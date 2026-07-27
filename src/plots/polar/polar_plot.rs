@@ -25,6 +25,23 @@
 //!     .show_r_labels(false);
 //! ```
 //!
+//! # Grid
+//!
+//! The polar grid is a set of concentric rings at the radial ticks plus one
+//! spoke per angular tick. Both halves are switchable, and both are drawn from
+//! the plot's own [`GridStyle`](crate::core::GridStyle), so a polar grid looks
+//! like every other grid in the figure:
+//!
+//! ```rust,ignore
+//! use ruviz::plots::polar::PolarPlotConfig;
+//!
+//! let config = PolarPlotConfig::new()
+//!     .show_rgrid(true)         // Concentric rings
+//!     .show_thetagrid(true)     // Spokes
+//!     .rgrid_count(4)           // Rings, and radial labels, at four radii
+//!     .thetagrid_count(8);      // Spokes, and angular labels, every 45°
+//! ```
+//!
 //! # Trait-Based API
 //!
 //! Polar plots implement the core plot traits:
@@ -34,9 +51,33 @@
 //! - [`PlotRender`] for `PolarPlotData`
 
 use crate::core::Result;
+use crate::plots::polar::radar::{RADAR_BOUNDS_RADIUS, RADAR_LABEL_RADIUS};
 use crate::plots::traits::{PlotArea, PlotCompute, PlotConfig, PlotData, PlotRender};
 use crate::render::skia::SkiaRenderer;
 use crate::render::{Color, LineStyle, MarkerStyle, Theme};
+
+/// Radius, as a multiple of `r_max`, at which the angular labels ring the plot.
+///
+/// Polar plots and radar charts are one family of radial charts, so they place
+/// their outside labels on the same ring and reserve the same pad around it.
+/// Pointing both at one constant is the point: polar used to label at
+/// `1.12 · r_max` inside a `1.5 · r_max` box, so a cardioid filled ~63% of its
+/// square while a radar polygon filled ~80%.
+pub(crate) const POLAR_LABEL_RADIUS: f64 = RADAR_LABEL_RADIUS;
+
+/// Half-extent of the data range a polar plot needs in x and y, as a multiple
+/// of `r_max`.
+///
+/// Every arm that has to reserve room for a polar plot — [`PlotData::data_bounds`]
+/// here and the raster bounds arm — derives it from this, so the backends agree
+/// by construction rather than by two matching literals.
+pub(crate) const POLAR_BOUNDS_RADIUS: f64 = RADAR_BOUNDS_RADIUS;
+
+/// Segments used to approximate one grid ring.
+///
+/// 72 is a 5° step: smooth at any figure size a plot is saved at, and cheap
+/// enough that the default five rings cost well under a thousand points.
+const POLAR_RING_SEGMENTS: usize = 72;
 
 /// Configuration for polar plots
 #[derive(Debug, Clone)]
@@ -45,14 +86,14 @@ pub struct PolarPlotConfig {
     pub theta_offset: f64,
     /// Direction of theta (true = counter-clockwise)
     pub theta_direction: bool,
-    /// Show radial grid
+    /// Draw the concentric radial grid rings
     pub show_rgrid: bool,
-    /// Show angular grid
-    pub show_thetgrid: bool,
-    /// Number of radial grid lines
+    /// Draw the angular grid spokes
+    pub show_thetagrid: bool,
+    /// Number of radial grid rings
     pub rgrid_count: usize,
-    /// Number of angular grid lines
-    pub thetgrid_count: usize,
+    /// Number of angular grid spokes
+    pub thetagrid_count: usize,
     /// Line color (None for auto)
     pub color: Option<Color>,
     /// Line width
@@ -79,9 +120,9 @@ impl Default for PolarPlotConfig {
             theta_offset: 0.0,
             theta_direction: true,
             show_rgrid: true,
-            show_thetgrid: true,
+            show_thetagrid: true,
             rgrid_count: 5,
-            thetgrid_count: 12,
+            thetagrid_count: 12,
             color: None,
             line_width: 1.5,
             marker_size: 0.0,
@@ -134,6 +175,30 @@ impl PolarPlotConfig {
     /// Set fill alpha
     pub fn fill_alpha(mut self, alpha: f32) -> Self {
         self.fill_alpha = alpha.clamp(0.0, 1.0);
+        self
+    }
+
+    /// Show/hide the concentric radial grid rings
+    pub fn show_rgrid(mut self, show: bool) -> Self {
+        self.show_rgrid = show;
+        self
+    }
+
+    /// Show/hide the angular grid spokes
+    pub fn show_thetagrid(mut self, show: bool) -> Self {
+        self.show_thetagrid = show;
+        self
+    }
+
+    /// Set the number of radial grid rings (and radial tick labels)
+    pub fn rgrid_count(mut self, count: usize) -> Self {
+        self.rgrid_count = count;
+        self
+    }
+
+    /// Set the number of angular grid spokes (and angular tick labels)
+    pub fn thetagrid_count(mut self, count: usize) -> Self {
+        self.thetagrid_count = count;
         self
     }
 
@@ -226,6 +291,15 @@ pub struct PolarPlotData {
     /// Whether the sweep is a full turn, so the curve closes on itself instead of
     /// through the origin
     pub closed: bool,
+    /// Concentric grid rings, in data coordinates, outermost last
+    ///
+    /// Empty when [`PolarPlotConfig::show_rgrid`] is off. Each ring is a closed
+    /// polyline whose last point repeats its first.
+    pub grid_rings: Vec<Vec<(f64, f64)>>,
+    /// Angular grid spokes, in data coordinates, as `(centre, rim)` pairs
+    ///
+    /// Empty when [`PolarPlotConfig::show_thetagrid`] is off.
+    pub grid_spokes: Vec<((f64, f64), (f64, f64))>,
     /// Angular axis labels (0°, 90°, etc.)
     pub theta_labels: Vec<PositionedLabel>,
     /// Radial axis labels
@@ -254,6 +328,14 @@ impl PolarPlotData {
 
         (gap > CLOSING_SEGMENT_EPSILON * self.r_max)
             .then_some(((last.x, last.y), (first.x, first.y)))
+    }
+
+    /// Half-extent of the square this plot needs, labels included.
+    ///
+    /// The one answer to "how much room does this polar plot want?", shared by
+    /// [`PlotData::data_bounds`] and the bounds arm the render pipeline uses.
+    pub fn bounds_radius(&self) -> f64 {
+        self.r_max * POLAR_BOUNDS_RADIUS
     }
 }
 
@@ -291,6 +373,8 @@ pub fn compute_polar_plot(r: &[f64], theta: &[f64], config: &PolarPlotConfig) ->
             r_max: 1.0,
             fill_polygon: vec![],
             closed: false,
+            grid_rings: vec![],
+            grid_spokes: vec![],
             theta_labels: vec![],
             r_labels: vec![],
             config: config.clone(),
@@ -346,12 +430,32 @@ pub fn compute_polar_plot(r: &[f64], theta: &[f64], config: &PolarPlotConfig) ->
         vec![]
     };
 
+    // Grid geometry, from the same `polar_grid` locator the radial labels use,
+    // so a ring and its label can never end up at different radii. Both arms are
+    // gated here rather than at draw time: the renderers then draw what was
+    // computed, and the SVG and raster backends cannot disagree about whether a
+    // ring exists.
+    let (ring_radii, spokes) = polar_grid(r_max, config.rgrid_count, config.thetagrid_count);
+    let grid_rings = if config.show_rgrid {
+        ring_radii
+            .iter()
+            .map(|&radius| circle_vertices(0.0, 0.0, radius, POLAR_RING_SEGMENTS))
+            .collect()
+    } else {
+        vec![]
+    };
+    let grid_spokes = if config.show_thetagrid {
+        spokes
+    } else {
+        Vec::new()
+    };
+
     // Compute theta labels (0°, 45°, 90°, etc.) positioned at edge of plot
     let theta_labels = if config.show_theta_labels {
-        let label_radius = r_max * 1.12; // Position slightly outside the plot
-        (0..config.thetgrid_count)
+        let label_radius = r_max * POLAR_LABEL_RADIUS;
+        (0..config.thetagrid_count)
             .map(|i| {
-                let angle = 2.0 * PI * i as f64 / config.thetgrid_count as f64;
+                let angle = 2.0 * PI * i as f64 / config.thetagrid_count as f64;
                 let degrees = (angle * 180.0 / PI).round() as i32;
                 PositionedLabel {
                     x: label_radius * angle.cos(),
@@ -386,6 +490,8 @@ pub fn compute_polar_plot(r: &[f64], theta: &[f64], config: &PolarPlotConfig) ->
         r_max,
         fill_polygon,
         closed,
+        grid_rings,
+        grid_spokes,
         theta_labels,
         r_labels,
         config: config.clone(),
@@ -513,10 +619,12 @@ impl PlotCompute for PolarPlot {
 
 impl PlotData for PolarPlotData {
     fn data_bounds(&self) -> ((f64, f64), (f64, f64)) {
-        // Polar plots need extra margin for axis labels positioned at r_max * 1.12
-        // Use r_max * 1.5 to ensure labels have enough room with layout adjustments
-        let label_margin = self.r_max * 1.5;
-        ((-label_margin, label_margin), (-label_margin, label_margin))
+        // A symmetric square around the origin, wide enough for the label ring
+        // at `POLAR_LABEL_RADIUS` plus its pad. Sized from the same constant a
+        // radar chart uses, so the two radial plot types fill the same share of
+        // their square.
+        let radius = self.bounds_radius();
+        ((-radius, radius), (-radius, radius))
     }
 
     fn is_empty(&self) -> bool {
@@ -544,6 +652,19 @@ impl PlotRender for PolarPlotData {
         alpha: f32,
         line_width: Option<f32>,
     ) -> Result<()> {
+        self.render_styled_with_grid(renderer, area, theme, color, alpha, line_width, None)
+    }
+
+    fn render_styled_with_grid(
+        &self,
+        renderer: &mut SkiaRenderer,
+        area: &PlotArea,
+        theme: &Theme,
+        color: Color,
+        alpha: f32,
+        line_width: Option<f32>,
+        grid_style: Option<&crate::core::GridStyle>,
+    ) -> Result<()> {
         if self.points.is_empty() {
             return Ok(());
         }
@@ -556,6 +677,52 @@ impl PlotRender for PolarPlotData {
         let line_width_px = render_scale.points_to_pixels(line_width.unwrap_or(config.line_width));
         let marker_size_px = render_scale.points_to_pixels(config.marker_size);
         let label_font_size_px = render_scale.points_to_pixels(config.label_font_size);
+
+        // Grid first, underneath everything: rings and spokes are the frame the
+        // radial tick numbers label. Resolved exactly the way the radar grid is,
+        // from the plot's own `GridStyle`, so a polar grid and a radar grid in
+        // the same theme are the same lines. Falling back to the theme when no
+        // style is passed keeps the trait's simpler entry points honest.
+        if grid_style.is_none_or(|style| style.visible) {
+            let grid_color = grid_style.map_or(theme.grid_color, |style| {
+                style.color.with_alpha(style.alpha)
+            });
+            let grid_line_width =
+                render_scale.points_to_pixels(grid_style.map_or(0.5, |style| style.line_width));
+            let grid_line_style = grid_style
+                .map(|style| style.line_style.clone())
+                .unwrap_or(LineStyle::Solid);
+
+            for ring in &self.grid_rings {
+                if ring.len() < 2 {
+                    continue;
+                }
+                let screen_ring: Vec<(f32, f32)> = ring
+                    .iter()
+                    .map(|(x, y)| area.data_to_screen(*x, *y))
+                    .collect();
+                renderer.draw_polyline(
+                    &screen_ring,
+                    grid_color,
+                    grid_line_width,
+                    grid_line_style.clone(),
+                )?;
+            }
+
+            for &((x1, y1), (x2, y2)) in &self.grid_spokes {
+                let (sx1, sy1) = area.data_to_screen(x1, y1);
+                let (sx2, sy2) = area.data_to_screen(x2, y2);
+                renderer.draw_line(
+                    sx1,
+                    sy1,
+                    sx2,
+                    sy2,
+                    grid_color,
+                    grid_line_width,
+                    grid_line_style.clone(),
+                )?;
+            }
+        }
 
         // Draw fill if enabled
         if config.fill && !self.fill_polygon.is_empty() {
@@ -888,6 +1055,107 @@ mod tests {
         assert_eq!(radii.len(), 5);
         assert_eq!(lines.len(), 8);
         assert!((radii[4] - 10.0).abs() < 1e-10);
+    }
+
+    /// The grid used to be computed by a `polar_grid` nothing called, so a
+    /// rendered polar plot had no rings and no spokes and its radial tick
+    /// numbers floated in blank space. The geometry now travels on the data, so
+    /// every backend draws the same rings.
+    #[test]
+    fn computed_polar_data_carries_its_grid() {
+        let r = vec![1.0, 2.0, 4.0];
+        let theta = vec![0.0, PI / 2.0, PI];
+        let config = PolarPlotConfig::default();
+        let data = compute_polar_plot(&r, &theta, &config);
+
+        assert_eq!(data.grid_rings.len(), config.rgrid_count);
+        assert_eq!(data.grid_spokes.len(), config.thetagrid_count);
+
+        // The outer ring sits exactly on `r_max`, and every ring is closed.
+        for ring in &data.grid_rings {
+            assert_eq!(ring.len(), POLAR_RING_SEGMENTS + 1);
+            assert!((ring[0].0 - ring[ring.len() - 1].0).abs() < 1e-9);
+            assert!((ring[0].1 - ring[ring.len() - 1].1).abs() < 1e-9);
+        }
+        let outer = data.grid_rings.last().expect("outer ring");
+        for &(x, y) in outer {
+            assert!((x.hypot(y) - data.r_max).abs() < 1e-9);
+        }
+
+        // Spokes run from the centre out to the rim.
+        for &((x1, y1), (x2, y2)) in &data.grid_spokes {
+            assert!(x1.abs() < 1e-12 && y1.abs() < 1e-12);
+            assert!((x2.hypot(y2) - data.r_max).abs() < 1e-9);
+        }
+    }
+
+    /// Each half of the grid is switchable on its own, and the switch is
+    /// applied once — at compute time — so no backend can honour it and another
+    /// ignore it.
+    #[test]
+    fn grid_visibility_flags_are_live() {
+        let r = vec![1.0, 2.0, 3.0];
+        let theta = vec![0.0, PI / 2.0, PI];
+        let grid_of = |config: PolarPlotConfig| compute_polar_plot(&r, &theta, &config);
+
+        let no_rings = grid_of(PolarPlotConfig::default().show_rgrid(false));
+        assert!(no_rings.grid_rings.is_empty());
+        assert!(!no_rings.grid_spokes.is_empty());
+
+        let no_spokes = grid_of(PolarPlotConfig::default().show_thetagrid(false));
+        assert!(!no_spokes.grid_rings.is_empty());
+        assert!(no_spokes.grid_spokes.is_empty());
+
+        let counted = grid_of(PolarPlotConfig::default().rgrid_count(3).thetagrid_count(6));
+        assert_eq!(counted.grid_rings.len(), 3);
+        assert_eq!(counted.grid_spokes.len(), 6);
+        // The radial labels count the same rings they annotate.
+        assert_eq!(counted.r_labels.len(), 3);
+        assert_eq!(counted.theta_labels.len(), 6);
+    }
+
+    /// A ring radius and the radial label beside it must be the same number.
+    #[test]
+    fn radial_labels_sit_on_their_rings() {
+        let r = vec![0.5, 2.0, 3.0];
+        let theta = vec![0.0, 1.0, 2.0];
+        let data = compute_polar_plot(&r, &theta, &PolarPlotConfig::default());
+
+        for (ring, label) in data.grid_rings.iter().zip(&data.r_labels) {
+            let ring_radius = ring[0].0.hypot(ring[0].1);
+            let label_radius = label.x.hypot(label.y);
+            assert!((ring_radius - label_radius).abs() < 1e-9);
+        }
+    }
+
+    /// Polar and radar are one family: the same label ring, the same pad, so
+    /// the same share of the square is filled. Polar used to reserve
+    /// `1.5 · r_max` for labels drawn at `1.12 · r_max`, wasting a quarter of
+    /// the frame that radar used.
+    #[test]
+    fn polar_reserves_the_same_square_as_radar() {
+        assert_eq!(POLAR_LABEL_RADIUS, RADAR_LABEL_RADIUS);
+        assert_eq!(POLAR_BOUNDS_RADIUS, RADAR_BOUNDS_RADIUS);
+        const { assert!(POLAR_BOUNDS_RADIUS > POLAR_LABEL_RADIUS) };
+
+        let r = vec![1.0, 2.0, 4.0];
+        let theta = vec![0.0, PI / 2.0, PI];
+        let data = compute_polar_plot(&r, &theta, &PolarPlotConfig::default());
+        assert!((data.bounds_radius() - data.r_max * POLAR_BOUNDS_RADIUS).abs() < 1e-12);
+
+        let ((x_min, x_max), (y_min, y_max)) = data.data_bounds();
+        assert!((x_max - data.bounds_radius()).abs() < 1e-12);
+        assert!((x_min + data.bounds_radius()).abs() < 1e-12);
+        assert!((y_max - data.bounds_radius()).abs() < 1e-12);
+        assert!((y_min + data.bounds_radius()).abs() < 1e-12);
+
+        // Every label the plot draws fits inside the square it asks for.
+        for label in data.theta_labels.iter().chain(&data.r_labels) {
+            assert!(label.x.abs() <= data.bounds_radius());
+            assert!(label.y.abs() <= data.bounds_radius());
+        }
+        // ... and the drawn area is a clear majority of it.
+        assert!(data.r_max / data.bounds_radius() > 0.75);
     }
 
     #[test]

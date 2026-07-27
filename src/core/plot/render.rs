@@ -1,16 +1,5 @@
 use super::*;
 
-#[derive(Debug, Clone)]
-struct ColorbarMeasurementSpec {
-    vmin: f64,
-    vmax: f64,
-    value_scale: AxisScale,
-    label: Option<String>,
-    tick_font_size: f32,
-    label_font_size: f32,
-    show_log_subticks: bool,
-}
-
 /// Where the data actually is, for [`LegendPosition::Best`].
 ///
 /// One function, called by every backend that draws a legend, so raster and SVG
@@ -650,41 +639,15 @@ impl Plot {
             y_max,
         )?;
 
-        let bar_categories: Option<Cow<'_, [String]>> =
-            self.series_mgr.series.iter().find_map(|s| {
-                if let SeriesType::Bar { categories, .. } = &s.series_type {
-                    Some(Cow::Borrowed(categories.as_slice()))
-                } else {
-                    None
-                }
-            });
+        // One harvest for every categorical plot type: bars, box plots,
+        // violins and boxen plots all sit in the same unit-wide slots.
+        let category_axis = super::series_internal::CategoryAxis::harvest(&self.series_mgr.series);
+        let (category_labels, category_positions): (&[String], &[f64]) = match &category_axis {
+            Some(axis) => (&axis.labels, &axis.positions),
+            None => (&[], &[]),
+        };
+        let is_categorical = category_axis.is_some();
 
-        let violin_data: Vec<(String, f64)> = self
-            .series_mgr
-            .series
-            .iter()
-            .filter_map(|s| {
-                if let SeriesType::Violin { data } = &s.series_type {
-                    data.config
-                        .category
-                        .clone()
-                        .map(|cat| (cat, data.config.x_position))
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        let (violin_categories, violin_positions): (Vec<String>, Vec<f64>) =
-            violin_data.into_iter().unzip();
-
-        let is_violin_categorical = !violin_categories.is_empty();
-
-        let bar_categories = bar_categories.or(if is_violin_categorical {
-            Some(Cow::Borrowed(violin_categories.as_slice()))
-        } else {
-            None
-        });
         let content = self.create_plot_content_from_resolved_text(y_min, y_max, frame);
         let (layout, x_ticks, y_ticks) = self.compute_layout_with_configured_ticks(
             &renderer,
@@ -752,13 +715,8 @@ impl Plot {
             }
         }
 
-        let categorical_x_tick_pixels = Self::categorical_x_tick_pixels(
-            plot_area,
-            x_min,
-            x_max,
-            bar_categories.as_ref().map(|categories| categories.len()),
-            &violin_positions,
-        );
+        let categorical_x_tick_pixels =
+            Self::categorical_x_tick_pixels(plot_area, x_min, x_max, category_positions);
 
         let draw_ticks = draw_axes && self.layout.tick_config.enabled;
         if draw_ticks {
@@ -811,11 +769,11 @@ impl Plot {
 
         let tick_size_px = pt_to_px(self.display.config.typography.tick_size(), dpi);
 
-        if draw_axes && is_violin_categorical {
-            renderer.draw_axis_labels_at_categorical_violin(
+        if draw_axes && is_categorical {
+            renderer.draw_axis_labels_at_categorical(
                 &layout.plot_area,
-                &violin_categories,
-                &violin_positions,
+                category_labels,
+                category_positions,
                 x_min,
                 x_max,
                 y_min,
@@ -831,44 +789,24 @@ impl Plot {
                 &self.layout.y_scale,
             )?;
         } else if draw_axes {
-            if let Some(ref categories) = bar_categories {
-                renderer.draw_axis_labels_at_categorical(
-                    &layout.plot_area,
-                    categories,
-                    x_min,
-                    x_max,
-                    y_min,
-                    y_max,
-                    &y_ticks,
-                    layout.xtick_baseline_y,
-                    layout.ytick_right_x,
-                    tick_size_px,
-                    self.display.theme.foreground,
-                    dpi,
-                    self.layout.tick_config.enabled,
-                    false,
-                    &self.layout.y_scale,
-                )?;
-            } else {
-                renderer.draw_axis_labels_at_scaled(
-                    &layout.plot_area,
-                    x_min,
-                    x_max,
-                    y_min,
-                    y_max,
-                    &x_ticks,
-                    &y_ticks,
-                    layout.xtick_baseline_y,
-                    layout.ytick_right_x,
-                    tick_size_px,
-                    self.display.theme.foreground,
-                    dpi,
-                    self.layout.tick_config.enabled,
-                    false,
-                    &self.layout.x_scale,
-                    &self.layout.y_scale,
-                )?;
-            }
+            renderer.draw_axis_labels_at_scaled(
+                &layout.plot_area,
+                x_min,
+                x_max,
+                y_min,
+                y_max,
+                &x_ticks,
+                &y_ticks,
+                layout.xtick_baseline_y,
+                layout.ytick_right_x,
+                tick_size_px,
+                self.display.theme.foreground,
+                dpi,
+                self.layout.tick_config.enabled,
+                false,
+                &self.layout.x_scale,
+                &self.layout.y_scale,
+            )?;
         }
 
         if let Some(ref pos) = layout.title_pos
@@ -1490,50 +1428,23 @@ impl Plot {
         self.create_plot_content_at_time(y_min, y_max, 0.0)
     }
 
-    fn colorbar_measurement_spec(&self) -> Option<ColorbarMeasurementSpec> {
+    /// The colorbar whose width the layout has to reserve room for.
+    ///
+    /// One colorbar is drawn (they all share `colorbar_rect`), so the first
+    /// series that asks for one is the one measured. It is the *same*
+    /// [`ColorbarRequest`] the drawing code will use, which is what stops the
+    /// margin being measured from one range and the strip drawn from another.
+    fn colorbar_measurement_spec(&self) -> Option<crate::render::colorbar::ColorbarRequest> {
         self.series_mgr
             .series
             .iter()
-            .find_map(|series| match &series.series_type {
-                SeriesType::Heatmap { data } if data.config.colorbar => {
-                    Some(ColorbarMeasurementSpec {
-                        vmin: data.vmin,
-                        vmax: data.vmax,
-                        value_scale: data.config.value_scale,
-                        label: data.config.colorbar_label.clone(),
-                        tick_font_size: data.config.colorbar_tick_font_size,
-                        label_font_size: data.config.colorbar_label_font_size,
-                        show_log_subticks: data.config.colorbar_log_subticks,
-                    })
-                }
-                SeriesType::Contour { data } if data.config.colorbar => {
-                    let (vmin, vmax) = if data.levels.is_empty() {
-                        (0.0, 1.0)
-                    } else {
-                        (
-                            data.levels.first().copied().unwrap_or(0.0),
-                            data.levels.last().copied().unwrap_or(1.0),
-                        )
-                    };
-
-                    Some(ColorbarMeasurementSpec {
-                        vmin,
-                        vmax,
-                        value_scale: AxisScale::Linear,
-                        label: data.config.colorbar_label.clone(),
-                        tick_font_size: data.config.colorbar_tick_font_size,
-                        label_font_size: data.config.colorbar_label_font_size,
-                        show_log_subticks: false,
-                    })
-                }
-                _ => None,
-            })
+            .find_map(|series| self.series_colorbar_request(&series.series_type))
     }
 
     fn measure_colorbar_right_margin(
         &self,
         renderer: &SkiaRenderer,
-        spec: &ColorbarMeasurementSpec,
+        spec: &crate::render::colorbar::ColorbarRequest,
     ) -> Result<f32> {
         let render_scale = renderer.render_scale();
         let colorbar_width = render_scale.logical_pixels_to_pixels(COLORBAR_WIDTH_PX);
@@ -2135,9 +2046,10 @@ impl Plot {
                     }
                 }
                 SeriesType::Violin { data } => {
-                    // Add violin KDE points
+                    // Add violin KDE points, at the centre of the category slot
+                    // this violin was assigned.
                     for &y in &data.kde.x {
-                        let x = 0.5; // Centered position
+                        let x = data.config.x_center();
                         if y.is_finite() {
                             x_values.push(x);
                             y_values.push(y);
@@ -2149,7 +2061,7 @@ impl Plot {
                     for boxen_box in &data.boxes {
                         let rect = crate::plots::distribution::boxen_rect(
                             boxen_box,
-                            0.5,
+                            data.config.x_center(),
                             data.config.orient,
                         );
                         for (x, y) in rect {
@@ -2204,6 +2116,18 @@ impl Plot {
                     for point in &data.points {
                         x_values.push(point.x);
                         y_values.push(point.y);
+                    }
+                }
+                SeriesType::Computed { data } => {
+                    // A compute-only plot type states its own extent; the
+                    // corners of it are what the datashader grid needs.
+                    let ((x0, x1), (y0, y1)) =
+                        crate::plots::traits::PlotData::data_bounds(data.as_ref());
+                    for (x, y) in [(x0, y0), (x1, y1)] {
+                        if x.is_finite() && y.is_finite() {
+                            x_values.push(x);
+                            y_values.push(y);
+                        }
                     }
                 }
             }
@@ -2870,14 +2794,15 @@ impl Plot {
         // Draw background
         svg.draw_rectangle(0.0, 0.0, width, height, self.display.theme.background, true);
 
-        // Check if we have a bar chart (need special X-axis handling)
-        let bar_categories: Option<&Vec<String>> = self.series_mgr.series.iter().find_map(|s| {
-            if let SeriesType::Bar { categories, .. } = &s.series_type {
-                Some(categories)
-            } else {
-                None
-            }
-        });
+        // The same harvest the raster backend runs, so PNG and SVG cannot label
+        // the same figure differently: bars, box plots, violins and boxen plots
+        // all report the unit-wide slots they occupy.
+        let category_axis = super::series_internal::CategoryAxis::harvest(&self.series_mgr.series);
+        let (category_labels, category_positions): (&[String], &[f64]) = match &category_axis {
+            Some(axis) => (&axis.labels, &axis.positions),
+            None => (&[], &[]),
+        };
+        let is_categorical = category_axis.is_some();
 
         // Compute Y-axis tick layout (fix parameter order: pixel_top then pixel_bottom)
         let y_tick_layout = TickLayout::compute_y_axis(
@@ -2888,7 +2813,7 @@ impl Plot {
             &self.layout.y_scale,
             self.layout.tick_config.major_ticks_y,
         );
-        let x_tick_layout = if bar_categories.is_none() {
+        let x_tick_layout = if !is_categorical {
             Some(TickLayout::compute(
                 x_min,
                 x_max,
@@ -2934,7 +2859,7 @@ impl Plot {
         let draw_axes = Self::needs_cartesian_axes_for_series(&self.series_mgr.series);
         if self.layout.grid_style.visible && draw_axes {
             // Bar charts only get horizontal grid lines.
-            let (x_major_pixels, x_minor_pixels): (&[f32], &[f32]) = if bar_categories.is_some() {
+            let (x_major_pixels, x_minor_pixels): (&[f32], &[f32]) = if is_categorical {
                 (&[], &[])
             } else {
                 let x_tick_layout = x_tick_layout.as_ref().ok_or_else(|| {
@@ -2999,19 +2924,20 @@ impl Plot {
 
         // Draw axes and tick labels
         if draw_axes {
-            if let Some(categories) = bar_categories {
+            if is_categorical {
                 let x_range = x_max - x_min;
-                let category_x_tick_positions: Vec<f32> = (0..categories.len())
-                    .map(|index| {
+                let category_x_tick_positions: Vec<f32> = category_positions
+                    .iter()
+                    .map(|&position| {
                         if x_range.abs() < f64::EPSILON {
                             plot_left + plot_width * 0.5
                         } else {
-                            plot_left + (((index as f64) - x_min) / x_range) as f32 * plot_width
+                            plot_left + ((position - x_min) / x_range) as f32 * plot_width
                         }
                     })
                     .collect();
 
-                // Bar chart: draw axes with category labels
+                // Categorical axis: ticks at the slot centres, labels under them.
                 if self.layout.tick_config.enabled {
                     let (
                         axis_width,
@@ -3056,8 +2982,13 @@ impl Plot {
                         tick_size_px,
                     )?;
 
-                    // Draw category labels on X-axis
-                    for (category, &x) in categories.iter().zip(category_x_tick_positions.iter()) {
+                    // Draw category labels on X-axis. An unnamed slot holds its
+                    // place on the axis but writes nothing under it.
+                    for (category, &x) in category_labels
+                        .iter()
+                        .zip(category_x_tick_positions.iter())
+                        .filter(|(category, _)| !category.is_empty())
+                    {
                         svg.draw_text_centered(
                             category,
                             x,

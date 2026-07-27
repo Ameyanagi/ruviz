@@ -2985,20 +2985,10 @@ fn compute_categorical_render_top_tick_probe(plot: &Plot) -> (u32, u32) {
         )
         .expect("configured layout with tick measurements");
     let plot_area = Plot::plot_area_from_layout(&layout).expect("valid plot area");
-    let categories = plot
-        .series_mgr
-        .series
-        .iter()
-        .find_map(|series| {
-            if let SeriesType::Bar { categories, .. } = &series.series_type {
-                Some(categories.len())
-            } else {
-                None
-            }
-        })
+    let category_axis = super::series_internal::CategoryAxis::harvest(&plot.series_mgr.series)
         .expect("categorical plot should contain bar categories");
     let x_tick_pixels =
-        Plot::categorical_x_tick_pixels(plot_area, x_min, x_max, Some(categories), &[])
+        Plot::categorical_x_tick_pixels(plot_area, x_min, x_max, &category_axis.positions)
             .expect("categorical ticks should be available");
     let x_probe = x_tick_pixels[0].round() as u32;
     (x_probe, (plot_area.top() + 3.0).round() as u32)
@@ -5986,8 +5976,12 @@ fn test_horizontal_boxen_bounds_put_data_range_on_x_axis() {
 
     assert!(x_min <= 10.0);
     assert!(x_max >= 30.0);
-    assert!(y_min <= 0.0);
-    assert!(y_max >= 1.0);
+
+    // The category axis carries the boxen's unit-wide slot, not a 0..1
+    // placeholder: with no `.category()` it owns slot 0, i.e. -0.5..0.5.
+    let (slot_lo, slot_hi) = crate::plots::boxplot::category_slot_span(0.0);
+    assert!(y_min <= slot_lo);
+    assert!(y_max >= slot_hi);
 }
 
 #[test]

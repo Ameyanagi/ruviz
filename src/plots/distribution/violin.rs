@@ -61,10 +61,17 @@ pub struct ViolinConfig {
     pub line_width: f32,
     /// Inner color (for box/quartiles)
     pub inner_color: Color,
-    /// Category name for this violin (for X-axis label)
+    /// Category label written under this violin on the x axis.
+    ///
+    /// Set with [`category`](Self::category()). Bars, box plots, violins and
+    /// boxen plots share one category axis: slot *i* is centred on `i` and one
+    /// data unit wide, so `width` is a fraction of that slot no
+    /// matter how many violins the figure holds.
     pub category: Option<String>,
-    /// X position for this violin (default: 0.5 for single violin)
-    pub x_position: f64,
+    /// Explicit centre on the category axis; `None` claims the next free slot.
+    ///
+    /// Set with [`x_position`](Self::x_position()).
+    pub x_position: Option<f64>,
 }
 
 /// Bandwidth selection method
@@ -146,7 +153,7 @@ impl Default for ViolinConfig {
             line_width: 1.0,
             inner_color: Color::from_rgb(51, 51, 51), // Dark gray instead of pure black
             category: None,
-            x_position: 0.5, // Default center position for single violin
+            x_position: None,
         }
     }
 }
@@ -260,23 +267,10 @@ impl ViolinConfig {
         self.line_width = width.max(0.0);
         self
     }
-
-    /// Set category name for this violin
-    ///
-    /// The category name is displayed on the X-axis instead of numeric values.
-    pub fn category<S: Into<String>>(mut self, name: S) -> Self {
-        self.category = Some(name.into());
-        self
-    }
-
-    /// Set X position for this violin
-    ///
-    /// Used when plotting multiple violins to control their horizontal positions.
-    pub fn x_position(mut self, pos: f64) -> Self {
-        self.x_position = pos;
-        self
-    }
 }
+
+// `category` and `x_position` are generated alongside every other categorical
+// plot type's, so all of them mean exactly the same thing.
 
 // Implement PlotConfig marker trait
 impl PlotConfig for ViolinConfig {}
@@ -513,8 +507,6 @@ impl PlotCompute for Violin {
 
 impl PlotData for ViolinData {
     fn data_bounds(&self) -> ((f64, f64), (f64, f64)) {
-        // For vertical violin: x is centered (use 0-1 range), y is KDE range
-        // For horizontal violin: x is KDE range, y is centered
         // Use the KDE's actual range (which extends beyond data min/max by 3 bandwidths)
         let kde_range = if self.kde.x.is_empty() {
             self.range
@@ -524,15 +516,12 @@ impl PlotData for ViolinData {
             (kde_min, kde_max)
         };
 
+        // The category axis carries one unit-wide slot per violin, centred on
+        // the position the series was assigned.
+        let slot = crate::plots::boxplot::category_slot_span(self.config.x_center());
         match self.config.orientation {
-            Orientation::Vertical => {
-                let x_range = (0.0, 1.0); // Will be adjusted by position
-                (x_range, kde_range)
-            }
-            Orientation::Horizontal => {
-                let y_range = (0.0, 1.0); // Will be adjusted by position
-                (kde_range, y_range)
-            }
+            Orientation::Vertical => (slot, kde_range),
+            Orientation::Horizontal => (kde_range, slot),
         }
     }
 
@@ -561,8 +550,9 @@ impl PlotRender for ViolinData {
         let inner_line_width_px = render_scale.points_to_pixels(1.0);
         let median_marker_size_px = render_scale.points_to_pixels(4.0);
 
-        // Generate polygon vertices (center at 0.5 for single violin)
-        let (left, right) = violin_polygon(self, 0.5, half_width, config);
+        // The violin straddles the centre of its own category slot.
+        let center = config.x_center();
+        let (left, right) = violin_polygon(self, center, half_width, config);
         let polygon = close_violin_polygon(&left, &right);
 
         if polygon.is_empty() {
@@ -600,7 +590,6 @@ impl PlotRender for ViolinData {
         }
 
         // Draw inner elements (points, box, quartiles, median)
-        let center = 0.5;
         let (q1, median, q3) = self.quartiles;
 
         self.draw_points(renderer, area, center, line_color, 1.0)?;
@@ -689,8 +678,9 @@ impl PlotRender for ViolinData {
         let inner_line_width_px = render_scale.points_to_pixels(1.0);
         let median_marker_size_px = render_scale.points_to_pixels(4.0);
 
-        // Generate polygon vertices (center at 0.5 for single violin)
-        let (left, right) = violin_polygon(self, 0.5, half_width, config);
+        // The violin straddles the centre of its own category slot.
+        let center = config.x_center();
+        let (left, right) = violin_polygon(self, center, half_width, config);
         let polygon = close_violin_polygon(&left, &right);
 
         if polygon.is_empty() {
@@ -737,7 +727,6 @@ impl PlotRender for ViolinData {
         }
 
         // Draw inner elements (points, box, quartiles, median)
-        let center = 0.5;
         let (q1, median, q3) = self.quartiles;
 
         // `line_color` already carries the series alpha, so do not apply it twice.
@@ -1014,5 +1003,50 @@ mod tests {
 
         // Test is_empty
         assert!(!violin_data.is_empty());
+    }
+
+    #[test]
+    fn test_violin_sits_in_its_own_category_slot() {
+        use crate::plots::traits::PlotData as _;
+
+        let data: Vec<f64> = (0..50).map(|i| i as f64).collect();
+
+        let first = ViolinData::from_values(&data, &ViolinConfig::new()).unwrap();
+        assert_eq!(first.config.x_center(), 0.0);
+        let ((x_min, x_max), _) = first.data_bounds();
+        assert_eq!((x_min, x_max), (-0.5, 0.5));
+
+        let second = ViolinData::from_values(&data, &ViolinConfig::new().x_position(1.0)).unwrap();
+        let ((x_min, x_max), _) = second.data_bounds();
+        assert_eq!((x_min, x_max), (0.5, 1.5));
+    }
+
+    #[test]
+    fn test_violin_polygon_follows_the_slot_it_was_given() {
+        // The renderer used to hardcode 0.5, so `.category("b")` relabelled the
+        // axis while every violin stayed stacked on the same spot.
+        let data: Vec<f64> = (0..50).map(|i| i as f64).collect();
+        let config = ViolinConfig::new().x_position(2.0);
+        let violin = ViolinData::from_values(&data, &config).unwrap();
+
+        let (left, right) = violin_polygon(&violin, config.x_center(), 0.4, &config);
+        for (x, _) in left.iter().chain(right.iter()) {
+            assert!(
+                (1.6..=2.4).contains(x),
+                "vertex {x} escaped the slot centred on 2.0"
+            );
+        }
+    }
+
+    #[test]
+    fn test_horizontal_violin_puts_its_slot_on_the_y_axis() {
+        use crate::plots::traits::PlotData as _;
+
+        let data: Vec<f64> = (0..50).map(|i| i as f64).collect();
+        let violin =
+            ViolinData::from_values(&data, &ViolinConfig::new().horizontal().x_position(1.0))
+                .unwrap();
+
+        assert_eq!(violin.data_bounds().1, (0.5, 1.5));
     }
 }

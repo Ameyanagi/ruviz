@@ -298,12 +298,18 @@ impl BoundsAccumulator {
         }
     }
 
-    fn add_box_plot(&mut self, data: &[f64]) -> Result<()> {
+    fn add_box_plot(
+        &mut self,
+        data: &[f64],
+        config: &crate::plots::boxplot::BoxPlotConfig,
+    ) -> Result<()> {
         if data.is_empty() {
             return Err(PlottingError::EmptyDataSet);
         }
-        // One box occupies the unit cell centred on 0.5.
-        self.include_x_span(0.0, 1.0);
+        // One box occupies the one-unit-wide category slot it was assigned, the
+        // same slot geometry a bar chart uses.
+        let (lo, hi) = crate::plots::boxplot::category_slot_span(config.x_center());
+        self.include_x_span(lo, hi);
         for &value in data {
             self.include_y(value);
         }
@@ -318,6 +324,10 @@ impl BoundsAccumulator {
         match series_type {
             SeriesType::Heatmap { data } => self.include_plot_data(data.as_ref()),
             SeriesType::Boxen { data } => self.include_plot_data(data.as_ref()),
+            // Every `ComputedSeries` states its own extent through `PlotData`,
+            // which is the same route heatmap and boxen take — so a plot type
+            // wired through `SeriesType::Computed` needs no arm of its own here.
+            SeriesType::Computed { data } => self.include_plot_data(data.as_ref()),
             SeriesType::Kde { data } => {
                 self.add_points_with_errors(&data.x, &data.y, None, None);
                 // Density curves are filled down to zero.
@@ -344,7 +354,8 @@ impl BoundsAccumulator {
                         self.include_y(value);
                     }
                 }
-                self.include_x_span(0.0, 1.0);
+                let (lo, hi) = crate::plots::boxplot::category_slot_span(data.config.x_center());
+                self.include_x_span(lo, hi);
             }
             SeriesType::Quiver { data } => {
                 for arrow in &data.arrows {
@@ -386,7 +397,7 @@ impl BoundsAccumulator {
                 // an asymmetric curve (a cardioid, say) still renders centred
                 // with room for its labels. This *replaces* the range on
                 // purpose: the sample points must not pull the centre off.
-                let label_margin = data.r_max * 1.5;
+                let label_margin = data.bounds_radius();
                 self.x_min = -label_margin;
                 self.x_max = label_margin;
                 self.y_min = -label_margin;
@@ -516,7 +527,9 @@ impl SeriesBoundsSource for PlotSeries {
                     acc.add_histogram(&data);
                 }
             }
-            SeriesType::BoxPlot { data, .. } => acc.add_box_plot(&data.resolve_cow(0.0))?,
+            SeriesType::BoxPlot { data, config } => {
+                acc.add_box_plot(&data.resolve_cow(0.0), config)?
+            }
             series_type => acc.add_computed_series(series_type),
         }
         Ok(())
@@ -556,7 +569,7 @@ impl ResolvedSeries<'_> {
                 Some(effective_error_values(attached.y, y_errors)),
             ),
             ResolvedSeries::Histogram { data } => acc.add_histogram(data),
-            ResolvedSeries::BoxPlot { data, .. } => acc.add_box_plot(data)?,
+            ResolvedSeries::BoxPlot { data, config } => acc.add_box_plot(data, config)?,
             ResolvedSeries::Other(series_type) => acc.add_computed_series(series_type),
         }
         Ok(())

@@ -78,6 +78,47 @@ Also in scope for "one obvious way to do it": four entry points currently draw a
 `Plot::new().line()`, `ruviz::line()` (`src/lib.rs:979`), `simple::line_plot` and
 `simple::line_plot_with_title` (`src/simple.rs:48,:63`).
 
+## Status (2026-07-27)
+
+Phases 1–8 have landed on `feat/3d-implementation` except §6.1; Phases 9 and 10
+are partly done. **The phase sections below describe each problem as it was
+found, not as the code is now** — every one carries a status line naming the
+commit that closed it. Read the status line first.
+
+Phases 6 and 10 landed as an uncommitted tranche on top of `258f3e8`; the rest
+name their commit.
+
+| Phase | State | Commit |
+| --- | --- | --- |
+| 1 — Shared primitives | done | `61d9a36`, follow-ups `846977e`, `c5a77cd` |
+| 2 — Public surface | done | `f9eac62`; the last of §2.3 (`flow`) in this tranche |
+| 3.1 — Bar geometry | done | `846977e` (`bar_pixel_rect`) |
+| 3.2 — Bounds | done | `e2cd5ca` |
+| 3.3 — Ticks | done | `e2cd5ca` |
+| 3.4 — Legend layout | done | `258f3e8` (`layout_legend`) |
+| 3.5 — Categorical / axis scale | done | `e2cd5ca`; the distribution family joined the one category axis in this tranche (`CategoryAxis::harvest`, `category_slot_span`, `impl_category_axis!`) |
+| 3.6 — `BarConfig` threading | done | `846977e` |
+| 4 — Correctness hazards | done | `e2cd5ca` |
+| 5 — Truth in advertising | done | `258f3e8` |
+| 6 — Rendering presentation | **mostly done** | 6.2 (`Option<f32>` colorbar fonts), 6.3 (`POLAR_LABEL_RADIUS`/`POLAR_BOUNDS_RADIUS`, real polar grid) and 6.4 (z-axis edge from the corner hull, orthographic fit) landed alongside Phase 10. **Open: 6.1** — categorical tick-label collisions, and the quiver colour key |
+| 7 — 3D correctness | done | `258f3e8` |
+| 8 — Test and CI credibility | done | `258f3e8` |
+| 9 — Structural | **partly done** | builder unification `d027f46`; duplicate `PlotArea` retired with the parallel renderer in `258f3e8`; `ARCHITECTURE.md` now matches the tree. `Styled<T>`, `thiserror`, the `Vec<f64>` fast path, the gpui workspace split and the `rfd` pin are open |
+| 10 — Unwired plot types | done | `flow` deleted, regplot CI fixed and the catalog made self-checking in this tranche; the five renderer-only types (`rug`, `strip`, `swarm`, `hexbin`, `dendrogram`) are wired through one `SeriesType::Computed` variant and the `ComputedSeries` trait |
+
+Documentation assets were regenerated twice as the renderer changed: `21bf2d1`
+and `e8c9266`.
+
+Open, in rough order of value: §6.1 categorical tick-label collisions and the
+quiver colour key, the grouped/stacked bar and stacked-area builders (which need
+their own multi-series shape, not another `ComputedSeries`), the 3D colorbar
+caption, `add_axes`, then the rest of Phase 9.
+
+The `Plot` builder now exposes **26** plot types, plus 4 from `Plot3D` — 30 in
+total. `src/plots/mod.rs::catalog_is_true` reads the builder's own source and
+fails if that count, either doc table, or the "no builder yet" list drifts from
+the API.
+
 ## Completed (2026-07-25)
 
 Landed on `feat/3d-implementation`; 1300 lib tests, clippy, and `cargo fmt --check` clean.
@@ -96,6 +137,10 @@ Carried forward from that work: 26 golden baselines regenerated; the 3D goldens 
 deliberately left stale (see *Decisions required*).
 
 ## Phase 1 — Shared primitives (S, highest return per line changed)
+
+> **Status: done in `61d9a36`**, with follow-ups `846977e` (edges the
+> implicit-border removal exposed) and `c5a77cd` (polar closure, non-finite
+> samples). Everything below is the state before those commits.
 
 These are one-line or one-file changes with no API break. Almost all of the remaining visual
 return in the library is concentrated here.
@@ -130,6 +175,11 @@ DPI-varying bar outlines. **Unblocks:** boxplot fill and `BarConfig::edge_color`
 | 3D colorbar ticks | `src/core/plot3d/layout.rs:604` | Prints `0.982343 / 0.382643 / −0.217057` via raw `format!`. `generate_ticks` is already imported at `layout.rs:4`. |
 
 ## Phase 2 — Public surface, before 1.0 freezes it (S)
+
+> **Status: done in `f9eac62`.** The one remainder, §2.3's empty `flow`
+> module, was deleted in the Phase 10 tranche; `composite` and `regression`
+> are `#[doc(hidden)]` rather than feature-gated (rationale in
+> `src/plots/mod.rs`), and `hierarchical` is now wired.
 
 Cheap now, breaking later. None of this requires new machinery.
 
@@ -188,6 +238,9 @@ rest so the compiler warns at the call site.
 > sees an identical image.
 
 ## Phase 3 — Unify the duplicated machinery (M)
+
+> **Status: done.** 3.1 and 3.6 in `846977e`, 3.2/3.3/3.5 in `e2cd5ca`,
+> 3.4 in `258f3e8`.
 
 This is where the "N plot types, not one library" problem actually lives. Each item below
 collapses a per-backend or per-plot-type clone into one implementation.
@@ -279,6 +332,8 @@ unreachable. Add `config: BarConfig` to the variant.
 
 ## Phase 4 — Correctness hazards (M)
 
+> **Status: done in `e2cd5ca`.**
+
 Independent of the above; can proceed in parallel.
 
 | Hazard | Location | Fix |
@@ -292,6 +347,12 @@ Independent of the above; can proceed in parallel.
 | `get_points_in_region` fabricates | `src/interactive/renderer.rs:299-322` | Returns invented point IDs to any caller. Wire to the real `PointHitIndex` or make it `pub(crate)`. |
 
 ## Phase 5 — Truth in advertising (M)
+
+> **Status: done in `258f3e8`.** The unreachable 2D parallel renderer and
+> the memory pool are gone, the implicit-feature namespace is a hard error,
+> and `tests/feature_hygiene_test.rs` keeps every declared feature honest.
+> `parallel` remains a default feature, but now for a real reason: the
+> software 3D rasterizer renders tiles across a rayon pool.
 
 ### 5.1 The `parallel` feature does nothing
 
@@ -336,6 +397,22 @@ real — so regressions there are invisible. `docs/BENCHMARK_RESULTS.md` should 
 `docs/benchmarks/`, the only trustworthy source in the repo.
 
 ## Phase 6 — Rendering presentation (M)
+
+> **Status: mostly done**, landed alongside Phase 10. 6.2 — both
+> `colorbar_tick_font_size` and `colorbar_label_font_size` are `Option<f32>`
+> defaulting to the theme on heatmap and contour alike. 6.3 —
+> `POLAR_LABEL_RADIUS`/`POLAR_BOUNDS_RADIUS` mirror the radar pair and
+> `show_rgrid`/`show_thetagrid` reach a real grid. 6.4 — the z axis is anchored
+> from the projected corner hull and the orthographic camera fits the box to the
+> frame.
+>
+> **Still open, and now the largest remaining block of visible quality:**
+> - **6.1 categorical tick-label collisions.** There is still no
+>   `xtick_rotation` anywhere in the tree, and nothing measures label extents
+>   before laying out the bottom margin. `system__longlabels.png` is still an
+>   illegible run of ten region names.
+> - **The quiver colour key.** `QuiverConfig` still has no `colorbar` field, so
+>   `.color_by_magnitude(true)` still produces an undecodable colour channel.
 
 ### 6.1 Categorical tick-label collisions
 
@@ -384,6 +461,8 @@ square where radar fills ~80%.
 
 ## Phase 7 — 3D correctness (M, separable)
 
+> **Status: done in `258f3e8`.**
+
 | Issue | Location | Fix |
 | --- | --- | --- |
 | Alpha convention mismatch | `software/raster.rs:231-254`, `gpu/pipelines.rs:186-188`, `presenter.rs:521-525` | Both backends emit coverage-premultiplied colour that every compositor treats as straight alpha, haloing every silhouette. An opaque red edge at 50% coverage over white renders (191,127,127) instead of (255,127,127). Tests currently lock the bug in (`raster.rs:966,:1017`). Pick one convention; enforce end to end with an analytic 50%-blend test. |
@@ -394,6 +473,8 @@ square where radar fills ~80%.
 | **No parity test** | — | Zero pixel-parity coverage between the two rasterizers. Known divergences: triangle markers are upside-down on CPU vs GPU vs the 2D reference; points are centre-culled on CPU but edge-clipped on GPU, so edge markers pop during orbit. Add `tests/three_d_parity_test.rs` on a software adapter (lavapipe/WARP). |
 
 ## Phase 8 — Test and CI credibility (M)
+
+> **Status: done in `258f3e8`.**
 
 - **CI compiles 45 test files and runs about 17.** No `cargo test` invocation in
   `.github/workflows/ci.yml` enables `pdf`, `gpu`, `interactive`, `polars_support`, or
@@ -418,6 +499,15 @@ square where radar fills ~80%.
   bare ` ```rust ` becomes an error requiring explicit `check` or `ignore`.
 
 ## Phase 9 — Structural (L)
+
+> **Status: partly done.** The builder unification landed in `d027f46` —
+> all series methods return `PlotBuilder<C>`, `PlotSeriesBuilder` and its
+> `Deref` are deleted, and `legend_position` is defined once on the generic
+> impl instead of being macro-generated 13 times. The duplicate public
+> `PlotArea` went with the parallel renderer in `258f3e8`, and
+> `ARCHITECTURE.md` now describes files that exist. Still open: `Styled<T>`,
+> the `thiserror` derive, the `Vec<f64>` dynamic-dispatch fast path, moving
+> `crates/ruviz-gpui` to its own workspace, and relaxing the `rfd` pin.
 
 Do these only after Phases 1–3; several become much smaller once the duplication is gone.
 
@@ -459,24 +549,89 @@ Do these only after Phases 1–3; several become much smaller once the duplicati
 
 ## Phase 10 — Unwired plot types (L, partly deletion)
 
-The catalog is 23 of the ~34 plot types the module docs advertise. For each: wire it or delete
-it. Every one left half-built is a divergence waiting to happen.
+> **Status: done.** The reachable catalog is **26** from `Plot` plus 4 from
+> `Plot3D` — 30 in total. Rug, strip, swarm, hexbin and dendrogram gained
+> working renderers *and* `Plot::` builder methods in this tranche; the empty
+> `flow` module was deleted; the regplot confidence band was verified
+> statistically wrong and fixed.
+>
+> The five were wired as **one** `SeriesType::Computed { data: Arc<dyn
+> ComputedSeries> }` variant, not five. `SeriesType` is matched exhaustively in
+> eleven places, so five variants would have meant ~40 new match arms; one
+> variant meant 8, written once. `ComputedSeries::primitives` describes the
+> geometry in device pixels and both backends have a single loop over it
+> (`draw_primitives` / `draw_primitives_svg`), so a plot type wired this way
+> **cannot** render in PNG and not in SVG — there is no per-type SVG code to
+> forget. Adding the next compute-only plot type costs a `Plot::` method, a
+> `finalize()` and an `impl ComputedSeries`.
+>
+> The counts and both doc tables in `src/plots/mod.rs` are checked by
+> `catalog_is_true` against the builder's own source, and the types that still
+> have a renderer but no builder (grouped bar, stacked bar, stacked area) are
+> tracked in an `AWAITING_A_BUILDER` list whose test fails the moment one of
+> them grows a builder. **Nobody has to remember to update the docs.**
 
-| Type | State | Decision |
-| --- | --- | --- |
-| **rug** | `PlotRender` returns `Ok(())` — draws nothing, reports success | **Wire.** One `draw_line` per point from the existing `compute_rug_lines` (`rug.rs:273`). Highest value/effort in this group; the natural companion to the KDE plot that already works. |
-| **dendrogram** | `dendrogram_lines()` returns segments; no renderer, no builder | **Wire.** Closest to done. |
-| **hexbin** | 580 lines with `PlotCompute` + `PlotRender`; no builder, no `SeriesType` | Wire (needs `hex_size_x`/`hex_size_y`) or delete and drop the doc row. |
-| **strip, swarm** | `PlotCompute` + `PlotRender` exist and are re-exported; no builder | Wire; wrap `config.size` in `points_to_pixels`. |
-| **grouped/stacked bar** | Compute exists and is re-exported | Falls out of Phase 3.6. |
-| **jointplot, pairplot** | Layout math only; `.rugplot(bool)` doubly inert | Blocked on `add_axes`. |
-| **regplot, residplot** | Compute returns a CI band nothing can display — and the band is statistically wrong | Fix the statistics *before* anything draws them. |
-| **sankey, streamplot** | `flow/mod.rs` is four lines of doc comment, zero code, `pub mod` | Remove the `pub mod` or feature-gate. |
+For each: wire it or delete it. Every one left half-built is a divergence
+waiting to happen.
 
-`add_axes` (arbitrary-rectangle axes) unblocks jointplot, pairplot, regplot, residplot and
-dendrogram together. 2D `axis_equal` unblocks square heatmap cells and an undistorted quiver.
+| Type | State when audited | Decision | Outcome |
+| --- | --- | --- | --- |
+| **rug** | `PlotRender` returned `Ok(())` — drew nothing, reported success | **Wire.** One `draw_line` per point from the existing `compute_rug_lines`. | done — `Plot::rug` |
+| **dendrogram** | `dendrogram_lines()` returns segments; no renderer, no builder | **Wire.** Closest to done. | done — `Plot::dendrogram`, `plots::hierarchical` un-hidden. Leaf *labels* are computed but not drawn, so no label setter is exposed |
+| **hexbin** | 580 lines with `PlotCompute` + `PlotRender`; no builder, no `SeriesType` | Wire (needs `hex_size_x`/`hex_size_y`) or delete and drop the doc row. | done — `Plot::hexbin` |
+| **strip, swarm** | `PlotCompute` + `PlotRender` exist and are re-exported; no builder | Wire; wrap `config.size` in `points_to_pixels`. | done — `Plot::strip`, `Plot::swarm`. Categories take ordinal slots `0..n-1`; they do not yet carry tick labels |
+| **grouped/stacked bar** | Compute exists and is re-exported | Falls out of Phase 3.6. | **open** — `BarConfig` reaches the renderer, the builder entry points do not exist |
+| **jointplot, pairplot** | Layout math only; `.rugplot(bool)` doubly inert | Blocked on `add_axes`. | **open** — kept `#[doc(hidden)]`; every appearance field documented as inert and pinned by `config_fields_that_are_inert` |
+| **regplot, residplot** | Compute returns a CI band nothing can display — and the band is statistically wrong | Fix the statistics *before* anything draws them. | statistics fixed; still `#[doc(hidden)]` compute, no renderer |
+| **sankey, streamplot** | `flow/mod.rs` was four lines of doc comment, zero code, `pub mod` | Remove the `pub mod` or feature-gate. | done — module deleted |
+
+The first four rows were the same shape five times: a `SeriesType` variant, a
+`PlotBuilder<C>`-returning method, and a bounds arm. They were done **as one
+change with one helper, not five** — `ComputedSeries` — for the same reason the
+four legend layouts and the thirteen `legend_position` copies were collapsed.
+
+The regplot finding was confirmed rather than inherited. `compute_regplot`
+returned `ŷ ± z·σ̂`: constant half-width, no leverage term, and a normal instead
+of a Student-t quantile. Measured against the textbook interval for the mean
+response it was **9.9× too wide at the centre of a 100-point fit** and 5.0× too
+wide at the ends, while at `n = 5` the missing `t` made it a third too *narrow* —
+the two errors run in opposite directions, which is why it looked plausible at
+small `n`. It now computes
+`ŷ(x₀) ± t(level, n−p)·σ̂·√(x₀ᵀ(XᵀX)⁻¹x₀)`, with the `t` quantile from a
+regularized incomplete beta and the leverage from a solve against the Gram
+matrix. Both are checked against published tables and closed forms.
+
+`add_axes` (arbitrary-rectangle axes) unblocks jointplot, pairplot, regplot,
+residplot and a dendrogram-plus-heatmap clustermap together — it is now the only
+thing standing between the compute-only modules and a renderer. 2D `axis_equal`
+unblocks square heatmap cells and an undistorted quiver.
+
+### Why `#[doc(hidden)]` and not an `unstable-plots` feature
+
+Both were on the table for `composite` and `regression` (§2.3 offered either).
+The rule that settled it: **a module is hidden if and only if it has no
+renderer at all.** `hierarchical` has one — and now a builder too — so it is visible;
+`composite` (layout rectangles only) and `regression` (numbers only) have
+nothing to draw with, so they stay hidden.
+
+`#[doc(hidden)]` beat a feature gate for those two because:
+
+- A cargo feature is a promise about a **compilation** boundary, and there is
+  nothing here to compile out — these are pure functions over `&[f64]` with no
+  dependencies, no `cfg` sites and no cost when unused.
+- `tests/feature_hygiene_test.rs` (Phase 5) exists precisely to forbid features
+  that gate nothing. An `unstable-plots` feature gating only rustdoc visibility
+  would need an exemption on the day it was added.
+- The guide snippets and `tests/config_enum_defaults_test.rs` call these
+  functions today; a feature gate breaks them for no gain.
+- The actual harm was docs.rs listing plot types a user cannot draw.
+  `#[doc(hidden)]` removes exactly that and nothing else.
 
 ## Decisions required
+
+> **Status: 3 and 6 are settled; 1, 2, 4 and 5 need re-checking against the
+> current tree before anyone acts on them.** Items are kept with their original
+> wording so the reasoning is not lost.
 
 1. **3D goldens are stale and their `--ignored` test fails.** The diff was verified to be
    100% the 3D pane grid tint — geometry, markers and text are unmoved. Fix is two coupled
@@ -486,30 +641,47 @@ dendrogram together. 2D `axis_equal` unblocks square heatmap cells and an undist
 2. **`docs/assets/` is stale repo-wide** — every committed gallery and rustdoc PNG still shows
    the old edge-to-edge framing and near-white grid. `make release-docs-rust` regenerates them
    but asserts it is on `docs/release-0.4.0-refresh`.
-3. **`parallel` and `gpu`: delete or commit.** §5.1 assumes deletion. Committing instead means
-   real GPU *rasterization* (upload once, one pixmap readback) — a compute shader that returns
-   coordinates to the CPU is the one GPU design that cannot win.
+3. **`parallel` and `gpu`: delete or commit.** *Settled in `258f3e8`:* the
+   unreachable 2D parallel renderer was deleted. `parallel` stays a default
+   feature, but now only because the software 3D rasterizer genuinely renders
+   tiles across a rayon pool; it changes no 2D output and no 2D timing.
 4. **SymLog autoscale margins** are skipped because `SymLogScale::symlog` is private. Make it
    `pub(crate)` and add the arm if it matters.
 5. **Box/violin framing** changed with the margin work: their by-construction 0..1 x range is
    now −0.05..1.05. Intentional, but a judgement call — Phase 3.5 supersedes it.
 6. **`Plot::save()` to a `.svg` path silently writes PNG bytes** when the `svg` feature is off,
-   rather than erroring. Decide: error, or make `svg` non-optional (§5.3 notes it gates nothing).
+   rather than erroring. *Settled in `258f3e8`:* SVG export is always compiled
+   in and `svg` gates nothing, so the path cannot be taken. The feature is
+   retained as a documented no-op so existing `features = ["svg"]` selections
+   keep resolving.
 
 ## Suggested sequencing
 
-| Batch | Contents | Effort |
-| --- | --- | --- |
-| 1 | Phase 1 in full — rectangle primitive first, then the single-file fixes | S |
-| 2 | Phase 2 — prelude, naming, doc-truth, deprecate inert setters | S |
-| 3 | Phase 4 correctness hazards (parallelisable with 1–2) | S–M |
-| 4 | Phase 3.3 tick generator → unblocks colorbar and contour levels | M |
-| 5 | Phase 3.2 bounds → unblocks error whiskers and categorical positions | M |
-| 6 | Phase 3.1 bar geometry + 3.6 `BarConfig` → SVG alignment, horizontal/grouped/stacked bar | M |
-| 7 | Phase 3.4 legend + 3.5 categorical + Phase 6 presentation | M |
-| 8 | Phase 5 truth-in-advertising + Phase 8 CI credibility | M |
-| 9 | Phase 7 3D correctness (independent; can start any time after Batch 1) | M |
-| 10 | Phase 9 structural, then Phase 10 unwired types | L |
+Batches 1–10 below are **complete except for §6.1 and the remainder of Phase 9** — see the status table at the top for what landed
+where. Kept for the reasoning about ordering, which still applies to what is
+left.
 
-Batches 1–3 carry most of the visible quality return and none of them break API. Batch 2 is
-the last cheap moment for the naming and prelude changes.
+| Batch | Contents | Effort | State |
+| --- | --- | --- | --- |
+| 1 | Phase 1 in full — rectangle primitive first, then the single-file fixes | S | done |
+| 2 | Phase 2 — prelude, naming, doc-truth, deprecate inert setters | S | done |
+| 3 | Phase 4 correctness hazards (parallelisable with 1–2) | S–M | done |
+| 4 | Phase 3.3 tick generator → unblocks colorbar and contour levels | M | done |
+| 5 | Phase 3.2 bounds → unblocks error whiskers and categorical positions | M | done |
+| 6 | Phase 3.1 bar geometry + 3.6 `BarConfig` → SVG alignment, horizontal/grouped/stacked bar | M | done |
+| 7 | Phase 3.4 legend + 3.5 categorical + Phase 6 presentation | M | legend and categorical done; Phase 6 all but §6.1 |
+| 8 | Phase 5 truth-in-advertising + Phase 8 CI credibility | M | done |
+| 9 | Phase 7 3D correctness (independent; can start any time after Batch 1) | M | done |
+| 10 | Phase 9 structural, then Phase 10 unwired types | L | builder unification done; Phase 10 done, including the five `Plot::` builders; `Styled<T>`/`thiserror`/`add_axes` open |
+
+### What to do next
+
+1. **§6.1 categorical tick-label collisions and the quiver colour key** — the
+   only open items a user would notice in an image.
+2. **`add_axes`** — one feature that unblocks jointplot, pairplot, regplot,
+   residplot and clustermaps at once, and retires two `#[doc(hidden)]` modules.
+3. **Grouped/stacked bar builders** — the compute and `BarConfig` plumbing are
+   already there; this is the last row of the Phase 10 table that is pure
+   wiring.
+4. **The rest of Phase 9** — `Styled<T>`, the `thiserror` derive, the `Vec<f64>`
+   fast path, the gpui workspace split, the `rfd` pin.

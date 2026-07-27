@@ -4,6 +4,7 @@ use super::error_bars::{
     AttachedErrorBarStyle, ErrorBarFrame, draw_error_bars, error_bar_pixels_for_series,
     stroke_error_bar_series,
 };
+use crate::plots::traits::ComputedSeries;
 
 /// Pad one axis range by `margin` (a fraction of the span) on each side.
 ///
@@ -100,6 +101,7 @@ impl Plot {
                 SeriesType::Radar { data } => data.series.iter().map(|s| s.values.len()).sum(),
                 SeriesType::Polar { data } => data.points.len(),
                 SeriesType::Quiver { data } => data.arrows.len(),
+                SeriesType::Computed { data } => data.point_count(),
             })
             .sum()
     }
@@ -130,6 +132,7 @@ impl Plot {
                     }
                     SeriesType::Polar { data } => data.points.len(),
                     SeriesType::Quiver { data } => data.arrows.len(),
+                    SeriesType::Computed { data } => data.point_count(),
                     _ => unreachable!("PlotData-backed series resolve to dedicated variants"),
                 },
             })
@@ -460,12 +463,7 @@ impl Plot {
         plot_area: tiny_skia::Rect,
     ) -> Result<()> {
         for series in &self.series_mgr.series {
-            let request = match &series.series_type {
-                SeriesType::Heatmap { data } => Self::heatmap_colorbar_request(data),
-                SeriesType::Contour { data } => Self::contour_colorbar_request(data),
-                _ => None,
-            };
-            if let Some(request) = request {
+            if let Some(request) = self.series_colorbar_request(&series.series_type) {
                 let (x, y, width, height) = self.colorbar_rect(plot_area);
                 crate::render::colorbar::draw_colorbar(
                     svg,
@@ -697,6 +695,32 @@ impl Plot {
                 // The colorbar sits outside the plot area, so it is drawn by
                 // `render_svg_colorbars` after the clip group closes.
             }
+            (SeriesType::Computed { data }, ResolvedSeries::Other(_)) => {
+                // The exact primitives the raster backend draws. A plot type
+                // wired through `SeriesType::Computed` therefore cannot render
+                // in PNG and not in SVG — there is no per-type SVG code to
+                // forget to write.
+                let area = super::raster_batches::plot_area_from_rect(
+                    plot_area,
+                    x_min,
+                    x_max,
+                    y_min,
+                    y_max,
+                    &self.layout.x_scale,
+                    &self.layout.y_scale,
+                );
+                // The series alpha is handed over separately rather than baked
+                // into `color`, because that is how the raster arm hands it to
+                // `primitives` — and the two must agree.
+                let style = crate::plots::traits::ComputedStyle {
+                    scale: svg.render_scale(),
+                    color: series.color.unwrap_or(default_color),
+                    alpha: series.alpha.unwrap_or(1.0),
+                    line_width: series.line_width,
+                };
+                let primitives = data.primitives(&area, &style);
+                crate::plots::traits::draw_primitives_svg(svg, &primitives);
+            }
             (SeriesType::Kde { data }, ResolvedSeries::Other(_)) => {
                 // Same geometry the raster path draws, from the same helpers, so
                 // the two backends cannot break the curve in different places.
@@ -769,8 +793,12 @@ impl Plot {
             }
             (SeriesType::Violin { data }, ResolvedSeries::Other(_)) => {
                 let half_width = data.config.width / 2.0;
-                let (left, right) =
-                    crate::plots::distribution::violin_polygon(data, 0.5, half_width, &data.config);
+                let (left, right) = crate::plots::distribution::violin_polygon(
+                    data,
+                    data.config.x_center(),
+                    half_width,
+                    &data.config,
+                );
                 let polygon = crate::plots::distribution::close_violin_polygon(&left, &right);
                 // Same vertex-rejection rule as the raster path.
                 let points: Vec<(f32, f32)> = super::raster_batches::plot_area_from_rect(
@@ -1235,7 +1263,7 @@ impl Plot {
             return;
         }
 
-        let center = 0.5;
+        let center = data.config.x_center();
         let alpha = series.alpha.unwrap_or(1.0);
         let base_color = data.config.color.map_or(default_color, |color| {
             color.with_alpha((f32::from(color.a) / 255.0) * alpha)
@@ -1772,6 +1800,45 @@ impl Plot {
         });
         let render_scale = svg.render_scale();
         let label_font_size = render_scale.points_to_pixels(data.config.label_font_size);
+
+        // The grid the raster backend draws in `PolarPlotData::render_styled_with_grid`,
+        // from the same precomputed rings and spokes and the same `GridStyle`.
+        // Without this the two backends disagreed about whether a polar plot has
+        // a grid at all.
+        if self.layout.grid_style.visible {
+            let grid_style = &self.layout.grid_style;
+            let grid_color = grid_style.color.with_alpha(grid_style.alpha);
+            let grid_line_width = render_scale.points_to_pixels(grid_style.line_width);
+            for ring in &data.grid_rings {
+                if ring.len() < 2 {
+                    continue;
+                }
+                let screen_ring: Vec<(f32, f32)> = ring
+                    .iter()
+                    .map(|(x, y)| area.data_to_screen(*x, *y))
+                    .collect();
+                svg.draw_polyline(
+                    &screen_ring,
+                    grid_color,
+                    grid_line_width,
+                    grid_style.line_style.clone(),
+                );
+            }
+
+            for &((x1, y1), (x2, y2)) in &data.grid_spokes {
+                let (sx1, sy1) = area.data_to_screen(x1, y1);
+                let (sx2, sy2) = area.data_to_screen(x2, y2);
+                svg.draw_line(
+                    sx1,
+                    sy1,
+                    sx2,
+                    sy2,
+                    grid_color,
+                    grid_line_width,
+                    grid_style.line_style.clone(),
+                );
+            }
+        }
 
         if data.config.fill && !data.fill_polygon.is_empty() {
             let polygon: Vec<(f32, f32)> = data

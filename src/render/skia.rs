@@ -1771,98 +1771,30 @@ impl SkiaRenderer {
         Ok(())
     }
 
-    /// Draw axis tick labels with categorical x-axis labels for bar charts
+    /// Draw axis tick labels with a categorical x axis.
     ///
-    /// Similar to `draw_axis_labels_at` but uses category names instead of numeric ticks
-    /// on the x-axis. Categories are positioned at the center of each bar.
+    /// Every categorical plot type — bar, box plot, violin, boxen — reaches this
+    /// one drawer, with the slot centres [`CategoryAxis::harvest`] collected. A
+    /// bar chart's slots happen to be `0..n-1`; there used to be a second copy of
+    /// this function that assumed that and could not express anything else, which
+    /// is why a violin needed its own.
     ///
-    /// Uses the same data-to-pixel mapping as bar rendering to ensure precise alignment.
-    /// With bar chart x-range [-0.5, n-0.5], category i maps to position i in data space.
-    #[allow(clippy::too_many_arguments)]
-    pub fn draw_axis_labels_at_categorical(
-        &mut self,
-        plot_area: &LayoutRect,
-        categories: &[String],
-        x_min: f64,
-        x_max: f64,
-        y_min: f64,
-        y_max: f64,
-        y_ticks: &[f64],
-        xtick_baseline_y: f32,
-        ytick_right_x: f32,
-        tick_size: f32,
-        color: Color,
-        dpi: f32,
-        show_tick_labels: bool,
-        draw_border: bool,
-        y_scale: &crate::axes::AxisScale,
-    ) -> Result<()> {
-        let render_scale = RenderScale::new(dpi);
-
-        // Convert LayoutRect to tiny_skia Rect for border drawing
-        let skia_plot_area = Rect::from_ltrb(
-            plot_area.left,
-            plot_area.top,
-            plot_area.right,
-            plot_area.bottom,
-        )
-        .ok_or(PlottingError::InvalidData {
-            message: "Invalid plot area dimensions".to_string(),
-            position: None,
-        })?;
-
-        if show_tick_labels {
-            let n_categories = categories.len();
-            if n_categories > 0 {
-                for (i, category) in categories.iter().enumerate() {
-                    let x_center = Self::x_label_center(plot_area, i as f64, x_min, x_max);
-
-                    let label_snippet = self.generated_label(category);
-                    let (text_width, _) = self.measure_text(&label_snippet, tick_size)?;
-                    let label_x = (x_center - text_width / 2.0)
-                        .max(0.0)
-                        .min(self.width() as f32 - text_width);
-
-                    self.draw_text(&label_snippet, label_x, xtick_baseline_y, tick_size, color)?;
-                }
-            }
-
-            self.draw_y_tick_labels(
-                plot_area,
-                y_ticks,
-                y_min,
-                y_max,
-                y_scale,
-                ytick_right_x,
-                tick_size,
-                color,
-            )?;
-        }
-
-        if draw_border {
-            self.draw_plot_border(skia_plot_area, color, render_scale.reference_scale())?;
-        }
-
-        Ok(())
-    }
-
-    /// Draw axis labels for violin/distribution plots with categorical x-axis
+    /// A slot whose series carries no category name has an empty label and draws
+    /// nothing — it still holds its place on the axis.
     ///
-    /// Unlike bar charts which use integer positions (0, 1, 2, ...), violin plots
-    /// use arbitrary x-positions (e.g., 0.5 for a single violin). This method
-    /// draws category labels at the actual x-positions within the data range.
+    /// [`CategoryAxis::harvest`]: crate::core::plot::series_internal::CategoryAxis::harvest
     ///
     /// # Arguments
     /// * `plot_area` - The computed plot area
-    /// * `categories` - Category labels to draw
-    /// * `x_positions` - X positions for each category in data space
+    /// * `categories` - Category labels to draw, in axis order
+    /// * `x_positions` - Slot centre for each category, in data space
     /// * `x_min` - Minimum x value (data space)
     /// * `x_max` - Maximum x value (data space)
     /// * `y_min`, `y_max` - Y data range
     /// * `y_ticks` - Y-axis tick values
     /// * Other arguments for positioning and styling
     #[allow(clippy::too_many_arguments)]
-    pub fn draw_axis_labels_at_categorical_violin(
+    pub fn draw_axis_labels_at_categorical(
         &mut self,
         plot_area: &LayoutRect,
         categories: &[String],
@@ -1897,6 +1829,10 @@ impl SkiaRenderer {
 
         if show_tick_labels {
             for (category, &x_pos) in categories.iter().zip(x_positions.iter()) {
+                // An unnamed slot holds its place but writes nothing under it.
+                if category.is_empty() {
+                    continue;
+                }
                 let x_center = Self::x_label_center(plot_area, x_pos, x_min, x_max);
 
                 let label_snippet = self.generated_label(category);

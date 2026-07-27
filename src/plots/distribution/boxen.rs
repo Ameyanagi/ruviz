@@ -35,6 +35,17 @@ pub struct BoxenConfig {
     pub line_width: f32,
     /// Orientation
     pub orient: BoxenOrientation,
+    /// Category label written under this boxen on the x axis.
+    ///
+    /// Set with [`category`](Self::category()). Bars, box plots, violins and
+    /// boxen plots share one category axis: slot *i* is centred on `i` and one
+    /// data unit wide, so `width` is a fraction of that slot no
+    /// matter how many boxes the figure holds.
+    pub category: Option<String>,
+    /// Explicit centre on the category axis; `None` claims the next free slot.
+    ///
+    /// Set with [`x_position`](Self::x_position()).
+    pub x_position: Option<f64>,
 }
 
 /// Orientation for boxen plots
@@ -56,6 +67,8 @@ impl Default for BoxenConfig {
             outlier_size: 4.0,
             line_width: 1.0,
             orient: BoxenOrientation::Vertical,
+            category: None,
+            x_position: None,
         }
     }
 }
@@ -334,19 +347,12 @@ impl PlotCompute for Boxen {
 
 impl PlotData for BoxenData {
     fn data_bounds(&self) -> ((f64, f64), (f64, f64)) {
-        // For vertical boxen: x is centered (use 0-1 range), y is data range
-        // For horizontal boxen: x is data range, y is centered
+        // The category axis carries one unit-wide slot per boxen, centred on
+        // the position the series was assigned; the other axis spans the data.
+        let slot = crate::plots::boxplot::category_slot_span(self.config.x_center());
         match self.config.orient {
-            BoxenOrientation::Vertical => {
-                let x_range = (0.0, 1.0); // Will be adjusted by position
-                let y_range = self.data_range;
-                (x_range, y_range)
-            }
-            BoxenOrientation::Horizontal => {
-                let x_range = self.data_range;
-                let y_range = (0.0, 1.0); // Will be adjusted by position
-                (x_range, y_range)
-            }
+            BoxenOrientation::Vertical => (slot, self.data_range),
+            BoxenOrientation::Horizontal => (self.data_range, slot),
         }
     }
 
@@ -385,7 +391,8 @@ impl PlotRender for BoxenData {
         let line_width_px = render_scale.points_to_pixels(line_width_points);
         let median_line_width_px = render_scale.points_to_pixels(2.0);
         let outlier_size_px = render_scale.points_to_pixels(config.outlier_size);
-        let center = 0.5; // Centered position for single boxen
+        // The stack of boxes straddles the centre of its own category slot.
+        let center = config.x_center();
         let base_color = config.color.unwrap_or(color);
         let base_color =
             base_color.with_alpha((f32::from(base_color.a) / 255.0) * alpha.clamp(0.0, 1.0));
@@ -710,5 +717,46 @@ mod tests {
         assert!(adjusted.r > 0 && adjusted.r < 255);
         assert!(adjusted.g > 0 && adjusted.g < 255);
         assert!(adjusted.b > 0 && adjusted.b < 255);
+    }
+
+    #[test]
+    fn test_boxen_sits_in_its_own_category_slot() {
+        use crate::plots::traits::PlotData as _;
+
+        let data: Vec<f64> = (0..50).map(|i| i as f64).collect();
+
+        let first = compute_boxen(&data, &BoxenConfig::new());
+        assert_eq!(first.config.x_center(), 0.0);
+        assert_eq!(first.data_bounds().0, (-0.5, 0.5));
+
+        let second = compute_boxen(&data, &BoxenConfig::new().x_position(1.0));
+        assert_eq!(second.data_bounds().0, (0.5, 1.5));
+    }
+
+    #[test]
+    fn test_horizontal_boxen_puts_its_slot_on_the_y_axis() {
+        use crate::plots::traits::PlotData as _;
+
+        let data: Vec<f64> = (0..50).map(|i| i as f64).collect();
+        let config = BoxenConfig::new().horizontal().x_position(2.0);
+        let boxen = compute_boxen(&data, &config);
+
+        assert_eq!(boxen.data_bounds().1, (1.5, 2.5));
+    }
+
+    #[test]
+    fn test_boxen_rect_straddles_the_slot_centre() {
+        let data: Vec<f64> = (0..50).map(|i| i as f64).collect();
+        let config = BoxenConfig::new().x_position(1.0);
+        let boxen = compute_boxen(&data, &config);
+        let outermost = &boxen.boxes[0];
+
+        let rect = boxen_rect(outermost, config.x_center(), config.orient);
+        let xs: Vec<f64> = rect.iter().map(|(x, _)| *x).collect();
+        let min = xs.iter().copied().fold(f64::INFINITY, f64::min);
+        let max = xs.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+
+        assert!((((min + max) / 2.0) - 1.0).abs() < 1e-12);
+        assert!(max - min <= 1.0, "a boxen must fit inside its own slot");
     }
 }

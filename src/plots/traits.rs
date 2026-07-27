@@ -32,7 +32,8 @@
 use crate::axes::AxisScale;
 use crate::core::error::Result;
 use crate::core::transform::CoordinateTransform;
-use crate::render::{Color, SkiaRenderer, Theme};
+use crate::core::units::RenderScale;
+use crate::render::{Color, LineStyle, MarkerStyle, SkiaRenderer, Theme};
 
 /// Defines the plot area for rendering
 ///
@@ -325,6 +326,17 @@ pub enum AxisScaleSupport {
 }
 
 impl AxisScaleSupport {
+    /// The refusal every categorical axis gives, worded once.
+    ///
+    /// Bars, box plots, violins, boxen plots, strip plots, swarm plots and the
+    /// leaf axis of a dendrogram all place their geometry in the same
+    /// unit-wide ordinal slots, so they all owe the reader the same
+    /// explanation. Writing it here is what stops that from becoming several
+    /// slightly different sentences about one situation.
+    pub const ORDINAL: Self = Self::Unsupported(
+        "its categories sit at ordinal positions, which carry no quantitative spacing",
+    );
+
     /// Whether `scale` can be rendered faithfully on this axis.
     ///
     /// Only a non-linear scale can be refused: [`AxisScale::Linear`] is what
@@ -535,6 +547,305 @@ pub trait PlotRender: PlotData {
     ) -> Result<()> {
         self.render_styled(renderer, area, theme, color, alpha, line_width)
     }
+}
+
+/// One drawing instruction in device pixels, in the vocabulary both backends
+/// share.
+///
+/// A [`ComputedSeries`] describes what it wants drawn as a list of these, and
+/// each backend has exactly one loop that turns them into ink
+/// ([`draw_primitives`] for raster, [`draw_primitives_svg`] for SVG). That is
+/// what makes it impossible for a plot type wired this way to render in PNG and
+/// not in SVG: there is no per-plot-type SVG code to forget to write.
+///
+/// Every coordinate and width here is already in device pixels — the
+/// projection and the points-to-pixels conversion happen in
+/// [`ComputedSeries::primitives`], where the plot type's own geometry lives.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PlotPrimitive {
+    /// A straight stroked segment.
+    Line {
+        /// Start point, in device pixels.
+        from: (f32, f32),
+        /// End point, in device pixels.
+        to: (f32, f32),
+        /// Stroke colour, alpha already applied.
+        color: Color,
+        /// Stroke width in device pixels.
+        width_px: f32,
+        /// Dash pattern.
+        style: LineStyle,
+    },
+    /// A closed shape, optionally filled and optionally outlined.
+    Polygon {
+        /// Vertices in device pixels; the shape closes automatically.
+        points: Vec<(f32, f32)>,
+        /// Fill colour, or `None` for an outline-only shape.
+        fill: Option<Color>,
+        /// `(colour, width in device pixels)` of the outline, or `None`.
+        edge: Option<(Color, f32)>,
+    },
+    /// A point marker.
+    Marker {
+        /// Centre, in device pixels.
+        at: (f32, f32),
+        /// Marker size in device pixels.
+        size_px: f32,
+        /// Marker shape.
+        style: MarkerStyle,
+        /// Marker colour, alpha already applied.
+        color: Color,
+    },
+}
+
+/// The styling a series was given, resolved, plus the scale that converts the
+/// plot type's point-valued sizes into device pixels.
+///
+/// Passed to [`ComputedSeries::primitives`] so that a plot type never has to
+/// reach for the renderer to find out how big a point is — which is how three
+/// plot types ended up drawing the same physical size at every DPI.
+#[derive(Debug, Clone, Copy)]
+pub struct ComputedStyle {
+    /// Points-to-pixels conversion for this render.
+    pub scale: RenderScale,
+    /// The series colour the palette resolved, before the series alpha.
+    pub color: Color,
+    /// Series alpha in `0.0..=1.0`.
+    pub alpha: f32,
+    /// Series line width in **points**, or `None` to use the plot type's own.
+    pub line_width: Option<f32>,
+}
+
+impl ComputedStyle {
+    /// The style a bare [`PlotRender::render`] call implies: full opacity and
+    /// the plot type's own line width.
+    pub fn opaque(scale: RenderScale, color: Color) -> Self {
+        Self {
+            scale,
+            color,
+            alpha: 1.0,
+            line_width: None,
+        }
+    }
+
+    /// `base` with this series' alpha composed over its own.
+    pub fn tinted(&self, base: Color) -> Color {
+        base.with_alpha((f32::from(base.a) / 255.0) * self.alpha.clamp(0.0, 1.0))
+    }
+
+    /// The stroke width in device pixels, preferring the series override.
+    pub fn stroke_px(&self, fallback_points: f32) -> f32 {
+        self.scale
+            .points_to_pixels(self.line_width.unwrap_or(fallback_points))
+    }
+}
+
+/// Draw a [`ComputedSeries`]' primitives to the raster backend.
+///
+/// The twin of [`draw_primitives_svg`]; keep the two adjacent so any
+/// divergence is five lines apart instead of two files apart.
+pub fn draw_primitives(renderer: &mut SkiaRenderer, primitives: &[PlotPrimitive]) -> Result<()> {
+    for primitive in primitives {
+        match primitive {
+            PlotPrimitive::Line {
+                from,
+                to,
+                color,
+                width_px,
+                style,
+            } => {
+                renderer.draw_line(from.0, from.1, to.0, to.1, *color, *width_px, style.clone())?;
+            }
+            PlotPrimitive::Polygon { points, fill, edge } => {
+                if let Some(fill) = fill {
+                    renderer.draw_filled_polygon(points, *fill)?;
+                }
+                if let Some((color, width_px)) = edge {
+                    renderer.draw_polygon_outline(points, *color, *width_px)?;
+                }
+            }
+            PlotPrimitive::Marker {
+                at,
+                size_px,
+                style,
+                color,
+            } => {
+                renderer.draw_marker(at.0, at.1, *size_px, *style, *color)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Draw a [`ComputedSeries`]' primitives to the SVG backend.
+///
+/// The twin of [`draw_primitives`]. The SVG primitives return no error — they
+/// drop unplaceable geometry rather than failing an export — so this cannot
+/// fail either.
+pub fn draw_primitives_svg(svg: &mut crate::export::SvgRenderer, primitives: &[PlotPrimitive]) {
+    for primitive in primitives {
+        match primitive {
+            PlotPrimitive::Line {
+                from,
+                to,
+                color,
+                width_px,
+                style,
+            } => {
+                svg.draw_line(from.0, from.1, to.0, to.1, *color, *width_px, style.clone());
+            }
+            PlotPrimitive::Polygon { points, fill, edge } => {
+                if let Some(fill) = fill {
+                    svg.draw_filled_polygon(points, *fill);
+                }
+                if let Some((color, width_px)) = edge {
+                    svg.draw_polygon_outline(points, *color, *width_px);
+                }
+            }
+            PlotPrimitive::Marker {
+                at,
+                size_px,
+                style,
+                color,
+            } => {
+                svg.draw_marker(at.0, at.1, *size_px, *style, *color);
+            }
+        }
+    }
+}
+
+/// A precomputed plot payload the builder carries without a bespoke series
+/// variant per plot type.
+///
+/// This is the crate's one extension point for "a plot type that ships finished
+/// geometry". Rug, strip, swarm, hexbin and dendrogram all reach the render path
+/// through it, and so does every future compute-only type.
+///
+/// # Why one trait instead of one variant per plot type
+///
+/// The internal `SeriesType` enum is matched exhaustively in eleven places —
+/// bounds, validation, axis-scale support, point counting, and the raster and
+/// SVG render paths. Five bespoke variants would have meant roughly forty new
+/// match arms and five more things to keep in step; one variant means eight
+/// arms, written once. Adding a plot type after this costs a `Plot::` method, a
+/// `finalize()` and an `impl ComputedSeries` — no render arm, no bounds arm, no
+/// entry in the axis-scale table, and therefore no way for a new type to be
+/// wired into one backend and not the other.
+///
+/// [`PlotRender`] and [`PlotData`] are object-safe (every method takes `&self`,
+/// none is generic and none returns `Self`), which is what makes the collapse
+/// possible.
+///
+/// # Implementing
+///
+/// ```rust,ignore
+/// impl ComputedSeries for MyPlotData {
+///     fn kind(&self) -> &'static str {
+///         "myplot"
+///     }
+///
+///     fn point_count(&self) -> usize {
+///         self.points.len()
+///     }
+///
+///     fn primitives(&self, area: &PlotArea, style: &ComputedStyle) -> Vec<PlotPrimitive> {
+///         // ...one description of the geometry, drawn by both backends
+///     }
+/// }
+/// ```
+pub trait ComputedSeries: PlotRender + std::fmt::Debug + Send + Sync {
+    /// Plot-type name quoted in diagnostics and axis-scale refusals.
+    ///
+    /// Use the builder method's name (`"rug"`, `"hexbin"`), because that is what
+    /// the reader of the error message typed.
+    fn kind(&self) -> &'static str;
+
+    /// Everything this series wants drawn, in device pixels.
+    ///
+    /// This is the *only* description of the geometry. Both backends consume it
+    /// ([`draw_primitives`] and [`draw_primitives_svg`]), and the plot type's
+    /// own [`PlotRender`] impl should be written over it too, so a caller
+    /// driving the trait directly, a PNG and an SVG cannot show three different
+    /// pictures.
+    ///
+    /// Drop anything the axes cannot place rather than emitting a `NaN`
+    /// coordinate — see [`PlotArea::try_data_to_screen`].
+    fn primitives(&self, area: &PlotArea, style: &ComputedStyle) -> Vec<PlotPrimitive>;
+
+    /// Which axis scales this geometry can honour.
+    ///
+    /// Anything projected through [`PlotArea::data_to_screen`] is
+    /// [`AxisScaleSupport::Scaled`] on both axes, which is the default and the
+    /// case for every implementor in this crate today. Override only for
+    /// geometry placed at ordinal slots or in its own coordinate system — see
+    /// [`AxisScaleSupport`] for the rule.
+    fn axis_scale_support(&self) -> (AxisScaleSupport, AxisScaleSupport) {
+        (AxisScaleSupport::Scaled, AxisScaleSupport::Scaled)
+    }
+
+    /// Sample count, for the renderer's auto-optimisation heuristics.
+    fn point_count(&self) -> usize;
+
+    /// The category slots this series occupies, as `(tick label, slot centre)`.
+    ///
+    /// Override it and the plot gets a real category axis: the names the caller
+    /// passed are printed under the data instead of the bare slot numbers
+    /// `-0.5, 0, 0.5 …`, which mean nothing to a reader. This is the same
+    /// mechanism bar charts, box plots, violins and boxen plots are on — see
+    /// `series_category_slots` — so a categorical plot type joins it by
+    /// answering this one question rather than by teaching the renderer a new
+    /// special case.
+    ///
+    /// The default is "no slots", i.e. an ordinary quantitative x axis.
+    fn category_slots(&self) -> Vec<(String, f64)> {
+        Vec::new()
+    }
+
+    /// The shape this plot type's legend swatch should take.
+    ///
+    /// A key that shows a line for a cloud of markers is worse than no key: it
+    /// tells the reader something untrue about the picture. Answer with the mark
+    /// the geometry is actually made of — the default, [`LegendKey::Line`], is
+    /// right for anything stroked.
+    fn legend_key(&self) -> LegendKey {
+        LegendKey::Line
+    }
+
+    /// The colour scale this series wants explained, if it has one.
+    ///
+    /// A plot type that maps values to colours is unreadable without it — the
+    /// reader can see that one hexagon is teal and another yellow and has no way
+    /// to find out what either means. Return the same
+    /// [`ColorbarRequest`](crate::render::colorbar::ColorbarRequest) a heatmap
+    /// or contour returns and the margin reservation, the raster draw and the
+    /// SVG draw all pick it up together.
+    fn colorbar(
+        &self,
+        _theme: &crate::render::Theme,
+    ) -> Option<crate::render::colorbar::ColorbarRequest> {
+        None
+    }
+}
+
+/// The swatch shape a [`ComputedSeries`] wants in the legend.
+///
+/// Deliberately a small vocabulary of *marks*, not a copy of
+/// [`LegendItemType`](crate::core::legend::LegendItemType): the plot type says
+/// what it draws with, and the legend keeps sole ownership of how a key for that
+/// mark is styled and measured.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum LegendKey {
+    /// Stroked geometry — a rug's ticks, a dendrogram's arms.
+    #[default]
+    Line,
+    /// Discrete markers — a strip or swarm cloud.
+    Marker,
+    /// A filled patch.
+    Patch,
+    /// No key at all. For geometry whose meaning is a colour scale rather than a
+    /// series identity: a single swatch would have to pick one colour out of a
+    /// colormap and imply the rest.
+    None,
 }
 
 /// Trait for filled shapes with optional edge styling

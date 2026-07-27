@@ -4,7 +4,10 @@
 //!
 //! # Colorbar Configuration
 //!
-//! Heatmaps support configurable colorbar labels and font sizes:
+//! Heatmaps support configurable colorbar labels and font sizes. Both font
+//! sizes default to the theme's tick and axis-label sizes — see
+//! [`ColorbarFontSizes`] — so a colorbar never has to be re-tuned after a
+//! `.theme(..)` call:
 //!
 //! ```rust,ignore
 //! use ruviz::prelude::{AxisScale, HeatmapConfig};
@@ -15,8 +18,8 @@
 //!     .colorbar_log_subticks(true)
 //!     .cell_borders(false)
 //!     .colorbar_label("Temperature (°C)")
-//!     .colorbar_tick_font_size(10.0)    // Tick label size
-//!     .colorbar_label_font_size(11.0);  // Axis label size
+//!     .colorbar_tick_font_size(10.0)    // Overrides the theme's tick size
+//!     .colorbar_label_font_size(11.0);  // Overrides the theme's label size
 //! ```
 //!
 //! When using `AxisScale::Log`, the effective `vmin`/`vmax` range must remain
@@ -36,6 +39,40 @@ use crate::core::style_utils::StyleResolver;
 use crate::plots::traits::{PlotArea, PlotConfig, PlotData, PlotRender};
 use crate::render::skia::SkiaRenderer;
 use crate::render::{Color, ColorMap, ColorMapSpec, Theme};
+
+/// The two text sizes a colorbar is drawn at, in points.
+///
+/// Every colorbar in the crate resolves its fonts here — the heatmap colorbar,
+/// the contour colorbar and the 3D surface colorbar — so the library has one
+/// answer to "how big is colorbar text?" rather than three sets of literals.
+/// Before this existed, heatmap hardcoded 12/14 pt, contour 10/11 pt and 3D
+/// went straight to the theme, so [`Theme::ieee`](crate::render::Theme::ieee)'s
+/// 8 pt axis ticks were drawn beside a 12 pt colorbar.
+///
+/// An unset (`None`) size follows the theme; that is the default for every
+/// colorbar in the crate. Setting one is an explicit override and is honoured
+/// verbatim.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ColorbarFontSizes {
+    /// Tick label size in points, defaulting to `Theme::tick_label_font_size`.
+    pub tick: f32,
+    /// Caption size in points, defaulting to `Theme::axis_label_font_size`.
+    pub label: f32,
+}
+
+impl ColorbarFontSizes {
+    /// Fill in each unset size from `theme`.
+    ///
+    /// The colorbar's ticks track the axis ticks and its caption tracks the
+    /// axis labels, because that is what the two texts *are*: a value axis
+    /// beside the plot.
+    pub fn resolve(tick: Option<f32>, label: Option<f32>, theme: &Theme) -> Self {
+        Self {
+            tick: tick.unwrap_or(theme.tick_label_font_size),
+            label: label.unwrap_or(theme.axis_label_font_size),
+        }
+    }
+}
 
 /// Interpolation method for heatmap rendering
 #[allow(deprecated)] // the derives touch the deprecated `Bilinear` variant
@@ -86,10 +123,14 @@ pub struct HeatmapConfig {
     pub colorbar: bool,
     /// Label for the colorbar
     pub colorbar_label: Option<String>,
-    /// Font size for colorbar tick labels (in points)
-    pub colorbar_tick_font_size: f32,
-    /// Font size for colorbar label (in points)
-    pub colorbar_label_font_size: f32,
+    /// Font size for colorbar tick labels, in points
+    ///
+    /// `None` follows the theme; see [`ColorbarFontSizes`].
+    pub colorbar_tick_font_size: Option<f32>,
+    /// Font size for the colorbar label, in points
+    ///
+    /// `None` follows the theme; see [`ColorbarFontSizes`].
+    pub colorbar_label_font_size: Option<f32>,
     /// Whether logarithmic colorbars draw minor subticks
     pub colorbar_log_subticks: bool,
     /// Custom labels for X axis ticks
@@ -151,8 +192,9 @@ impl Default for HeatmapConfig {
             value_scale: AxisScale::Linear,
             colorbar: true,
             colorbar_label: None,
-            colorbar_tick_font_size: 12.0, // Readable colorbar tick labels
-            colorbar_label_font_size: 14.0, // Larger for visibility
+            // Unset: the theme's tick and axis-label sizes. See `ColorbarFontSizes`.
+            colorbar_tick_font_size: None,
+            colorbar_label_font_size: None,
             colorbar_log_subticks: true,
             xticklabels: None,
             yticklabels: None,
@@ -225,20 +267,35 @@ impl HeatmapConfig {
         self
     }
 
-    /// Set the colorbar tick font size (in points)
+    /// Set the colorbar tick font size, in points.
     ///
-    /// Default is 10.0pt to match axis tick labels.
+    /// Unset by default, which follows the theme's tick label size.
     pub fn colorbar_tick_font_size(mut self, size: f32) -> Self {
-        self.colorbar_tick_font_size = size.max(1.0);
+        self.colorbar_tick_font_size = Some(size.max(1.0));
         self
     }
 
-    /// Set the colorbar label font size (in points)
+    /// Set the colorbar label font size, in points.
     ///
-    /// Default is 11.0pt, slightly larger than tick labels.
+    /// Unset by default, which follows the theme's axis label size.
     pub fn colorbar_label_font_size(mut self, size: f32) -> Self {
-        self.colorbar_label_font_size = size.max(1.0);
+        self.colorbar_label_font_size = Some(size.max(1.0));
         self
+    }
+
+    /// The font sizes this colorbar is drawn at, with unset sizes taken from
+    /// `theme`.
+    ///
+    /// The single resolution point shared with [`ContourConfig`] and the 3D
+    /// surface colorbar.
+    ///
+    /// [`ContourConfig`]: crate::plots::continuous::contour::ContourConfig
+    pub fn colorbar_font_sizes(&self, theme: &Theme) -> ColorbarFontSizes {
+        ColorbarFontSizes::resolve(
+            self.colorbar_tick_font_size,
+            self.colorbar_label_font_size,
+            theme,
+        )
     }
 
     /// Enable or disable logarithmic colorbar subticks.
@@ -1245,6 +1302,35 @@ mod tests {
         assert!(config.extent.is_none());
         assert_eq!(config.origin, HeatmapOrigin::Upper);
         assert_eq!(HeatmapOrigin::default(), HeatmapOrigin::Upper);
+        // Unset by default, so the theme decides. Hardcoded 12/14 pt was why
+        // `Theme::ieee()`'s 8 pt ticks sat beside a 12 pt colorbar.
+        assert!(config.colorbar_tick_font_size.is_none());
+        assert!(config.colorbar_label_font_size.is_none());
+    }
+
+    /// The colorbar's ticks track the axis ticks and its caption tracks the
+    /// axis labels, for every theme, with no per-plot-type literals in between.
+    #[test]
+    fn colorbar_fonts_follow_the_theme_by_default() {
+        for theme in [Theme::default(), Theme::dark(), Theme::ieee()] {
+            let sizes = HeatmapConfig::default().colorbar_font_sizes(&theme);
+            assert_eq!(sizes.tick, theme.tick_label_font_size);
+            assert_eq!(sizes.label, theme.axis_label_font_size);
+        }
+    }
+
+    #[test]
+    fn explicit_colorbar_fonts_win_over_the_theme() {
+        let theme = Theme::ieee();
+        let sizes = HeatmapConfig::default()
+            .colorbar_tick_font_size(18.0)
+            .colorbar_label_font_size(24.0)
+            .colorbar_font_sizes(&theme);
+        assert_eq!(sizes.tick, 18.0);
+        assert_eq!(sizes.label, 24.0);
+        // Sizes below 1 pt would render nothing; they are clamped, not taken.
+        let clamped = HeatmapConfig::default().colorbar_tick_font_size(-3.0);
+        assert_eq!(clamped.colorbar_font_sizes(&theme).tick, 1.0);
     }
 
     #[test]

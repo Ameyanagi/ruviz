@@ -1140,6 +1140,30 @@ impl Plot {
         )
     }
 
+    /// Start building a donut chart: a pie with a hole in the middle.
+    ///
+    /// An entry point of its own, because a donut is a plot type a caller goes
+    /// looking for by name. It is a pie underneath — this is exactly
+    /// `.pie(values).donut(DEFAULT_DONUT_INNER_RADIUS)` — so it takes the same
+    /// chain and the same setters, and `.donut(ratio)` still resizes the hole.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// Plot::new()
+    ///     .donut(&[30.0, 20.0, 50.0])
+    ///     .label("share")
+    ///     .legend_best()
+    ///     .save("donut.png")?;
+    /// ```
+    pub fn donut<V>(self, values: &V) -> PlotBuilder<crate::plots::PieConfig>
+    where
+        V: Data1D<f64>,
+    {
+        self.pie(values)
+            .donut(crate::plots::DEFAULT_DONUT_INNER_RADIUS)
+    }
+
     /// Add a radar/spider chart for multivariate data comparison
     ///
     /// Creates a radar chart with multiple axes arranged in a circle.
@@ -1398,6 +1422,190 @@ impl Plot {
         )
     }
 
+    // =======================================================================
+    // Compute-only plot types
+    //
+    // Rug, strip, swarm, hexbin and dendrogram ship finished geometry, so they
+    // all enter through `SeriesType::Computed` and the one
+    // `ComputedSeries` trait rather than through a variant each. Adding another
+    // such plot type costs a method here, a `finalize()` below and an
+    // `impl ComputedSeries` — no render arm, no bounds arm, no axis-scale
+    // entry, and no way to wire it into one backend and not the other.
+    // =======================================================================
+
+    /// Start building a rug plot: one short mark per sample, along an axis.
+    ///
+    /// Returns a [`PlotBuilder`]`<RugConfig>`, the same builder shape every
+    /// other series returns, so it joins the usual chain.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// Plot::new()
+    ///     .rug(&samples)
+    ///     .label("observations")
+    ///     .color(Color::from_rgb(0, 0, 200))
+    ///     .legend_best()
+    ///     .save("rug.png")?;
+    /// ```
+    pub fn rug<T, D: Data1D<T>>(
+        self,
+        data: &D,
+    ) -> PlotBuilder<crate::plots::distribution::RugConfig>
+    where
+        T: Into<f64> + Copy,
+    {
+        let values = Self::collect_data1d_into_f64::<T, D>(data);
+        PlotBuilder::new(
+            self,
+            PlotInput::Single(values),
+            crate::plots::distribution::RugConfig::default(),
+        )
+    }
+
+    /// Start building a strip plot: a jittered scatter of every observation,
+    /// grouped by category.
+    ///
+    /// `categories` names the category of each observation, so the two slices
+    /// have the same length — the seaborn `stripplot(x=..., y=...)` shape.
+    /// Categories take slots `0, 1, 2 …` in order of first appearance.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// Plot::new()
+    ///     .strip(&["a", "a", "b"], &[1.0, 2.0, 3.0])
+    ///     .label("samples")
+    ///     .legend_best()
+    ///     .save("strip.png")?;
+    /// ```
+    pub fn strip<S: AsRef<str>, D: NumericData1D>(
+        mut self,
+        categories: &[S],
+        values: &D,
+    ) -> PlotBuilder<crate::plots::categorical::StripConfig> {
+        let (categories, values) = self.collect_categorical_observations(categories, values);
+        PlotBuilder::new(
+            self,
+            PlotInput::Categorical { categories, values },
+            crate::plots::categorical::StripConfig::default(),
+        )
+    }
+
+    /// Start building a swarm plot: like [`Plot::strip`], but the points are
+    /// nudged sideways so none of them overlap.
+    ///
+    /// Takes the same pair of slices as [`Plot::strip`].
+    pub fn swarm<S: AsRef<str>, D: NumericData1D>(
+        mut self,
+        categories: &[S],
+        values: &D,
+    ) -> PlotBuilder<crate::plots::categorical::SwarmConfig> {
+        let (categories, values) = self.collect_categorical_observations(categories, values);
+        PlotBuilder::new(
+            self,
+            PlotInput::Categorical { categories, values },
+            crate::plots::categorical::SwarmConfig::default(),
+        )
+    }
+
+    /// Start building a hexbin plot: a 2D density map on a hexagonal grid.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// Plot::new()
+    ///     .hexbin(&x, &y)
+    ///     .gridsize(40)
+    ///     .label("density")
+    ///     .save("hexbin.png")?;
+    /// ```
+    pub fn hexbin<X: NumericData1D, Y: NumericData1D>(
+        self,
+        x: &X,
+        y: &Y,
+    ) -> PlotBuilder<crate::plots::continuous::hexbin::HexbinConfig> {
+        let (plot, x_values, y_values) = self.collect_xy_for_derived_series(x, y);
+        PlotBuilder::new(
+            plot,
+            PlotInput::XY(x_values, y_values),
+            crate::plots::continuous::hexbin::HexbinConfig::default(),
+        )
+    }
+
+    /// Start building a dendrogram from a hierarchical clustering result.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let tree = ruviz::stats::clustering::linkage(&distances, LinkageMethod::Ward);
+    /// Plot::new()
+    ///     .dendrogram(&tree)
+    ///     .label("clusters")
+    ///     .save("dendrogram.png")?;
+    /// ```
+    pub fn dendrogram(
+        self,
+        linkage: &crate::stats::clustering::Linkage,
+    ) -> PlotBuilder<crate::plots::hierarchical::DendrogramConfig> {
+        PlotBuilder::new(
+            self,
+            PlotInput::Linkage(linkage.clone()),
+            crate::plots::hierarchical::DendrogramConfig::default(),
+        )
+    }
+
+    /// Collect one `(category name, value)` observation per element.
+    ///
+    /// Shared by [`Plot::strip`] and [`Plot::swarm`] so the two cannot disagree
+    /// about what a mismatched pair of slices means.
+    fn collect_categorical_observations<S: AsRef<str>, D: NumericData1D>(
+        &mut self,
+        categories: &[S],
+        values: &D,
+    ) -> (Vec<String>, Vec<f64>) {
+        let values = self.collect_numeric_input(values);
+        if !values.is_empty() && categories.len() != values.len() {
+            self.set_pending_ingestion_error(PlottingError::DataLengthMismatch {
+                x_len: categories.len(),
+                y_len: values.len(),
+                series_index: None,
+            });
+        }
+        let categories = categories
+            .iter()
+            .map(|category| category.as_ref().to_string())
+            .collect();
+        (categories, values)
+    }
+
+    /// Record an ingestion failure and hand the plot back, so a builder's
+    /// `finalize()` stays a single expression.
+    ///
+    /// The error surfaces at `render()`/`save()` like every other ingestion
+    /// failure, rather than the series vanishing without explanation.
+    fn with_ingestion_error(mut self, error: PlottingError) -> Self {
+        self.set_pending_ingestion_error(error);
+        self
+    }
+
+    /// Commit a plot type that ships finished geometry.
+    ///
+    /// Goes through the same [`series_from_style`] and the same palette rule as
+    /// every other series, so a compute-only plot type is styled and coloured
+    /// identically to a line — there is no per-type series constructor.
+    fn push_computed_series<C>(self, data: C, style: SeriesStyle) -> Self
+    where
+        C: crate::plots::traits::ComputedSeries + 'static,
+    {
+        self.push_builder_series(series_from_style(
+            SeriesType::Computed {
+                data: Arc::new(data),
+            },
+            style,
+        ))
+    }
+
     /// Commit a finalized builder series, assigning the next palette slot.
     ///
     /// Every plot type spells series styling the same way, so the palette rule
@@ -1512,10 +1720,9 @@ impl PlotBuilder<BoxPlotConfig> {
             _ => PlotData::Static(Vec::new()),
         };
 
-        plot.push_builder_series(series_from_style(
-            SeriesType::BoxPlot { data, config },
-            style,
-        ))
+        // Through `add_box_plot_series`, the same door violin and boxen use, so
+        // the box claims its category slot at add time like they do.
+        plot.add_box_plot_series(data, config, style)
     }
 }
 
@@ -1620,6 +1827,281 @@ impl PlotBuilder<ErrorBarConfig> {
 
         plot.push_builder_series(series_from_style(series_type, style))
     }
+}
+
+// ===========================================================================
+// Compute-only plot types: builder setters and `finalize()`
+//
+// Every one of these computes in `finalize()` rather than in the `Plot::`
+// method, so a setter called anywhere in the chain still affects the result.
+// The setters below forward to the config's own; the shared
+// `.label()/.color()/.alpha()/.line_width()` on `PlotBuilder<C>` cover the
+// styling every series has in common, and each plot type's renderer already
+// treats those as the override for its own defaults.
+// ===========================================================================
+
+impl PlotBuilder<crate::plots::distribution::RugConfig> {
+    /// Mark height as a fraction of the axis range (default `0.05`).
+    pub fn height(mut self, height: f32) -> Self {
+        self.config = std::mem::take(&mut self.config).height(height);
+        self
+    }
+
+    /// Which axis the marks sit against.
+    pub fn axis(mut self, axis: crate::plots::distribution::RugAxis) -> Self {
+        self.config = std::mem::take(&mut self.config).axis(axis);
+        self
+    }
+
+    /// Lift the marks off the axis by a fraction of the axis range.
+    pub fn offset(mut self, offset: f32) -> Self {
+        self.config = std::mem::take(&mut self.config).offset(offset);
+        self
+    }
+
+    pub(super) fn finalize(self) -> Plot {
+        let PlotBuilder {
+            plot,
+            input,
+            config,
+            style,
+        } = self;
+        let values = match input {
+            PlotInput::Single(values) => values,
+            _ => Vec::new(),
+        };
+
+        match <crate::plots::distribution::Rug as crate::plots::traits::PlotCompute>::compute(
+            values.as_slice(),
+            &config,
+        ) {
+            Ok(data) => plot.push_computed_series(data, style),
+            Err(error) => plot.with_ingestion_error(error),
+        }
+    }
+}
+
+impl PlotBuilder<crate::plots::categorical::StripConfig> {
+    /// Jitter width as a fraction of the category slot (default `0.3`).
+    pub fn jitter(mut self, jitter: f64) -> Self {
+        self.config = std::mem::take(&mut self.config).jitter(jitter);
+        self
+    }
+
+    /// Marker size in points.
+    pub fn marker_size(mut self, size: f32) -> Self {
+        self.config = std::mem::take(&mut self.config).size(size);
+        self
+    }
+
+    /// Lay the categories along the y axis instead of the x axis.
+    pub fn horizontal(mut self) -> Self {
+        self.config = std::mem::take(&mut self.config).horizontal();
+        self
+    }
+
+    /// Seed for the jitter, so a figure redraws identically.
+    pub fn seed(mut self, seed: u64) -> Self {
+        self.config = std::mem::take(&mut self.config).seed(seed);
+        self
+    }
+
+    pub(super) fn finalize(self) -> Plot {
+        let PlotBuilder {
+            plot,
+            input,
+            config,
+            style,
+        } = self;
+        let (categories, values) = categorical_observations(input);
+        let (slots, names) = category_slot_indices(&categories);
+        let input = crate::plots::categorical::StripInput::new(&slots, &values).with_names(&names);
+
+        match <crate::plots::categorical::Strip as crate::plots::traits::PlotCompute>::compute(
+            input, &config,
+        ) {
+            Ok(data) => plot.push_computed_series(data, style),
+            Err(error) => plot.with_ingestion_error(error),
+        }
+    }
+}
+
+impl PlotBuilder<crate::plots::categorical::SwarmConfig> {
+    /// Marker size in points.
+    pub fn marker_size(mut self, size: f32) -> Self {
+        self.config = std::mem::take(&mut self.config).size(size);
+        self
+    }
+
+    /// Widest the swarm may spread, as a fraction of the category slot.
+    pub fn width(mut self, width: f64) -> Self {
+        self.config = std::mem::take(&mut self.config).width(width);
+        self
+    }
+
+    /// Lay the categories along the y axis instead of the x axis.
+    pub fn horizontal(mut self) -> Self {
+        self.config = std::mem::take(&mut self.config).horizontal();
+        self
+    }
+
+    pub(super) fn finalize(self) -> Plot {
+        let PlotBuilder {
+            plot,
+            input,
+            config,
+            style,
+        } = self;
+        let (categories, values) = categorical_observations(input);
+        let (slots, names) = category_slot_indices(&categories);
+        let input = crate::plots::categorical::SwarmInput::new(&slots, &values).with_names(&names);
+
+        match <crate::plots::categorical::Swarm as crate::plots::traits::PlotCompute>::compute(
+            input, &config,
+        ) {
+            Ok(data) => plot.push_computed_series(data, style),
+            Err(error) => plot.with_ingestion_error(error),
+        }
+    }
+}
+
+impl PlotBuilder<crate::plots::continuous::hexbin::HexbinConfig> {
+    /// Number of hexagons across the x axis.
+    pub fn gridsize(mut self, size: usize) -> Self {
+        self.config = std::mem::take(&mut self.config).gridsize(size);
+        self
+    }
+
+    /// Colormap, by name or as a [`ColorMap`](crate::render::ColorMap).
+    pub fn cmap(mut self, cmap: impl Into<crate::render::ColorMapSpec>) -> Self {
+        self.config = std::mem::take(&mut self.config).cmap(cmap);
+        self
+    }
+
+    /// How the points inside one hexagon are reduced to its value.
+    pub fn reduce_fn(mut self, reduce: crate::plots::continuous::hexbin::ReduceFunction) -> Self {
+        self.config = std::mem::take(&mut self.config).reduce_fn(reduce);
+        self
+    }
+
+    /// Hide hexagons holding fewer than this many points.
+    pub fn mincnt(mut self, count: usize) -> Self {
+        self.config = std::mem::take(&mut self.config).mincnt(count);
+        self
+    }
+
+    /// Colour the bins on a logarithmic value scale.
+    pub fn log_scale(mut self, log_scale: bool) -> Self {
+        self.config = std::mem::take(&mut self.config).log_scale(log_scale);
+        self
+    }
+
+    /// Outline every hexagon in this colour.
+    pub fn edge_color(mut self, color: Color) -> Self {
+        self.config = std::mem::take(&mut self.config).edge_color(color);
+        self
+    }
+
+    /// Show or hide the colorbar. It is on by default, because the colour of a
+    /// hexagon is the whole reading and nothing else decodes it.
+    pub fn colorbar(mut self, show: bool) -> Self {
+        self.config = std::mem::take(&mut self.config).colorbar(show);
+        self
+    }
+
+    /// Caption for the colorbar — what the colours are counting or measuring.
+    pub fn colorbar_label(mut self, label: impl Into<String>) -> Self {
+        self.config = std::mem::take(&mut self.config).colorbar_label(label);
+        self
+    }
+
+    pub(super) fn finalize(self) -> Plot {
+        let PlotBuilder {
+            plot,
+            input,
+            config,
+            style,
+        } = self;
+        let (x, y) = match input {
+            PlotInput::XY(x, y) => (x, y),
+            _ => (Vec::new(), Vec::new()),
+        };
+        let input = crate::plots::continuous::hexbin::HexbinInput::new(&x, &y);
+
+        match <crate::plots::continuous::hexbin::Hexbin as crate::plots::traits::PlotCompute>::compute(
+            input, &config,
+        ) {
+            Ok(data) => plot.push_computed_series(data, style),
+            Err(error) => plot.with_ingestion_error(error),
+        }
+    }
+}
+
+impl PlotBuilder<crate::plots::hierarchical::DendrogramConfig> {
+    /// Which way the tree hangs.
+    pub fn orientation(
+        mut self,
+        orientation: crate::plots::hierarchical::DendrogramOrientation,
+    ) -> Self {
+        self.config = std::mem::take(&mut self.config).orientation(orientation);
+        self
+    }
+
+    // `.labels()` and `.show_labels()` are deliberately NOT forwarded: the
+    // renderer draws links, not text, so a builder setter for leaf labels would
+    // be a knob that changes nothing. `DendrogramConfig::labels` still fills
+    // `DendrogramPlotData::labels` for callers laying the text out themselves.
+
+    pub(super) fn finalize(self) -> Plot {
+        let PlotBuilder {
+            plot,
+            input,
+            config,
+            style,
+        } = self;
+        let PlotInput::Linkage(linkage) = input else {
+            return plot.with_ingestion_error(PlottingError::EmptyDataSet);
+        };
+
+        let data = crate::plots::hierarchical::compute_dendrogram(&linkage, &config);
+        plot.push_computed_series(data, style)
+    }
+}
+
+/// The `(category name, value)` pairs a strip or swarm builder collected.
+fn categorical_observations(input: PlotInput) -> (Vec<String>, Vec<f64>) {
+    match input {
+        PlotInput::Categorical { categories, values } => (categories, values),
+        _ => (Vec::new(), Vec::new()),
+    }
+}
+
+/// Map category names onto the slot indices the layout uses.
+///
+/// A name takes the slot it was first seen in, so repeating a category groups
+/// its observations and the slots run `0, 1, 2 …` in order of first appearance
+/// — the same left-to-right rule a bar chart follows.
+///
+/// Returns the per-observation slot **and** the distinct names in slot order.
+/// Both halves have to travel together: the names are what the category axis
+/// prints, and dropping them here is what used to leave a strip plot labelled
+/// `-0.5, 0, 0.5 …` when the caller had passed `["A", "B", "C"]`.
+fn category_slot_indices(categories: &[String]) -> (Vec<usize>, Vec<String>) {
+    let mut order: Vec<String> = Vec::new();
+    let slots = categories
+        .iter()
+        .map(|category| {
+            let existing = order.iter().position(|seen| seen == category);
+            match existing {
+                Some(index) => index,
+                None => {
+                    order.push(category.clone());
+                    order.len() - 1
+                }
+            }
+        })
+        .collect();
+    (slots, order)
 }
 
 #[cfg(test)]
@@ -2079,5 +2561,203 @@ mod tests {
         let expected = Theme::dark().get_color(0);
         let styles = fill_styles(&plot);
         assert_eq!(styles[0].color, expected);
+    }
+}
+
+/// The five compute-only plot types wired through `SeriesType::Computed`.
+///
+/// One variant carries all of them, so the thing worth asserting is not that
+/// each one has its own code path — it is that none of them does: the same
+/// chain, the same palette rule, the same primitives in both backends.
+#[cfg(test)]
+mod computed_series_tests {
+    use super::*;
+    use crate::render::Color;
+    use crate::stats::clustering::{LinkageMethod, linkage};
+
+    fn samples() -> Vec<f64> {
+        (0..24).map(|i| f64::from(i) * 0.37 + 1.0).collect()
+    }
+
+    fn categories() -> Vec<&'static str> {
+        let mut out = Vec::new();
+        for _ in 0..8 {
+            out.extend(["a", "b", "c"]);
+        }
+        out
+    }
+
+    fn tree() -> crate::stats::clustering::Linkage {
+        let distances = vec![
+            vec![0.0, 1.0, 4.0, 5.0],
+            vec![1.0, 0.0, 4.5, 5.5],
+            vec![4.0, 4.5, 0.0, 1.5],
+            vec![5.0, 5.5, 1.5, 0.0],
+        ];
+        linkage(&distances, LinkageMethod::Average)
+    }
+
+    /// Every builder that can appear in the chain, finalized into a `Plot`,
+    /// with the SVG element and count its geometry must produce.
+    ///
+    /// The counts are exact-shaped rather than "something was drawn": rug's
+    /// renderer used to return `Ok(())` having drawn nothing, and an assertion
+    /// that only looked for ink would have been satisfied by the axes.
+    fn every_computed_plot() -> Vec<(&'static str, Plot, &'static str, usize)> {
+        let values = samples();
+        let names = categories();
+        let x: Vec<f64> = (0..64).map(|i| f64::from(i) * 0.1).collect();
+        let y: Vec<f64> = x.iter().map(|v| v.sin()).collect();
+
+        vec![
+            // One stroked mark per sample.
+            (
+                "rug",
+                Plot::new().rug(&values).label("rug").into(),
+                "<line",
+                values.len(),
+            ),
+            // One marker per observation.
+            (
+                "strip",
+                Plot::new().strip(&names, &values).label("strip").into(),
+                "<circle",
+                values.len(),
+            ),
+            (
+                "swarm",
+                Plot::new().swarm(&names, &values).label("swarm").into(),
+                "<circle",
+                values.len(),
+            ),
+            // One filled hexagon per occupied bin.
+            (
+                "hexbin",
+                Plot::new().hexbin(&x, &y).label("hexbin").into(),
+                "<polygon",
+                1,
+            ),
+            // Three segments per merge, three merges for four leaves.
+            (
+                "dendrogram",
+                Plot::new().dendrogram(&tree()).label("tree").into(),
+                "<line",
+                9,
+            ),
+        ]
+    }
+
+    #[test]
+    fn every_computed_plot_type_joins_the_standard_chain() {
+        // `.<series>(..).label(..).color(..).legend_best().save(..)` has to
+        // compile for these exactly as it does for the other 21.
+        let values = samples();
+        let names = categories();
+        let plot: Plot = Plot::new()
+            .rug(&values)
+            .label("marks")
+            .color(Color::from_rgb(10, 20, 30))
+            .legend_best()
+            .strip(&names, &values)
+            .label("points")
+            .color(Color::from_rgb(40, 50, 60))
+            .into();
+
+        assert_eq!(plot.series_mgr.series.len(), 2);
+        for series in &plot.series_mgr.series {
+            assert!(matches!(series.series_type, SeriesType::Computed { .. }));
+            assert!(series.label.is_some());
+            assert!(series.color.is_some());
+        }
+    }
+
+    #[test]
+    fn every_computed_plot_type_pushes_exactly_one_series() {
+        for (name, plot, _, _) in every_computed_plot() {
+            assert_eq!(
+                plot.series_mgr.series.len(),
+                1,
+                "`Plot::{name}` did not add exactly one series"
+            );
+            let series = &plot.series_mgr.series[0];
+            assert!(
+                matches!(series.series_type, SeriesType::Computed { .. }),
+                "`Plot::{name}` did not go through SeriesType::Computed"
+            );
+        }
+    }
+
+    #[test]
+    fn a_computed_series_takes_the_next_palette_slot_like_any_other() {
+        // The palette rule lives in `push_builder_series`; a compute-only plot
+        // type must not have its own.
+        let values = samples();
+        let plot: Plot = Plot::new().line(&values, &values).rug(&values).into();
+        assert_eq!(plot.series_mgr.auto_color_index(), 2);
+
+        let explicit: Plot = Plot::new()
+            .rug(&values)
+            .color(Color::from_rgb(1, 2, 3))
+            .into();
+        assert_eq!(explicit.series_mgr.auto_color_index(), 0);
+    }
+
+    #[test]
+    fn every_computed_plot_type_draws_in_both_backends() {
+        // A plot type that renders in PNG but not SVG is exactly the divergence
+        // `PlotPrimitive` exists to make impossible, so assert both backends put
+        // the series' own geometry on the page for every one of them.
+        for (name, plot, element, minimum) in every_computed_plot() {
+            let image = plot
+                .clone()
+                .size_px(320, 240)
+                .render()
+                .unwrap_or_else(|error| panic!("`Plot::{name}` failed to render: {error}"));
+            let ink = image
+                .pixels
+                .chunks_exact(4)
+                .filter(|p| p[3] > 0 && (p[0] < 250 || p[1] < 250 || p[2] < 250))
+                .count();
+            assert!(ink > 0, "`Plot::{name}` rendered a blank PNG");
+
+            let svg = plot
+                .size_px(320, 240)
+                .render_to_svg()
+                .unwrap_or_else(|error| panic!("`Plot::{name}` failed to export SVG: {error}"));
+            let drawn = svg.matches(element).count();
+            assert!(
+                drawn >= minimum,
+                "`Plot::{name}` exported {drawn} `{element}` elements, expected at \
+                 least {minimum} — its geometry did not reach the SVG backend"
+            );
+        }
+    }
+
+    #[test]
+    fn repeating_a_category_name_reuses_its_slot() {
+        assert_eq!(
+            category_slot_indices(&[
+                "b".to_string(),
+                "a".to_string(),
+                "b".to_string(),
+                "c".to_string(),
+            ]),
+            (
+                vec![0, 1, 0, 2],
+                vec!["b".to_string(), "a".to_string(), "c".to_string()],
+            ),
+            "a repeated category must land back in the slot it first claimed, \
+             and each distinct name must be reported once, in slot order"
+        );
+    }
+
+    #[test]
+    fn mismatched_categorical_input_is_reported_not_silently_truncated() {
+        let values = vec![1.0, 2.0, 3.0];
+        let plot: Plot = Plot::new().strip(&["a", "b"], &values).into();
+        assert!(
+            plot.render().is_err(),
+            "a strip plot with more values than categories rendered anyway"
+        );
     }
 }

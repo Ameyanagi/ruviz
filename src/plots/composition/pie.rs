@@ -16,6 +16,13 @@ use crate::render::primitives::{Wedge, pie_wedges};
 use crate::render::{Color, SkiaRenderer, Theme};
 use std::f64::consts::PI;
 
+/// Inner radius, as a fraction of the outer radius, that makes a pie a donut.
+///
+/// The one number `Plot::donut` means by "a donut": a hole wide enough to read
+/// as one, narrow enough to leave the wedges comparable by angle. Callers who
+/// want a different hole say so with [`PieConfig::donut`].
+pub const DEFAULT_DONUT_INNER_RADIUS: f64 = 0.4;
+
 /// Configuration for pie chart
 #[derive(Debug, Clone)]
 pub struct PieConfig {
@@ -96,6 +103,8 @@ impl PieConfig {
     }
 
     /// Create a donut chart with inner radius
+    ///
+    /// See [`DEFAULT_DONUT_INNER_RADIUS`] for the ratio `Plot::donut` uses.
     pub fn donut(mut self, inner_radius: f64) -> Self {
         self.inner_radius = inner_radius.clamp(0.0, 0.95);
         self

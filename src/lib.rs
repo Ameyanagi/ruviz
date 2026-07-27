@@ -266,19 +266,29 @@
 //! | Category | Plot Types |
 //! |----------|------------|
 //! | **Basic** | Line, Scatter, Bar |
-//! | **Distribution** | Histogram, Box Plot, Violin, Boxen, KDE, ECDF |
-//! | **Continuous** | Heatmap, Contour, Fill Between, Area |
+//! | **Distribution** | Histogram, Box Plot, Violin, Boxen, KDE, ECDF, Rug, Strip, Swarm |
+//! | **Continuous** | Heatmap, Contour, Hexbin, Fill Between, Area |
 //! | **Discrete** | Step, Stem |
 //! | **Error** | Error Bars |
 //! | **Composition** | Pie, Donut |
 //! | **Polar** | Polar Plot, Radar/Spider Chart |
 //! | **Vector** | Quiver |
+//! | **Hierarchical** | Dendrogram |
 //! | **3D** (`3d` feature) | Scatter3D, Line3D, Surface3D, Wireframe3D |
 //!
-//! That is the complete list: 21 types from [`Plot`], 4 more from `Plot3D`.
-//! [`plots`] also exposes compute helpers (hexbin, strip/swarm, grouped and
-//! stacked bar, stacked area, 2D KDE, dendrogram, regression) that have **no**
-//! builder method and cannot be drawn — see the [`plots`] module docs. See the
+//! That is the complete list: 26 types from [`Plot`], 4 more from `Plot3D`.
+//! `src/plots/mod.rs::catalog_is_true` reads the builder's own source and fails
+//! if this table drifts from the API.
+//!
+//! All of them except `fill_between` are *series* methods returning
+//! [`PlotBuilder<C>`](core::PlotBuilder), so one chain works across every one:
+//! `.<series>(..).label(..).color(..).legend_best().save(..)`. `fill_between`
+//! is an annotation rather than a series — it returns the plot itself, so it
+//! takes plot-level setters instead of series-level ones.
+//!
+//! [`plots`] also exposes compute helpers (grouped and stacked bar, stacked
+//! area, 2D KDE, regression) that have **no** builder method and cannot be
+//! drawn — see the [`plots`] module docs. See the
 //! [Plot Types Guide](https://github.com/Ameyanagi/ruviz/blob/main/docs/guide/04_plot_types.md)
 //! for details.
 //!

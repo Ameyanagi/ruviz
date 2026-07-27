@@ -250,10 +250,21 @@ fn png_and_hybrid_svg_terminals_are_live() {
 
 #[test]
 fn one_call_surface_pick_returns_source_indices_and_data_coordinates() {
+    // Ask the plot where the surface origin actually lands rather than hard-coding
+    // a pixel: `project` is the documented inverse of `pick`, so this stays a test
+    // of picking instead of a test of one particular layout's arithmetic.
+    let origin = ruviz::core::Point3D::new(0.0, 0.0, 0.0);
+    let (origin_x, origin_y) = surface(&[-1.0, 1.0], &[-1.0, 1.0], &[[0.0, 0.0], [0.0, 0.0]])
+        .size(2.4, 1.8)
+        .dpi(72)
+        .project(origin)
+        .expect("project")
+        .expect("origin is on screen");
+
     let hit = surface(&[-1.0, 1.0], &[-1.0, 1.0], &[[0.0, 0.0], [0.0, 0.0]])
         .size(2.4, 1.8)
         .dpi(72)
-        .pick(95.0, 52.5)
+        .pick(origin_x, origin_y)
         .expect("pick")
         .expect("surface hit");
     assert_eq!(hit.primitive, ruviz::core::PickPrimitive3D::SurfaceTriangle);

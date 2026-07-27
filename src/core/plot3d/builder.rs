@@ -530,6 +530,20 @@ macro_rules! impl_common_builder {
                 self.finalize().pick_at(screen_x, screen_y)
             }
 
+            /// Project a data-space point to the full-canvas pixel it occupies.
+            ///
+            /// This is the exact inverse of [`Self::pick`] and uses the same
+            /// top-left-origin pixel system, so `project(p)` feeds straight back
+            /// into `pick(..)`. Returns `Ok(None)` when the point falls outside
+            /// the camera's clip volume.
+            ///
+            /// Use this instead of hard-coding a pixel: the layout that decides
+            /// where the scene sits is free to change, and a caller that asks
+            /// where a point actually landed keeps working when it does.
+            pub fn project(self, point: super::Point3D) -> Result<Option<(f32, f32)>> {
+                self.finalize().project_at(point)
+            }
+
             /// Create a retained backend-neutral 3d interaction session.
             pub fn interactive_session(self) -> Result<super::InteractivePlot3DSession> {
                 super::InteractivePlot3DSession::new(self.finalize())

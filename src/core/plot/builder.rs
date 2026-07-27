@@ -361,6 +361,8 @@ pub enum PlotInput {
     },
     /// Live X/Y buffer read at render time (streaming line and scatter series).
     Streaming(crate::data::StreamingXY),
+    /// A hierarchical clustering result (dendrogram series).
+    Linkage(crate::stats::clustering::Linkage),
 }
 
 impl PlotInput {
@@ -377,6 +379,8 @@ impl PlotInput {
             PlotInput::Quiver { x, .. } => x.len(),
             PlotInput::ErrorBars { x, .. } => x.len(),
             PlotInput::Streaming(stream) => stream.len(),
+            // One "point" per merge in the tree, which is what the renderer draws.
+            PlotInput::Linkage(linkage) => linkage.matrix.len(),
         }
     }
 }
@@ -2214,6 +2218,30 @@ impl PlotBuilder<crate::plots::PolarPlotConfig> {
         self
     }
 
+    /// Show/hide the concentric rings of the polar grid.
+    pub fn show_rgrid(mut self, show: bool) -> Self {
+        self.config.show_rgrid = show;
+        self
+    }
+
+    /// Show/hide the radial spokes of the polar grid.
+    pub fn show_thetagrid(mut self, show: bool) -> Self {
+        self.config.show_thetagrid = show;
+        self
+    }
+
+    /// How many concentric rings — and radial labels — the grid has.
+    pub fn rgrid_count(mut self, count: usize) -> Self {
+        self.config.rgrid_count = count;
+        self
+    }
+
+    /// How many spokes — and angular labels — the grid has.
+    pub fn thetagrid_count(mut self, count: usize) -> Self {
+        self.config.thetagrid_count = count;
+        self
+    }
+
     /// Finalize the polar series and add it to the plot
     fn finalize(self) -> super::Plot {
         let (r, theta) = match &self.input {
@@ -2334,23 +2362,11 @@ impl PlotBuilder<crate::plots::ViolinConfig> {
         self
     }
 
-    /// Set category name for this violin
-    ///
-    /// The category name is displayed on the X-axis instead of numeric values.
-    /// This enables categorical axis mode for the plot.
-    ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// Plot::new()
-    ///     .violin(&data)
-    ///     .category("Group A")
-    ///     .save("violin.png")?;
-    /// ```
-    pub fn category<S: Into<String>>(mut self, name: S) -> Self {
-        self.config.category = Some(name.into());
-        self
-    }
+    // `.category(..)` and `.x_position(..)` are not written here. They come from
+    // `impl_category_axis!` in series_internal.rs, which emits them for every
+    // categorical plot type at once — a hand-written copy here is exactly how
+    // violin ended up with a `.category()` that box plots and boxen plots did
+    // not have.
 
     /// Finalize the violin series and add it to the plot
     fn finalize(self) -> super::Plot {
@@ -2894,6 +2910,15 @@ impl_terminal_methods!(crate::plots::HistogramConfig);
 impl_terminal_methods!(crate::plots::BoxPlotConfig);
 impl_terminal_methods!(crate::plots::heatmap::HeatmapConfig);
 impl_terminal_methods!(crate::plots::error::ErrorBarConfig);
+
+// The compute-only plot types, which enter through `SeriesType::Computed`.
+// Their `finalize()`s are in `series_api.rs` for the same reason as the four
+// above: they touch `Plot`'s `pub(super)` fields.
+impl_terminal_methods!(crate::plots::distribution::RugConfig);
+impl_terminal_methods!(crate::plots::categorical::StripConfig);
+impl_terminal_methods!(crate::plots::categorical::SwarmConfig);
+impl_terminal_methods!(crate::plots::continuous::hexbin::HexbinConfig);
+impl_terminal_methods!(crate::plots::hierarchical::DendrogramConfig);
 
 #[cfg(test)]
 mod tests;

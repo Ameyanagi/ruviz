@@ -274,6 +274,13 @@ impl Plot3D {
         let (scene, bvh, _) = cache.prepare_with_bvh(&frame)?;
         pick_scene(&frame, &layout, &scene, &bvh, screen_x, screen_y, 0, 0)
     }
+
+    pub(super) fn project_at(self, point: Point3D) -> Result<Option<(f32, f32)>> {
+        let frame = self.resolve()?;
+        let layout = Axis3Layout::resolve(&frame)?;
+        let local = frame.bounds.normalize(point, Vec3::ONE);
+        Ok(project_visible_local(&layout, local).map(|projected| (projected.x, projected.y)))
+    }
 }
 
 pub(crate) fn pick_scene(

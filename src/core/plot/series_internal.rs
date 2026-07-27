@@ -8,7 +8,8 @@ use crate::core::plot::raster_fast_path::{
     canonicalize_line_points_exact, reduce_line_points_for_raster, should_reduce_line_series,
 };
 use crate::core::plot::types::MarkerEdge;
-use crate::plots::traits::AxisScaleSupport;
+use crate::plots::boxplot::{CATEGORY_SLOT_HALF_WIDTH, category_slot_span};
+use crate::plots::traits::{AxisScaleSupport, ComputedSeries};
 
 impl Plot {
     /// Add a new line to existing plot (for incremental updates)
@@ -276,12 +277,41 @@ impl Plot {
         self
     }
 
+    /// Internal method to add a Box Plot series
+    ///
+    /// Box plots, violins and boxen plots are all added through one of these
+    /// three functions, and each one claims the series' category slot the same
+    /// way before pushing it — so "which slot am I in" is answered once, at
+    /// add time, and every backend afterwards just reads `x_position`.
+    pub(crate) fn add_box_plot_series(
+        self,
+        data: PlotData,
+        mut config: crate::plots::boxplot::BoxPlotConfig,
+        style: crate::core::plot::builder::SeriesStyle,
+    ) -> Self {
+        let slot = config
+            .x_position
+            .unwrap_or_else(|| self.next_category_slot(config.category.as_deref()));
+        config.x_position = Some(slot);
+
+        self.push_builder_series(super::series_api::series_from_style(
+            SeriesType::BoxPlot { data, config },
+            style,
+        ))
+    }
+
     /// Internal method to add a Violin series
     pub(crate) fn add_violin_series(
         mut self,
-        violin_data: crate::plots::ViolinData,
+        mut violin_data: crate::plots::ViolinData,
         style: crate::core::plot::builder::SeriesStyle,
     ) -> Self {
+        let slot = violin_data
+            .config
+            .x_position
+            .unwrap_or_else(|| self.next_category_slot(violin_data.config.category.as_deref()));
+        violin_data.config.x_position = Some(slot);
+
         let series = PlotSeries {
             series_type: SeriesType::Violin {
                 data: Arc::new(violin_data),
@@ -329,6 +359,11 @@ impl Plot {
         if let Some(marker_size) = style.marker_size {
             boxen_data.config.outlier_size = marker_size.max(0.0);
         }
+        let slot = boxen_data
+            .config
+            .x_position
+            .unwrap_or_else(|| self.next_category_slot(boxen_data.config.category.as_deref()));
+        boxen_data.config.x_position = Some(slot);
 
         let series = PlotSeries {
             series_type: SeriesType::Boxen {
@@ -891,7 +926,7 @@ impl Plot {
                     }
                 }
 
-                if let Some(request) = Self::heatmap_colorbar_request(data) {
+                if let Some(request) = Self::heatmap_colorbar_request(data, &self.display.theme) {
                     let (x, y, width, height) = self.colorbar_rect(plot_area);
                     crate::render::colorbar::draw_colorbar(
                         renderer,
@@ -1419,6 +1454,37 @@ impl Plot {
                     &self.layout.y_scale,
                 )?;
             }
+            (SeriesType::Computed { data }, ResolvedSeries::Other(_)) => {
+                // Every compute-only plot type draws through this one arm, the
+                // same way KDE does below. Adding a plot type therefore cannot
+                // add a raster path without an SVG path — there is nothing
+                // per-type to add.
+                let plot_area_rect = plot_area;
+                let plot_area = plot_area_from_rect(
+                    plot_area,
+                    x_min,
+                    x_max,
+                    y_min,
+                    y_max,
+                    &self.layout.x_scale,
+                    &self.layout.y_scale,
+                );
+                data.render_styled(
+                    renderer,
+                    &plot_area,
+                    &self.display.theme,
+                    base_color,
+                    alpha,
+                    series.line_width,
+                )?;
+                if let Some(request) = data.colorbar(&self.display.theme) {
+                    let (x, y, width, height) = self.colorbar_rect(plot_area_rect);
+                    crate::render::colorbar::draw_colorbar(
+                        renderer,
+                        &request.spec_at(x, y, width, height, self.display.theme.foreground),
+                    )?;
+                }
+            }
             (SeriesType::Kde { data }, ResolvedSeries::Other(_)) => {
                 // Use PlotRender trait to render KDE
                 let plot_area = plot_area_from_rect(
@@ -1533,7 +1599,7 @@ impl Plot {
                     series.line_width,
                 )?;
 
-                if let Some(request) = Self::contour_colorbar_request(data) {
+                if let Some(request) = Self::contour_colorbar_request(data, &self.display.theme) {
                     let (x, y, width, height) = self.colorbar_rect(plot_area);
                     crate::render::colorbar::draw_colorbar(
                         renderer,
@@ -1592,13 +1658,16 @@ impl Plot {
                 let polar_plot_area = crate::plots::PlotArea::new(
                     polar_x, polar_y, polar_size, polar_size, x_min, x_max, y_min, y_max,
                 );
-                data.render_styled(
+                // Same call shape the radar arm above uses, so `.grid(false)`
+                // and custom grid styling reach both radial plot types.
+                data.render_styled_with_grid(
                     renderer,
                     &polar_plot_area,
                     &self.display.theme,
                     base_color,
                     alpha,
                     series.line_width,
+                    Some(&self.layout.grid_style),
                 )?;
             }
             _ => unreachable!("resolved series variant must match its declarative series"),
@@ -1900,6 +1969,11 @@ impl Plot {
                         return Err(PlottingError::EmptyDataSet);
                     }
                 }
+                SeriesType::Computed { data } => {
+                    if crate::plots::traits::PlotData::is_empty(data.as_ref()) {
+                        return Err(PlottingError::EmptyDataSet);
+                    }
+                }
             }
         }
 
@@ -2025,6 +2099,11 @@ impl Plot {
                     SeriesType::Polar { data } if data.points.is_empty() => {
                         return Err(PlottingError::EmptyDataSet);
                     }
+                    SeriesType::Computed { data }
+                        if crate::plots::traits::PlotData::is_empty(data.as_ref()) =>
+                    {
+                        return Err(PlottingError::EmptyDataSet);
+                    }
                     SeriesType::Quiver { data } => {
                         for (position, arrow) in data.arrows.iter().enumerate() {
                             let all_values = [
@@ -2077,16 +2156,11 @@ impl Plot {
     pub(super) fn series_axis_scale_support(
         series: &SeriesType,
     ) -> (&'static str, AxisScaleSupport, AxisScaleSupport) {
-        // Category axis: positions are indices, so there is no quantity to
-        // take a logarithm of.
-        const ORDINAL: AxisScaleSupport = AxisScaleSupport::Unsupported(
-            "its categories sit at ordinal positions, which carry no quantitative spacing",
-        );
-        // A single-distribution plot centred in the synthetic 0..1 axis the
-        // bounds calculation gives it.
-        const SYNTHETIC_SLOT: AxisScaleSupport = AxisScaleSupport::Unsupported(
-            "it occupies a synthetic slot on this axis rather than a data position",
-        );
+        // Category axis: positions are slots, so there is no quantity to take
+        // a logarithm of. The wording lives on `AxisScaleSupport` so that every
+        // categorical plot type — including the ones reached through
+        // `SeriesType::Computed` — refuses in the same sentence.
+        const ORDINAL: AxisScaleSupport = AxisScaleSupport::ORDINAL;
         const SCALED: AxisScaleSupport = AxisScaleSupport::Scaled;
         const OWN_COORDS: AxisScaleSupport = AxisScaleSupport::Independent;
 
@@ -2094,9 +2168,9 @@ impl Plot {
         // the other; which is which follows the series' own orientation.
         let across_and_along = |vertical: bool| {
             if vertical {
-                (SYNTHETIC_SLOT, SCALED)
+                (ORDINAL, SCALED)
             } else {
-                (SCALED, SYNTHETIC_SLOT)
+                (SCALED, ORDINAL)
             }
         };
 
@@ -2107,7 +2181,10 @@ impl Plot {
             SeriesType::ErrorBars { .. } => ("errorbar", SCALED, SCALED),
             SeriesType::ErrorBarsXY { .. } => ("errorbar", SCALED, SCALED),
             SeriesType::Histogram { .. } => ("histogram", SCALED, SCALED),
-            SeriesType::BoxPlot { .. } => ("boxplot", SYNTHETIC_SLOT, SCALED),
+            // Always vertical: `BoxPlotPixels` draws the box across the x axis
+            // whatever `orientation` says, so declaring x as `Scaled` for a
+            // horizontal box plot would promise a projection nothing performs.
+            SeriesType::BoxPlot { .. } => ("boxplot", ORDINAL, SCALED),
             SeriesType::Quiver { .. } => ("quiver", SCALED, SCALED),
             SeriesType::Heatmap { .. } => ("heatmap", SCALED, SCALED),
             SeriesType::Kde { .. } => ("kde", SCALED, SCALED),
@@ -2130,6 +2207,14 @@ impl Plot {
             SeriesType::Pie { .. } => ("pie", OWN_COORDS, OWN_COORDS),
             SeriesType::Radar { .. } => ("radar", OWN_COORDS, OWN_COORDS),
             SeriesType::Polar { .. } => ("polar", OWN_COORDS, OWN_COORDS),
+            // A `ComputedSeries` answers for itself, in the same vocabulary:
+            // `AxisScaleSupport::ORDINAL` is the constant this arm's `ORDINAL`
+            // aliases, so a compute-only categorical plot type refuses a log
+            // axis in exactly the words a bar chart uses.
+            SeriesType::Computed { data } => {
+                let (x, y) = data.axis_scale_support();
+                (data.kind(), x, y)
+            }
         }
     }
 
@@ -2287,10 +2372,36 @@ impl Plot {
         )
     }
 
+    /// The colorbar any one series asks for, or `None` if it has no colour scale.
+    ///
+    /// The single answer to "what does this series' colorbar say?". Margin
+    /// reservation ([`Plot::colorbar_measurement_spec`]), the raster draw and the
+    /// SVG draw all call it, so a colorbar cannot be measured with one range and
+    /// drawn with another, and a new plot type with a colour scale becomes
+    /// readable in both backends at once.
+    pub(super) fn series_colorbar_request(
+        &self,
+        series_type: &SeriesType,
+    ) -> Option<crate::render::colorbar::ColorbarRequest> {
+        let theme = &self.display.theme;
+        match series_type {
+            SeriesType::Heatmap { data } => Self::heatmap_colorbar_request(data, theme),
+            SeriesType::Contour { data } => Self::contour_colorbar_request(data, theme),
+            SeriesType::Computed { data } => data.colorbar(theme),
+            _ => None,
+        }
+    }
+
     /// The colorbar a heatmap asks for, or `None` when it has one turned off.
+    ///
+    /// The font sizes come from the one resolver every colorbar uses, so an
+    /// unconfigured colorbar tracks the figure's theme instead of the 12/14 pt
+    /// literals this used to carry.
     pub(super) fn heatmap_colorbar_request(
         data: &crate::plots::HeatmapData,
+        theme: &crate::render::Theme,
     ) -> Option<crate::render::colorbar::ColorbarRequest> {
+        let fonts = data.config.colorbar_font_sizes(theme);
         data.config
             .colorbar
             .then(|| crate::render::colorbar::ColorbarRequest {
@@ -2299,8 +2410,8 @@ impl Plot {
                 vmax: data.vmax,
                 value_scale: data.config.value_scale,
                 label: data.config.colorbar_label.clone(),
-                tick_font_size: data.config.colorbar_tick_font_size,
-                label_font_size: data.config.colorbar_label_font_size,
+                tick_font_size: fonts.tick,
+                label_font_size: fonts.label,
                 show_log_subticks: data.config.colorbar_log_subticks,
             })
     }
@@ -2312,10 +2423,12 @@ impl Plot {
     /// same figure differently.
     pub(super) fn contour_colorbar_request(
         data: &crate::plots::ContourPlotData,
+        theme: &crate::render::Theme,
     ) -> Option<crate::render::colorbar::ColorbarRequest> {
         if !data.config.colorbar {
             return None;
         }
+        let fonts = data.config.colorbar_font_sizes(theme);
         let (vmin, vmax) = match (data.levels.first(), data.levels.last()) {
             (Some(&first), Some(&last)) => (first, last),
             _ => (0.0, 1.0),
@@ -2327,8 +2440,8 @@ impl Plot {
             vmax,
             value_scale: crate::axes::AxisScale::Linear,
             label: data.config.colorbar_label.clone(),
-            tick_font_size: data.config.colorbar_tick_font_size,
-            label_font_size: data.config.colorbar_label_font_size,
+            tick_font_size: fonts.tick,
+            label_font_size: fonts.label,
             show_log_subticks: false,
         })
     }
@@ -2460,6 +2573,203 @@ pub(super) fn histogram_bar_pixel_rect(
     )
 }
 
+// ===========================================================================
+// The categorical x axis
+// ===========================================================================
+
+/// Give a plot type a place on the categorical x axis.
+///
+/// Emits, for one config type, the *only* two knobs a categorical series has —
+/// `.category(..)` and `.x_position(..)` — on both the config itself and on
+/// `PlotBuilder`, plus the `x_center()` accessor every render path reads.
+///
+/// Writing them once is the point. Before this, `.violin(..)` had a
+/// `.category(..)` that only reached the tick labels, box plots had no category
+/// at all and drew against a meaningless 0..1 numeric axis, and each renderer
+/// picked its own "centre of the plot". A new categorical plot type now joins
+/// the axis by adding one line to the invocation below, and it cannot join it
+/// halfway.
+macro_rules! impl_category_axis {
+    ($($config:path),+ $(,)?) => {$(
+        impl $config {
+            /// Label this series with a category, shown under it on the x axis.
+            ///
+            /// Repeating a category name places this series in the slot that
+            /// name already has; a new name claims the next slot to the right,
+            /// exactly as an extra bar would.
+            pub fn category<S: Into<String>>(mut self, name: S) -> Self {
+                self.category = Some(name.into());
+                self
+            }
+
+            /// Pin this series to an explicit centre on the category axis.
+            ///
+            /// The escape hatch for layouts [`category`](Self::category()) cannot
+            /// express, such as two half-violins sharing one slot. Positions are
+            /// in slot units: slot *i* is centred on `i` and one unit wide.
+            pub fn x_position(mut self, position: f64) -> Self {
+                self.x_position = Some(position);
+                self
+            }
+
+            /// Centre of this series' category slot, in data units.
+            ///
+            /// `None` reads as slot 0 so that a series inspected before it was
+            /// added to a plot still has a well-defined position.
+            pub(crate) fn x_center(&self) -> f64 {
+                self.x_position.unwrap_or(0.0)
+            }
+        }
+
+        impl PlotBuilder<$config> {
+            /// Label this series with a category, shown under it on the x axis.
+            ///
+            /// Chain it like any other series setter — adding a second series
+            /// with a different category lays the two out side by side, the
+            /// way a grouped bar chart does.
+            pub fn category<S: Into<String>>(mut self, name: S) -> Self {
+                self.config = std::mem::take(&mut self.config).category(name);
+                self
+            }
+
+            /// Pin this series to an explicit centre on the category axis.
+            pub fn x_position(mut self, position: f64) -> Self {
+                self.config = std::mem::take(&mut self.config).x_position(position);
+                self
+            }
+        }
+    )+};
+}
+
+impl_category_axis!(
+    crate::plots::boxplot::BoxPlotConfig,
+    crate::plots::distribution::ViolinConfig,
+    crate::plots::distribution::BoxenConfig,
+);
+
+/// The category slots one series occupies, left to right.
+///
+/// A bar series occupies one slot per bar, always slots `0..n`, because a bar's
+/// position *is* its index; a distribution series occupies exactly one slot,
+/// claimed when it was added. An empty label means "this series holds a slot
+/// but has nothing to write under it", which is what stops a lone
+/// `.boxplot(&d)` from falling back to a numeric 0..1 axis.
+///
+/// Both the slot *assignment* ([`Plot::next_category_slot`]) and the slot
+/// *readback* ([`CategoryAxis::harvest`]) go through here, so a series cannot
+/// be positioned by one rule and labelled by another.
+pub(crate) fn series_category_slots(series: &SeriesType) -> Vec<(String, f64)> {
+    match series {
+        SeriesType::Bar { categories, .. } => categories
+            .iter()
+            .enumerate()
+            .map(|(index, category)| (category.clone(), index as f64))
+            .collect(),
+        SeriesType::BoxPlot { config, .. } => vec![(
+            config.category.clone().unwrap_or_default(),
+            config.x_center(),
+        )],
+        SeriesType::Violin { data } => vec![(
+            data.config.category.clone().unwrap_or_default(),
+            data.config.x_center(),
+        )],
+        SeriesType::Boxen { data } => vec![(
+            data.config.category.clone().unwrap_or_default(),
+            data.config.x_center(),
+        )],
+        // Compute-only types answer for themselves: strip and swarm hold one
+        // slot per category name, everything else holds none.
+        SeriesType::Computed { data } => data.category_slots(),
+        _ => Vec::new(),
+    }
+}
+
+/// How close two slot centres have to be to count as the same slot.
+///
+/// Slots are whole numbers unless a caller pinned one with `x_position`, so
+/// this only has to absorb float round-trips, not real spacing.
+const SLOT_TOLERANCE: f64 = 1e-9;
+
+/// The categorical x axis a figure has, if any series asked for one.
+///
+/// One harvest for every categorical plot type. The renderer used to run two:
+/// a bar-only one that assumed ordinal positions and had no way to express a
+/// gap, and a violin-only one that carried positions but which no other plot
+/// type could reach. Box plots reached neither, which is why a single box drew
+/// against a bare 0..1 numeric axis.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct CategoryAxis {
+    /// Tick label for each slot, in axis order. May be empty for a slot whose
+    /// series carries no category name.
+    pub(crate) labels: Vec<String>,
+    /// Centre of each slot, in data units, in axis order.
+    pub(crate) positions: Vec<f64>,
+}
+
+impl CategoryAxis {
+    /// Collect every category slot in the figure, or `None` if it has none.
+    ///
+    /// Slots are deduplicated by position, so two series sharing a slot (a
+    /// split violin pair, say) label it once, and the first non-empty name
+    /// wins.
+    pub(crate) fn harvest(series: &[PlotSeries]) -> Option<Self> {
+        let mut slots: Vec<(String, f64)> = Vec::new();
+        for entry in series {
+            for (label, position) in series_category_slots(&entry.series_type) {
+                let existing = slots
+                    .iter()
+                    .position(|(_, taken)| (taken - position).abs() < SLOT_TOLERANCE);
+                match existing {
+                    Some(index) => {
+                        if slots[index].0.is_empty() {
+                            slots[index].0 = label;
+                        }
+                    }
+                    None => slots.push((label, position)),
+                }
+            }
+        }
+
+        if slots.is_empty() {
+            return None;
+        }
+
+        slots.sort_by(|(_, a), (_, b)| a.total_cmp(b));
+        let (labels, positions): (Vec<String>, Vec<f64>) = slots.into_iter().unzip();
+        Some(Self { labels, positions })
+    }
+
+    /// The data-space span the axis needs to show every slot in full.
+    pub(crate) fn x_span(&self) -> (f64, f64) {
+        let first = self.positions.first().copied().unwrap_or(0.0);
+        let last = self.positions.last().copied().unwrap_or(0.0);
+        (category_slot_span(first).0, category_slot_span(last).1)
+    }
+}
+
+impl Plot {
+    /// The category slot a series added now should occupy.
+    ///
+    /// Reusing a category name reuses its slot — that is what makes two series
+    /// "the same category" — and anything else claims the next slot to the
+    /// right of everything already placed, so several box plots, violins or
+    /// boxen plots lay out side by side without the caller counting anything.
+    pub(crate) fn next_category_slot(&self, category: Option<&str>) -> f64 {
+        let Some(axis) = CategoryAxis::harvest(&self.series_mgr.series) else {
+            return 0.0;
+        };
+
+        if let Some(name) = category.filter(|name| !name.is_empty())
+            && let Some(index) = axis.labels.iter().position(|label| label.as_str() == name)
+        {
+            return axis.positions[index];
+        }
+
+        // The next slot's centre is half a slot past where the axis ends today.
+        axis.x_span().1 + CATEGORY_SLOT_HALF_WIDTH
+    }
+}
+
 /// Every pixel coordinate one box plot is drawn from.
 ///
 /// The raster, SVG and parallel backends each used to project these five
@@ -2489,12 +2799,6 @@ pub(super) struct BoxPlotPixels {
     pub upper_whisker_y: f32,
 }
 
-/// Where the box sits on the (ordinal) category axis.
-///
-/// The single-box API has no category to key off, so the box is centred in the
-/// synthetic 0..1 axis the bounds calculation produces for it.
-const BOX_PLOT_X_CENTER: f64 = 0.5;
-
 impl BoxPlotPixels {
     /// Project a computed box plot into pixels.
     ///
@@ -2512,24 +2816,33 @@ impl BoxPlotPixels {
         y_max: f64,
         y_scale: &crate::axes::AxisScale,
     ) -> Self {
-        let (x_center, _) = crate::render::skia::map_data_to_pixels_scaled(
-            BOX_PLOT_X_CENTER,
-            0.0,
-            x_min,
-            x_max,
-            y_min,
-            y_max,
-            plot_area,
-            &crate::axes::AxisScale::Linear,
-            y_scale,
-        );
-        let half_width = box_data.width_ratio * plot_area.width() * 0.5;
+        // The box is one `width_ratio` of its category slot across, measured in
+        // data units and then projected — so several boxes on one axis keep
+        // their spacing instead of each claiming a fraction of the whole panel.
+        let half_width = f64::from(box_data.width_ratio) * CATEGORY_SLOT_HALF_WIDTH;
+        let slot_x = |x: f64| {
+            crate::render::skia::map_data_to_pixels_scaled(
+                x,
+                0.0,
+                x_min,
+                x_max,
+                y_min,
+                y_max,
+                plot_area,
+                &crate::axes::AxisScale::Linear,
+                y_scale,
+            )
+            .0
+        };
+        let x_center = slot_x(box_data.x_center);
+        let box_left = slot_x(box_data.x_center - half_width);
+        let box_right = slot_x(box_data.x_center + half_width);
 
         Self {
             x_center,
-            box_left: x_center - half_width,
-            box_right: x_center + half_width,
-            cap_half_width: half_width * box_data.cap_width,
+            box_left,
+            box_right,
+            cap_half_width: (box_right - box_left) * 0.5 * box_data.cap_width,
             q1_y: box_plot_value_y(box_data.q1, plot_area, y_min, y_max, y_scale),
             median_y: box_plot_value_y(box_data.median, plot_area, y_min, y_max, y_scale),
             q3_y: box_plot_value_y(box_data.q3, plot_area, y_min, y_max, y_scale),
@@ -3123,9 +3436,9 @@ mod axis_scale_geometry_tests {
         // linearly-positioned box.
         let plot_area = area();
         let data = box_data();
-        let log = BoxPlotPixels::new(&data, plot_area, 0.0, 1.0, 1.0, 1000.0, &AxisScale::Log);
+        let log = BoxPlotPixels::new(&data, plot_area, -0.5, 0.5, 1.0, 1000.0, &AxisScale::Log);
         let linear =
-            BoxPlotPixels::new(&data, plot_area, 0.0, 1.0, 1.0, 1000.0, &AxisScale::Linear);
+            BoxPlotPixels::new(&data, plot_area, -0.5, 0.5, 1.0, 1000.0, &AxisScale::Linear);
 
         for (label, drawn, value) in [
             ("median", log.median_y, data.median),
@@ -3155,7 +3468,7 @@ mod axis_scale_geometry_tests {
     fn test_boxplot_outliers_use_the_same_projection_as_its_whiskers() {
         let plot_area = area();
         let data = box_data();
-        let pixels = BoxPlotPixels::new(&data, plot_area, 0.0, 1.0, 1.0, 1000.0, &AxisScale::Log);
+        let pixels = BoxPlotPixels::new(&data, plot_area, -0.5, 0.5, 1.0, 1000.0, &AxisScale::Log);
 
         assert!(
             (box_plot_value_y(data.max, plot_area, 1.0, 1000.0, &AxisScale::Log)
@@ -3508,5 +3821,280 @@ mod axis_scale_geometry_tests {
             .bar(&["a", "b"], &[1.0, 2.0])
             .render()
             .expect("a bar chart on linear axes must render");
+    }
+}
+
+#[cfg(test)]
+mod category_axis_tests {
+    use super::*;
+    use crate::plots::boxplot::{BoxPlotConfig, calculate_box_plot};
+
+    fn samples() -> Vec<f64> {
+        vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]
+    }
+
+    fn boxplot_series(plot: Plot, category: &str) -> Plot {
+        plot.add_box_plot_series(
+            PlotData::Static(samples()),
+            BoxPlotConfig::new().category(category),
+            crate::core::plot::builder::SeriesStyle::default(),
+        )
+    }
+
+    #[test]
+    fn distinct_categories_claim_consecutive_slots() {
+        // The defect: several boxes could not be laid out side by side at all.
+        let plot = boxplot_series(boxplot_series(Plot::new(), "control"), "treated");
+        let axis = CategoryAxis::harvest(&plot.series_mgr.series).expect("a category axis");
+
+        assert_eq!(
+            axis.labels,
+            vec!["control".to_string(), "treated".to_string()]
+        );
+        assert_eq!(axis.positions, vec![0.0, 1.0]);
+        // Exactly the span a two-category bar chart asks for.
+        assert_eq!(axis.x_span(), (-0.5, 1.5));
+    }
+
+    #[test]
+    fn a_repeated_category_reuses_its_slot() {
+        // Two series in one category is what "grouped" means; they must not
+        // drift apart onto two slots with the same name.
+        let plot = boxplot_series(boxplot_series(Plot::new(), "control"), "control");
+        let axis = CategoryAxis::harvest(&plot.series_mgr.series).expect("a category axis");
+
+        assert_eq!(axis.labels, vec!["control".to_string()]);
+        assert_eq!(axis.positions, vec![0.0]);
+    }
+
+    #[test]
+    fn distributions_continue_the_slots_a_bar_series_already_took() {
+        // Bars and box plots share one axis, so a box added after a two-bar
+        // series lands beside them rather than on top of the first bar.
+        let bars = Plot::new().add_bar_series(
+            vec!["a".to_string(), "b".to_string()],
+            PlotData::Static(vec![1.0, 2.0]),
+            &crate::plots::basic::BarConfig::default(),
+            crate::core::plot::builder::SeriesStyle::default(),
+        );
+        let plot = boxplot_series(bars, "c");
+        let axis = CategoryAxis::harvest(&plot.series_mgr.series).expect("a category axis");
+
+        assert_eq!(
+            axis.labels,
+            vec!["a".to_string(), "b".to_string(), "c".to_string()]
+        );
+        assert_eq!(axis.positions, vec![0.0, 1.0, 2.0]);
+    }
+
+    #[test]
+    fn an_uncategorised_box_still_holds_a_slot() {
+        // `.boxplot(&d)` with no category used to fall through to a numeric
+        // 0..1 axis reading "0, 0.2, ... 1.0" and meaning nothing. It now owns
+        // slot 0 with an empty label, so the axis has nothing to write.
+        let plot = Plot::new().add_box_plot_series(
+            PlotData::Static(samples()),
+            BoxPlotConfig::new(),
+            crate::core::plot::builder::SeriesStyle::default(),
+        );
+        let axis = CategoryAxis::harvest(&plot.series_mgr.series).expect("a category axis");
+
+        assert_eq!(axis.labels, vec![String::new()]);
+        assert_eq!(axis.positions, vec![0.0]);
+        assert_eq!(axis.x_span(), (-0.5, 0.5));
+    }
+
+    /// The multi-slot categorical types — the two whose *only* input is a list
+    /// of category names — put the names the caller passed on the same axis.
+    ///
+    /// They used to reach no harvest at all, so `.strip(&["A", "B", "C"], ..)`
+    /// printed `-0.5, 0, 0.5, 1 …` under three columns plainly labelled by the
+    /// caller, which is the one thing a category axis exists to prevent.
+    #[test]
+    fn strip_and_swarm_put_their_category_names_on_the_axis() {
+        let categories = ["A", "A", "B", "C"];
+        let values = [1.0, 2.0, 3.0, 4.0];
+        for plot in [
+            Plot::new().strip(&categories, &values).finalize(),
+            Plot::new().swarm(&categories, &values).finalize(),
+        ] {
+            let axis = CategoryAxis::harvest(&plot.series_mgr.series)
+                .expect("a categorical plot type must produce a category axis");
+
+            assert_eq!(
+                axis.labels,
+                vec!["A".to_string(), "B".to_string(), "C".to_string()]
+            );
+            assert_eq!(axis.positions, vec![0.0, 1.0, 2.0]);
+            assert_eq!(axis.x_span(), (-0.5, 2.5));
+        }
+    }
+
+    /// A dendrogram's leaf axis is a category axis too: the labels belong under
+    /// the leaves, not a second set of numbers beside them.
+    #[test]
+    fn a_dendrogram_labels_its_leaves() {
+        let distances = crate::stats::clustering::pdist_euclidean(&[
+            vec![0.0, 0.0],
+            vec![0.1, 0.0],
+            vec![5.0, 0.0],
+        ]);
+        let tree = crate::stats::clustering::linkage(
+            &distances,
+            crate::stats::clustering::LinkageMethod::Average,
+        );
+        let plot = Plot::new().dendrogram(&tree).finalize();
+        let axis = CategoryAxis::harvest(&plot.series_mgr.series).expect("a category axis");
+
+        assert_eq!(axis.positions, vec![0.0, 1.0, 2.0]);
+        assert_eq!(axis.labels.len(), 3);
+        let mut sorted = axis.labels.clone();
+        sorted.sort();
+        assert_eq!(
+            sorted,
+            vec!["0".to_string(), "1".to_string(), "2".to_string()],
+            "every leaf must be named exactly once"
+        );
+    }
+
+    #[test]
+    fn a_figure_with_no_categorical_series_has_no_category_axis() {
+        let xs = vec![0.0, 1.0];
+        let mut plot = Plot::new();
+        plot.add_line(&xs, &xs).expect("a line series");
+        assert!(CategoryAxis::harvest(&plot.series_mgr.series).is_none());
+    }
+
+    #[test]
+    fn an_explicit_x_position_overrides_the_automatic_slot() {
+        let plot = Plot::new().add_box_plot_series(
+            PlotData::Static(samples()),
+            BoxPlotConfig::new().category("only").x_position(3.0),
+            crate::core::plot::builder::SeriesStyle::default(),
+        );
+        let axis = CategoryAxis::harvest(&plot.series_mgr.series).expect("a category axis");
+
+        assert_eq!(axis.positions, vec![3.0]);
+        assert_eq!(axis.x_span(), (2.5, 3.5));
+    }
+
+    fn violin_series(plot: Plot, category: &str) -> Plot {
+        let config = crate::plots::ViolinConfig::new().category(category);
+        let data =
+            crate::plots::ViolinData::from_values(&samples(), &config).expect("violin statistics");
+        plot.add_violin_series(data, crate::core::plot::builder::SeriesStyle::default())
+    }
+
+    fn boxen_series(plot: Plot, category: &str) -> Plot {
+        let config = crate::plots::BoxenConfig::new().category(category);
+        let data = crate::plots::compute_boxen(&samples(), &config);
+        plot.add_boxen_series(data, crate::core::plot::builder::SeriesStyle::default())
+    }
+
+    #[test]
+    fn every_distribution_type_lands_on_the_same_axis() {
+        // Box plot, violin and boxen all sit in unit slots on one axis; a
+        // per-type convention here is exactly what let them drift before.
+        let plot = boxen_series(
+            violin_series(boxplot_series(Plot::new(), "box"), "violin"),
+            "boxen",
+        );
+        let axis = CategoryAxis::harvest(&plot.series_mgr.series).expect("a category axis");
+
+        assert_eq!(
+            axis.labels,
+            vec!["box".to_string(), "violin".to_string(), "boxen".to_string()]
+        );
+        assert_eq!(axis.positions, vec![0.0, 1.0, 2.0]);
+    }
+
+    #[test]
+    fn a_box_is_drawn_at_the_centre_of_its_own_slot() {
+        // Two categories, so the axis runs -0.5..1.5 and each slot is half the
+        // panel wide. The second box must sit in the right half.
+        let plot_area =
+            tiny_skia::Rect::from_xywh(0.0, 0.0, 200.0, 100.0).expect("valid plot area");
+        let first = calculate_box_plot(&samples(), &BoxPlotConfig::new().x_position(0.0))
+            .expect("box statistics");
+        let second = calculate_box_plot(&samples(), &BoxPlotConfig::new().x_position(1.0))
+            .expect("box statistics");
+
+        let left = BoxPlotPixels::new(
+            &first,
+            plot_area,
+            -0.5,
+            1.5,
+            0.0,
+            10.0,
+            &crate::axes::AxisScale::Linear,
+        );
+        let right = BoxPlotPixels::new(
+            &second,
+            plot_area,
+            -0.5,
+            1.5,
+            0.0,
+            10.0,
+            &crate::axes::AxisScale::Linear,
+        );
+
+        assert!((left.x_center - 50.0).abs() < 1e-3, "{}", left.x_center);
+        assert!((right.x_center - 150.0).abs() < 1e-3, "{}", right.x_center);
+        // The boxes must not overlap: each is `width_ratio` of its own slot.
+        assert!(left.box_right < right.box_left);
+    }
+
+    #[test]
+    fn box_width_is_a_fraction_of_one_slot_not_of_the_panel() {
+        // `width_ratio` used to be applied to the whole panel width, so adding
+        // a second category silently doubled every box's apparent width.
+        let plot_area =
+            tiny_skia::Rect::from_xywh(0.0, 0.0, 200.0, 100.0).expect("valid plot area");
+        let data = calculate_box_plot(&samples(), &BoxPlotConfig::new().width_ratio(0.5))
+            .expect("box statistics");
+
+        let alone = BoxPlotPixels::new(
+            &data,
+            plot_area,
+            -0.5,
+            0.5,
+            0.0,
+            10.0,
+            &crate::axes::AxisScale::Linear,
+        );
+        let paired = BoxPlotPixels::new(
+            &data,
+            plot_area,
+            -0.5,
+            1.5,
+            0.0,
+            10.0,
+            &crate::axes::AxisScale::Linear,
+        );
+
+        // One slot of 200 px vs one slot of 100 px, both half-filled.
+        assert!((alone.box_right - alone.box_left - 100.0).abs() < 1e-3);
+        assert!((paired.box_right - paired.box_left - 50.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn grouped_boxen_widens_the_axis_and_separates_the_boxes() {
+        // End-to-end: bounds, geometry and spacing for the one distribution
+        // family whose bounds already flow through `PlotData::data_bounds`.
+        use crate::plots::traits::PlotData as _;
+
+        let plot = boxen_series(boxen_series(Plot::new(), "a"), "b");
+
+        let bounds: Vec<(f64, f64)> = plot
+            .series_mgr
+            .series
+            .iter()
+            .map(|series| match &series.series_type {
+                SeriesType::Boxen { data } => data.data_bounds().0,
+                other => panic!("expected boxen series, got {other:?}"),
+            })
+            .collect();
+
+        assert_eq!(bounds, vec![(-0.5, 0.5), (0.5, 1.5)]);
     }
 }

@@ -11,7 +11,10 @@
 //! - [`PlotRender`] for `StripData`
 
 use crate::core::Result;
-use crate::plots::traits::{PlotArea, PlotCompute, PlotConfig, PlotData, PlotRender};
+use crate::plots::traits::{
+    AxisScaleSupport, ComputedSeries, ComputedStyle, LegendKey, PlotArea, PlotCompute, PlotConfig,
+    PlotData, PlotPrimitive, PlotRender, draw_primitives,
+};
 use crate::render::skia::SkiaRenderer;
 use crate::render::{Color, MarkerStyle, Theme};
 
@@ -20,7 +23,7 @@ use crate::render::{Color, MarkerStyle, Theme};
 pub struct StripConfig {
     /// Jitter amount (0.0-1.0 as fraction of category spacing)
     pub jitter: f64,
-    /// Marker size
+    /// Marker size, in **points**
     pub size: f32,
     /// Marker color (None for auto)
     pub color: Option<Color>,
@@ -68,7 +71,7 @@ impl StripConfig {
         self
     }
 
-    /// Set marker size
+    /// Set marker size, in points
     pub fn size(mut self, size: f32) -> Self {
         self.size = size.max(0.1);
         self
@@ -243,6 +246,9 @@ pub struct StripData {
     pub points: Vec<StripPoint>,
     /// Number of categories
     pub num_categories: usize,
+    /// Name of each category, in slot order. Empty when the caller supplied
+    /// bare slot indices, in which case the axis has nothing to print.
+    pub category_names: Vec<String>,
     /// Configuration used to compute this data
     pub(crate) config: StripConfig,
 }
@@ -255,6 +261,8 @@ pub struct StripInput<'a> {
     pub values: &'a [f64],
     /// Optional group indices
     pub groups: Option<&'a [usize]>,
+    /// Optional category names, in slot order, for the category axis.
+    pub names: Option<&'a [String]>,
 }
 
 impl<'a> StripInput<'a> {
@@ -264,12 +272,20 @@ impl<'a> StripInput<'a> {
             categories,
             values,
             groups: None,
+            names: None,
         }
     }
 
     /// Add groups
     pub fn with_groups(mut self, groups: &'a [usize]) -> Self {
         self.groups = Some(groups);
+        self
+    }
+
+    /// Name each category slot, so the x axis prints the names the caller used
+    /// instead of the slot numbers.
+    pub fn with_names(mut self, names: &'a [String]) -> Self {
+        self.names = Some(names);
         self
     }
 }
@@ -292,6 +308,7 @@ impl PlotCompute for Strip {
         Ok(StripData {
             points,
             num_categories,
+            category_names: input.names.map(<[String]>::to_vec).unwrap_or_default(),
             config: config.clone(),
         })
     }
@@ -307,6 +324,75 @@ impl PlotData for StripData {
     }
 }
 
+impl ComputedSeries for StripData {
+    fn kind(&self) -> &'static str {
+        "strip"
+    }
+
+    fn point_count(&self) -> usize {
+        self.points.len()
+    }
+
+    /// One slot per category, centred on its index — the same unit-wide slots
+    /// bars and box plots use, so the names the caller passed get printed under
+    /// the columns instead of raw numbers.
+    fn category_slots(&self) -> Vec<(String, f64)> {
+        match self.config.orientation {
+            StripOrientation::Vertical => {
+                crate::plots::boxplot::category_slots(&self.category_names, self.num_categories)
+            }
+            // The shared category axis is the x axis; a horizontal strip puts
+            // its categories on y, which that machinery cannot place yet.
+            StripOrientation::Horizontal => Vec::new(),
+        }
+    }
+
+    /// A cloud of markers, so the key is a marker — a line swatch would claim
+    /// the observations are joined up, which is the one thing a strip plot is
+    /// deliberately not doing.
+    fn legend_key(&self) -> LegendKey {
+        LegendKey::Marker
+    }
+
+    /// The category axis carries ordinal slots, so it has no quantitative
+    /// spacing to take a logarithm of; the value axis is projected and scales
+    /// freely. Same rule, same wording, as a bar chart's.
+    fn axis_scale_support(&self) -> (AxisScaleSupport, AxisScaleSupport) {
+        match self.config.orientation {
+            StripOrientation::Vertical => (AxisScaleSupport::ORDINAL, AxisScaleSupport::Scaled),
+            StripOrientation::Horizontal => (AxisScaleSupport::Scaled, AxisScaleSupport::ORDINAL),
+        }
+    }
+
+    /// One marker per observation, at the position the layout already chose.
+    fn primitives(&self, area: &PlotArea, style: &ComputedStyle) -> Vec<PlotPrimitive> {
+        let config = &self.config;
+        let base = config.color.unwrap_or(style.color);
+        // The configured alpha and the series alpha compose, so a translucent
+        // cloud stays translucent when the series is faded further.
+        let color = base
+            .with_alpha((f32::from(base.a) / 255.0) * config.alpha * style.alpha.clamp(0.0, 1.0));
+        // `size` is in points, like every other marker size in the crate; the
+        // render scale is what keeps the dots the same physical size at any DPI.
+        let size_px = style.scale.points_to_pixels(config.size);
+
+        self.points
+            .iter()
+            .filter_map(|point| {
+                // A point the axes cannot place has no position, so it is
+                // dropped rather than drawn at a NaN pixel.
+                let at = area.try_data_to_screen(point.x, point.y)?;
+                Some(PlotPrimitive::Marker {
+                    at,
+                    size_px,
+                    style: MarkerStyle::Circle,
+                    color,
+                })
+            })
+            .collect()
+    }
+}
+
 impl PlotRender for StripData {
     fn render(
         &self,
@@ -315,19 +401,26 @@ impl PlotRender for StripData {
         _theme: &Theme,
         color: Color,
     ) -> Result<()> {
-        if self.points.is_empty() {
-            return Ok(());
-        }
+        let style = ComputedStyle::opaque(renderer.render_scale(), color);
+        draw_primitives(renderer, &self.primitives(area, &style))
+    }
 
-        let config = &self.config;
-        let point_color = config.color.unwrap_or(color).with_alpha(config.alpha);
-
-        for point in &self.points {
-            let (px, py) = area.data_to_screen(point.x, point.y);
-            renderer.draw_marker(px, py, config.size, MarkerStyle::Circle, point_color)?;
-        }
-
-        Ok(())
+    fn render_styled(
+        &self,
+        renderer: &mut SkiaRenderer,
+        area: &PlotArea,
+        _theme: &Theme,
+        color: Color,
+        alpha: f32,
+        _line_width: Option<f32>,
+    ) -> Result<()> {
+        let style = ComputedStyle {
+            scale: renderer.render_scale(),
+            color,
+            alpha,
+            line_width: None,
+        };
+        draw_primitives(renderer, &self.primitives(area, &style))
     }
 }
 
@@ -451,6 +544,50 @@ mod tests {
         let result = Strip::compute(input, &config);
 
         assert!(result.is_err());
+    }
+
+    fn strip_ink(dpi_scale: f32) -> usize {
+        let categories = vec![0, 1, 2];
+        let values = vec![1.0, 5.0, 3.0];
+        let data = Strip::compute(
+            StripInput::new(&categories, &values),
+            &StripConfig::default(),
+        )
+        .unwrap();
+
+        let mut renderer = SkiaRenderer::new(200, 200, Theme::default()).unwrap();
+        renderer.set_dpi_scale(dpi_scale);
+        let ((x_min, x_max), (y_min, y_max)) = data.data_bounds();
+        // Inset so every marker is fully on canvas at both render scales.
+        let area = PlotArea::new(20.0, 20.0, 160.0, 160.0, x_min, x_max, y_min, y_max);
+        data.render(
+            &mut renderer,
+            &area,
+            &Theme::default(),
+            Color::from_rgb(200, 0, 0),
+        )
+        .unwrap();
+
+        renderer
+            .into_image()
+            .pixels
+            .chunks_exact(4)
+            .filter(|p| p[3] > 0 && (p[0] < 250 || p[1] < 250 || p[2] < 250))
+            .count()
+    }
+
+    #[test]
+    fn test_strip_markers_keep_their_physical_size_at_higher_dpi() {
+        // `size` is in points like every other marker size in the crate, so
+        // doubling the render scale must double the dot diameter. Passing the
+        // raw number through as pixels left the dots the same size at 300 DPI.
+        let single = strip_ink(1.0);
+        let double = strip_ink(2.0);
+
+        assert!(
+            double > single * 2,
+            "strip markers did not grow with DPI ({double} vs {single} inked pixels)"
+        );
     }
 
     #[test]

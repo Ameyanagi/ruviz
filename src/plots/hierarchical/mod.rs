@@ -1,13 +1,22 @@
-//! Hierarchical plot types — **compute only, not drawable**.
+//! Hierarchical plot types (dendrogram).
+//!
+//! `Plot::dendrogram` draws one as an ordinary series, on the same chain every
+//! other plot type uses:
+//!
+//! ```text
+//! Plot::new().dendrogram(&linkage).label("clusters").legend_best().save("tree.png")?
+//! ```
 //!
 //! [`compute_dendrogram`] turns a [`Linkage`](crate::stats::Linkage) into node
-//! positions and [`dendrogram_lines`] turns those into line segments. There is
-//! **no renderer and no `Plot` builder method**, so a dendrogram cannot be
-//! drawn through the public API — you would have to place the segments
-//! yourself. Clustermaps do not exist at all.
+//! positions, [`dendrogram_lines`] turns those into line segments, and
+//! [`DendrogramPlotData`] implements
+//! [`ComputedSeries`](crate::plots::ComputedSeries), which is how the builder
+//! carries it and how both the raster and SVG backends draw it. See
+//! [`crate::plots`] for the full reachability table.
 //!
-//! Wiring this up is Phase 10 of
-//! `docs/roadmaps/ruviz-audit-remediation-plan.md`; it needs `add_axes`.
+//! Clustermaps (a dendrogram gutter attached to a heatmap) do not exist at all;
+//! they need arbitrary-rectangle axes, tracked as `add_axes` in
+//! `docs/roadmaps/ruviz-audit-remediation-plan.md`.
 
 pub mod dendrogram;
 

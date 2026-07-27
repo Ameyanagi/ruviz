@@ -255,7 +255,7 @@ pub(crate) fn draw_colorbar<C: ColorbarCanvas + ?Sized>(
 /// and SVG heatmap paths — and the raster and SVG contour paths — share one
 /// answer for "what does this colorbar say?".
 #[derive(Debug, Clone)]
-pub(crate) struct ColorbarRequest {
+pub struct ColorbarRequest {
     /// Ramp the strip is sampled from.
     pub colormap: crate::render::ColorMap,
     /// Value at the bottom of the strip.

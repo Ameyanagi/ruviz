@@ -875,6 +875,7 @@ fn test_categorical_axis_labels_honour_the_y_scale() {
         .draw_axis_labels_at_categorical(
             &plot_area,
             &["a".to_string(), "b".to_string()],
+            &[0.0, 1.0],
             -0.5,
             1.5,
             1.0,

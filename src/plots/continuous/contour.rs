@@ -12,6 +12,7 @@
 
 use crate::core::Result;
 use crate::core::style_utils::StyleResolver;
+use crate::plots::heatmap::ColorbarFontSizes;
 use crate::plots::traits::{PlotArea, PlotCompute, PlotConfig, PlotData, PlotRender};
 use crate::render::skia::SkiaRenderer;
 use crate::render::{Color, ColorMap, ColorMapSpec, LineStyle, Theme};
@@ -68,10 +69,14 @@ pub struct ContourConfig {
     pub colorbar: bool,
     /// Label for the colorbar
     pub colorbar_label: Option<String>,
-    /// Font size for colorbar tick labels (in points)
-    pub colorbar_tick_font_size: f32,
-    /// Font size for colorbar label (in points)
-    pub colorbar_label_font_size: f32,
+    /// Font size for colorbar tick labels, in points
+    ///
+    /// `None` follows the theme; see [`ColorbarFontSizes`].
+    pub colorbar_tick_font_size: Option<f32>,
+    /// Font size for the colorbar label, in points
+    ///
+    /// `None` follows the theme; see [`ColorbarFontSizes`].
+    pub colorbar_label_font_size: Option<f32>,
 }
 
 impl Default for ContourConfig {
@@ -96,8 +101,9 @@ impl Default for ContourConfig {
             // filled contours read the same way heatmaps do.
             colorbar: true,
             colorbar_label: None,
-            colorbar_tick_font_size: 10.0,
-            colorbar_label_font_size: 11.0,
+            // Unset: the theme's tick and axis-label sizes. See `ColorbarFontSizes`.
+            colorbar_tick_font_size: None,
+            colorbar_label_font_size: None,
         }
     }
 }
@@ -224,20 +230,36 @@ impl ContourConfig {
         self
     }
 
-    /// Set the colorbar tick font size (in points)
+    /// Set the colorbar tick font size, in points.
     ///
-    /// Default is 10.0pt to match axis tick labels.
+    /// Unset by default, which follows the theme's tick label size.
     pub fn colorbar_tick_font_size(mut self, size: f32) -> Self {
-        self.colorbar_tick_font_size = size.max(1.0);
+        self.colorbar_tick_font_size = Some(size.max(1.0));
         self
     }
 
-    /// Set the colorbar label font size (in points)
+    /// Set the colorbar label font size, in points.
     ///
-    /// Default is 11.0pt, slightly larger than tick labels.
+    /// Unset by default, which follows the theme's axis label size.
     pub fn colorbar_label_font_size(mut self, size: f32) -> Self {
-        self.colorbar_label_font_size = size.max(1.0);
+        self.colorbar_label_font_size = Some(size.max(1.0));
         self
+    }
+
+    /// The font sizes this colorbar is drawn at, with unset sizes taken from
+    /// `theme`.
+    ///
+    /// Shares [`ColorbarFontSizes`] with [`HeatmapConfig`], so a contour
+    /// colorbar and a heatmap colorbar under the same theme are the same size
+    /// by construction.
+    ///
+    /// [`HeatmapConfig`]: crate::plots::heatmap::HeatmapConfig
+    pub fn colorbar_font_sizes(&self, theme: &Theme) -> ColorbarFontSizes {
+        ColorbarFontSizes::resolve(
+            self.colorbar_tick_font_size,
+            self.colorbar_label_font_size,
+            theme,
+        )
     }
 }
 
@@ -954,6 +976,38 @@ mod tests {
             ContourInterpolation::default(),
             ContourInterpolation::Linear
         );
+    }
+
+    /// A colorbar with no explicit sizes follows the theme, and it follows the
+    /// *same* theme fields a heatmap colorbar does. Before this, contour was
+    /// pinned at 10/11 pt and heatmap at 12/14 pt, so the two colorbars in one
+    /// figure disagreed and neither tracked `Theme::ieee`'s 8 pt ticks.
+    #[test]
+    fn colorbar_fonts_default_to_the_theme_and_match_heatmap() {
+        use crate::plots::heatmap::HeatmapConfig;
+
+        for theme in [Theme::default(), Theme::ieee(), Theme::publication()] {
+            let contour = ContourConfig::default().colorbar_font_sizes(&theme);
+            let heatmap = HeatmapConfig::default().colorbar_font_sizes(&theme);
+            assert_eq!(contour, heatmap, "one colorbar look, not two");
+            assert_eq!(contour.tick, theme.tick_label_font_size);
+            assert_eq!(contour.label, theme.axis_label_font_size);
+        }
+    }
+
+    /// An explicit size still wins, and only the size that was set changes.
+    #[test]
+    fn explicit_colorbar_fonts_override_the_theme() {
+        let theme = Theme::ieee();
+        let sizes = ContourConfig::default()
+            .colorbar_tick_font_size(20.0)
+            .colorbar_font_sizes(&theme);
+        assert_eq!(sizes.tick, 20.0);
+        assert_eq!(sizes.label, theme.axis_label_font_size);
+
+        // A degenerate request is clamped, not accepted.
+        let clamped = ContourConfig::default().colorbar_label_font_size(0.0);
+        assert_eq!(clamped.colorbar_font_sizes(&theme).label, 1.0);
     }
 
     fn make_test_grid() -> (Vec<f64>, Vec<f64>, Vec<f64>) {

@@ -12,6 +12,27 @@ use super::builder::Series3D;
 use super::resolve::ResolvedFrame3D;
 use super::types::PreparedCamera3D;
 
+/// Length of a tick mark, in points at 72 dpi.
+const TICK_MARK_LENGTH_PT: f32 = 4.0;
+
+/// Gap between the end of a tick mark and the near edge of its label.
+const TICK_LABEL_GAP_PT: f32 = 5.0;
+
+/// Gap between the outermost tick label and the axis label beyond it.
+const AXIS_LABEL_GAP_PT: f32 = 6.0;
+
+/// Breathing room between the outermost label and the edge of the canvas.
+const LABEL_EDGE_PAD_PT: f32 = 6.0;
+
+/// Distance from the top of the canvas to the centre of the title.
+const TITLE_CENTER_PT: f32 = 8.0;
+
+/// Largest share of the canvas one margin may claim.
+///
+/// A pathological label — a 40-character unit string on a small figure — must
+/// not shrink the scene to nothing.
+const MAX_MARGIN_FRACTION: f32 = 0.30;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Viewport3D {
     pub(crate) x: u32,
@@ -139,153 +160,33 @@ impl Axis3Layout {
             });
         }
 
+        let line_scale = frame.figure.dpi / 72.0;
+        // Ticks are located once and then used both to fit the viewport and to
+        // draw the labels, so the frame always reserves room for the text it
+        // actually prints.
+        let ticks = axis_ticks(frame);
         let decorations = decoration_sources(frame);
         let decoration_width = decoration_band_width(frame, &decorations, canvas_width)?;
-        let viewport = axis_viewport(frame, canvas_width, canvas_height, decoration_width);
-        let camera = frame
-            .camera
-            .prepare(viewport.width as f32 / viewport.height as f32, frame.bounds)?;
-        let corners = projected_box_corners(camera, viewport)?;
-        let anchor_index = outer_anchor_corner(&corners);
-        let anchor_signs = corner_signs(anchor_index);
-        let center = project_local(Vec3::ZERO, camera, viewport)?;
-        let line_scale = frame.figure.dpi / 72.0;
-
-        let mut panes = Vec::with_capacity(3);
-        for axis in 0..3 {
-            let indices = face_corner_indices(anchor_index, axis);
-            panes.push(
-                [
-                    corners[indices[0]],
-                    corners[indices[1]],
-                    corners[indices[2]],
-                    corners[indices[3]],
-                ]
-                .map(|point| Vec2::new(point.x, point.y)),
-            );
-        }
-
-        let edge_indices = [
-            [0, 1],
-            [0, 2],
-            [0, 4],
-            [1, 3],
-            [1, 5],
-            [2, 3],
-            [2, 6],
-            [3, 7],
-            [4, 5],
-            [4, 6],
-            [5, 7],
-            [6, 7],
-        ];
-        let box_edges = edge_indices
-            .into_iter()
-            .map(|[start, end]| OverlayLine3D {
-                start: Vec2::new(corners[start].x, corners[start].y),
-                end: Vec2::new(corners[end].x, corners[end].y),
-            })
-            .collect();
-
-        let ranges = [
-            (frame.bounds.min.x, frame.bounds.max.x),
-            (frame.bounds.min.y, frame.bounds.max.y),
-            (frame.bounds.min.z, frame.bounds.max.z),
-        ];
-        let labels = [
-            frame.xlabel.as_deref(),
-            frame.ylabel.as_deref(),
-            frame.zlabel.as_deref(),
-        ];
-        let mut grid_lines = Vec::new();
-        let mut tick_marks = Vec::new();
-        let mut tick_labels = Vec::new();
-        let mut axis_labels = Vec::new();
-
-        for axis in 0..3 {
-            let mut tick_values = generate_ticks(ranges[axis].0, ranges[axis].1, 6);
-            tick_values.dedup_by(|left, right| left.to_bits() == right.to_bits());
-            let formatted = format_tick_labels(&tick_values);
-            let axis_start = local_corner(anchor_signs);
-            let mut axis_end = axis_start;
-            axis_end[axis] = -axis_end[axis];
-            let projected_start = project_local(axis_start, camera, viewport)?;
-            let projected_end = project_local(axis_end, camera, viewport)?;
-            let edge_midpoint = Vec2::new(
-                (projected_start.x + projected_end.x) * 0.5,
-                (projected_start.y + projected_end.y) * 0.5,
-            );
-            let edge_outward = outward_direction(
-                edge_midpoint,
-                Vec2::new(center.x, center.y),
-                Vec2::new(
-                    projected_end.x - projected_start.x,
-                    projected_end.y - projected_start.y,
-                ),
-            );
-
-            for (&value, text) in tick_values.iter().zip(formatted) {
-                let parameter = normalized_tick(value, ranges[axis]);
-                let mut local = axis_start;
-                local[axis] = parameter;
-                let projected = project_local(local, camera, viewport)?;
-                let position = Vec2::new(projected.x, projected.y);
-                let outward = outward_direction(
-                    position,
-                    Vec2::new(center.x, center.y),
-                    Vec2::new(
-                        projected_end.x - projected_start.x,
-                        projected_end.y - projected_start.y,
-                    ),
-                );
-                tick_marks.push(OverlayLine3D {
-                    start: position,
-                    end: position + outward * (4.0 * line_scale),
-                });
-                let candidate = OverlayText3D {
-                    text,
-                    position: position + outward * (9.0 * line_scale),
-                    centered: true,
-                };
-                push_text_avoiding_overlap(
-                    &mut tick_labels,
-                    candidate,
-                    outward,
-                    frame.theme.tick_label_font_size * line_scale,
-                );
-
-                for other_axis in 0..3 {
-                    if other_axis == axis {
-                        continue;
-                    }
-                    let mut grid_end = local;
-                    grid_end[other_axis] = -grid_end[other_axis];
-                    let projected_grid_end = project_local(grid_end, camera, viewport)?;
-                    grid_lines.push(OverlayLine3D {
-                        start: position,
-                        end: Vec2::new(projected_grid_end.x, projected_grid_end.y),
-                    });
-                }
-            }
-
-            if let Some(label) = labels[axis].filter(|label| !label.is_empty()) {
-                axis_labels.push(OverlayText3D {
-                    text: label.to_string(),
-                    position: edge_midpoint + edge_outward * (28.0 * line_scale),
-                    centered: true,
-                });
-            }
-        }
-
-        let title = frame
-            .title
-            .as_ref()
-            .filter(|title| !title.is_empty())
-            .map(|title| OverlayText3D {
-                text: title.clone(),
-                position: Vec2::new(canvas_width as f32 * 0.5, 8.0 * line_scale),
-                centered: true,
-            });
+        let title = title_overlay(frame, canvas_width, line_scale);
+        let limits = InkLimits3D::new(
+            canvas_width,
+            canvas_height,
+            decoration_width,
+            title_band_height(frame, line_scale),
+            LABEL_EDGE_PAD_PT * line_scale,
+        );
+        let scene = fit_scene(frame, &ticks, &limits, canvas_width, canvas_height)?;
+        let Scene3D {
+            viewport,
+            camera,
+            panes,
+            grid_lines,
+            box_edges,
+            tick_marks,
+            tick_labels,
+            axis_labels,
+            ..
+        } = scene;
         let (legend, colorbars) = resolve_decorations(frame, viewport, canvas_width, &decorations)?;
 
         Ok(Self {
@@ -308,7 +209,463 @@ impl Axis3Layout {
     pub(crate) fn project_local(&self, local: Vec3) -> Result<ScreenPoint3D> {
         project_local(local, self.camera, self.viewport)
     }
+}
 
+/// Everything the axes contribute to one frame, laid out at one viewport.
+///
+/// Producing this is a pure function of the viewport, which is what lets the
+/// viewport be *measured* rather than guessed: [`fit_scene`] lays the scene out,
+/// looks at where the labels actually landed, and hands back the room they
+/// turned out to need.
+struct Scene3D {
+    viewport: Viewport3D,
+    camera: PreparedCamera3D,
+    panes: Vec<[Vec2; 4]>,
+    grid_lines: Vec<OverlayLine3D>,
+    box_edges: Vec<OverlayLine3D>,
+    tick_marks: Vec<OverlayLine3D>,
+    tick_labels: Vec<OverlayText3D>,
+    axis_labels: Vec<OverlayText3D>,
+    /// Bounding box of every line and glyph above, in canvas pixels.
+    ink: InkBox3D,
+}
+
+/// `(min_x, min_y, max_x, max_y)` of everything drawn for the axes.
+#[derive(Clone, Copy, Debug)]
+struct InkBox3D {
+    min_x: f32,
+    min_y: f32,
+    max_x: f32,
+    max_y: f32,
+}
+
+impl InkBox3D {
+    fn empty() -> Self {
+        Self {
+            min_x: f32::INFINITY,
+            min_y: f32::INFINITY,
+            max_x: f32::NEG_INFINITY,
+            max_y: f32::NEG_INFINITY,
+        }
+    }
+
+    fn add_point(&mut self, point: Vec2) {
+        if !point.is_finite() {
+            return;
+        }
+        self.min_x = self.min_x.min(point.x);
+        self.min_y = self.min_y.min(point.y);
+        self.max_x = self.max_x.max(point.x);
+        self.max_y = self.max_y.max(point.y);
+    }
+
+    /// A centred glyph run straddles its position, so it reaches half its
+    /// measured size in every direction. This is the *same* measurement the
+    /// label offsets are computed from, so the fit can never reserve room for
+    /// text of a different size than the overlay paints.
+    fn add_centered_text(&mut self, text: &OverlayText3D, font_size: f32) {
+        let half = Vec2::new(
+            estimated_label_width(&text.text, font_size) * 0.5,
+            font_size * 0.5,
+        );
+        self.add_point(text.position - half);
+        self.add_point(text.position + half);
+    }
+}
+
+/// Where the axes' ink is allowed to reach on each side of the canvas.
+///
+/// The title strip and the right-hand decoration band belong to someone else,
+/// so the scene stops short of them; everywhere else it may run to within one
+/// [`LABEL_EDGE_PAD_PT`] of the canvas edge.
+struct InkLimits3D {
+    left: f32,
+    right: f32,
+    top: f32,
+    bottom: f32,
+    /// Smallest each viewport margin is allowed to be: zero, except where a
+    /// structural band already occupies the space.
+    floors: Margins3D,
+    max_horizontal: f32,
+    max_vertical: f32,
+}
+
+impl InkLimits3D {
+    fn new(
+        canvas_width: u32,
+        canvas_height: u32,
+        decoration_width: f32,
+        title_band: f32,
+        pad: f32,
+    ) -> Self {
+        let width = canvas_width as f32;
+        let height = canvas_height as f32;
+        Self {
+            left: pad,
+            right: width - decoration_width - pad,
+            top: title_band,
+            bottom: height - pad,
+            floors: Margins3D {
+                left: 0.0,
+                right: decoration_width,
+                top: title_band,
+                bottom: 0.0,
+            },
+            max_horizontal: (width * MAX_MARGIN_FRACTION).max(1.0),
+            max_vertical: (height * MAX_MARGIN_FRACTION).max(1.0),
+        }
+    }
+}
+
+/// The four viewport margins, in canvas pixels.
+#[derive(Clone, Copy, Debug)]
+struct Margins3D {
+    left: f32,
+    right: f32,
+    top: f32,
+    bottom: f32,
+}
+
+impl Margins3D {
+    fn viewport(self, canvas_width: u32, canvas_height: u32) -> Viewport3D {
+        let width = canvas_width as f32;
+        let height = canvas_height as f32;
+        let x = self.left.floor().clamp(0.0, width - 1.0) as u32;
+        let y = self.top.floor().clamp(0.0, height - 1.0) as u32;
+        let viewport_width = (width - self.left - self.right).floor().max(1.0) as u32;
+        let viewport_height = (height - self.top - self.bottom).floor().max(1.0) as u32;
+        Viewport3D {
+            x,
+            y,
+            width: viewport_width.min(canvas_width.saturating_sub(x).max(1)),
+            height: viewport_height.min(canvas_height.saturating_sub(y).max(1)),
+        }
+    }
+
+    /// The margins this scene turned out to need.
+    ///
+    /// Two things are asked of each axis at once: give the ink the room it
+    /// actually overflowed by, and split whatever is left over evenly so the
+    /// figure sits in the middle of its frame. Growing a margin by `d` moves the
+    /// box `d/2` the other way, so a single pass halves the error and the fit
+    /// converges geometrically.
+    fn fitted_to(self, ink: InkBox3D, limits: &InkLimits3D) -> Self {
+        let slack_left = ink.min_x - limits.left;
+        let slack_right = limits.right - ink.max_x;
+        let slack_top = ink.min_y - limits.top;
+        let slack_bottom = limits.bottom - ink.max_y;
+        // Negative total slack means the scene does not fit and must shrink;
+        // unequal slack means it fits but is off-centre.
+        let horizontal_deficit = -(slack_left + slack_right).min(0.0);
+        let vertical_deficit = -(slack_top + slack_bottom).min(0.0);
+        let horizontal_shift = (slack_right - slack_left) * 0.5;
+        let vertical_shift = (slack_bottom - slack_top) * 0.5;
+        Self {
+            left: self.left + horizontal_deficit * 0.5 + horizontal_shift,
+            right: self.right + horizontal_deficit * 0.5 - horizontal_shift,
+            top: self.top + vertical_deficit * 0.5 + vertical_shift,
+            bottom: self.bottom + vertical_deficit * 0.5 - vertical_shift,
+        }
+        .clamped(limits)
+    }
+
+    fn clamped(self, limits: &InkLimits3D) -> Self {
+        let floors = limits.floors;
+        let clamp = |value: f32, floor: f32, ceiling: f32| {
+            if value.is_finite() {
+                value.clamp(floor, ceiling.max(floor))
+            } else {
+                floor
+            }
+        };
+        Self {
+            left: clamp(self.left, floors.left, limits.max_horizontal),
+            right: clamp(self.right, floors.right, limits.max_horizontal),
+            top: clamp(self.top, floors.top, limits.max_vertical),
+            bottom: clamp(self.bottom, floors.bottom, limits.max_vertical),
+        }
+    }
+
+    fn is_close_to(self, other: Self) -> bool {
+        const TOLERANCE: f32 = 0.5;
+        (self.left - other.left).abs() < TOLERANCE
+            && (self.right - other.right).abs() < TOLERANCE
+            && (self.top - other.top).abs() < TOLERANCE
+            && (self.bottom - other.bottom).abs() < TOLERANCE
+    }
+}
+
+/// How many times the fit may re-measure itself.
+///
+/// Each pass halves the remaining error, so a dozen is far more than a
+/// hundred-pixel initial overflow needs; the loop normally settles in three or
+/// four. Laying the axes out is a few hundred matrix-vector products, which is
+/// nothing beside rasterising the scene once.
+const MAX_FIT_PASSES: usize = 12;
+
+/// Lay the scene out, see where its labels landed, and repeat until they fit.
+///
+/// This replaces a *prediction* of the margins — the widest tick label plus the
+/// widest axis label, reserved as a rectangle on all four sides — with a
+/// measurement of the labels that get drawn. The prediction was a second, cruder
+/// description of the offsets in [`lay_out_scene`], and it was wrong in the
+/// expensive direction: a projected box is a hexagon, its tick labels sit in the
+/// empty triangles at the corners of its bounding rectangle, and a rectangular
+/// reservation therefore paid for the same room twice — once as viewport margin
+/// and again as the slack the aspect-preserving fit already left.
+fn fit_scene(
+    frame: &ResolvedFrame3D,
+    ticks: &[(Vec<f64>, Vec<String>); 3],
+    limits: &InkLimits3D,
+    canvas_width: u32,
+    canvas_height: u32,
+) -> Result<Scene3D> {
+    let mut margins = limits.floors.clamped(limits);
+    let mut scene = lay_out_scene(frame, margins.viewport(canvas_width, canvas_height), ticks)?;
+    for _ in 0..MAX_FIT_PASSES {
+        let next = margins.fitted_to(scene.ink, limits);
+        if next.is_close_to(margins) {
+            break;
+        }
+        margins = next;
+        scene = lay_out_scene(frame, margins.viewport(canvas_width, canvas_height), ticks)?;
+    }
+    Ok(scene)
+}
+
+fn lay_out_scene(
+    frame: &ResolvedFrame3D,
+    viewport: Viewport3D,
+    ticks: &[(Vec<f64>, Vec<String>); 3],
+) -> Result<Scene3D> {
+    let line_scale = frame.figure.dpi / 72.0;
+    let camera = frame
+        .camera
+        .prepare(viewport.width as f32 / viewport.height as f32, frame.bounds)?;
+    let corners = projected_box_corners(camera, viewport)?;
+    let anchor_index = outer_anchor_corner(&corners);
+    let anchor_signs = corner_signs(anchor_index);
+    // x and y run along the bottom edges that meet at the anchor corner, but
+    // z is vertical: anchoring it there too put its ticks and its `z` label
+    // on the *front* edge of the box, inside the silhouette and on top of
+    // the surface. The z axis belongs on a silhouette edge, so it takes the
+    // leftmost vertical edge of the projected box instead.
+    let axis_anchor_signs = [
+        anchor_signs,
+        anchor_signs,
+        corner_signs(z_axis_anchor_corner(&corners)),
+    ];
+    let center = project_local(Vec3::ZERO, camera, viewport)?;
+
+    let mut panes = Vec::with_capacity(3);
+    for axis in 0..3 {
+        let indices = face_corner_indices(anchor_index, axis);
+        panes.push(
+            [
+                corners[indices[0]],
+                corners[indices[1]],
+                corners[indices[2]],
+                corners[indices[3]],
+            ]
+            .map(|point| Vec2::new(point.x, point.y)),
+        );
+    }
+
+    let edge_indices = [
+        [0, 1],
+        [0, 2],
+        [0, 4],
+        [1, 3],
+        [1, 5],
+        [2, 3],
+        [2, 6],
+        [3, 7],
+        [4, 5],
+        [4, 6],
+        [5, 7],
+        [6, 7],
+    ];
+    let box_edges: Vec<OverlayLine3D> = edge_indices
+        .into_iter()
+        .map(|[start, end]| OverlayLine3D {
+            start: Vec2::new(corners[start].x, corners[start].y),
+            end: Vec2::new(corners[end].x, corners[end].y),
+        })
+        .collect();
+
+    let ranges = axis_ranges(frame);
+    let labels = [
+        frame.xlabel.as_deref(),
+        frame.ylabel.as_deref(),
+        frame.zlabel.as_deref(),
+    ];
+    let tick_font_size = frame.theme.tick_label_font_size * line_scale;
+    let axis_font_size = frame.theme.axis_label_font_size * line_scale;
+    let tick_mark_length = TICK_MARK_LENGTH_PT * line_scale;
+    let tick_label_gap = TICK_LABEL_GAP_PT * line_scale;
+    let axis_label_gap = AXIS_LABEL_GAP_PT * line_scale;
+    let mut grid_lines = Vec::new();
+    let mut tick_marks = Vec::new();
+    let mut tick_labels = Vec::new();
+    let mut axis_labels = Vec::new();
+
+    for axis in 0..3 {
+        let (tick_values, formatted) = &ticks[axis];
+        let axis_start = local_corner(axis_anchor_signs[axis]);
+        let mut axis_end = axis_start;
+        axis_end[axis] = -axis_end[axis];
+        let projected_start = project_local(axis_start, camera, viewport)?;
+        let projected_end = project_local(axis_end, camera, viewport)?;
+        let edge_midpoint = Vec2::new(
+            (projected_start.x + projected_end.x) * 0.5,
+            (projected_start.y + projected_end.y) * 0.5,
+        );
+        let edge_outward = outward_direction(
+            edge_midpoint,
+            Vec2::new(center.x, center.y),
+            Vec2::new(
+                projected_end.x - projected_start.x,
+                projected_end.y - projected_start.y,
+            ),
+        );
+
+        for (&value, text) in tick_values.iter().zip(formatted) {
+            let parameter = normalized_tick(value, ranges[axis]);
+            let mut local = axis_start;
+            local[axis] = parameter;
+            let projected = project_local(local, camera, viewport)?;
+            let position = Vec2::new(projected.x, projected.y);
+            let outward = outward_direction(
+                position,
+                Vec2::new(center.x, center.y),
+                Vec2::new(
+                    projected_end.x - projected_start.x,
+                    projected_end.y - projected_start.y,
+                ),
+            );
+            tick_marks.push(OverlayLine3D {
+                start: position,
+                end: position + outward * tick_mark_length,
+            });
+            // A centred label straddles the point it is placed at, so it has
+            // to be pushed out by its own half-extent along the offset
+            // direction or half of it lands back over the box. Sideways
+            // offsets — the z axis, and x/y at some camera angles — are
+            // where this shows.
+            let half_extent = half_extent_along(
+                outward,
+                estimated_label_width(text, tick_font_size),
+                tick_font_size,
+            );
+            let offset = tick_mark_length + tick_label_gap + half_extent;
+            let candidate = OverlayText3D {
+                text: text.clone(),
+                position: position + outward * offset,
+                centered: true,
+            };
+            push_text_avoiding_overlap(&mut tick_labels, candidate, outward, tick_font_size);
+
+            for other_axis in 0..3 {
+                if other_axis == axis {
+                    continue;
+                }
+                let mut grid_end = local;
+                grid_end[other_axis] = -grid_end[other_axis];
+                let projected_grid_end = project_local(grid_end, camera, viewport)?;
+                grid_lines.push(OverlayLine3D {
+                    start: position,
+                    end: Vec2::new(projected_grid_end.x, projected_grid_end.y),
+                });
+            }
+        }
+
+        if let Some(label) = labels[axis].filter(|label| !label.is_empty()) {
+            // Clear of the tick labels rather than at a fixed 28 px: the z
+            // label shares its edge with the z ticks, so a constant offset
+            // either overlapped them or wasted the room it did not need.
+            let widest_tick = formatted
+                .iter()
+                .map(|text| estimated_label_width(text, tick_font_size))
+                .fold(0.0_f32, f32::max);
+            let offset = tick_mark_length
+                + tick_label_gap
+                + 2.0 * half_extent_along(edge_outward, widest_tick, tick_font_size)
+                + axis_label_gap
+                + half_extent_along(
+                    edge_outward,
+                    estimated_label_width(label, axis_font_size),
+                    axis_font_size,
+                );
+            axis_labels.push(OverlayText3D {
+                text: label.to_string(),
+                position: edge_midpoint + edge_outward * offset,
+                centered: true,
+            });
+        }
+    }
+
+    let mut ink = InkBox3D::empty();
+    for edge in box_edges.iter().chain(&tick_marks) {
+        ink.add_point(edge.start);
+        ink.add_point(edge.end);
+    }
+    for label in &tick_labels {
+        ink.add_centered_text(label, tick_font_size);
+    }
+    for label in &axis_labels {
+        ink.add_centered_text(label, axis_font_size);
+    }
+
+    Ok(Scene3D {
+        viewport,
+        camera,
+        panes,
+        grid_lines,
+        box_edges,
+        tick_marks,
+        tick_labels,
+        axis_labels,
+        ink,
+    })
+}
+
+/// The title, positioned in the strip [`title_band_height`] reserves for it.
+///
+/// The overlay draws what this returns and the fit reserves what
+/// [`title_band_height`] says, both from the same two numbers, so the strip
+/// cannot be sized for a title drawn somewhere else.
+fn title_overlay(
+    frame: &ResolvedFrame3D,
+    canvas_width: u32,
+    line_scale: f32,
+) -> Option<OverlayText3D> {
+    frame
+        .title
+        .as_ref()
+        .filter(|title| !title.is_empty())
+        .map(|title| OverlayText3D {
+            text: title.clone(),
+            position: Vec2::new(canvas_width as f32 * 0.5, TITLE_CENTER_PT * line_scale),
+            centered: true,
+        })
+}
+
+/// Height of the strip at the top of the canvas the scene may not enter.
+///
+/// It is exactly the title's own extent plus one edge pad — measured, like every
+/// other margin — rather than a share of the canvas height. With no title
+/// nothing at all is drawn above the box, so the strip is just the pad.
+fn title_band_height(frame: &ResolvedFrame3D, line_scale: f32) -> f32 {
+    let pad = LABEL_EDGE_PAD_PT * line_scale;
+    match frame.title.as_deref().filter(|title| !title.is_empty()) {
+        Some(_) => {
+            (TITLE_CENTER_PT * line_scale) + frame.theme.title_font_size * line_scale * 0.5 + pad
+        }
+        None => pad,
+    }
+}
+
+impl Axis3Layout {
     pub(crate) fn screen_ray_local(
         &self,
         screen_x: f32,
@@ -823,34 +1180,59 @@ fn normalized_colorbar_value(value: f64, range: (f64, f64)) -> f32 {
     }
 }
 
-fn axis_viewport(
-    frame: &ResolvedFrame3D,
-    canvas_width: u32,
-    canvas_height: u32,
-    decoration_width: f32,
-) -> Viewport3D {
-    let width = canvas_width as f32;
-    let height = canvas_height as f32;
-    let dpi_scale = frame.figure.dpi / 72.0;
-    let left = (width * 0.14).max(42.0 * dpi_scale);
-    let right = (width * 0.10).max(24.0 * dpi_scale).max(decoration_width);
-    let top = if frame.title.is_some() {
-        (height * 0.14).max(36.0 * dpi_scale)
-    } else {
-        (height * 0.09).max(18.0 * dpi_scale)
-    };
-    let bottom = (height * 0.16).max(42.0 * dpi_scale);
+/// Data range of each axis, in axis order.
+fn axis_ranges(frame: &ResolvedFrame3D) -> [(f64, f64); 3] {
+    [
+        (frame.bounds.min.x, frame.bounds.max.x),
+        (frame.bounds.min.y, frame.bounds.max.y),
+        (frame.bounds.min.z, frame.bounds.max.z),
+    ]
+}
 
-    let x = left.floor().clamp(0.0, width - 1.0) as u32;
-    let y = top.floor().clamp(0.0, height - 1.0) as u32;
-    let viewport_width = (width - left - right).floor().max(1.0) as u32;
-    let viewport_height = (height - top - bottom).floor().max(1.0) as u32;
-    Viewport3D {
-        x,
-        y,
-        width: viewport_width.min(canvas_width.saturating_sub(x).max(1)),
-        height: viewport_height.min(canvas_height.saturating_sub(y).max(1)),
+/// Target tick count per 3D axis.
+const AXIS_TICK_TARGET: usize = 6;
+
+/// Tick values and their formatted labels for all three axes.
+///
+/// Located once per frame: the margins are reserved from these strings and the
+/// labels are drawn from these strings, so the reservation can never be for
+/// different text than the layout prints.
+fn axis_ticks(frame: &ResolvedFrame3D) -> [(Vec<f64>, Vec<String>); 3] {
+    axis_ranges(frame).map(|(min, max)| {
+        let mut values = generate_ticks(min, max, AXIS_TICK_TARGET);
+        values.dedup_by(|left, right| left.to_bits() == right.to_bits());
+        let labels = format_tick_labels(&values);
+        (values, labels)
+    })
+}
+
+/// Half-extent of a centred label along `outward`.
+///
+/// A label centred on a point covers `width/2` either side and `height/2` above
+/// and below it, so this is how far it reaches in the direction it is pushed.
+fn half_extent_along(outward: Vec2, width: f32, height: f32) -> f32 {
+    outward.x.abs() * width * 0.5 + outward.y.abs() * height * 0.5
+}
+
+/// Foot of the vertical box edge the z axis is drawn on.
+///
+/// The four vertical edges pair corners that differ only in their z sign; the
+/// leftmost of them is on the silhouette, so ticks and the `z` label offset
+/// outward from it land in the left margin instead of over the surface. The
+/// left is chosen over the equally extremal right because the right of a 3D
+/// frame is the decoration band, where the legend and colorbars live.
+fn z_axis_anchor_corner(corners: &[ScreenPoint3D; 8]) -> usize {
+    let mut selected = 0_usize;
+    let mut selected_x = f32::INFINITY;
+    for base in 0..4_usize {
+        // `base` has its z bit (bit 2) clear, so it is the foot of the edge.
+        let edge_x = (corners[base].x + corners[base | 4].x) * 0.5;
+        if edge_x < selected_x {
+            selected_x = edge_x;
+            selected = base;
+        }
     }
+    selected
 }
 
 fn projected_box_corners(
@@ -980,6 +1362,7 @@ fn project_local(
 
 #[cfg(test)]
 mod tests {
+    use crate::core::plot3d::Camera3D;
     use crate::{scatter3d, surface};
 
     use super::*;
@@ -1103,6 +1486,270 @@ mod tests {
         }));
         let large_legend = large.legend.as_ref().expect("legend");
         assert!(large_legend.bounds.height > default_legend.bounds.height);
+    }
+
+    /// `(min_x, max_x, min_y, max_y)` of the projected plotting box.
+    fn corner_bbox(corners: &[ScreenPoint3D; 8]) -> (f32, f32, f32, f32) {
+        let mut bbox = (f32::MAX, f32::MIN, f32::MAX, f32::MIN);
+        for corner in corners {
+            bbox.0 = bbox.0.min(corner.x);
+            bbox.1 = bbox.1.max(corner.x);
+            bbox.2 = bbox.2.min(corner.y);
+            bbox.3 = bbox.3.max(corner.y);
+        }
+        bbox
+    }
+
+    fn labelled_surface_layout() -> (ResolvedFrame3D, Axis3Layout) {
+        let frame = surface(&[0.0, 1.0], &[0.0, 1.0], &[[0.0, 1.0], [2.0, 3.0]])
+            .xlabel("x")
+            .ylabel("y")
+            .zlabel("z")
+            .finalize()
+            .resolve()
+            .expect("frame");
+        let layout = Axis3Layout::resolve(&frame).expect("layout");
+        (frame, layout)
+    }
+
+    /// The z ticks and the `z` label used to be drawn on the *front* vertical
+    /// edge — inside the silhouette, on top of the surface — because all three
+    /// axes anchored at `outer_anchor_corner`, which is right for x and y only.
+    /// They now hang off the leftmost vertical edge of the projected box, so
+    /// every one of them is clear of the scene.
+    #[test]
+    fn the_z_axis_is_labelled_outside_the_silhouette() {
+        let (frame, layout) = labelled_surface_layout();
+        let corners =
+            projected_box_corners(layout.camera, layout.viewport).expect("projected corners");
+        let (leftmost, ..) = corner_bbox(&corners);
+
+        assert_eq!(layout.axis_labels.len(), 3);
+        let z_label = &layout.axis_labels[2];
+        assert_eq!(z_label.text, "z");
+        assert!(
+            z_label.position.x < leftmost,
+            "z label at {} is inside the box (leftmost corner {leftmost})",
+            z_label.position.x
+        );
+
+        // Tick labels are pushed in axis order, so the z ticks are the last run.
+        let z_tick_count = axis_ticks(&frame)[2].0.len();
+        assert!(z_tick_count >= 2);
+        for label in layout.tick_labels.iter().rev().take(z_tick_count) {
+            assert!(
+                label.position.x < leftmost,
+                "z tick {:?} at {} is inside the box (leftmost corner {leftmost})",
+                label.text,
+                label.position.x
+            );
+        }
+    }
+
+    /// The scene fills its frame instead of floating in it.
+    ///
+    /// A fixed `1.8 / zoom` orthographic half-extent plus hardcoded 14/10/14/16%
+    /// margins left a 3D box occupying roughly 41% of the frame's width, where a
+    /// 2D line plot fills 92%. Both ends are now measured.
+    #[test]
+    fn the_scene_fills_most_of_its_frame() {
+        let (_, layout) = labelled_surface_layout();
+        let corners =
+            projected_box_corners(layout.camera, layout.viewport).expect("projected corners");
+        let (min_x, max_x, min_y, max_y) = corner_bbox(&corners);
+
+        let width_fraction = (max_x - min_x) / layout.canvas_width as f32;
+        let height_fraction = (max_y - min_y) / layout.canvas_height as f32;
+        assert!(
+            width_fraction > 0.68,
+            "3D scene only fills {width_fraction:.2} of the frame's width"
+        );
+        assert!(
+            height_fraction > 0.88,
+            "3D scene only fills {height_fraction:.2} of the frame's height"
+        );
+
+        // ... and it still fits: nothing may spill out of the canvas.
+        assert!(min_x >= 0.0 && min_y >= 0.0);
+        assert!(max_x <= layout.canvas_width as f32);
+        assert!(max_y <= layout.canvas_height as f32);
+    }
+
+    /// `(min_x, min_y, max_x, max_y)` of everything the layout draws for the
+    /// axes — the same measurement [`fit_scene`] fits against.
+    fn layout_ink(frame: &ResolvedFrame3D, layout: &Axis3Layout) -> InkBox3D {
+        let line_scale = frame.figure.dpi / 72.0;
+        let mut ink = InkBox3D::empty();
+        for edge in layout.box_edges.iter().chain(&layout.tick_marks) {
+            ink.add_point(edge.start);
+            ink.add_point(edge.end);
+        }
+        for label in &layout.tick_labels {
+            ink.add_centered_text(label, frame.theme.tick_label_font_size * line_scale);
+        }
+        for label in &layout.axis_labels {
+            ink.add_centered_text(label, frame.theme.axis_label_font_size * line_scale);
+        }
+        ink
+    }
+
+    /// The fit is measured, so the *labels* are what touch the frame.
+    ///
+    /// The old fit predicted a rectangular margin on all four sides from the
+    /// widest tick string. A projected box is a hexagon whose tick labels live
+    /// in the empty triangles at the corners of its bounding rectangle, so that
+    /// reservation bought the same room twice — once as viewport margin, and
+    /// again as the slack an aspect-preserving fit already leaves — and the
+    /// scene paid for it in size. Fitting to the ink instead means the drawn
+    /// figure runs to the edge of its canvas on the limiting axis, and whatever
+    /// the aspect ratio leaves over is split evenly rather than piled on one
+    /// side.
+    #[test]
+    fn the_fit_puts_the_labels_at_the_frame_edge_and_centres_what_is_left() {
+        let (frame, layout) = labelled_surface_layout();
+        let ink = layout_ink(&frame, &layout);
+        let width = layout.canvas_width as f32;
+        let height = layout.canvas_height as f32;
+        let pad = LABEL_EDGE_PAD_PT * frame.figure.dpi / 72.0;
+
+        // Nothing is clipped...
+        assert!(
+            ink.min_x >= 0.0 && ink.min_y >= 0.0 && ink.max_x <= width && ink.max_y <= height,
+            "axis ink {ink:?} leaves the {width}x{height} canvas"
+        );
+        // ... and the limiting axis is used up: this surface is taller than it
+        // is wide once projected, so the height is what runs out.
+        let ink_height = (ink.max_y - ink.min_y) / height;
+        assert!(
+            ink_height > 0.93,
+            "the labelled scene only fills {ink_height:.2} of the frame's height"
+        );
+        assert!(ink.min_y <= pad + 1.0, "ink starts at {}", ink.min_y);
+        assert!(ink.max_y >= height - pad - 1.0, "ink ends at {}", ink.max_y);
+
+        // The leftover width — the letterbox an isotropic projection of a
+        // near-square silhouette necessarily leaves in a 4:3 frame — is split
+        // evenly instead of being handed to one margin.
+        let left_slack = ink.min_x - pad;
+        let right_slack = width - pad - ink.max_x;
+        assert!(
+            (left_slack - right_slack).abs() < 3.0,
+            "the scene is off-centre: {left_slack:.1}px of slack on the left \
+             and {right_slack:.1}px on the right"
+        );
+    }
+
+    /// The frame fill that is left is the camera's, not the layout's.
+    ///
+    /// Width fill is `height fill x silhouette aspect / canvas aspect`, and the
+    /// silhouette aspect is fixed by [`AxisAspect3D`]: a literal cube projects
+    /// to a near-square hexagon that cannot fill a 4:3 canvas in both
+    /// directions at once, while the crate's default 4:4:3 box projects wider
+    /// than it is tall. Both go through the same fit, so the difference between
+    /// them is the *only* thing still standing between a 3D figure and 2D
+    /// parity — and it is a camera setting, not a margin.
+    #[test]
+    fn the_default_box_aspect_fills_the_frame_more_than_a_literal_cube() {
+        fn width_fill(aspect: crate::core::plot3d::AxisAspect3D) -> f32 {
+            let frame = surface(&[0.0, 1.0], &[0.0, 1.0], &[[0.0, 1.0], [2.0, 3.0]])
+                .xlabel("x")
+                .ylabel("y")
+                .zlabel("z")
+                .camera(Camera3D::default().axis_aspect(aspect).orthographic())
+                .finalize()
+                .resolve()
+                .expect("frame");
+            let layout = Axis3Layout::resolve(&frame).expect("layout");
+            let ink = layout_ink(&frame, &layout);
+            (ink.max_x - ink.min_x) / layout.canvas_width as f32
+        }
+
+        let cube = width_fill(crate::core::plot3d::AxisAspect3D::Equal);
+        let scientific = width_fill(crate::core::plot3d::AxisAspect3D::Auto);
+        assert!(
+            scientific > cube + 0.05,
+            "the 4:4:3 box should fill markedly more width than a cube: \
+             {scientific:.2} vs {cube:.2}"
+        );
+        assert!(
+            scientific > 0.76,
+            "the default box aspect only fills {scientific:.2} of the frame's width"
+        );
+    }
+
+    /// ...and so does a perspective scene, because both fits are tight.
+    ///
+    /// "Tight" is the property that matters and it is exactly checkable: the
+    /// projected box must *touch* its viewport on the limiting axis. The
+    /// perspective frustum used to be sized from the box's circumscribed
+    /// sphere, whose radius is `sqrt(3)` for a unit box, so nothing ever touched
+    /// anything and the scene floated with empty frame on all four sides.
+    #[test]
+    fn both_projections_fit_the_box_tightly_to_the_viewport() {
+        fn slack(camera: Camera3D) -> (f32, f32, Axis3Layout) {
+            let frame = surface(&[0.0, 1.0], &[0.0, 1.0], &[[0.0, 1.0], [2.0, 3.0]])
+                .xlabel("x")
+                .ylabel("y")
+                .zlabel("z")
+                .camera(camera)
+                .finalize()
+                .resolve()
+                .expect("frame");
+            let layout = Axis3Layout::resolve(&frame).expect("layout");
+            let corners =
+                projected_box_corners(layout.camera, layout.viewport).expect("projected corners");
+            let (min_x, max_x, min_y, max_y) = corner_bbox(&corners);
+            let viewport = layout.viewport;
+            // Slack on each axis: how much of the viewport the box leaves empty.
+            let horizontal = viewport.width as f32 - (max_x - min_x);
+            let vertical = viewport.height as f32 - (max_y - min_y);
+            // ... and it still fits: nothing may spill out of the canvas.
+            assert!(min_x >= 0.0 && min_y >= 0.0);
+            assert!(max_x <= layout.canvas_width as f32);
+            assert!(max_y <= layout.canvas_height as f32);
+            (horizontal, vertical, layout)
+        }
+
+        for (name, camera) in [
+            ("orthographic", Camera3D::default().orthographic()),
+            ("perspective", Camera3D::default().perspective_deg(45.0)),
+        ] {
+            let (horizontal, vertical, layout) = slack(camera);
+            // One axis is limiting and the other carries the aspect difference
+            // between a near-square box silhouette and a 4:3 frame; a tight fit
+            // means the limiting one has essentially no slack at all.
+            assert!(
+                horizontal.min(vertical) < 2.0,
+                "the {name} box leaves {horizontal:.0}px horizontal and \
+                 {vertical:.0}px vertical slack in a {}x{} viewport — the fit is \
+                 not touching either edge",
+                layout.viewport.width,
+                layout.viewport.height,
+            );
+        }
+    }
+
+    /// The margins are the measured labels, not a percentage of the canvas: a
+    /// long axis label has to push the box in, and no axis labels at all has to
+    /// let it out.
+    #[test]
+    fn viewport_margins_follow_the_measured_labels() {
+        fn viewport_of(zlabel: &str) -> Viewport3D {
+            let plot = surface(&[0.0, 1.0], &[0.0, 1.0], &[[0.0, 1.0], [2.0, 3.0]]);
+            let plot = if zlabel.is_empty() {
+                plot
+            } else {
+                plot.zlabel(zlabel)
+            };
+            let frame = plot.finalize().resolve().expect("frame");
+            Axis3Layout::resolve(&frame).expect("layout").viewport
+        }
+
+        let bare = viewport_of("");
+        let labelled = viewport_of("z");
+        let verbose = viewport_of("temperature in degrees celsius");
+        assert!(labelled.width < bare.width);
+        assert!(verbose.width < labelled.width);
     }
 
     #[test]

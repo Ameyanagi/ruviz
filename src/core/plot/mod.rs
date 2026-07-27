@@ -430,6 +430,56 @@ macro_rules! impl_series_continuation_methods {
             $self_.$finalize().quiver(x_data, y_data, u_data, v_data)
         }
 
+        /// Continue with a rug series.
+        pub fn rug<T, D: $crate::data::Data1D<T>>(
+            $self_,
+            data: &D,
+        ) -> $crate::core::plot::PlotBuilder<$crate::plots::distribution::RugConfig>
+        where
+            T: Into<f64> + Copy,
+        {
+            $self_.$finalize().rug(data)
+        }
+
+        /// Continue with a strip series.
+        pub fn strip<S: AsRef<str>, D: $crate::data::NumericData1D>(
+            $self_,
+            categories: &[S],
+            values: &D,
+        ) -> $crate::core::plot::PlotBuilder<$crate::plots::categorical::StripConfig> {
+            $self_.$finalize().strip(categories, values)
+        }
+
+        /// Continue with a swarm series.
+        pub fn swarm<S: AsRef<str>, D: $crate::data::NumericData1D>(
+            $self_,
+            categories: &[S],
+            values: &D,
+        ) -> $crate::core::plot::PlotBuilder<$crate::plots::categorical::SwarmConfig> {
+            $self_.$finalize().swarm(categories, values)
+        }
+
+        /// Continue with a hexbin series.
+        pub fn hexbin<X, Y>(
+            $self_,
+            x: &X,
+            y: &Y,
+        ) -> $crate::core::plot::PlotBuilder<$crate::plots::continuous::hexbin::HexbinConfig>
+        where
+            X: $crate::data::NumericData1D,
+            Y: $crate::data::NumericData1D,
+        {
+            $self_.$finalize().hexbin(x, y)
+        }
+
+        /// Continue with a dendrogram series.
+        pub fn dendrogram(
+            $self_,
+            linkage: &$crate::stats::clustering::Linkage,
+        ) -> $crate::core::plot::PlotBuilder<$crate::plots::hierarchical::DendrogramConfig> {
+            $self_.$finalize().dendrogram(linkage)
+        }
+
         /// Continue with a new streaming line series.
         pub fn line_streaming(
             $self_,

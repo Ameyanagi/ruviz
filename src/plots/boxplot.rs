@@ -6,6 +6,45 @@ use crate::data::Data1D;
 use crate::plots::traits::{PlotArea, PlotConfig, PlotData, PlotRender};
 use crate::render::{Color, LineStyle, MarkerStyle, SkiaRenderer, Theme};
 
+// ===========================================================================
+// The category axis, in data units
+// ===========================================================================
+
+/// Half the width of one category slot, in data units.
+///
+/// Bars, box plots, violins and boxen plots share a single categorical x axis:
+/// slot *i* is centred on `i` and spans `i ± CATEGORY_SLOT_HALF_WIDTH`, so an
+/// axis showing *n* categories runs `-0.5 ..= n - 0.5`.
+///
+/// The consequence worth relying on is that **every width knob on every one of
+/// those plot types is a fraction of one slot** — `BoxPlotConfig::width_ratio`,
+/// `ViolinConfig::width` and `BoxenConfig::width` all mean the same thing, and
+/// none of them has to know how many categories the figure ended up with.
+pub const CATEGORY_SLOT_HALF_WIDTH: f64 = 0.5;
+
+/// The data-space span of the category slot centred on `center`.
+///
+/// Bounds calculation, tick placement and geometry all go through this, so a
+/// plot type cannot be *drawn* in one slot and *measured* in another.
+pub fn category_slot_span(center: f64) -> (f64, f64) {
+    (
+        center - CATEGORY_SLOT_HALF_WIDTH,
+        center + CATEGORY_SLOT_HALF_WIDTH,
+    )
+}
+
+/// One `(tick label, slot centre)` pair per category, in slot order.
+///
+/// For the plot types whose input *is* a list of category names — bars, strip,
+/// swarm — a category's slot is its index. Names shorter than `count` leave the
+/// remaining slots unlabelled rather than shifting anything, so a slot always
+/// means the same position whether or not it has a name.
+pub fn category_slots(names: &[String], count: usize) -> Vec<(String, f64)> {
+    (0..count)
+        .map(|index| (names.get(index).cloned().unwrap_or_default(), index as f64))
+        .collect()
+}
+
 /// Configuration for box plots
 ///
 /// Style knobs left as `None` fall back to the crate defaults in
@@ -40,6 +79,17 @@ pub struct BoxPlotConfig {
     pub cap_width: Option<f32>,
     /// Outlier marker size (default 6.0)
     pub flier_size: Option<f32>,
+    /// Category label written under this box on the x axis.
+    ///
+    /// Set with [`category`](Self::category()). Bars, box plots, violins and
+    /// boxen plots share one category axis: slot *i* is centred on `i` and one
+    /// data unit wide, so `width_ratio` is a fraction of that slot no matter
+    /// how many boxes the figure holds.
+    pub category: Option<String>,
+    /// Explicit centre on the category axis; `None` claims the next free slot.
+    ///
+    /// Set with [`x_position`](Self::x_position()).
+    pub x_position: Option<f64>,
 }
 
 /// Methods for detecting outliers
@@ -93,6 +143,7 @@ pub enum WhiskerMethod {
 ///
 /// | Field | Meaning | Default |
 /// | --- | --- | --- |
+/// | [`x_center`](Self::x_center) | centre of the box's category slot, in data units | `0.0` |
 /// | [`width_ratio`](Self::width_ratio) | box width as a fraction of the category slot | `0.5` |
 /// | [`cap_width`](Self::cap_width) | whisker cap width as a fraction of the box width | `0.5` |
 /// | [`fill_alpha`](Self::fill_alpha) | opacity of the box fill | `0.7` |
@@ -125,6 +176,12 @@ pub struct BoxPlotData {
     pub iqr: f64,
     /// Box orientation
     pub orientation: BoxOrientation,
+    /// Centre of this box's category slot, in data units.
+    ///
+    /// Resolved from `BoxPlotConfig::x_position` when the series was added, so
+    /// every backend reads the same number instead of each picking its own
+    /// "centre of the plot".
+    pub x_center: f64,
     /// Fill alpha for box
     pub fill_alpha: f32,
     /// Edge color (None = auto-derive)
@@ -150,8 +207,8 @@ pub struct BoxPlotData {
 // Implement PlotData trait for BoxPlotData
 impl PlotData for BoxPlotData {
     fn data_bounds(&self) -> ((f64, f64), (f64, f64)) {
-        // For vertical box plots, x is typically categorical (0, 1, 2, etc.)
-        // and y spans the data range
+        // The category axis carries one unit-wide slot per box, centred on
+        // `x_center`; the value axis spans the data.
         let (y_min, y_max) = if self.outliers.is_empty() {
             (self.min, self.max)
         } else {
@@ -164,9 +221,10 @@ impl PlotData for BoxPlotData {
             (self.min.min(outlier_min), self.max.max(outlier_max))
         };
 
+        let slot = category_slot_span(self.x_center);
         match self.orientation {
-            BoxOrientation::Vertical => ((-0.5, 0.5), (y_min, y_max)),
-            BoxOrientation::Horizontal => ((y_min, y_max), (-0.5, 0.5)),
+            BoxOrientation::Vertical => (slot, (y_min, y_max)),
+            BoxOrientation::Horizontal => ((y_min, y_max), slot),
         }
     }
 
@@ -217,8 +275,9 @@ impl PlotRender for BoxPlotData {
         let whisker_width = self.whisker_width.unwrap_or(theme.line_width);
         let median_width = self.median_width.unwrap_or(theme.line_width * 1.5);
 
-        // For rendering, use the center position (x=0 for single box)
-        let center_x = 0.0;
+        // The box sits at the centre of its category slot, wherever that slot
+        // ended up — not at "the middle of the plot".
+        let center_x = self.x_center;
 
         match self.orientation {
             BoxOrientation::Vertical => {
@@ -267,8 +326,9 @@ impl BoxPlotData {
         median_width: f32,
         marker_color: Color,
     ) -> Result<()> {
-        // Calculate box dimensions
-        let box_half_width = (self.width_ratio * 0.5) as f64;
+        // Widths are fractions of one category slot, which is
+        // `2 * CATEGORY_SLOT_HALF_WIDTH` data units across.
+        let box_half_width = self.width_ratio as f64 * CATEGORY_SLOT_HALF_WIDTH;
         let cap_half_width = box_half_width * self.cap_width as f64;
 
         // Convert key y-values to screen coordinates
@@ -386,8 +446,9 @@ impl BoxPlotData {
         median_width: f32,
         marker_color: Color,
     ) -> Result<()> {
-        // Calculate box dimensions
-        let box_half_height = (self.width_ratio * 0.5) as f64;
+        // Widths are fractions of one category slot, exactly as in the
+        // vertical case — the orientation only decides which axis carries it.
+        let box_half_height = self.width_ratio as f64 * CATEGORY_SLOT_HALF_WIDTH;
         let cap_half_height = box_half_height * self.cap_width as f64;
 
         // Convert key x-values to screen coordinates
@@ -508,6 +569,8 @@ impl Default for BoxPlotConfig {
             median_width: None,
             cap_width: None,
             flier_size: None,
+            category: None,
+            x_position: None,
         }
     }
 }
@@ -754,6 +817,7 @@ where
         n_samples,
         iqr,
         orientation: config.orientation,
+        x_center: config.x_center(),
         fill_alpha,
         edge_color,
         edge_width,
@@ -1168,5 +1232,48 @@ mod tests {
         assert!(boxplot.edge_color.is_some());
         assert_eq!(boxplot.edge_width, 2.0);
         assert_eq!(boxplot.width_ratio, 0.8);
+    }
+
+    #[test]
+    fn test_category_slot_span_is_one_unit_wide() {
+        assert_eq!(category_slot_span(0.0), (-0.5, 0.5));
+        assert_eq!(category_slot_span(1.0), (0.5, 1.5));
+        assert_eq!(category_slot_span(2.0), (1.5, 2.5));
+    }
+
+    #[test]
+    fn test_slot_position_reaches_the_computed_box() {
+        // `.boxplot(&d).category("b")` has to move the box, not just relabel
+        // the axis, so the resolved centre travels on `BoxPlotData`.
+        let data = vec![1.0, 2.0, 3.0, 4.0, 5.0];
+
+        let first = calculate_box_plot(&data, &BoxPlotConfig::new()).unwrap();
+        assert_eq!(first.x_center, 0.0);
+        assert_eq!(first.data_bounds().0, (-0.5, 0.5));
+
+        let second = calculate_box_plot(&data, &BoxPlotConfig::new().x_position(1.0)).unwrap();
+        assert_eq!(second.x_center, 1.0);
+        assert_eq!(second.data_bounds().0, (0.5, 1.5));
+    }
+
+    #[test]
+    fn test_horizontal_box_puts_its_slot_on_the_value_free_axis() {
+        let data = vec![1.0, 2.0, 3.0, 4.0, 5.0];
+        let config = BoxPlotConfig::new()
+            .orientation(BoxOrientation::Horizontal)
+            .x_position(2.0);
+        let boxplot = calculate_box_plot(&data, &config).unwrap();
+
+        assert_eq!(boxplot.data_bounds().1, (1.5, 2.5));
+    }
+
+    #[test]
+    fn test_category_survives_onto_the_config() {
+        let config = BoxPlotConfig::new().category("control");
+        assert_eq!(config.category.as_deref(), Some("control"));
+        // No explicit position: the plot assigns the slot when the series is
+        // added, so the config itself still reads as "unplaced".
+        assert_eq!(config.x_position, None);
+        assert_eq!(config.x_center(), 0.0);
     }
 }

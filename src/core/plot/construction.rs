@@ -1199,27 +1199,26 @@ impl Plot {
         }
     }
 
+    /// Pixel x of every category tick, or `None` when the figure has no
+    /// category axis.
+    ///
+    /// `category_positions` comes from `CategoryAxis::harvest`, which is the one
+    /// place that decides where a category sits. This used to carry a second
+    /// answer — a `category_count` from which it re-derived bar positions as
+    /// `0..n` — so a figure mixing bars with a positioned distribution could get
+    /// ticks in one place and boxes in another.
     pub(super) fn categorical_x_tick_pixels(
         plot_area: tiny_skia::Rect,
         x_min: f64,
         x_max: f64,
-        category_count: Option<usize>,
-        violin_positions: &[f64],
+        category_positions: &[f64],
     ) -> Option<Vec<f32>> {
-        if !violin_positions.is_empty() {
-            Some(
-                violin_positions
-                    .iter()
-                    .map(|&x_pos| Self::x_data_to_pixel(plot_area, x_pos, x_min, x_max))
-                    .collect(),
-            )
-        } else {
-            category_count.map(|count| {
-                (0..count)
-                    .map(|index| Self::x_data_to_pixel(plot_area, index as f64, x_min, x_max))
-                    .collect()
-            })
-        }
+        (!category_positions.is_empty()).then(|| {
+            category_positions
+                .iter()
+                .map(|&x_pos| Self::x_data_to_pixel(plot_area, x_pos, x_min, x_max))
+                .collect()
+        })
     }
 
     fn resolve_style(&self, time: f64) -> ResolvedStyle {

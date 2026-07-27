@@ -511,45 +511,40 @@ impl Camera3D {
             elevation.cos() * azimuth.sin(),
             elevation.sin(),
         );
-        let (eye_distance, projection) = match self.projection {
-            Projection3D::Orthographic => {
-                let (half_width, half_height) = if viewport_aspect >= 1.0 {
-                    let half_height = 1.8 / self.zoom;
-                    (half_height * viewport_aspect, half_height)
-                } else {
-                    let half_width = 1.8 / self.zoom;
-                    (half_width, half_width / viewport_aspect)
-                };
-                (
-                    4.0,
-                    Mat4::orthographic_rh(
-                        -half_width,
-                        half_width,
-                        -half_height,
-                        half_height,
-                        0.01,
-                        100.0,
-                    ),
-                )
-            }
+        // The eye distance is fixed for an orthographic camera — the projection
+        // has no foreshortening, so distance only has to keep the box between
+        // the clip planes. Perspective derives it from the fov, which is what
+        // makes `vertical_fov_deg` mean "how wide-angle the view is": a wider
+        // fov moves the eye closer and foreshortens the box more.
+        let eye_distance = match self.projection {
+            Projection3D::Orthographic => ORTHOGRAPHIC_EYE_DISTANCE,
             Projection3D::Perspective { vertical_fov_deg } => {
                 let base_half_y = vertical_fov_deg.to_radians() * 0.5;
                 let base_half_x = (base_half_y.tan() * viewport_aspect).atan();
-                let limiting_half_fov = base_half_x.min(base_half_y);
-                let eye_distance = scene_radius / limiting_half_fov.sin() * 1.05;
-                let effective_half_y = (base_half_y.tan() / self.zoom).atan();
-                let near = (eye_distance - scene_radius * 1.25).max(0.001);
-                let far = eye_distance + scene_radius * 1.25;
-                (
-                    eye_distance,
-                    Mat4::perspective_rh(effective_half_y * 2.0, viewport_aspect, near, far),
-                )
+                scene_radius / base_half_x.min(base_half_y).sin() * 1.05
             }
         };
         let eye = target + eye_direction * eye_distance;
         let forward = (target - eye).normalize();
         let up = Quat::from_axis_angle(forward, self.roll_deg.to_radians()) * Vec3::Z;
         let view = Mat4::look_at_rh(eye, target, up);
+        // Both projections are fitted to the same thing — the eight projected
+        // corners of the plotting box — so a perspective figure fills its frame
+        // as well as an orthographic one instead of being sized for the box's
+        // circumscribed sphere, which is nearly 30% larger than the box.
+        let projection = match self.projection {
+            Projection3D::Orthographic => {
+                orthographic_fit(view, axis_aspect, viewport_aspect, self.zoom)
+            }
+            Projection3D::Perspective { .. } => perspective_fit(
+                view,
+                axis_aspect,
+                viewport_aspect,
+                self.zoom,
+                scene_radius,
+                eye_distance,
+            ),
+        };
         let view_projection = projection * view;
         Ok(PreparedCamera3D {
             view_projection,
@@ -558,6 +553,155 @@ impl Camera3D {
         })
     }
 }
+
+/// Eye distance for an orthographic camera.
+///
+/// An orthographic projection has no foreshortening, so this only has to keep
+/// the whole box between the clip planes; [`orthographic_fit`] decides how much
+/// of the frame the box occupies.
+const ORTHOGRAPHIC_EYE_DISTANCE: f32 = 4.0;
+
+/// Near clip plane of the orthographic frustum.
+const ORTHOGRAPHIC_NEAR: f32 = 0.01;
+
+/// Far clip plane of the orthographic frustum.
+const ORTHOGRAPHIC_FAR: f32 = 100.0;
+
+/// The rectangle the plotting box occupies on a projection plane, as
+/// `(center_x, center_y, half_width, half_height)`.
+///
+/// One description of "where the box is in the frame", shared by both
+/// projections, because it is the same question: the eight corners of the
+/// aspect-scaled box are transformed into view space, mapped onto the fitted
+/// plane, and their bounding rectangle is taken. Only `to_plane` differs — an
+/// orthographic camera reads the view-space coordinates directly, a perspective
+/// one divides by depth.
+///
+/// The rectangle is then grown on whichever axis has room to match the
+/// viewport's aspect ratio, so the box is always fully visible and never
+/// stretched, and scaled about its own centre by `zoom`.
+///
+/// Fitting the *centre* as well as the extent is what makes a perspective fit
+/// tight: a perspective silhouette is not symmetric about the view axis (the
+/// near corners subtend more than the far ones), so a frustum centred on the
+/// view axis leaves a band of empty frame on one side no matter how it is
+/// scaled.
+fn fitted_box_rect(
+    view: Mat4,
+    axis_aspect: Vec3,
+    viewport_aspect: f32,
+    zoom: f32,
+    to_plane: impl Fn(Vec3) -> (f32, f32),
+) -> (f32, f32, f32, f32) {
+    let mut min = (f32::INFINITY, f32::INFINITY);
+    let mut max = (f32::NEG_INFINITY, f32::NEG_INFINITY);
+    for index in 0..8_usize {
+        let signs = Vec3::new(
+            if index & 1 == 0 { -1.0 } else { 1.0 },
+            if index & 2 == 0 { -1.0 } else { 1.0 },
+            if index & 4 == 0 { -1.0 } else { 1.0 },
+        );
+        let (x, y) = to_plane(view.transform_point3(signs * axis_aspect));
+        min = (min.0.min(x), min.1.min(y));
+        max = (max.0.max(x), max.1.max(y));
+    }
+
+    // `zoom` scales the whole plane about the camera's own axis — the look-at
+    // target — which is what "move the camera closer" means. At `zoom == 1` the
+    // rectangle is exactly the tight fit computed above; zooming in magnifies
+    // around the target and leaves it exactly where it was. Scaling the extent
+    // alone would magnify around the box's silhouette instead, which carries
+    // the target off the edge of the canvas at high zoom.
+    let center = ((min.0 + max.0) * 0.5 / zoom, (min.1 + max.1) * 0.5 / zoom);
+    // `Camera3D::validate` guarantees a positive finite zoom and positive finite
+    // aspect components, so the extents are already positive; the floor only
+    // keeps a pathological caller from producing a singular frustum.
+    let half_x = ((max.0 - min.0) * 0.5 / zoom).max(MIN_FITTED_HALF_EXTENT);
+    let half_y = ((max.1 - min.1) * 0.5 / zoom).max(MIN_FITTED_HALF_EXTENT);
+
+    // Grow the axis that has room rather than shrinking the one that does not,
+    // so the fitted box is always fully visible.
+    let (half_width, half_height) = if half_x >= half_y * viewport_aspect {
+        (half_x, half_x / viewport_aspect)
+    } else {
+        (half_y * viewport_aspect, half_y)
+    };
+    (center.0, center.1, half_width, half_height)
+}
+
+/// Orthographic projection that fits the plotting box to the viewport.
+///
+/// The half-extent used to be a fixed `1.8 / zoom` regardless of camera or
+/// aspect, and the default camera only needs about `1.33` — so the scene was
+/// drawn at roughly three quarters of the size it could be, in a frame a 2D plot
+/// fills to 92% x 97%.
+///
+/// `zoom` still scales the result, so `.zoom(2.0)` means twice as close on any
+/// camera rather than twice as close on one particular one.
+fn orthographic_fit(view: Mat4, axis_aspect: Vec3, viewport_aspect: f32, zoom: f32) -> Mat4 {
+    // An orthographic projection has no divide: view-space x and y *are* the
+    // coordinates on the projection plane.
+    let (center_x, center_y, half_width, half_height) =
+        fitted_box_rect(view, axis_aspect, viewport_aspect, zoom, |in_view| {
+            (in_view.x, in_view.y)
+        });
+    Mat4::orthographic_rh(
+        center_x - half_width,
+        center_x + half_width,
+        center_y - half_height,
+        center_y + half_height,
+        ORTHOGRAPHIC_NEAR,
+        ORTHOGRAPHIC_FAR,
+    )
+}
+
+/// Perspective projection that fits the plotting box to the viewport.
+///
+/// The exact counterpart of [`orthographic_fit`], on the same
+/// [`fitted_box_rect`]. This used to size the frustum from the box's *bounding
+/// sphere*, whose radius is `sqrt(3)` for a unit box, so a perspective figure
+/// was drawn markedly smaller than an orthographic one of the same box with the
+/// difference left as empty frame on every side.
+///
+/// The result is an off-axis frustum, which is what a tight fit requires: see
+/// [`fitted_box_rect`]. The near and far planes still bracket the whole sphere,
+/// so nothing clips.
+fn perspective_fit(
+    view: Mat4,
+    axis_aspect: Vec3,
+    viewport_aspect: f32,
+    zoom: f32,
+    scene_radius: f32,
+    eye_distance: f32,
+) -> Mat4 {
+    // A right-handed camera looks down its own -Z, so depth is `-z`. A corner at
+    // or behind the eye has no finite projection; the floor keeps the frustum
+    // from opening to infinity if a caller aims inside the box.
+    let (center_x, center_y, half_width, half_height) =
+        fitted_box_rect(view, axis_aspect, viewport_aspect, zoom, |in_view| {
+            let depth = (-in_view.z).max(MIN_PERSPECTIVE_DEPTH);
+            (in_view.x / depth, in_view.y / depth)
+        });
+
+    let near = (eye_distance - scene_radius * 1.25).max(0.001);
+    let far = eye_distance + scene_radius * 1.25;
+    // `fitted_box_rect` works in tangents; the frustum wants the rectangle those
+    // tangents cut out of the near plane.
+    Mat4::frustum_rh(
+        (center_x - half_width) * near,
+        (center_x + half_width) * near,
+        (center_y - half_height) * near,
+        (center_y + half_height) * near,
+        near,
+        far,
+    )
+}
+
+/// Smallest fitted half-extent, so a frustum is never singular.
+const MIN_FITTED_HALF_EXTENT: f32 = 1.0e-4;
+
+/// Smallest view-space depth a corner may claim when fitting a frustum.
+const MIN_PERSPECTIVE_DEPTH: f32 = 1.0e-4;
 
 /// Distance from `target` to the farthest corner of the aspect-scaled box.
 ///
@@ -730,6 +874,75 @@ mod tests {
         );
     }
 
+    /// Every corner of the aspect-scaled plotting box, in NDC.
+    fn projected_corner_extent(prepared: PreparedCamera3D) -> (f32, f32) {
+        let mut max_x = 0.0_f32;
+        let mut max_y = 0.0_f32;
+        for index in 0..8_usize {
+            let signs = Vec3::new(
+                if index & 1 == 0 { -1.0 } else { 1.0 },
+                if index & 2 == 0 { -1.0 } else { 1.0 },
+                if index & 4 == 0 { -1.0 } else { 1.0 },
+            );
+            let local = signs * prepared.axis_aspect;
+            let clip = prepared.view_projection * local.extend(1.0);
+            let ndc = clip.truncate() / clip.w;
+            max_x = max_x.max(ndc.x.abs());
+            max_y = max_y.max(ndc.y.abs());
+        }
+        (max_x, max_y)
+    }
+
+    /// The orthographic frustum is fitted to the box, not to a constant.
+    ///
+    /// The half-extent used to be `1.8 / zoom` whatever the camera did; the
+    /// default camera needs about `1.33`, so a 3D figure was drawn at roughly
+    /// three quarters of the size the frame allowed. The box must now touch the
+    /// edge of the frame on whichever axis limits it, and never cross it.
+    #[test]
+    fn orthographic_camera_fits_the_box_to_the_frame() {
+        for viewport_aspect in [0.5_f32, 1.0, 4.0 / 3.0, 16.0 / 9.0, 3.0] {
+            let prepared = Camera3D::default()
+                .prepare(viewport_aspect, unit_bounds())
+                .expect("default camera prepares");
+            let (max_x, max_y) = projected_corner_extent(prepared);
+
+            assert!(
+                max_x <= 1.0 + 1.0e-4 && max_y <= 1.0 + 1.0e-4,
+                "box must stay inside the frame: {max_x} x {max_y}"
+            );
+            assert_abs_diff_eq!(max_x.max(max_y), 1.0, epsilon = 1.0e-4);
+        }
+    }
+
+    /// Zoom keeps meaning "this much closer" now that the base extent varies.
+    #[test]
+    fn orthographic_zoom_scales_the_fitted_extent() {
+        let unzoomed = Camera3D::default()
+            .prepare(1.5, unit_bounds())
+            .expect("camera prepares");
+        let zoomed = Camera3D::default()
+            .zoom(2.0)
+            .prepare(1.5, unit_bounds())
+            .expect("camera prepares");
+        let (_, base_y) = projected_corner_extent(unzoomed);
+        let (_, zoomed_y) = projected_corner_extent(zoomed);
+        assert_abs_diff_eq!(zoomed_y, base_y * 2.0, epsilon = 1.0e-4);
+    }
+
+    /// A squashed z axis makes the box shorter on screen, and the fit has to
+    /// follow it instead of reserving room for a cube.
+    #[test]
+    fn orthographic_fit_follows_the_axis_aspect() {
+        let flat = Camera3D::default()
+            .axis_aspect(AxisAspect3D::fixed(1.0, 1.0, 0.05))
+            .prepare(1.0, unit_bounds())
+            .expect("camera prepares");
+        let (max_x, max_y) = projected_corner_extent(flat);
+        assert!(max_x <= 1.0 + 1.0e-4 && max_y <= 1.0 + 1.0e-4);
+        assert_abs_diff_eq!(max_x.max(max_y), 1.0, epsilon = 1.0e-4);
+    }
+
     #[test]
     fn an_absurd_look_at_target_keeps_the_box_in_front_of_the_eye() {
         for projection in [
@@ -888,11 +1101,43 @@ mod tests {
         ));
     }
 
+    /// Centre of the box's projected silhouette — what a reader sees as the
+    /// middle of the picture. It is *not* the projected data centre: perspective
+    /// makes the near corners subtend more than the far ones, so the silhouette
+    /// sits off the view axis, and a frustum centred on the view axis instead
+    /// leaves a band of empty frame down one side.
+    fn silhouette_center(camera: Camera3D, bounds: Bounds3D) -> (f32, f32) {
+        let mut min = (f32::INFINITY, f32::INFINITY);
+        let mut max = (f32::NEG_INFINITY, f32::NEG_INFINITY);
+        for index in 0..8_usize {
+            let corner = Point3D::new(
+                if index & 1 == 0 { -1.0 } else { 1.0 },
+                if index & 2 == 0 { -1.0 } else { 1.0 },
+                if index & 4 == 0 { -1.0 } else { 1.0 },
+            );
+            let at = camera.project(corner, bounds, 800, 600).expect("corner");
+            min = (min.0.min(at.x), min.1.min(at.y));
+            max = (max.0.max(at.x), max.1.max(at.y));
+        }
+        ((min.0 + max.0) * 0.5, (min.1 + max.1) * 0.5)
+    }
+
     #[test]
-    fn perspective_zoom_changes_apparent_size_without_moving_center() {
+    fn an_unzoomed_perspective_box_is_centred_in_its_frame() {
+        let bounds = Bounds3D::new(Point3D::new(-1.0, -1.0, -1.0), Point3D::new(1.0, 1.0, 1.0))
+            .expect("bounds");
+        let center = silhouette_center(Camera3D::default().perspective_deg(45.0), bounds);
+
+        assert_abs_diff_eq!(center.0, 400.0, epsilon = 1.0);
+        assert_abs_diff_eq!(center.1, 300.0, epsilon = 1.0);
+    }
+
+    #[test]
+    fn perspective_zoom_magnifies_about_the_look_at_target() {
         let bounds = Bounds3D::new(Point3D::new(-1.0, -1.0, -1.0), Point3D::new(1.0, 1.0, 1.0))
             .expect("bounds");
         let point = Point3D::new(1.0, 0.0, 0.0);
+
         let normal = Camera3D::default()
             .perspective_deg(45.0)
             .project(point, bounds, 800, 600)
@@ -903,13 +1148,26 @@ mod tests {
             .project(point, bounds, 800, 600)
             .expect("zoomed");
         assert!((zoomed.x - 400.0).abs() > (normal.x - 400.0).abs());
-        let center = Camera3D::default()
-            .perspective_deg(45.0)
-            .zoom(2.0)
-            .project(bounds.center(), bounds, 800, 600)
-            .expect("center");
-        assert_abs_diff_eq!(center.x, 400.0, epsilon = 1.0e-3);
-        assert_abs_diff_eq!(center.y, 300.0, epsilon = 1.0e-3);
+
+        // The look-at target — the thing the caller said to look at — is the
+        // fixed point of the zoom: the picture grows around it and it does not
+        // drift, however far in you go. Zooming about the box's silhouette
+        // instead would carry the target clean off the canvas at high zoom.
+        let target_at = |zoom: f32| {
+            let at = Camera3D::default()
+                .perspective_deg(45.0)
+                .zoom(zoom)
+                .project(bounds.center(), bounds, 800, 600)
+                .expect("target");
+            (at.x, at.y)
+        };
+
+        let anchor = target_at(1.0);
+        for zoom in [2.0, 8.0, 64.0] {
+            let at = target_at(zoom);
+            assert_abs_diff_eq!(at.0, anchor.0, epsilon = 1.0e-2);
+            assert_abs_diff_eq!(at.1, anchor.1, epsilon = 1.0e-2);
+        }
     }
 
     #[test]

@@ -512,6 +512,22 @@ impl PlotSeries {
                 style: line_style,
                 width: line_width,
             },
+            // Compute-only types are not all stroked: a strip or swarm cloud is
+            // markers and a hexbin is a colour scale, so each says which mark
+            // stands for it rather than all of them inheriting the line key.
+            SeriesType::Computed { data } => match data.legend_key() {
+                crate::plots::traits::LegendKey::Line => LegendItemType::Line {
+                    style: line_style,
+                    width: line_width,
+                },
+                crate::plots::traits::LegendKey::Marker => LegendItemType::Scatter {
+                    marker: marker_style,
+                    size: marker_size,
+                    edge: marker_edge,
+                },
+                crate::plots::traits::LegendKey::Patch => LegendItemType::Bar { edge: None },
+                crate::plots::traits::LegendKey::None => return None,
+            },
             // These patches are drawn flat today, so their keys are flat too.
             SeriesType::Violin { .. } | SeriesType::Boxen { .. } | SeriesType::Pie { .. } => {
                 LegendItemType::Bar { edge: None }
@@ -939,6 +955,17 @@ pub(crate) enum SeriesType {
     /// Quiver vector field plot
     Quiver {
         data: Arc<crate::plots::QuiverPlotData>,
+    },
+    /// Any plot type that ships finished geometry behind
+    /// [`ComputedSeries`](crate::plots::traits::ComputedSeries).
+    ///
+    /// One variant, not one per plot type. `SeriesType` is matched exhaustively
+    /// in eleven places, so five compute-only plot types would have cost forty
+    /// match arms and five more things to keep in step. Rug, strip, swarm,
+    /// hexbin and dendrogram all arrive here, and the next such plot type needs
+    /// no edit to this enum at all.
+    Computed {
+        data: Arc<dyn crate::plots::traits::ComputedSeries>,
     },
 }
 

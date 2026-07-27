@@ -108,22 +108,38 @@ deprecated in favour of that chain; see
 
 ## Plot Types
 
-The root `Plot` builder exposes 21 plot types, and that list is complete:
+The root `Plot` builder exposes 26 plot types, and that list is complete:
 
 - Basic: line, scatter, bar, histogram, box plot, heatmap
-- Distribution: KDE, ECDF, violin, boxen
+- Distribution: KDE, ECDF, violin, boxen, rug
+- Categorical: strip, swarm
 - Composition and polar: pie, donut styling, radar, polar line
-- Continuous, discrete, and error plots: contour, area, fill between, step, stem, symmetric/asymmetric error bars
+- Continuous, discrete, and error plots: contour, area, fill between, hexbin, step, stem, symmetric/asymmetric error bars
+- Hierarchical: dendrogram
 - Vector: quiver
 - Layout helpers: subplots, legends, grid/tick controls, annotations, insets
 
-Anything not in that list has no builder method and cannot be drawn, even
-though the source tree contains partial implementations of it. Specifically,
-**hexbin, strip, swarm, grouped bar, stacked bar, stacked area, rug, 2D KDE,
-dendrogram, joint plot, pair plot, regression plot and residual plot have no
-`Plot` builder**, and Sankey diagrams and streamplots are not implemented at
-all. The compute functions for some of these are public and usable on their
-own, but they will not render.
+With the `3d` feature, `Plot3D` adds four more: 3D scatter, 3D line, surface
+and wireframe.
+
+All of them except `fill_between` are *series* methods that take the same shape —
+`Plot::new()`, a series method, setters, a terminal call — so
+`.<series>(..).label(..).color(..).legend_best().save(..)` compiles for every one
+of them. `fill_between` is an annotation rather than a series: it returns the
+plot itself, so it takes plot-level setters (`.title(..)`, `.xlabel(..)`) rather
+than series-level ones.
+
+Anything not in that list has no builder method and cannot be drawn with that
+chain, even though the source tree contains implementations of it. Specifically,
+**grouped bar, stacked bar, stacked area, 2D KDE, joint plot, pair plot,
+regression plot and residual plot have no `Plot` builder**, and Sankey diagrams
+and streamplots are not implemented at all.
+
+Several of those do have a working renderer and can be drawn by calling
+`PlotCompute` and `PlotRender::render` yourself; the missing piece is only the
+one-line entry point.
+The [ruviz::plots module docs](https://docs.rs/ruviz/latest/ruviz/plots/) list
+which is which, and a test keeps that list in step with the builder.
 
 ## Export
 
@@ -144,6 +160,7 @@ Default features are `ndarray_support` and `parallel`.
 
 | Feature | Description |
 |---------|-------------|
+| `3d` | `Plot3D`: 3D scatter, line, surface and wireframe |
 | `ndarray_support` | ndarray data support (canonical) |
 | `ndarray` | compatibility alias for `ndarray_support` |
 | `polars_support` | polars data support (canonical) |
@@ -161,6 +178,7 @@ Default features are `ndarray_support` and `parallel`.
 | `pdf` | PDF export via SVG-to-PDF |
 | `typst-math` | Typst-backed text rendering |
 | `animation` | GIF recording support |
+| `animation-video` | `animation` + AV1 video encoding |
 | `svg` | no-op, retained for compatibility (see below) |
 | `full` | broad feature set for native builds |
 
