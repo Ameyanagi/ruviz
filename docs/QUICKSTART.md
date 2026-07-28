@@ -2,15 +2,16 @@
 
 Get started with ruviz in less than 5 minutes!
 
-## What's New in v0.5.0
+## What's New in v0.6.0
 
-- Streaming data can be replaced atomically with `StreamingXY::replace`, and acknowledgement watermarks are tracked per consumer so shared streams never composite stale frames.
-- Outside legend positions (`OutsideRight`, `OutsideLeft`, `OutsideUpper`, `OutsideLower`) are honored across PNG, SVG, interactive, and subplot rendering.
-- Interactive annotations can be added, updated, and removed at runtime, and heatmaps accept a configurable row origin.
-- Builders gain a conditional `.when(...)` combinator, and the GPUI adapter gains coordinate mapping, pointer events, and view-preserving plot replacement.
+- First-class 3D plotting now spans Rust, Python, WebAssembly, GPUI, egui, Iced, and Slint.
+- Native adapters support static and interactive 2D/3D plots with responsive HiDPI rendering and nonblocking reactive updates.
+- CPU and GPU 3D paths share corrected lighting, alpha, clipping, camera, legend, and picking behavior.
+- Legend layout and styling are unified across 2D and 3D raster and SVG output.
 
 See full details:
-- [Release notes for v0.5.0](releases/v0.5.0.md)
+
+- [Release notes for v0.6.0](releases/v0.6.0.md)
 - [Project changelog](../CHANGELOG.md)
 
 ## Installation
@@ -24,7 +25,7 @@ cd my_plot
 2. **Add ruviz to your `Cargo.toml`**:
 ```toml
 [dependencies]
-ruviz = "0.5.0"
+ruviz = "0.6.0"
 ```
 
 3. **Write your first plot** in `src/main.rs`:
@@ -63,8 +64,8 @@ an embedded interactive plot view:
 
 ```toml
 [dependencies]
-ruviz = "0.5.0"
-ruviz-gpui = "0.5.0"
+ruviz = "0.6.0"
+ruviz-gpui = "0.6.0"
 ```
 
 `ruviz-gpui` is supported on Linux, macOS, and Windows. On Windows, prefer the
