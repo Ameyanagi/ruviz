@@ -53,8 +53,9 @@ Interactive 2D supports hover, click selection, left/middle drag pan, scroll
 zoom, right-drag rectangular zoom, double-click reset, and Escape reset when
 idle. Escape, release outside, and focus loss cancel an active drag.
 
-`set_plot` resets the viewport; `set_plot_keep_view` restores the current
-visible bounds on the replacement. Both retain the last frame until the new
+`set_plot` resets the viewport; `set_plot_keep_view` restores the old visible
+bounds only when the user customized them. An untouched view uses the
+replacement plot's natural bounds. Both retain the last frame until the new
 one has rendered and been allocated by Iced.
 
 ## 3D

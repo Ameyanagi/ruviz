@@ -1,10 +1,11 @@
 use std::sync::mpsc::{self, Receiver, Sender};
 
 use egui::{Id, PointerButton, Response, Sense, TextureHandle, TextureOptions, Ui};
+use ruviz::axes::AxisScale;
 use ruviz::core::{
     HitResult, Image, ImageFit, ImageTarget, InteractiveChangeRevision,
     InteractiveChangeSubscription, InteractivePlotSession, InteractiveRenderStamp, IntoPlotSession,
-    LatestRequestScheduler, Plot, PlotInputEvent, ScheduledRequestId, ViewportPoint,
+    LatestRequestScheduler, Plot, PlotInputEvent, ScheduledRequestId, ViewportPoint, ViewportRect,
     physical_backing_size,
 };
 
@@ -187,6 +188,7 @@ pub struct RuvizPlot {
     last_drag_position: Option<egui::Pos2>,
     last_hover_position: Option<(u64, u64)>,
     last_hover: Option<HitResult>,
+    session_hover_active: bool,
     last_error: Option<AdapterError>,
     time_seconds: f64,
 }
@@ -223,6 +225,7 @@ impl RuvizPlot {
             last_drag_position: None,
             last_hover_position: None,
             last_hover: None,
+            session_hover_active: false,
             last_error: None,
             time_seconds: 0.0,
         }
@@ -240,6 +243,10 @@ impl RuvizPlot {
         self.mode = mode;
         if mode == ViewMode::Static {
             self.cancel_drag();
+            if self.clear_hover_if_pointer_left(false) {
+                self.last_requested = None;
+                self.request_repaint();
+            }
         }
     }
 
@@ -283,8 +290,11 @@ impl RuvizPlot {
         self.replace_session(plot.into_plot_session(), false);
     }
 
-    /// Replace the retained plot and restore the previous visible bounds when
-    /// they are valid for the replacement axes.
+    /// Replace the retained plot while retaining a customized visible view.
+    ///
+    /// The previous visible bounds are restored only when they materially
+    /// differ from the previous plot's base bounds. An untouched view uses the
+    /// replacement plot's natural bounds.
     pub fn set_plot_keep_view(&mut self, plot: impl IntoPlotSession) {
         self.replace_session(plot.into_plot_session(), true);
     }
@@ -334,6 +344,13 @@ impl RuvizPlot {
         let frame_is_current = self
             .displayed_stamp
             .is_some_and(|stamp| self.session.is_render_stamp_current(stamp));
+        let pointer_over_visible_content = response
+            .hover_pos()
+            .is_some_and(|position| visible_content.contains(position));
+        if self.clear_hover_if_pointer_left(pointer_over_visible_content) {
+            hovered = None;
+            events.push(PlotEvent::Hovered(None));
+        }
         if !frame_is_current && self.last_hover.take().is_some() {
             self.last_hover_position = None;
             hovered = None;
@@ -372,17 +389,15 @@ impl RuvizPlot {
             time_bits: self.time_seconds.to_bits(),
             revision: self.session.change_revision(),
         };
-        if self.last_requested != Some(key) {
-            self.last_requested = Some(key);
-            self.queue_render(
-                ImageTarget {
-                    size_px: target_size,
-                    scale_factor,
-                    time_seconds: self.time_seconds,
-                },
-                ui.ctx().clone(),
-            );
-        }
+        self.request_render_if_needed(
+            key,
+            ImageTarget {
+                size_px: target_size,
+                scale_factor,
+                time_seconds: self.time_seconds,
+            },
+            ui.ctx().clone(),
+        );
 
         if selection_changed || view_changed || !events.is_empty() {
             response.mark_changed();
@@ -405,15 +420,19 @@ impl RuvizPlot {
     fn replace_session(&mut self, replacement: InteractivePlotSession, keep_view: bool) {
         replacement.set_prefer_gpu(self.prefer_gpu);
         self.session.cancel_interaction();
-        if keep_view {
-            let bounds = self.session.view_bounds_snapshot().visible_bounds;
-            replacement.defer_visible_bounds_restore(bounds);
+        let old_viewport = self.session.view_bounds_snapshot();
+        if keep_view
+            && viewport_bounds_materially_differ(
+                old_viewport.visible_bounds,
+                old_viewport.base_bounds,
+                &old_viewport.x_scale,
+                &old_viewport.y_scale,
+            )
+        {
+            replacement.defer_visible_bounds_restore(old_viewport.visible_bounds);
         }
         self.session = replacement;
-        self.session_epoch = self
-            .session_epoch
-            .checked_add(1)
-            .expect("ruviz-egui 2D replacement epoch exhausted");
+        self.session_epoch = self.session_epoch.wrapping_add(1);
         self.subscription = None;
         self.last_requested = None;
         self.displayed_stamp = None;
@@ -421,6 +440,7 @@ impl RuvizPlot {
         self.last_drag_position = None;
         self.last_hover = None;
         self.last_hover_position = None;
+        self.session_hover_active = false;
         self.last_error = None;
         self.request_repaint();
     }
@@ -458,9 +478,24 @@ impl RuvizPlot {
         }
     }
 
+    fn request_render_if_needed(
+        &mut self,
+        key: RenderKey2D,
+        target: ImageTarget,
+        repaint: egui::Context,
+    ) -> bool {
+        if self.last_requested == Some(key) {
+            return false;
+        }
+        self.last_requested = Some(key);
+        self.queue_render(target, repaint);
+        true
+    }
+
     fn spawn_render(&self, id: ScheduledRequestId, request: RenderRequest2D) {
         let sender = self.completion_tx.clone();
         let worker_sender = sender.clone();
+        let worker_id = id.clone();
         let repaint = request.repaint.clone();
         if let Err(error) = std::thread::Builder::new()
             .name("ruviz-egui-2d-render".to_string())
@@ -476,7 +511,7 @@ impl RuvizPlot {
                     }
                 };
                 let _ = worker_sender.send(RenderCompletion2D {
-                    id,
+                    id: worker_id,
                     session_epoch: request.session_epoch,
                     result,
                 });
@@ -494,28 +529,37 @@ impl RuvizPlot {
 
     fn drain_completions(&mut self, context: &egui::Context, events: &mut Vec<PlotEvent>) {
         while let Ok(completed) = self.completion_rx.try_recv() {
-            let Some(state) = self.scheduler.complete(completed.id) else {
-                continue;
-            };
-            if state.install && completed.session_epoch == self.session_epoch {
-                match completed.result {
-                    RenderResult2D::Frame(frame)
-                        if self.session.is_render_stamp_current(frame.stamp) =>
-                    {
-                        self.install_image(context, frame.image);
-                        self.displayed_stamp = Some(frame.stamp);
-                        self.last_error = None;
-                    }
-                    RenderResult2D::Frame(_) | RenderResult2D::Superseded => {}
-                    RenderResult2D::Error(error) => {
-                        self.last_error = Some(error.clone());
-                        events.push(PlotEvent::Error(error));
-                    }
+            self.handle_completion(context, events, completed);
+        }
+    }
+
+    fn handle_completion(
+        &mut self,
+        context: &egui::Context,
+        events: &mut Vec<PlotEvent>,
+        completed: RenderCompletion2D,
+    ) {
+        let Some(state) = self.scheduler.complete(completed.id) else {
+            return;
+        };
+        if state.install && completed.session_epoch == self.session_epoch {
+            match completed.result {
+                RenderResult2D::Frame(frame)
+                    if self.session.is_render_stamp_current(frame.stamp) =>
+                {
+                    self.install_image(context, frame.image);
+                    self.displayed_stamp = Some(frame.stamp);
+                    self.last_error = None;
+                }
+                RenderResult2D::Frame(_) | RenderResult2D::Superseded => {}
+                RenderResult2D::Error(error) => {
+                    self.last_error = Some(error.clone());
+                    events.push(PlotEvent::Error(error));
                 }
             }
-            if let Some(next) = state.next {
-                self.spawn_render(next.id(), next.into_request());
-            }
+        }
+        if let Some(next) = state.next {
+            self.spawn_render(next.id(), next.into_request());
         }
     }
 
@@ -574,6 +618,7 @@ impl RuvizPlot {
                     let hit = self.session.hit_test(position_px);
                     self.session
                         .apply_input(PlotInputEvent::Hover { position_px });
+                    self.session_hover_active = true;
                     self.last_hover_position = Some(hover_key);
                     self.last_hover = (!matches!(hit, HitResult::None)).then_some(hit);
                     outcome.hovered = self.last_hover.clone();
@@ -593,9 +638,7 @@ impl RuvizPlot {
                     outcome.events.push(PlotEvent::ViewChanged);
                 }
             }
-        } else if self.last_hover_position.take().is_some() {
-            self.session.apply_input(PlotInputEvent::ClearHover);
-            self.last_hover = None;
+        } else if self.clear_hover_if_pointer_left(false) {
             outcome.hovered = None;
             outcome.events.push(PlotEvent::Hovered(None));
         }
@@ -629,8 +672,10 @@ impl RuvizPlot {
             if !press_starts_in(visible_content, press_origin) {
                 return outcome;
             }
+            let Some(start) = press_origin else {
+                return outcome;
+            };
             response.request_focus();
-            let start = press_origin.expect("visible drag origin was checked above");
             self.last_drag_position = Some(start);
             if brush {
                 let (x, y) = map_point_clamped(content, start, image_size);
@@ -684,6 +729,16 @@ impl RuvizPlot {
         outcome
     }
 
+    fn clear_hover_if_pointer_left(&mut self, pointer_over_visible_content: bool) -> bool {
+        if pointer_over_visible_content || !std::mem::take(&mut self.session_hover_active) {
+            return false;
+        }
+        self.session.apply_input(PlotInputEvent::ClearHover);
+        self.last_hover_position = None;
+        self.last_hover = None;
+        true
+    }
+
     fn finish_drag(
         &mut self,
         position: Option<egui::Pos2>,
@@ -722,6 +777,37 @@ fn incremental_drag_delta(previous: Option<egui::Pos2>, current: egui::Pos2) -> 
     previous.map_or(egui::Vec2::ZERO, |previous| current - previous)
 }
 
+const VIEW_BOUNDS_NORMALIZED_TOLERANCE: f64 = 1e-12;
+
+fn viewport_bounds_materially_differ(
+    visible: ViewportRect,
+    base: ViewportRect,
+    x_scale: &AxisScale,
+    y_scale: &AxisScale,
+) -> bool {
+    !viewport_axis_bounds_close(
+        (visible.min.x, visible.max.x),
+        (base.min.x, base.max.x),
+        x_scale,
+    ) || !viewport_axis_bounds_close(
+        (visible.min.y, visible.max.y),
+        (base.min.y, base.max.y),
+        y_scale,
+    )
+}
+
+fn viewport_axis_bounds_close(visible: (f64, f64), base: (f64, f64), scale: &AxisScale) -> bool {
+    if (visible.1 - visible.0).is_sign_negative() != (base.1 - base.0).is_sign_negative() {
+        return false;
+    }
+    let start = scale.normalized_position(visible.0, base.0, base.1);
+    let end = scale.normalized_position(visible.1, base.0, base.1);
+    start.is_finite()
+        && end.is_finite()
+        && start.abs() <= VIEW_BOUNDS_NORMALIZED_TOLERANCE
+        && (end - 1.0).abs() <= VIEW_BOUNDS_NORMALIZED_TOLERANCE
+}
+
 #[derive(Default)]
 struct InputOutcome2D {
     clicked: Option<HitResult>,
@@ -739,10 +825,47 @@ impl Default for RuvizPlot {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+    use std::time::Duration;
+
     use super::*;
+    use ruviz::data::Observable;
 
     fn plot() -> impl IntoPlotSession {
         Plot::new().line(&[0.0, 1.0, 2.0], &[0.0, 1.0, 0.0])
+    }
+
+    fn scheduled_completion(
+        widget: &mut RuvizPlot,
+        target: ImageTarget,
+        repaint: egui::Context,
+    ) -> RenderCompletion2D {
+        let scheduled = widget
+            .scheduler
+            .request(RenderRequest2D {
+                session: widget.session.clone(),
+                session_epoch: widget.session_epoch,
+                target,
+                repaint,
+            })
+            .unwrap();
+        let id = scheduled.id();
+        let request = scheduled.into_request();
+        let frame = request
+            .session
+            .render_to_image_stamped(request.target)
+            .unwrap();
+        RenderCompletion2D {
+            id,
+            session_epoch: request.session_epoch,
+            result: RenderResult2D::Frame(Rendered2D {
+                image: frame.frame.image.as_ref().clone(),
+                stamp: frame.render_stamp(),
+            }),
+        }
     }
 
     #[test]
@@ -760,24 +883,271 @@ mod tests {
 
     #[test]
     fn keep_view_restores_compatible_bounds() {
-        let mut widget = plot_builder(plot()).build();
-        widget.session.apply_input(PlotInputEvent::Zoom {
-            factor: 2.0,
-            center_px: ViewportPoint::new(100.0, 100.0),
-        });
-        let before = widget.session.view_bounds_snapshot().visible_bounds;
-        widget.set_plot_keep_view(plot());
+        let initial = Plot::new()
+            .line(&[0.0, 10.0], &[0.0, 10.0])
+            .xlim(0.0, 10.0)
+            .ylim(0.0, 10.0);
+        let mut widget = plot_builder(initial).build();
+        let custom_view =
+            ViewportRect::from_points(ViewportPoint::new(2.0, 1.0), ViewportPoint::new(8.0, 9.0));
+        assert!(widget.session.restore_visible_bounds(custom_view));
+
+        let replacement = Plot::new()
+            .line(&[0.0, 20.0], &[0.0, 20.0])
+            .xlim(0.0, 20.0)
+            .ylim(0.0, 20.0);
+        widget.set_plot_keep_view(replacement);
+        widget
+            .session
+            .render_to_image_stamped(ImageTarget {
+                size_px: (320, 200),
+                scale_factor: 1.0,
+                time_seconds: 0.0,
+            })
+            .unwrap();
         let after = widget.session.view_bounds_snapshot().visible_bounds;
-        assert_eq!(before, after);
+        assert!((after.min.x - custom_view.min.x).abs() < 1e-12);
+        assert!((after.min.y - custom_view.min.y).abs() < 1e-12);
+        assert!((after.max.x - custom_view.max.x).abs() < 1e-12);
+        assert!((after.max.y - custom_view.max.y).abs() < 1e-12);
+    }
+
+    #[test]
+    fn keep_view_uses_replacement_bounds_when_old_view_was_untouched() {
+        let initial = Plot::new()
+            .line(&[0.0, 10.0], &[0.0, 10.0])
+            .xlim(0.0, 10.0)
+            .ylim(0.0, 10.0);
+        let mut widget = plot_builder(initial).build();
+        let replacement = Plot::new()
+            .line(&[100.0, 200.0], &[-5.0, 5.0])
+            .xlim(100.0, 200.0)
+            .ylim(-5.0, 5.0);
+
+        widget.set_plot_keep_view(replacement);
+
+        let snapshot = widget.session.view_bounds_snapshot();
+        assert_eq!(snapshot.visible_bounds, snapshot.base_bounds);
+        assert_eq!(
+            snapshot.base_bounds,
+            ViewportRect::from_points(
+                ViewportPoint::new(100.0, -5.0),
+                ViewportPoint::new(200.0, 5.0),
+            )
+        );
+    }
+
+    #[test]
+    fn pointer_leave_clears_hover_even_after_stale_bookkeeping_is_retired() {
+        let mut widget = plot_builder(plot()).build();
+        widget.session_hover_active = true;
+        widget.last_hover_position = None;
+        widget.last_hover = None;
+
+        assert!(!widget.clear_hover_if_pointer_left(true));
+        assert!(widget.session_hover_active);
+        assert!(widget.clear_hover_if_pointer_left(false));
+        assert!(!widget.session_hover_active);
+        assert!(widget.last_hover_position.is_none());
+        assert!(widget.last_hover.is_none());
+    }
+
+    #[test]
+    fn switching_to_static_clears_drag_hover_and_requests_a_cleanup_frame() {
+        let mut widget = plot_builder(plot()).build();
+        widget.active_drag = Some(Drag2D::Brush);
+        widget.last_drag_position = Some(egui::pos2(10.0, 20.0));
+        widget.session_hover_active = true;
+        widget.last_hover_position = Some((10, 20));
+        widget.last_requested = Some(RenderKey2D {
+            size_px: (80, 48),
+            scale_bits: 1.0_f32.to_bits(),
+            time_bits: 0.0_f64.to_bits(),
+            revision: widget.session.change_revision(),
+        });
+
+        widget.set_mode(ViewMode::Static);
+
+        assert_eq!(widget.mode(), ViewMode::Static);
+        assert!(widget.active_drag.is_none());
+        assert!(widget.last_drag_position.is_none());
+        assert!(!widget.session_hover_active);
+        assert!(widget.last_hover_position.is_none());
+        assert!(widget.last_requested.is_none());
+    }
+
+    #[test]
+    fn observable_change_wakes_schedules_and_installs_a_reactive_frame() {
+        let y = Observable::new(vec![0.0, 1.0, 4.0]);
+        let reactive_plot = Plot::new().line_source(vec![0.0, 1.0, 2.0], y.clone());
+        let mut widget = plot_builder(reactive_plot).build();
+        let context = egui::Context::default();
+        let wake_count = Arc::new(AtomicUsize::new(0));
+        context.set_request_repaint_callback({
+            let wake_count = Arc::clone(&wake_count);
+            move |_| {
+                wake_count.fetch_add(1, Ordering::SeqCst);
+            }
+        });
+        widget.ensure_subscription(&context);
+        let target = ImageTarget {
+            size_px: (96, 64),
+            scale_factor: 1.0,
+            time_seconds: 0.0,
+        };
+        let initial_key = RenderKey2D {
+            size_px: target.size_px,
+            scale_bits: target.scale_factor.to_bits(),
+            time_bits: target.time_seconds.to_bits(),
+            revision: widget.session.change_revision(),
+        };
+        assert!(widget.request_render_if_needed(initial_key, target, context.clone()));
+        let initial_completion = widget
+            .completion_rx
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
+        widget.handle_completion(&context, &mut Vec::new(), initial_completion);
+        let initial_stamp = widget.displayed_stamp.unwrap();
+        assert!(widget.texture.is_some());
+
+        for _ in 0..4 {
+            let _ = context.run_ui(egui::RawInput::default(), |_| {});
+            if !context.has_requested_repaint() {
+                break;
+            }
+        }
+        assert!(!context.has_requested_repaint());
+        let wakes_before_update = wake_count.load(Ordering::SeqCst);
+        let revision_before_update = widget.session.change_revision();
+
+        y.set(vec![0.0, 1.0, 9.0]);
+
+        let updated_revision = widget.session.change_revision();
+        assert_ne!(updated_revision, revision_before_update);
+        assert!(context.has_requested_repaint());
+        assert!(wake_count.load(Ordering::SeqCst) > wakes_before_update);
+        let updated_key = RenderKey2D {
+            revision: updated_revision,
+            ..initial_key
+        };
+        assert!(widget.request_render_if_needed(updated_key, target, context.clone()));
+        let updated_completion = widget
+            .completion_rx
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
+        widget.handle_completion(&context, &mut Vec::new(), updated_completion);
+
+        let updated_stamp = widget.displayed_stamp.unwrap();
+        assert_ne!(updated_stamp, initial_stamp);
+        assert!(widget.session.is_render_stamp_current(updated_stamp));
+        assert_eq!(widget.image_size, Some(target.size_px));
+        assert!(widget.texture.is_some());
+    }
+
+    #[test]
+    fn multiple_widgets_keep_completion_and_input_routing_independent() {
+        let mut first =
+            plot_builder(Plot::new().line(&[0.0, 1.0], &[0.0, 1.0]).title("first")).build();
+        let mut second =
+            plot_builder(Plot::new().line(&[0.0, 1.0], &[1.0, 0.0]).title("second")).build();
+        let context = egui::Context::default();
+        let first_target = ImageTarget {
+            size_px: (80, 48),
+            scale_factor: 1.0,
+            time_seconds: 0.0,
+        };
+        let second_target = ImageTarget {
+            size_px: (120, 72),
+            scale_factor: 1.0,
+            time_seconds: 0.0,
+        };
+        let first_completion = scheduled_completion(&mut first, first_target, context.clone());
+        let second_completion = scheduled_completion(&mut second, second_target, context.clone());
+
+        let foreign_completion = RenderCompletion2D {
+            id: first_completion.id.clone(),
+            session_epoch: first_completion.session_epoch,
+            result: match &first_completion.result {
+                RenderResult2D::Frame(frame) => RenderResult2D::Frame(Rendered2D {
+                    image: frame.image.clone(),
+                    stamp: frame.stamp,
+                }),
+                RenderResult2D::Superseded | RenderResult2D::Error(_) => unreachable!(),
+            },
+        };
+        second.handle_completion(&context, &mut Vec::new(), foreign_completion);
+        assert!(second.displayed_stamp.is_none());
+        assert!(!second.scheduler.is_idle());
+
+        first.handle_completion(&context, &mut Vec::new(), first_completion);
+        assert_eq!(first.image_size, Some(first_target.size_px));
+        assert!(first.texture.is_some());
+        assert!(second.texture.is_none());
+
+        second.handle_completion(&context, &mut Vec::new(), second_completion);
+        assert_eq!(second.image_size, Some(second_target.size_px));
+        assert!(second.texture.is_some());
+        assert_ne!(
+            first.texture.as_ref().map(TextureHandle::id),
+            second.texture.as_ref().map(TextureHandle::id)
+        );
+
+        first.session_hover_active = true;
+        second.session_hover_active = true;
+        assert!(first.clear_hover_if_pointer_left(false));
+        assert!(!first.session_hover_active);
+        assert!(second.session_hover_active);
+
+        first.active_drag = Some(Drag2D::Pan);
+        second.active_drag = Some(Drag2D::Brush);
+        let mut first_events = InputOutcome2D::default();
+        first.cancel_active_drag(&mut first_events);
+        assert!(first.active_drag.is_none());
+        assert_eq!(second.active_drag, Some(Drag2D::Brush));
+        assert_eq!(first_events.events, vec![PlotEvent::DragCancelled]);
     }
 
     #[test]
     fn replacement_does_not_discard_last_good_texture_state_eagerly() {
         let mut widget = plot_builder(plot()).build();
         widget.image_size = Some((640, 360));
+        widget.session_epoch = u64::MAX;
         widget.set_plot(plot());
         assert_eq!(widget.image_size, Some((640, 360)));
         assert!(widget.last_requested.is_none());
+        assert_eq!(widget.session_epoch, 0);
+    }
+
+    #[test]
+    fn replacement_keeps_an_existing_render_in_flight_and_coalesces_new_work() {
+        let mut widget = plot_builder(plot()).build();
+        let repaint = egui::Context::default();
+        assert!(
+            widget
+                .scheduler
+                .request(RenderRequest2D {
+                    session: widget.session.clone(),
+                    session_epoch: widget.session_epoch,
+                    target: ImageTarget::default(),
+                    repaint: repaint.clone(),
+                })
+                .is_some()
+        );
+
+        widget.set_plot(plot());
+
+        assert!(!widget.scheduler.is_idle());
+        assert!(
+            widget
+                .scheduler
+                .request(RenderRequest2D {
+                    session: widget.session.clone(),
+                    session_epoch: widget.session_epoch,
+                    target: ImageTarget::default(),
+                    repaint,
+                })
+                .is_none()
+        );
     }
 
     #[cfg(feature = "gpu")]

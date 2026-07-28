@@ -12,6 +12,7 @@ runs:
           cmake \
           libasound2-dev \
           libfontconfig-dev \
+          libgl1-mesa-dri \
           libglib2.0-dev \
           libgtk-3-dev \
           libsqlite3-dev \
@@ -23,4 +24,7 @@ runs:
           libxkbcommon-dev \
           libxkbcommon-x11-dev \
           libzstd-dev \
-          pkg-config
+          mesa-vulkan-drivers \
+          pkg-config \
+          xauth \
+          xvfb

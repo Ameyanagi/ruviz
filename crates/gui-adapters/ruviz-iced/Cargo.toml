@@ -32,6 +32,7 @@ ruviz = { version = "=0.6.0", path = "../../.." }
 
 [dev-dependencies]
 iced = { version = "0.14", default-features = false, features = ["advanced", "image", "thread-pool", "tiny-skia", "x11", "wayland"] }
+iced_runtime = "0.14"
 
 [[example]]
 name = "dashboard_2d"

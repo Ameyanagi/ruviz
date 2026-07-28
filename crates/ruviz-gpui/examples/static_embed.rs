@@ -5,7 +5,7 @@ use gpui::{
     size,
 };
 use ruviz::prelude::*;
-use ruviz_gpui::{GpuiContextMenuConfig, GpuiContextMenuItem, RuvizPlot, plot_builder};
+use ruviz_gpui::{RuvizPlot, plot_builder};
 use support::{application, exit_on_window_open_failure};
 
 struct StaticEmbedDemo {
@@ -23,27 +23,7 @@ impl StaticEmbedDemo {
             .ylabel("sin(x)")
             .into();
 
-        let plot = plot_builder(plot)
-            .interactive()
-            .context_menu(GpuiContextMenuConfig {
-                custom_items: vec![GpuiContextMenuItem::new(
-                    "dump-view",
-                    "Print Visible Bounds",
-                )],
-                ..GpuiContextMenuConfig::default()
-            })
-            .on_context_menu_action(|context| {
-                println!(
-                    "custom action: visible_bounds=({:.3}, {:.3}) -> ({:.3}, {:.3}) cursor={:?}",
-                    context.visible_bounds.min.x,
-                    context.visible_bounds.min.y,
-                    context.visible_bounds.max.x,
-                    context.visible_bounds.max.y,
-                    context.cursor_data_position
-                );
-                Ok(())
-            })
-            .build(cx);
+        let plot = plot_builder(plot).static_view().build(cx);
         Self { plot }
     }
 }

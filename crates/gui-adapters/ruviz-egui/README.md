@@ -64,8 +64,9 @@ if let Some(hit) = response.picked {
 ```
 
 Left-drag orbits, middle/right-drag pans, the wheel zooms, click picks, and
-Escape/double-click resets the camera. `set_plot_keep_view` preserves the 2D
-visible bounds or 3D camera where valid.
+Escape/double-click resets the camera. `set_plot_keep_view` preserves a
+user-customized 2D visible view or the 3D camera where valid. An untouched 2D
+view uses the replacement plot's natural bounds.
 
 The image upload explicitly converts ruviz RGBA pixels to egui's
 premultiplied-alpha representation. Pointer coordinates are mapped through the

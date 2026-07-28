@@ -104,6 +104,9 @@ export component RuvizPlot inherits Rectangle {
             enabled: root.interactive;
 
             pointer-event(event) => {
+                if (event.kind == PointerEventKind.down) {
+                    input.focus();
+                }
                 RuvizRuntime.pointer-event(
                     root.slot-id,
                     event.kind == PointerEventKind.down ? 0 :

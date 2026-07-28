@@ -2233,6 +2233,403 @@ fn test_noop_configuration_and_brush_updates_preserve_revision() {
 }
 
 #[test]
+fn test_reentrant_change_dispatch_preserves_subscriber_order_and_stops_at_exhaustion() {
+    let hub = Arc::new(ChangeHub::default());
+    let first_seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let second_seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let reentered = Arc::new(std::sync::atomic::AtomicBool::new(false));
+
+    let hub_for_first = Arc::clone(&hub);
+    let first_seen_for_callback = Arc::clone(&first_seen);
+    let reentered_for_callback = Arc::clone(&reentered);
+    let first = hub.subscribe(move |revision| {
+        first_seen_for_callback.lock().unwrap().push(revision);
+        if !reentered_for_callback.swap(true, Ordering::AcqRel) {
+            hub_for_first.notify();
+        }
+    });
+    let second_seen_for_callback = Arc::clone(&second_seen);
+    let second = hub.subscribe(move |revision| {
+        second_seen_for_callback.lock().unwrap().push(revision);
+    });
+
+    let first_revision = hub.notify();
+    let second_revision = hub.revision();
+    assert!(second_revision > first_revision);
+    assert_eq!(
+        first_seen.lock().unwrap().as_slice(),
+        &[first_revision, second_revision]
+    );
+    assert_eq!(
+        second_seen.lock().unwrap().as_slice(),
+        &[first_revision, second_revision]
+    );
+
+    let callback_count_before_exhaustion = second_seen.lock().unwrap().len();
+    {
+        let mut state = lock_recover(&hub.state);
+        state.revision = InteractiveChangeRevision {
+            era: u64::MAX,
+            sequence: u64::MAX,
+        };
+    }
+    let terminal = hub.revision();
+    assert_eq!(hub.notify(), terminal);
+    assert_eq!(hub.notify(), terminal);
+    assert!(hub.is_exhausted());
+    assert_eq!(
+        second_seen.lock().unwrap().len(),
+        callback_count_before_exhaustion,
+        "terminal exhaustion must not redeliver a duplicate revision"
+    );
+    drop((first, second));
+}
+
+#[test]
+fn test_change_dispatch_recovers_after_callback_panic() {
+    let hub = Arc::new(ChangeHub::default());
+    let panicking = hub.subscribe(|_| panic!("subscriber panic"));
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| hub.notify()));
+    assert!(result.is_err());
+    assert!(!lock_recover(&hub.state).dispatching);
+    drop(panicking);
+
+    let observed = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let observed_for_callback = Arc::clone(&observed);
+    let subscription = hub.subscribe(move |revision| {
+        observed_for_callback.lock().unwrap().push(revision);
+    });
+    let revision = hub.notify();
+    assert_eq!(observed.lock().unwrap().as_slice(), &[revision]);
+    drop(subscription);
+}
+
+#[test]
+fn test_callback_panic_drains_concurrently_queued_revisions_before_unwind() {
+    let hub = Arc::new(ChangeHub::default());
+    let panic_started = Arc::new(std::sync::Barrier::new(2));
+    let release_panic = Arc::new(std::sync::Barrier::new(2));
+    let panic_once = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let observer_revisions = Arc::new(std::sync::Mutex::new(Vec::new()));
+
+    let panic_started_for_callback = Arc::clone(&panic_started);
+    let release_panic_for_callback = Arc::clone(&release_panic);
+    let panic_once_for_callback = Arc::clone(&panic_once);
+    let panicking = hub.subscribe(move |_| {
+        if !panic_once_for_callback.swap(true, Ordering::AcqRel) {
+            panic_started_for_callback.wait();
+            release_panic_for_callback.wait();
+            panic!("first revision callback panic");
+        }
+    });
+    let observer_revisions_for_callback = Arc::clone(&observer_revisions);
+    let observer = hub.subscribe(move |revision| {
+        observer_revisions_for_callback
+            .lock()
+            .unwrap()
+            .push(revision);
+    });
+
+    let hub_for_enqueue = Arc::clone(&hub);
+    let panic_started_for_enqueue = Arc::clone(&panic_started);
+    let release_panic_for_enqueue = Arc::clone(&release_panic);
+    let queued_revision = Arc::new(std::sync::Mutex::new(None));
+    let queued_revision_for_enqueue = Arc::clone(&queued_revision);
+    let enqueue = std::thread::spawn(move || {
+        panic_started_for_enqueue.wait();
+        let revision = hub_for_enqueue.notify();
+        *queued_revision_for_enqueue.lock().unwrap() = Some(revision);
+        release_panic_for_enqueue.wait();
+    });
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| hub.notify()));
+    assert!(
+        result.is_err(),
+        "the initiating caller must observe the panic"
+    );
+    enqueue.join().unwrap();
+
+    let observed = observer_revisions.lock().unwrap().clone();
+    let queued = queued_revision
+        .lock()
+        .unwrap()
+        .expect("enqueue thread recorded its revision");
+    assert_eq!(observed.len(), 2);
+    assert!(observed[0] < observed[1]);
+    assert_eq!(observed[1], queued);
+    let state = lock_recover(&hub.state);
+    assert!(state.pending.is_empty());
+    assert!(!state.dispatching);
+    drop(state);
+    drop((panicking, observer));
+}
+
+#[test]
+fn test_change_counters_fail_closed_without_aba_at_terminal_boundary() {
+    let epoch = AtomicU64::new(u64::MAX);
+    let exhausted = AtomicBool::new(false);
+    assert!(!advance_atomic_epoch(&epoch, &exhausted));
+    assert!(!advance_atomic_epoch(&epoch, &exhausted));
+    assert_eq!(epoch.load(Ordering::Acquire), u64::MAX);
+    assert!(exhausted.load(Ordering::Acquire));
+
+    let identity = AtomicU64::new(u64::MAX);
+    assert_eq!(reserve_atomic_id(&identity), None);
+    assert_eq!(identity.load(Ordering::Acquire), u64::MAX);
+
+    let hub = Arc::new(ChangeHub::default());
+    {
+        let mut state = lock_recover(&hub.state);
+        state.revision = InteractiveChangeRevision {
+            era: 7,
+            sequence: u64::MAX,
+        };
+        state.next_subscription_id = u64::MAX;
+    }
+    let first = hub.subscribe(|_| {});
+    lock_recover(&hub.state).next_subscription_id = u64::MAX;
+    let second = hub.subscribe(|_| {});
+    assert_eq!(lock_recover(&hub.state).callbacks.len(), 2);
+    assert_eq!(
+        hub.notify(),
+        InteractiveChangeRevision {
+            era: 8,
+            sequence: 0
+        }
+    );
+    {
+        let mut state = lock_recover(&hub.state);
+        state.revision = InteractiveChangeRevision {
+            era: u64::MAX,
+            sequence: u64::MAX,
+        };
+    }
+    let terminal = hub.revision();
+    assert_eq!(hub.notify(), terminal);
+    assert!(hub.is_exhausted());
+    drop((first, second));
+}
+
+#[test]
+fn test_session_epoch_exhaustion_rejects_old_stamp_and_future_renders() {
+    let plot: Plot = Plot::new().line(&[0.0, 1.0], &[0.0, 1.0]).into();
+    let session = plot.prepare_interactive();
+    let target = render_target();
+    let frame = session
+        .render_to_surface_stamped(target)
+        .expect("initial frame should render");
+    let stamp = frame.render_stamp();
+    session
+        .inner
+        .mutation_epoch
+        .store(u64::MAX, Ordering::Release);
+
+    session.apply_input(PlotInputEvent::ShowTooltip {
+        content: "exhaust".to_string(),
+        position_px: ViewportPoint::new(10.0, 20.0),
+    });
+
+    assert!(session.inner.epoch_exhausted.load(Ordering::Acquire));
+    assert_eq!(
+        session.inner.mutation_epoch.load(Ordering::Acquire),
+        u64::MAX
+    );
+    assert!(!session.is_render_stamp_current(stamp));
+    let error = session
+        .render_to_surface_stamped(target)
+        .expect_err("an exhausted session must fail closed");
+    assert!(matches!(
+        error,
+        PlottingError::RenderError(message) if message.contains("revision space exhausted")
+    ));
+}
+
+#[test]
+fn test_session_change_revision_exhaustion_fails_closed() {
+    let plot: Plot = Plot::new().line(&[0.0, 1.0], &[0.0, 1.0]).into();
+    let session = plot.prepare_interactive();
+    let target = render_target();
+    let frame = session
+        .render_to_surface_stamped(target)
+        .expect("initial frame should render");
+    let stamp = frame.render_stamp();
+    {
+        let mut state = lock_recover(&session.inner.change_hub.state);
+        state.revision = InteractiveChangeRevision {
+            era: u64::MAX,
+            sequence: u64::MAX,
+        };
+    }
+
+    session.apply_input(PlotInputEvent::ShowTooltip {
+        content: "exhaust revision".to_string(),
+        position_px: ViewportPoint::new(10.0, 20.0),
+    });
+
+    assert!(session.inner.change_hub.is_exhausted());
+    assert!(!session.is_render_stamp_current(stamp));
+    let error = session
+        .render_to_surface_stamped(target)
+        .expect_err("a revision-exhausted session must fail closed");
+    assert!(matches!(
+        error,
+        PlottingError::RenderError(message) if message.contains("revision space exhausted")
+    ));
+}
+
+#[test]
+fn test_new_session_locks_recover_from_poison() {
+    let plot: Plot = Plot::new().line(&[0.0, 1.0], &[0.0, 1.0]).into();
+    let session = plot.prepare_interactive();
+
+    let inner = Arc::clone(&session.inner);
+    assert!(
+        std::thread::spawn(move || {
+            let _guard = inner.state.lock().unwrap();
+            panic!("poison state");
+        })
+        .join()
+        .is_err()
+    );
+    let inner = Arc::clone(&session.inner);
+    assert!(
+        std::thread::spawn(move || {
+            let _guard = inner.frame_pacing.lock().unwrap();
+            panic!("poison pacing");
+        })
+        .join()
+        .is_err()
+    );
+    let inner = Arc::clone(&session.inner);
+    assert!(
+        std::thread::spawn(move || {
+            let _guard = inner.dirty.lock().unwrap();
+            panic!("poison dirty");
+        })
+        .join()
+        .is_err()
+    );
+    let inner = Arc::clone(&session.inner);
+    assert!(
+        std::thread::spawn(move || {
+            let _guard = inner.change_hub.state.lock().unwrap();
+            panic!("poison change hub");
+        })
+        .join()
+        .is_err()
+    );
+
+    assert_eq!(session.displayed_frame_generation(), None);
+    session.set_frame_pacing(FramePacing::Manual);
+    assert_eq!(session.frame_pacing(), FramePacing::Manual);
+    let subscription = session.subscribe_changes(|_| {});
+    session.set_quality_policy(QualityPolicy::Interactive);
+    drop(subscription);
+}
+
+#[test]
+fn test_poisoned_partial_state_invalidates_stamp_and_rerenders_safely() {
+    let plot: Plot = Plot::new().line(&[0.0, 1.0], &[0.0, 1.0]).into();
+    let session = plot.prepare_interactive();
+    let target = render_target();
+    let first = session
+        .render_to_surface_stamped(target)
+        .expect("initial frame should render");
+    let first_stamp = first.render_stamp();
+    assert!(session.is_render_stamp_current(first_stamp));
+
+    let callback_observed_unlocked_state = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let callback_observed_unlocked_state_for_callback =
+        Arc::clone(&callback_observed_unlocked_state);
+    let callback_session = session.clone();
+    let subscription = session.subscribe_changes(move |_| {
+        let state_unlocked = callback_session.inner.state.try_lock().is_ok();
+        let dirty_unlocked = callback_session.inner.dirty.try_lock().is_ok();
+        callback_observed_unlocked_state_for_callback
+            .store(state_unlocked && dirty_unlocked, Ordering::Release);
+    });
+
+    let inner = Arc::clone(&session.inner);
+    assert!(
+        std::thread::spawn(move || {
+            let mut state = inner.state.lock().unwrap();
+            state.time_seconds = 42.0;
+            panic!("panic after partial state mutation but before record_mutation");
+        })
+        .join()
+        .is_err()
+    );
+
+    assert!(!session.is_render_stamp_current(first_stamp));
+    assert!(callback_observed_unlocked_state.load(Ordering::Acquire));
+    assert_eq!(session.displayed_frame_generation(), None);
+    assert_eq!(session.dirty_domains(), DirtyDomains::with_all());
+
+    let second = session
+        .render_to_surface_stamped(target)
+        .expect("state poison recovery should permit a safe full rerender");
+    let second_stamp = second.render_stamp();
+    assert!(session.is_render_stamp_current(second_stamp));
+
+    let inner = Arc::clone(&session.inner);
+    assert!(
+        std::thread::spawn(move || {
+            let mut dirty = inner.dirty.lock().unwrap();
+            *dirty = DirtyDomains::default();
+            panic!("panic after corrupting dirty domains");
+        })
+        .join()
+        .is_err()
+    );
+    assert!(!session.is_render_stamp_current(second_stamp));
+    assert_eq!(session.dirty_domains(), DirtyDomains::with_all());
+    session
+        .render_to_surface_stamped(target)
+        .expect("dirty poison recovery should permit a safe full rerender");
+    drop(subscription);
+}
+
+#[test]
+fn test_change_polling_and_subscription_entry_points_repair_poisoned_state() {
+    let make_poisoned_session = || {
+        let plot: Plot = Plot::new().line(&[0.0, 1.0], &[0.0, 1.0]).into();
+        let session = plot.prepare_interactive();
+        session
+            .render_to_surface_stamped(render_target())
+            .expect("initial frame should render");
+        let inner = Arc::clone(&session.inner);
+        assert!(
+            std::thread::spawn(move || {
+                let mut state = inner.state.lock().unwrap();
+                state.time_seconds = 99.0;
+                panic!("partial mutation before notification");
+            })
+            .join()
+            .is_err()
+        );
+        session
+    };
+
+    let polling_session = make_poisoned_session();
+    let revision_before = polling_session.change_revision_raw();
+    let repaired_revision = polling_session.change_revision();
+    assert!(repaired_revision > revision_before);
+    assert!(!polling_session.inner.state.is_poisoned());
+    assert_eq!(polling_session.displayed_frame_generation(), None);
+
+    let subscribing_session = make_poisoned_session();
+    let notifications = Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let notifications_for_callback = Arc::clone(&notifications);
+    let subscription = subscribing_session.subscribe_changes(move |_| {
+        notifications_for_callback.fetch_add(1, Ordering::AcqRel);
+    });
+    assert_eq!(notifications.load(Ordering::Acquire), 1);
+    assert!(!subscribing_session.inner.state.is_poisoned());
+    assert_eq!(subscribing_session.displayed_frame_generation(), None);
+    drop(subscription);
+}
+
+#[test]
 fn test_render_setup_callbacks_can_render_without_holding_render_gate() {
     let plot: Plot = Plot::new().line(&[0.0, 1.0], &[0.0, 1.0]).into();
     let session = plot.prepare_interactive();

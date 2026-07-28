@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 use futures::StreamExt;
 use futures::stream::BoxStream;
 use iced::{Subscription, Task};
+use ruviz::axes::AxisScale;
 use ruviz::core::{
     ImageFit, ImageTarget, InteractiveChangeRevision, InteractiveChangeSubscription,
     InteractivePlotSession, IntoPlotSession, LatestRequestScheduler, PlotInputEvent, PlottingError,
@@ -21,16 +22,16 @@ use ruviz::core::{
 };
 
 use crate::{
-    Event, Message, MessageKind, PointerButton, Presentation, PresentedImage, Sizing, Update,
-    WidgetEvent, iced_handle,
+    Event, Message, MessageKind, PointerButton, Presentation, PresentedImage, Sizing,
+    StateIncarnation, Update, WidgetEvent, iced_handle,
 };
 
 static NEXT_WAKE_ID: AtomicU64 = AtomicU64::new(1);
-static NEXT_STATE_INCARNATION: AtomicU64 = AtomicU64::new(1);
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 struct RenderRequest2D {
-    incarnation: u64,
+    incarnation: StateIncarnation,
+    change_revision: InteractiveChangeRevision,
     size_px: (u32, u32),
     scale_factor: f32,
     time_seconds: f64,
@@ -107,7 +108,7 @@ pub struct PlotState {
     logical_size: (f64, f64),
     time_seconds: f64,
     scheduler: LatestRequestScheduler<RenderRequest2D>,
-    incarnation: u64,
+    incarnation: StateIncarnation,
     pub(crate) presented: Option<PresentedImage>,
     pub(crate) presented_stamp: Option<ruviz::core::InteractiveRenderStamp>,
     wake: ChangeWake,
@@ -150,7 +151,7 @@ impl PlotState {
             logical_size: Sizing::default().logical_fallback(),
             time_seconds: 0.0,
             scheduler: LatestRequestScheduler::default(),
-            incarnation: next_incarnation(),
+            incarnation: StateIncarnation::new(),
             presented: None,
             presented_stamp: None,
             wake,
@@ -254,11 +255,20 @@ impl PlotState {
         Update::task(self.queue_render())
     }
 
-    /// Replace the plot while restoring the current visible bounds after the
-    /// replacement resolves its data and layout.
+    /// Replace the plot while restoring a user-customized visible view.
+    ///
+    /// If the old view still matches its base bounds, the replacement keeps
+    /// its own natural bounds.
     pub fn set_plot_keep_view<P: IntoPlotSession>(&mut self, plot: P) -> Update {
-        let visible = self.session.view_bounds_snapshot().visible_bounds;
-        self.replace_session(plot.into_plot_session(), Some(visible));
+        let old_view = self.session.view_bounds_snapshot();
+        let visible = viewport_bounds_materially_differ(
+            old_view.visible_bounds,
+            old_view.base_bounds,
+            &old_view.x_scale,
+            &old_view.y_scale,
+        )
+        .then_some(old_view.visible_bounds);
+        self.replace_session(plot.into_plot_session(), visible);
         Update::task(self.queue_render())
     }
 
@@ -269,7 +279,7 @@ impl PlotState {
         }
         self.wake = ChangeWake::new(&self.session);
         self.last_seen_change = self.session.change_revision();
-        self.incarnation = next_incarnation();
+        self.incarnation = StateIncarnation::new();
         self.drag = None;
         self.cursor_px = None;
         // Keep the previous allocation visible until the replacement is ready.
@@ -297,8 +307,9 @@ impl PlotState {
             MessageKind::Rendered2D {
                 incarnation,
                 request_id,
+                change_revision,
                 result,
-            } => self.complete_render(incarnation, request_id, result),
+            } => self.complete_render(incarnation, request_id, change_revision, result),
             MessageKind::Allocated2D {
                 incarnation,
                 request_id,
@@ -493,7 +504,8 @@ impl PlotState {
         let size_px =
             physical_backing_size(self.logical_size.0, self.logical_size.1, self.scale_factor);
         let request = RenderRequest2D {
-            incarnation: self.incarnation,
+            incarnation: self.incarnation.clone(),
+            change_revision: self.session.change_revision(),
             size_px,
             scale_factor: self.scale_factor,
             time_seconds: self.time_seconds,
@@ -506,11 +518,12 @@ impl PlotState {
 
     fn complete_render(
         &mut self,
-        incarnation: u64,
+        incarnation: StateIncarnation,
         request_id: ScheduledRequestId,
+        change_revision: InteractiveChangeRevision,
         result: Result<ruviz::core::StampedInteractiveFrame, PlottingError>,
     ) -> Update {
-        let Some(completion) = self.scheduler.complete(request_id) else {
+        let Some(completion) = self.scheduler.complete(request_id.clone()) else {
             return Update::none();
         };
         let next_task = completion
@@ -531,18 +544,22 @@ impl PlotState {
             }
             Ok(_) => Update::task(next_task),
             Err(error) if error.is_render_superseded() => Update::task(next_task),
+            Err(_) if change_revision != self.session.change_revision() => Update::task(next_task),
             Err(error) => Update::with_event(next_task, Event::Error(error)),
         }
     }
 
     fn complete_allocation(
         &mut self,
-        incarnation: u64,
+        incarnation: StateIncarnation,
         _request_id: ScheduledRequestId,
-        frame: ruviz::core::StampedInteractiveFrame,
+        frame: Option<ruviz::core::StampedInteractiveFrame>,
         source_alpha: ruviz::core::AlphaMode,
         allocation: Result<iced::widget::image::Allocation, String>,
     ) -> Update {
+        let Some(frame) = frame else {
+            return Update::none();
+        };
         if incarnation != self.incarnation
             || !self.session.is_render_stamp_current(frame.render_stamp())
         {
@@ -574,8 +591,9 @@ fn render_2d_task(
     session: InteractivePlotSession,
 ) -> Task<Message> {
     let request_id = scheduled.id();
-    let request = *scheduled.request();
+    let request = scheduled.into_request();
     let incarnation = request.incarnation;
+    let change_revision = request.change_revision;
     Task::perform(
         async move {
             session.render_to_image_stamped(ImageTarget {
@@ -588,6 +606,7 @@ fn render_2d_task(
             Message(MessageKind::Rendered2D {
                 incarnation,
                 request_id,
+                change_revision,
                 result,
             })
         },
@@ -595,7 +614,7 @@ fn render_2d_task(
 }
 
 fn image_allocation_2d_task(
-    incarnation: u64,
+    incarnation: StateIncarnation,
     request_id: ScheduledRequestId,
     frame: ruviz::core::StampedInteractiveFrame,
     handle: iced::widget::image::Handle,
@@ -604,11 +623,9 @@ fn image_allocation_2d_task(
     let mut frame = Some(frame);
     iced::widget::image::allocate(handle).map(move |allocation| {
         Message(MessageKind::Allocated2D {
-            incarnation,
-            request_id,
-            frame: frame
-                .take()
-                .expect("Iced image allocation task emitted more than once"),
+            incarnation: incarnation.clone(),
+            request_id: request_id.clone(),
+            frame: frame.take(),
             source_alpha,
             allocation: allocation.map_err(|error| error.to_string()),
         })
@@ -618,7 +635,7 @@ fn image_allocation_2d_task(
 #[cfg(feature = "3d")]
 #[derive(Clone)]
 struct RenderRequest3D {
-    incarnation: u64,
+    incarnation: StateIncarnation,
     job: BackgroundRenderJob3D,
 }
 
@@ -632,7 +649,7 @@ pub struct Plot3DState {
     scale_factor: f32,
     logical_size: (f64, f64),
     scheduler: LatestRequestScheduler<RenderRequest3D>,
-    incarnation: u64,
+    incarnation: StateIncarnation,
     renderer: Arc<Mutex<BackgroundRenderer3D>>,
     pub(crate) presented: Option<PresentedImage>,
     pub(crate) presented_view: Option<ruviz::core::ViewStamp3D>,
@@ -679,7 +696,7 @@ impl Plot3DState {
             scale_factor: 1.0,
             logical_size: Sizing::default().logical_fallback(),
             scheduler: LatestRequestScheduler::default(),
-            incarnation: next_incarnation(),
+            incarnation: StateIncarnation::new(),
             renderer: Arc::new(Mutex::new(background_renderer())),
             presented: None,
             presented_view: None,
@@ -738,25 +755,24 @@ impl Plot3DState {
 
     /// Replace the plot and reset to its camera.
     pub fn set_plot<P: TryIntoPlot3DSession>(&mut self, plot: P) -> Update {
-        match plot.try_into_plot3d_session() {
-            Ok(replacement) => {
-                self.session.replace(replacement);
-                self.incarnation = next_incarnation();
-                self.cursor_px = None;
-                self.request_render()
-            }
-            Err(error) => Update::with_event(Task::none(), Event::Error(error)),
-        }
+        let result = plot
+            .try_into_plot3d_session()
+            .and_then(|replacement| self.session.try_replace(replacement));
+        self.complete_replacement(result)
     }
 
     /// Replace the plot while preserving the authoritative camera.
     pub fn set_plot_keep_view<P: TryIntoPlot3DSession>(&mut self, plot: P) -> Update {
-        match plot
+        let result = plot
             .try_into_plot3d_session()
-            .and_then(|replacement| self.session.replace_keep_camera(replacement))
-        {
+            .and_then(|replacement| self.session.replace_keep_camera(replacement));
+        self.complete_replacement(result)
+    }
+
+    fn complete_replacement(&mut self, result: ruviz::core::Result<()>) -> Update {
+        match result {
             Ok(()) => {
-                self.incarnation = next_incarnation();
+                self.incarnation = StateIncarnation::new();
                 self.cursor_px = None;
                 self.request_render()
             }
@@ -917,7 +933,7 @@ impl Plot3DState {
         self.session.resize(width, height, self.scale_factor)?;
         let job = self.session.background_render_job()?;
         let request = RenderRequest3D {
-            incarnation: self.incarnation,
+            incarnation: self.incarnation.clone(),
             job,
         };
         Ok(match self.scheduler.request(request) {
@@ -928,11 +944,11 @@ impl Plot3DState {
 
     fn complete_render(
         &mut self,
-        incarnation: u64,
+        incarnation: StateIncarnation,
         request_id: ScheduledRequestId,
         result: Result<ruviz::core::RenderedImage3D, PlottingError>,
     ) -> Update {
-        let Some(completion) = self.scheduler.complete(request_id) else {
+        let Some(completion) = self.scheduler.complete(request_id.clone()) else {
             return Update::none();
         };
         let next_task = match completion.next {
@@ -964,12 +980,15 @@ impl Plot3DState {
 
     fn complete_allocation(
         &mut self,
-        incarnation: u64,
+        incarnation: StateIncarnation,
         _request_id: ScheduledRequestId,
-        rendered: ruviz::core::RenderedImage3D,
+        rendered: Option<ruviz::core::RenderedImage3D>,
         source_alpha: ruviz::core::AlphaMode,
         allocation: Result<iced::widget::image::Allocation, String>,
     ) -> Update {
+        let Some(rendered) = rendered else {
+            return Update::none();
+        };
         if incarnation != self.incarnation
             || !matches!(
                 self.session.classify_render(rendered.clone()),
@@ -1029,7 +1048,7 @@ fn render_3d_task(
 
 #[cfg(feature = "3d")]
 fn image_allocation_3d_task(
-    incarnation: u64,
+    incarnation: StateIncarnation,
     request_id: ScheduledRequestId,
     rendered: ruviz::core::RenderedImage3D,
     handle: iced::widget::image::Handle,
@@ -1038,11 +1057,9 @@ fn image_allocation_3d_task(
     let mut rendered = Some(rendered);
     iced::widget::image::allocate(handle).map(move |allocation| {
         Message(MessageKind::Allocated3D {
-            incarnation,
-            request_id,
-            rendered: rendered
-                .take()
-                .expect("Iced image allocation task emitted more than once"),
+            incarnation: incarnation.clone(),
+            request_id: request_id.clone(),
+            rendered: rendered.take(),
             source_alpha,
             allocation: allocation.map_err(|error| error.to_string()),
         })
@@ -1064,14 +1081,6 @@ fn merge_event(mut update: Update, event: Event) -> Update {
     update
 }
 
-fn next_incarnation() -> u64 {
-    NEXT_STATE_INCARNATION
-        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
-            value.checked_add(1)
-        })
-        .expect("ruviz-iced state incarnation space exhausted")
-}
-
 #[cfg(feature = "3d")]
 fn background_renderer() -> BackgroundRenderer3D {
     #[cfg(feature = "3d-gpu")]
@@ -1082,6 +1091,38 @@ fn background_renderer() -> BackgroundRenderer3D {
     {
         BackgroundRenderer3D::new(BackgroundRenderBackend3D::Cpu)
     }
+}
+
+const VIEW_BOUNDS_NORMALIZED_TOLERANCE: f64 = 1e-12;
+
+fn viewport_bounds_materially_differ(
+    visible: ViewportRect,
+    base: ViewportRect,
+    x_scale: &AxisScale,
+    y_scale: &AxisScale,
+) -> bool {
+    !viewport_axis_bounds_close(
+        (visible.min.x, visible.max.x),
+        (base.min.x, base.max.x),
+        x_scale,
+    ) || !viewport_axis_bounds_close(
+        (visible.min.y, visible.max.y),
+        (base.min.y, base.max.y),
+        y_scale,
+    )
+}
+
+fn viewport_axis_bounds_close(visible: (f64, f64), base: (f64, f64), scale: &AxisScale) -> bool {
+    if (visible.1 - visible.0).is_sign_negative() != (base.1 - base.0).is_sign_negative() {
+        return false;
+    }
+
+    let start = scale.normalized_position(visible.0, base.0, base.1);
+    let end = scale.normalized_position(visible.1, base.0, base.1);
+    start.is_finite()
+        && end.is_finite()
+        && start.abs() <= VIEW_BOUNDS_NORMALIZED_TOLERANCE
+        && (end - 1.0).abs() <= VIEW_BOUNDS_NORMALIZED_TOLERANCE
 }
 
 fn valid_fixed(width: f32, height: f32) -> Sizing {
@@ -1114,7 +1155,49 @@ fn viewport_point((x, y): (f64, f64)) -> ViewportPoint {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ruviz::data::observable::Observable;
     use ruviz::prelude::Plot;
+
+    fn task_output(task: Task<Message>) -> Message {
+        let mut actions =
+            iced_runtime::task::into_stream(task).expect("test task should produce one message");
+        let renderer = iced::Renderer::new(iced::Font::default(), iced::Pixels(16.0));
+        futures::executor::block_on(async move {
+            loop {
+                match actions
+                    .next()
+                    .await
+                    .expect("test task ended without output")
+                {
+                    iced_runtime::Action::Output(message) => return message,
+                    iced_runtime::Action::Image(iced_runtime::image::Action::Allocate(
+                        handle,
+                        sender,
+                    )) => {
+                        let allocation =
+                            iced::advanced::image::Renderer::load_image(&renderer, &handle);
+                        let _ = sender.send(allocation);
+                    }
+                    action => panic!("unexpected Iced test action: {action:?}"),
+                }
+            }
+        })
+    }
+
+    fn install_render_update(state: &mut PlotState, update: Update) {
+        let rendered = task_output(update.into_task());
+        let allocation = state.update(rendered);
+        assert!(allocation.events().is_empty());
+        let allocated = task_output(allocation.into_task());
+        let installed = state.update(allocated);
+        assert!(installed.events().is_empty());
+        assert!(state.presented.is_some());
+        assert!(
+            state
+                .presented_stamp
+                .is_some_and(|stamp| state.session.is_render_stamp_current(stamp))
+        );
+    }
 
     #[test]
     fn fixed_size_is_sanitized() {
@@ -1130,7 +1213,7 @@ mod tests {
     }
 
     #[test]
-    fn keep_view_restores_visible_bounds_on_replacement() {
+    fn keep_view_restores_customized_visible_bounds_on_replacement() {
         let mut state =
             PlotState::interactive(Plot::new().line(&[0.0, 1.0, 2.0], &[0.0, 1.0, 4.0]));
         state
@@ -1163,6 +1246,37 @@ mod tests {
     }
 
     #[test]
+    fn keep_view_uses_replacement_bounds_when_old_view_is_untouched() {
+        let mut state = PlotState::interactive(
+            Plot::new()
+                .line(&[0.0, 10.0], &[0.0, 10.0])
+                .xlim(0.0, 10.0)
+                .ylim(0.0, 10.0),
+        );
+        let old_base = state.session.view_bounds_snapshot().base_bounds;
+        let replacement = Plot::new()
+            .line(&[100.0, 200.0], &[-5.0, 5.0])
+            .xlim(100.0, 200.0)
+            .ylim(-5.0, 5.0);
+
+        let _ = state.set_plot_keep_view(replacement);
+        state
+            .session
+            .render_to_image(ImageTarget {
+                size_px: (400, 300),
+                scale_factor: 1.0,
+                time_seconds: 0.0,
+            })
+            .unwrap();
+        let replacement_view = state.session.view_bounds_snapshot();
+        assert_eq!(
+            replacement_view.visible_bounds,
+            replacement_view.base_bounds
+        );
+        assert_ne!(replacement_view.base_bounds, old_base);
+    }
+
+    #[test]
     fn release_outside_cancels_retained_drag() {
         let mut state = PlotState::interactive(Plot::new().line(&[0.0, 1.0], &[0.0, 1.0]));
         let _ = state.handle_widget_event(WidgetEvent::PointerPressed {
@@ -1172,6 +1286,39 @@ mod tests {
         assert!(state.drag.is_some());
         let update = state.handle_widget_event(WidgetEvent::CancelDrag);
         assert!(matches!(update.event(), Some(Event::DragCancelled)));
+        assert!(state.drag.is_none());
+    }
+
+    #[test]
+    fn two_d_captured_pan_continues_until_release_while_redraw_is_pending() {
+        let mut state = PlotState::interactive(Plot::new().line(&[0.0, 1.0], &[0.0, 1.0]));
+        state
+            .session
+            .render_to_image(ImageTarget {
+                size_px: (320, 240),
+                scale_factor: 1.0,
+                time_seconds: 0.0,
+            })
+            .unwrap();
+        let _ = state.handle_widget_event(WidgetEvent::PointerPressed {
+            position_px: (20.0, 20.0),
+            button: PointerButton::Left,
+        });
+        let first = state.handle_widget_event(WidgetEvent::PointerMoved(Some((40.0, 30.0))));
+        let after_first = state.session.view_bounds_snapshot().visible_bounds;
+        assert!(matches!(first.event(), Some(Event::ViewChanged)));
+
+        let second = state.handle_widget_event(WidgetEvent::PointerMoved(Some((55.0, 45.0))));
+        assert!(matches!(second.event(), Some(Event::ViewChanged)));
+        assert_ne!(
+            state.session.view_bounds_snapshot().visible_bounds,
+            after_first
+        );
+
+        let _ = state.handle_widget_event(WidgetEvent::PointerReleased {
+            position_px: (55.0, 45.0),
+            button: PointerButton::Left,
+        });
         assert!(state.drag.is_none());
     }
 
@@ -1216,11 +1363,116 @@ mod tests {
     }
 
     #[test]
+    fn stale_pointer_leave_still_clears_hover_overlay() {
+        let mut state = PlotState::interactive(Plot::new().line(&[0.0, 1.0], &[0.0, 1.0]));
+        state
+            .session
+            .render_to_image(ImageTarget {
+                size_px: (320, 240),
+                scale_factor: 1.0,
+                time_seconds: 0.0,
+            })
+            .unwrap();
+        let _ = state.handle_widget_event(WidgetEvent::PointerMoved(Some((160.0, 120.0))));
+        state.session.invalidate();
+
+        let update = state.handle_widget_event(WidgetEvent::PointerMoved(None));
+        assert!(matches!(update.event(), Some(Event::Hovered2D(None))));
+        assert!(state.drag.is_none());
+    }
+
+    #[test]
+    fn observable_change_wakes_schedules_and_installs_reactive_redraw() {
+        let values = Observable::new(vec![0.0, 1.0]);
+        let plot: Plot = Plot::new()
+            .line_source(vec![0.0, 1.0], values.clone())
+            .into();
+        let mut state = PlotState::interactive(plot);
+        let initial = state.request_render();
+        install_render_update(&mut state, initial);
+        let initial_stamp = state.presented_stamp;
+        while state.wake.data.receiver.try_recv().is_ok() {}
+        let previous_generation = state.scheduler.latest_generation();
+
+        values.set(vec![2.0, 3.0]);
+        state
+            .wake
+            .data
+            .receiver
+            .try_recv()
+            .expect("observable change should wake the Iced subscription");
+        let update = state.update(Message(MessageKind::Changed2D));
+        assert!(!state.scheduler.is_idle());
+        assert!(state.scheduler.latest_generation() > previous_generation);
+        install_render_update(&mut state, update);
+
+        assert_ne!(state.presented_stamp, initial_stamp);
+    }
+
+    #[test]
+    fn independent_states_reject_cross_routed_completion_and_input() {
+        let mut first = PlotState::interactive(
+            Plot::new()
+                .line(&[0.0, 1.0], &[0.0, 1.0])
+                .xlim(0.0, 1.0)
+                .ylim(0.0, 1.0),
+        );
+        let mut second = PlotState::interactive(
+            Plot::new()
+                .line(&[10.0, 20.0], &[10.0, 20.0])
+                .xlim(10.0, 20.0)
+                .ylim(10.0, 20.0),
+        );
+        let first_initial = first.request_render();
+        install_render_update(&mut first, first_initial);
+        let second_initial = second.request_render();
+        install_render_update(&mut second, second_initial);
+        let second_stamp = second.presented_stamp;
+        let second_bounds = second.session.view_bounds_snapshot().visible_bounds;
+
+        let first_update = first.handle_widget_event(WidgetEvent::Wheel {
+            position_px: (320.0, 240.0),
+            delta_y: 80.0,
+        });
+        assert_eq!(
+            second.session.view_bounds_snapshot().visible_bounds,
+            second_bounds
+        );
+        let rendered_for_first = task_output(first_update.into_task());
+        assert!(
+            second
+                .update(rendered_for_first.clone())
+                .events()
+                .is_empty()
+        );
+        assert_eq!(second.presented_stamp, second_stamp);
+
+        let allocation_for_first = first.update(rendered_for_first);
+        let allocated_for_first = task_output(allocation_for_first.into_task());
+        assert!(
+            second
+                .update(allocated_for_first.clone())
+                .events()
+                .is_empty()
+        );
+        assert_eq!(second.presented_stamp, second_stamp);
+        assert!(first.update(allocated_for_first).events().is_empty());
+        assert_ne!(first.presented_stamp, second.presented_stamp);
+    }
+
+    #[test]
     fn iced_scheduler_coalesces_replacement_and_resize_to_newest_request() {
         let mut scheduler = LatestRequestScheduler::default();
+        let revision = PlotState::static_view(Plot::new())
+            .session
+            .change_revision();
+        let first_incarnation = StateIncarnation::new();
+        let second_incarnation = StateIncarnation::new();
+        let newest_incarnation = StateIncarnation::new();
         let first = scheduler
             .request(RenderRequest2D {
-                incarnation: 1,
+                incarnation: first_incarnation,
+                change_revision: revision,
                 size_px: (320, 240),
                 scale_factor: 1.0,
                 time_seconds: 0.0,
@@ -1229,7 +1481,8 @@ mod tests {
         assert!(
             scheduler
                 .request(RenderRequest2D {
-                    incarnation: 2,
+                    incarnation: second_incarnation,
+                    change_revision: revision,
                     size_px: (400, 300),
                     scale_factor: 1.25,
                     time_seconds: 0.0,
@@ -1239,7 +1492,8 @@ mod tests {
         assert!(
             scheduler
                 .request(RenderRequest2D {
-                    incarnation: 3,
+                    incarnation: newest_incarnation.clone(),
+                    change_revision: revision,
                     size_px: (800, 600),
                     scale_factor: 2.0,
                     time_seconds: 1.0,
@@ -1250,11 +1504,66 @@ mod tests {
         let completion = scheduler.complete(first.id()).unwrap();
         assert!(!completion.install);
         let newest = completion.next.unwrap();
-        assert_eq!(newest.request().incarnation, 3);
+        assert_eq!(newest.request().incarnation, newest_incarnation);
         assert_eq!(newest.request().size_px, (800, 600));
         assert_eq!(newest.request().scale_factor, 2.0);
         assert_eq!(newest.request().time_seconds, 1.0);
         assert!(scheduler.complete(newest.id()).unwrap().install);
+    }
+
+    #[test]
+    fn duplicate_allocation_emission_is_ignored_without_aliasing_incarnations() {
+        let mut state = PlotState::interactive(Plot::new().line(&[0.0, 1.0], &[0.0, 1.0]));
+        let current = state.incarnation.clone();
+        assert_eq!(current, state.incarnation);
+        assert_ne!(current, StateIncarnation::new());
+
+        let mut scheduler = LatestRequestScheduler::default();
+        let request = scheduler
+            .request(RenderRequest2D {
+                incarnation: current.clone(),
+                change_revision: state.session.change_revision(),
+                size_px: (1, 1),
+                scale_factor: 1.0,
+                time_seconds: 0.0,
+            })
+            .unwrap();
+        let update = state.complete_allocation(
+            current,
+            request.id(),
+            None,
+            ruviz::core::AlphaMode::Straight,
+            Err("duplicate completion must be ignored".to_owned()),
+        );
+        assert!(update.events().is_empty());
+    }
+
+    #[test]
+    fn obsolete_reactive_render_error_is_suppressed_by_request_revision() {
+        let mut state = PlotState::interactive(Plot::new().line(&[0.0, 1.0], &[0.0, 1.0]));
+        let request_revision = state.session.change_revision();
+        let request = state
+            .scheduler
+            .request(RenderRequest2D {
+                incarnation: state.incarnation.clone(),
+                change_revision: request_revision,
+                size_px: (320, 240),
+                scale_factor: 1.0,
+                time_seconds: 0.0,
+            })
+            .unwrap();
+
+        state.session.invalidate();
+        assert_ne!(state.session.change_revision(), request_revision);
+        let update = state.complete_render(
+            state.incarnation.clone(),
+            request.id(),
+            request_revision,
+            Err(PlottingError::RenderError(
+                "obsolete reactive render failure".to_owned(),
+            )),
+        );
+        assert!(update.events().is_empty());
     }
 
     #[test]
@@ -1273,7 +1582,7 @@ mod tests {
                 .session
                 .is_render_stamp_current(old_frame.render_stamp())
         );
-        let old_incarnation = state.incarnation;
+        let old_incarnation = state.incarnation.clone();
         let _ = state.set_plot(Plot::new().line(&[0.0, 1.0], &[2.0, 3.0]));
         assert_ne!(state.incarnation, old_incarnation);
         assert!(
@@ -1330,6 +1639,15 @@ mod tests {
         });
         let update = state.handle_widget_event(WidgetEvent::PointerMoved(Some((40.0, 35.0))));
         assert!(matches!(update.event(), Some(Event::CameraChanged(_))));
+        let after_first = state.session.camera_snapshot();
+        let update = state.handle_widget_event(WidgetEvent::PointerMoved(Some((55.0, 45.0))));
+        assert!(matches!(update.event(), Some(Event::CameraChanged(_))));
+        assert_ne!(state.session.camera_snapshot().camera, after_first.camera);
+        let _ = state.handle_widget_event(WidgetEvent::PointerReleased {
+            position_px: (55.0, 45.0),
+            button: PointerButton::Left,
+        });
+        assert!(!state.session.is_drag_active());
 
         let _ = state.handle_widget_event(WidgetEvent::PointerPressed {
             position_px: (30.0, 30.0),
@@ -1387,5 +1705,53 @@ mod tests {
 
         let _ = state.request_render();
         assert!(Arc::ptr_eq(&state.renderer, &worker));
+    }
+
+    #[cfg(feature = "3d")]
+    #[test]
+    fn failed_three_d_replacement_reports_error_without_rotating_incarnation() {
+        let mut state = Plot3DState::interactive(ruviz::scatter3d(&[0.0], &[0.0], &[0.0])).unwrap();
+        let incarnation = state.incarnation.clone();
+        let view = state.session.view_stamp();
+        let update = state.complete_replacement(Err(PlottingError::RenderError(
+            "3D render request space was exhausted during replacement".to_owned(),
+        )));
+
+        assert!(matches!(update.event(), Some(Event::Error(_))));
+        assert_eq!(state.incarnation, incarnation);
+        assert_eq!(state.session.view_stamp(), view);
+    }
+
+    #[cfg(all(feature = "3d-gpu", not(target_arch = "wasm32")))]
+    #[test]
+    fn three_d_gpu_readback_selection_installs_mocked_worker_image() {
+        let mut state = Plot3DState::interactive(ruviz::scatter3d(&[0.0], &[0.0], &[0.0])).unwrap();
+        assert_eq!(
+            state.renderer.lock().expect("renderer lock").backend(),
+            BackgroundRenderBackend3D::GpuReadback,
+        );
+
+        let job = state.session.background_render_job().unwrap();
+        let scheduled = state
+            .scheduler
+            .request(RenderRequest3D {
+                incarnation: state.incarnation.clone(),
+                job: job.clone(),
+            })
+            .unwrap();
+        // The adapter boundary receives the same RenderedImage3D regardless of
+        // backend. Use deterministic CPU production as a mock GPU-worker result
+        // so this installation contract does not require a physical adapter.
+        let rendered = BackgroundRenderer3D::new(BackgroundRenderBackend3D::Cpu)
+            .render(job)
+            .unwrap();
+        let allocation =
+            state.complete_render(state.incarnation.clone(), scheduled.id(), Ok(rendered));
+        let allocated = task_output(allocation.into_task());
+        let installed = state.update(allocated);
+
+        assert!(installed.events().is_empty());
+        assert!(state.presented.is_some());
+        assert_eq!(state.presented_view, Some(state.session.view_stamp()));
     }
 }

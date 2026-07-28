@@ -5277,6 +5277,7 @@ dependencies = [
  "async-channel",
  "futures",
  "iced",
+ "iced_runtime",
  "ruviz",
 ]
 

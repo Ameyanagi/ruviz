@@ -7,8 +7,8 @@
 
 use super::{InteractivePlotSession, IntoPlot, Plot, PreparedPlot};
 use std::{
-    num::NonZeroU64,
-    sync::atomic::{AtomicU64, Ordering},
+    hash::{Hash, Hasher},
+    sync::Arc,
 };
 
 /// Converts a 2D plot value into the retained session used by GUI adapters.
@@ -229,20 +229,8 @@ pub fn logical_to_physical(
     ))
 }
 
-static NEXT_SCHEDULER_INCARNATION: AtomicU64 = AtomicU64::new(1);
-
-fn next_scheduler_incarnation() -> NonZeroU64 {
-    next_scheduler_incarnation_from(&NEXT_SCHEDULER_INCARNATION)
-}
-
-fn next_scheduler_incarnation_from(counter: &AtomicU64) -> NonZeroU64 {
-    let incarnation = counter
-        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
-            next.checked_add(1)
-        })
-        .unwrap_or_else(|_| panic!("adapter scheduler incarnation space exhausted"));
-    NonZeroU64::new(incarnation).expect("scheduler incarnation counter never produces zero")
-}
+#[derive(Debug)]
+struct SchedulerIncarnation;
 
 /// Opaque identity of one accepted adapter render request.
 ///
@@ -250,10 +238,26 @@ fn next_scheduler_incarnation_from(counter: &AtomicU64) -> NonZeroU64 {
 /// scheduler's monotonic generation. Pass the complete value to
 /// [`LatestRequestScheduler::complete`]; a generation alone cannot distinguish
 /// work produced by a dropped or reset scheduler.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct ScheduledRequestId {
-    scheduler_incarnation: NonZeroU64,
+    scheduler_incarnation: Arc<SchedulerIncarnation>,
     generation: u64,
+}
+
+impl PartialEq for ScheduledRequestId {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.scheduler_incarnation, &other.scheduler_incarnation)
+            && self.generation == other.generation
+    }
+}
+
+impl Eq for ScheduledRequestId {}
+
+impl Hash for ScheduledRequestId {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        Arc::as_ptr(&self.scheduler_incarnation).hash(state);
+        self.generation.hash(state);
+    }
 }
 
 impl ScheduledRequestId {
@@ -261,7 +265,7 @@ impl ScheduledRequestId {
     ///
     /// Generations can repeat across scheduler incarnations and must not be
     /// used as completion identities.
-    pub const fn generation(self) -> u64 {
+    pub const fn generation(&self) -> u64 {
         self.generation
     }
 }
@@ -275,8 +279,8 @@ pub struct ScheduledRequest<T> {
 
 impl<T> ScheduledRequest<T> {
     /// Globally incarnation-safe identity used to complete this request.
-    pub const fn id(&self) -> ScheduledRequestId {
-        self.id
+    pub fn id(&self) -> ScheduledRequestId {
+        self.id.clone()
     }
 
     /// Per-scheduler generation, exposed for diagnostics only.
@@ -313,7 +317,7 @@ pub struct RequestCompletion<T> {
 /// marked non-installable when a newer request exists.
 #[derive(Debug)]
 pub struct LatestRequestScheduler<T> {
-    scheduler_incarnation: NonZeroU64,
+    scheduler_incarnation: Arc<SchedulerIncarnation>,
     latest_generation: u64,
     in_flight: Option<ScheduledRequestId>,
     queued: Option<ScheduledRequest<T>>,
@@ -330,7 +334,7 @@ impl<T> LatestRequestScheduler<T> {
     /// Construct an idle scheduler with a process-unique incarnation.
     pub fn new() -> Self {
         Self {
-            scheduler_incarnation: next_scheduler_incarnation(),
+            scheduler_incarnation: Arc::new(SchedulerIncarnation),
             latest_generation: 0,
             in_flight: None,
             queued: None,
@@ -359,7 +363,7 @@ impl<T> LatestRequestScheduler<T> {
     /// incarnation guarantees its identity cannot match any replacement work,
     /// even when the replacement starts again at generation one.
     pub fn reset(&mut self) {
-        self.scheduler_incarnation = next_scheduler_incarnation();
+        self.scheduler_incarnation = Arc::new(SchedulerIncarnation);
         self.latest_generation = 0;
         self.in_flight = None;
         self.queued = None;
@@ -370,13 +374,15 @@ impl<T> LatestRequestScheduler<T> {
 impl<T> LatestRequestScheduler<T> {
     /// Queue a request and return it when a worker should be started now.
     pub fn request(&mut self, request: T) -> Option<ScheduledRequest<T>> {
-        self.latest_generation = self
-            .latest_generation
-            .checked_add(1)
-            .expect("adapter render request generation exhausted");
+        if self.latest_generation == u64::MAX {
+            self.scheduler_incarnation = Arc::new(SchedulerIncarnation);
+            self.latest_generation = 1;
+        } else {
+            self.latest_generation += 1;
+        }
         let scheduled = ScheduledRequest {
             id: ScheduledRequestId {
-                scheduler_incarnation: self.scheduler_incarnation,
+                scheduler_incarnation: Arc::clone(&self.scheduler_incarnation),
                 generation: self.latest_generation,
             },
             request,
@@ -397,11 +403,11 @@ impl<T> LatestRequestScheduler<T> {
     /// Returns `None` for a stale or duplicate completion. The returned `next`
     /// request has already become the in-flight request.
     pub fn complete(&mut self, id: ScheduledRequestId) -> Option<RequestCompletion<T>> {
-        if self.in_flight != Some(id) {
+        if self.in_flight.as_ref() != Some(&id) {
             return None;
         }
         self.in_flight = None;
-        let install = id.scheduler_incarnation == self.scheduler_incarnation
+        let install = Arc::ptr_eq(&id.scheduler_incarnation, &self.scheduler_incarnation)
             && id.generation == self.latest_generation;
         let next = self.queued.take();
         if let Some(next) = &next {
@@ -543,9 +549,19 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "adapter scheduler incarnation space exhausted")]
-    fn scheduler_incarnation_exhaustion_panics_before_reuse() {
-        let exhausted = AtomicU64::new(u64::MAX);
-        let _ = next_scheduler_incarnation_from(&exhausted);
+    fn scheduler_generation_exhaustion_rotates_incarnation() {
+        let mut scheduler = LatestRequestScheduler::<&'static str>::new();
+        let previous_incarnation = Arc::clone(&scheduler.scheduler_incarnation);
+        scheduler.latest_generation = u64::MAX;
+
+        let request = scheduler
+            .request("after exhaustion")
+            .expect("idle scheduler starts the request");
+
+        assert_eq!(request.generation(), 1);
+        assert!(!Arc::ptr_eq(
+            &request.id().scheduler_incarnation,
+            &previous_incarnation
+        ));
     }
 }

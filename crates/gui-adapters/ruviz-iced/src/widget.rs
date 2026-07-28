@@ -315,36 +315,16 @@ impl CommonWidget {
             state.hovered = mapped.is_some();
         }
 
-        if !self.input_current {
-            match event {
-                IcedEvent::Mouse(mouse::Event::ButtonReleased(_))
-                    if state.pressed.take().is_some() =>
-                {
-                    shell.publish(Message(wrap(WidgetEvent::CancelDrag)));
-                }
-                IcedEvent::Mouse(mouse::Event::CursorLeft)
-                | IcedEvent::Window(iced::window::Event::Unfocused) => {
-                    state.hovered = false;
-                    if state.pressed.take().is_some() {
-                        shell.publish(Message(wrap(WidgetEvent::CancelDrag)));
-                    }
-                }
-                IcedEvent::Keyboard(iced::keyboard::Event::KeyPressed { key, .. })
-                    if matches!(key.as_ref(), Key::Named(key::Named::Escape))
-                        && owns_escape(state) =>
-                {
-                    state.pressed = None;
-                    shell.publish(Message(wrap(WidgetEvent::Escape)));
-                    shell.capture_event();
-                }
-                _ => {}
-            }
+        if !self.input_current && !routes_while_frame_is_stale(state, event, mapped) {
             return;
         }
 
         match event {
             IcedEvent::Mouse(mouse::Event::CursorMoved { .. }) => {
                 shell.publish(Message(wrap(WidgetEvent::PointerMoved(mapped))));
+                if state.pressed.is_some() {
+                    shell.capture_event();
+                }
             }
             IcedEvent::Mouse(mouse::Event::CursorLeft)
             | IcedEvent::Window(iced::window::Event::Unfocused) => {
@@ -396,6 +376,7 @@ impl CommonWidget {
                     }
                     None => shell.publish(Message(wrap(WidgetEvent::CancelDrag))),
                 }
+                shell.capture_event();
             }
             IcedEvent::Mouse(mouse::Event::WheelScrolled { delta }) => {
                 let Some(position_px) = mapped else {
@@ -447,6 +428,30 @@ impl CommonWidget {
 
 fn owns_escape(state: &WidgetState) -> bool {
     state.hovered || state.pressed.is_some()
+}
+
+fn routes_while_frame_is_stale(
+    state: &WidgetState,
+    event: &IcedEvent,
+    mapped: Option<(f64, f64)>,
+) -> bool {
+    match event {
+        IcedEvent::Mouse(mouse::Event::CursorMoved { .. }) => {
+            state.pressed.is_some() || mapped.is_none()
+        }
+        IcedEvent::Mouse(mouse::Event::ButtonReleased(button)) => {
+            pointer_button(*button).is_some_and(|button| state.pressed == Some(button))
+        }
+        // Wheel navigation only uses fitted pixel coordinates, not stale hit
+        // geometry, and must remain responsive while its redraw catches up.
+        IcedEvent::Mouse(mouse::Event::WheelScrolled { .. }) => true,
+        IcedEvent::Mouse(mouse::Event::CursorLeft)
+        | IcedEvent::Window(iced::window::Event::Unfocused) => true,
+        IcedEvent::Keyboard(iced::keyboard::Event::KeyPressed { key, .. }) => {
+            matches!(key.as_ref(), Key::Named(key::Named::Escape)) && owns_escape(state)
+        }
+        _ => false,
+    }
 }
 
 fn map_point(
@@ -595,5 +600,88 @@ mod tests {
         first.pressed = Some(PointerButton::Left);
         assert!(owns_escape(&first));
         assert!(!owns_escape(&second));
+    }
+
+    fn assert_stale_navigation_contract(button: PointerButton, iced_button: mouse::Button) {
+        let mut state = WidgetState {
+            pressed: Some(button),
+            ..WidgetState::default()
+        };
+        let moved = IcedEvent::Mouse(mouse::Event::CursorMoved {
+            position: iced::Point::new(40.0, 30.0),
+        });
+        let released = IcedEvent::Mouse(mouse::Event::ButtonReleased(iced_button));
+        let mismatched_release =
+            IcedEvent::Mouse(mouse::Event::ButtonReleased(mouse::Button::Other(9)));
+        let wheel = IcedEvent::Mouse(mouse::Event::WheelScrolled {
+            delta: mouse::ScrollDelta::Lines { x: 0.0, y: 1.0 },
+        });
+        let new_press = IcedEvent::Mouse(mouse::Event::ButtonPressed(iced_button));
+        let mapped = Some((40.0, 30.0));
+
+        assert!(routes_while_frame_is_stale(&state, &moved, mapped));
+        assert!(routes_while_frame_is_stale(&state, &released, mapped));
+        assert!(!routes_while_frame_is_stale(
+            &state,
+            &mismatched_release,
+            mapped,
+        ));
+        assert!(routes_while_frame_is_stale(&state, &wheel, mapped));
+        assert!(!routes_while_frame_is_stale(&state, &new_press, mapped));
+
+        state.pressed = None;
+        assert!(!routes_while_frame_is_stale(&state, &moved, mapped));
+        assert!(!routes_while_frame_is_stale(&state, &released, mapped));
+        assert!(routes_while_frame_is_stale(&state, &wheel, mapped));
+    }
+
+    #[test]
+    fn stale_frame_routes_leave_and_focus_loss_without_enabling_hover_hits() {
+        let state = WidgetState::default();
+        let moved = IcedEvent::Mouse(mouse::Event::CursorMoved {
+            position: iced::Point::new(40.0, 30.0),
+        });
+        let left = IcedEvent::Mouse(mouse::Event::CursorLeft);
+        let unfocused = IcedEvent::Window(iced::window::Event::Unfocused);
+        let outer = Rectangle {
+            x: 0.0,
+            y: 0.0,
+            width: 100.0,
+            height: 100.0,
+        };
+        let mapped_content = map_point(
+            outer,
+            (100, 50),
+            ImageFit::Contain,
+            iced::Point::new(50.0, 50.0),
+        );
+        let mapped_padding = map_point(
+            outer,
+            (100, 50),
+            ImageFit::Contain,
+            iced::Point::new(50.0, 10.0),
+        );
+        assert!(mapped_content.is_some());
+        assert!(mapped_padding.is_none());
+
+        assert!(!routes_while_frame_is_stale(&state, &moved, mapped_content,));
+        assert!(routes_while_frame_is_stale(&state, &moved, mapped_padding,));
+        assert!(routes_while_frame_is_stale(&state, &left, mapped_padding,));
+        assert!(routes_while_frame_is_stale(
+            &state,
+            &unfocused,
+            mapped_padding,
+        ));
+    }
+
+    #[test]
+    fn stale_two_d_frame_keeps_captured_pan_and_wheel_navigation_live() {
+        assert_stale_navigation_contract(PointerButton::Left, mouse::Button::Left);
+    }
+
+    #[cfg(feature = "3d")]
+    #[test]
+    fn stale_three_d_frame_keeps_captured_orbit_and_wheel_navigation_live() {
+        assert_stale_navigation_contract(PointerButton::Left, mouse::Button::Left);
     }
 }

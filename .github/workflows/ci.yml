@@ -186,8 +186,21 @@ jobs:
         run: uv run python scripts/verify_gui_adapter_packages.py --mode ci
 
   native-gui-tests:
-    name: Native GUI Behavioral Tests
-    runs-on: ubuntu-latest
+    name: Native GUI Behavioral Tests (${{ matrix.platform.name }})
+    runs-on: ${{ matrix.platform.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - name: Linux
+            os: ubuntu-latest
+            cache_key: linux
+          - name: macOS
+            os: macos-14
+            cache_key: macos
+          - name: Windows
+            os: windows-latest
+            cache_key: windows
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -196,6 +209,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install Linux desktop build dependencies
+        if: runner.os == 'Linux'
         uses: ./.github/actions/install-linux-desktop-build-deps
 
       - name: Cache native GUI test workspaces
@@ -206,8 +220,8 @@ jobs:
             ~/.cargo/git
             crates/gui-adapters/target
             crates/ruviz-gpui/target
-          key: ${{ runner.os }}-cargo-native-gui-tests-${{ hashFiles('crates/gui-adapters/Cargo.lock', 'crates/ruviz-gpui/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-native-gui-tests-
+          key: ${{ matrix.platform.cache_key }}-cargo-native-gui-tests-${{ hashFiles('crates/gui-adapters/Cargo.lock', 'crates/ruviz-gpui/Cargo.lock') }}
+          restore-keys: ${{ matrix.platform.cache_key }}-cargo-native-gui-tests-
 
       - name: Test adapter default behavior
         run: cargo test --manifest-path crates/gui-adapters/Cargo.toml --workspace --lib --locked
@@ -236,6 +250,74 @@ jobs:
         run: |
           cargo test --manifest-path crates/ruviz-gpui/Cargo.toml --doc --locked
           cargo test --manifest-path crates/ruviz-gpui/Cargo.toml --doc --all-features --locked
+
+      - name: Test native GUI smoke helper
+        if: runner.os == 'Linux'
+        run: python3 -m unittest scripts/test_smoke_native_gui_examples.py
+
+      - name: Build all native GUI examples for smoke testing
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          native_gui_stage_dir="${RUNNER_TEMP}/native-gui-examples"
+          mkdir -p "${native_gui_stage_dir}"
+
+          cargo build --manifest-path crates/gui-adapters/Cargo.toml --package ruviz-egui --examples --all-features --locked --message-format=json-render-diagnostics > "${RUNNER_TEMP}/ruviz-egui-examples.json"
+          python3 scripts/smoke_native_gui_examples.py stage \
+            --cargo-json "${RUNNER_TEMP}/ruviz-egui-examples.json" \
+            --stage-dir "${native_gui_stage_dir}" \
+            --expect ruviz-egui:dashboard \
+            --expect ruviz-egui:mixed_dashboard \
+            --expect ruviz-egui:three_d
+
+          cargo build --manifest-path crates/gui-adapters/Cargo.toml --package ruviz-iced --examples --all-features --locked --message-format=json-render-diagnostics > "${RUNNER_TEMP}/ruviz-iced-examples.json"
+          python3 scripts/smoke_native_gui_examples.py stage \
+            --cargo-json "${RUNNER_TEMP}/ruviz-iced-examples.json" \
+            --stage-dir "${native_gui_stage_dir}" \
+            --expect ruviz-iced:dashboard \
+            --expect ruviz-iced:dashboard_2d \
+            --expect ruviz-iced:static_dashboard
+
+          cargo build --manifest-path crates/gui-adapters/Cargo.toml --package ruviz-slint --examples --all-features --locked --message-format=json-render-diagnostics > "${RUNNER_TEMP}/ruviz-slint-examples.json"
+          python3 scripts/smoke_native_gui_examples.py stage \
+            --cargo-json "${RUNNER_TEMP}/ruviz-slint-examples.json" \
+            --stage-dir "${native_gui_stage_dir}" \
+            --expect ruviz-slint:dashboard \
+            --expect ruviz-slint:mixed_3d_dashboard
+
+          cargo build --manifest-path crates/ruviz-gpui/Cargo.toml --examples --all-features --locked --message-format=json-render-diagnostics > "${RUNNER_TEMP}/gpui-examples.json"
+          python3 scripts/smoke_native_gui_examples.py stage \
+            --cargo-json "${RUNNER_TEMP}/gpui-examples.json" \
+            --stage-dir "${native_gui_stage_dir}" \
+            --expect ruviz-gpui:coordinate_events \
+            --expect ruviz-gpui:fixed_bounds_dashboard \
+            --expect ruviz-gpui:movable_annotation \
+            --expect ruviz-gpui:observable_embed \
+            --expect ruviz-gpui:plot3d_embed \
+            --expect ruviz-gpui:static_embed \
+            --expect ruviz-gpui:streaming_embed
+
+      - name: Smoke all native GUI examples under Xvfb
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          python3 scripts/smoke_native_gui_examples.py run \
+            --stage-dir "${RUNNER_TEMP}/native-gui-examples" \
+            --expect ruviz-egui:dashboard \
+            --expect ruviz-egui:mixed_dashboard \
+            --expect ruviz-egui:three_d \
+            --expect ruviz-iced:dashboard \
+            --expect ruviz-iced:dashboard_2d \
+            --expect ruviz-iced:static_dashboard \
+            --expect ruviz-slint:dashboard \
+            --expect ruviz-slint:mixed_3d_dashboard \
+            --expect ruviz-gpui:coordinate_events \
+            --expect ruviz-gpui:fixed_bounds_dashboard \
+            --expect ruviz-gpui:movable_annotation \
+            --expect ruviz-gpui:observable_embed \
+            --expect ruviz-gpui:plot3d_embed \
+            --expect ruviz-gpui:static_embed \
+            --expect ruviz-gpui:streaming_embed
 
   test-fast:
     name: Test Fast Lane
@@ -719,6 +801,54 @@ jobs:
           cargo check --manifest-path crates/gui-adapters/Cargo.toml --workspace --all-features --locked
           cargo check --manifest-path crates/gui-adapters/Cargo.toml --workspace --examples --all-features --locked
 
+  gpui-msrv:
+    name: GPUI MSRV (1.92)
+    runs-on: ubuntu-latest
+    env:
+      RUSTUP_TOOLCHAIN: 1.92.0
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust 1.92
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.92.0
+
+      - name: Assert the GPUI MSRV rustc is the one that runs
+        env:
+          EXPECTED_RUSTC: "1.92.0"
+        run: |
+          actual="$(rustc --version | cut -d' ' -f2)"
+          if [[ "${actual}" != "${EXPECTED_RUSTC}" ]]; then
+            echo "::error::expected rustc ${EXPECTED_RUSTC}, got ${actual}"
+            exit 1
+          fi
+
+      - name: Install Linux desktop build dependencies
+        uses: ./.github/actions/install-linux-desktop-build-deps
+
+      - name: Cache GPUI MSRV workspace
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            crates/ruviz-gpui/target
+          key: ${{ runner.os }}-cargo-gpui-msrv-1.92-${{ hashFiles('crates/ruviz-gpui/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-gpui-msrv-1.92-
+
+      - name: Check GPUI default features on the MSRV
+        run: cargo check --manifest-path crates/ruviz-gpui/Cargo.toml --locked
+
+      - name: Check all GPUI features on the MSRV
+        run: cargo check --manifest-path crates/ruviz-gpui/Cargo.toml --all-features --locked
+
+      - name: Check GPUI examples on the MSRV
+        run: |
+          cargo check --manifest-path crates/ruviz-gpui/Cargo.toml --examples --locked
+          cargo check --manifest-path crates/ruviz-gpui/Cargo.toml --examples --all-features --locked
+
   python:
     name: Python
     runs-on: ubuntu-latest
@@ -990,15 +1120,19 @@ jobs:
       # resolves from crates.io alone instead of dragging in the zed checkout.
       - name: Check ruviz-gpui desktop build
         if: ${{ !matrix.platform.cross }}
-        run: cargo check --manifest-path crates/ruviz-gpui/Cargo.toml --target ${{ matrix.platform.target }}
+        run: cargo check --manifest-path crates/ruviz-gpui/Cargo.toml --target ${{ matrix.platform.target }} --locked
 
       - name: Check ruviz-gpui 3D GPU desktop build
         if: ${{ !matrix.platform.cross }}
-        run: cargo check --manifest-path crates/ruviz-gpui/Cargo.toml --target ${{ matrix.platform.target }} --no-default-features --features 3d-gpu
+        run: cargo check --manifest-path crates/ruviz-gpui/Cargo.toml --target ${{ matrix.platform.target }} --no-default-features --features 3d-gpu --locked
 
       - name: Check ruviz-gpui desktop examples
         if: ${{ !matrix.platform.cross }}
-        run: cargo check --manifest-path crates/ruviz-gpui/Cargo.toml --target ${{ matrix.platform.target }} --examples
+        run: cargo check --manifest-path crates/ruviz-gpui/Cargo.toml --target ${{ matrix.platform.target }} --examples --locked
+
+      - name: Check ruviz-gpui 3D desktop example
+        if: ${{ !matrix.platform.cross }}
+        run: cargo check --manifest-path crates/ruviz-gpui/Cargo.toml --target ${{ matrix.platform.target }} --example plot3d_embed --all-features --locked
 
   gui-adapters:
     name: Native GUI Adapters (${{ matrix.platform.name }})
@@ -1174,6 +1308,7 @@ jobs:
             ~/.cargo/git
             target
             crates/gui-adapters/target
+            crates/ruviz-gpui/target
           key: ${{ runner.os }}-cargo-docs-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Install Linux desktop build dependencies
@@ -1210,6 +1345,16 @@ jobs:
 
       - name: Build native GUI adapter documentation
         run: cargo doc --manifest-path crates/gui-adapters/Cargo.toml --workspace --all-features --no-deps --locked
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+      - name: Test GPUI documentation
+        run: |
+          cargo test --manifest-path crates/ruviz-gpui/Cargo.toml --doc --locked
+          cargo test --manifest-path crates/ruviz-gpui/Cargo.toml --doc --all-features --locked
+
+      - name: Build GPUI documentation
+        run: cargo doc --manifest-path crates/ruviz-gpui/Cargo.toml --all-features --no-deps --locked
         env:
           RUSTDOCFLAGS: -D warnings
 

@@ -90,14 +90,26 @@ handler receives a usable GPUI context:
 
 ```rust,ignore,reason=gpui-host-subscription
 let plot = plot_builder(plot).build(cx);
-let subscription = cx.subscribe(&plot, |this, _plot, event, cx| {
-    this.last_pointer_event = Some(event.clone());
-    cx.notify();
-});
+let subscription = cx.subscribe(
+    &plot,
+    |this, _plot, event: &ruviz_gpui::PlotPointerEvent, cx| {
+        this.last_pointer_event = Some(event.clone());
+        cx.notify();
+    },
+);
 ```
 
-Keep the returned subscription alive with the host view. `RuvizPlot` emits click
-and hover events to GPUI subscribers in addition to invoking builder callbacks.
+Keep the returned subscription alive with the host view. Existing
+`PlotPointerEvent` subscriptions remain supported. Render failures use a
+dedicated API so pointer-event subscription inference remains source
+compatible: use `.on_error(...)` for a thread-safe observer and inspect
+`RuvizPlot::last_error()` from host state.
+
+The adapter keeps the last good frame visible after a current render error and
+suppresses errors from superseded work. An identical failed request is latched
+instead of being rescheduled on every GPUI notification. Resize, replacement,
+reactive changes, and accepted interaction clear that latch automatically; call
+`RuvizPlot::retry_render` to clear the reported error and retry explicitly.
 
 Click events run on a primary-button release for a non-drag gesture. With normal
 platform double-click delivery, the completed click-count 1 release may emit
@@ -161,12 +173,14 @@ readers can observe the two objects independently.
 
 Use `RuvizPlot::set_plot` only when the plot definition itself must change. It
 replaces the whole interactive session and resets the visible and home views,
-pointer, drag, hover, selection, cached frames, scheduler and in-flight work,
-and reactive subscriptions. `RuvizPlot::set_plot_keep_view` performs the same
-replacement but queues old visible data bounds for restoration when the old view
-was customized. Restoration happens during the replacement's next render, after
-its data bounds have been resolved for the configured time. Incompatible bounds
-are discarded and the replacement keeps its natural view.
+pointer, drag, hover, selection, and reactive subscriptions. The last good frame
+stays visible while the replacement renders or if that render fails. Existing
+in-flight work remains the sole physical render and is superseded; the newest
+replacement request is coalesced behind it. `RuvizPlot::set_plot_keep_view`
+performs the same replacement but queues old visible data bounds for restoration
+when the old view was customized. Restoration happens during the replacement's
+next render, after its data bounds have been resolved for the configured time.
+Incompatible bounds are discarded and the replacement keeps its natural view.
 
 ## Related Docs
 

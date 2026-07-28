@@ -27,7 +27,7 @@ impl CoordinateEventsDemo {
             .into();
 
         let plot = plot_builder(plot).build(cx);
-        let subscription = cx.subscribe(&plot, |this, _, event, cx| {
+        let subscription = cx.subscribe(&plot, |this, _, event: &PlotPointerEvent, cx| {
             match &event.hit {
                 HitResult::HeatmapCell {
                     row, col, value, ..

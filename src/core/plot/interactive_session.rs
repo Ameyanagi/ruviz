@@ -15,11 +15,11 @@ use crate::{
 };
 use std::{
     cell::RefCell,
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     fmt,
     sync::{
-        Arc, Mutex, OnceLock, Weak,
-        atomic::{AtomicU64, Ordering},
+        Arc, Mutex, MutexGuard, OnceLock, Weak,
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::Duration,
 };
@@ -31,40 +31,85 @@ thread_local! {
 static NEXT_ANNOTATION_SESSION_TOKEN: AtomicU64 = AtomicU64::new(1);
 static NEXT_INTERACTIVE_SESSION_TOKEN: AtomicU64 = AtomicU64::new(1);
 
+fn lock_recover<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    match mutex.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    }
+}
+
 /// Opaque, monotonically increasing revision of an interactive session.
 ///
 /// Revisions may be compared for equality and ordering, but their numeric
 /// representation is intentionally private. A revision is meaningful only for
 /// the session that produced it.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct InteractiveChangeRevision(u64);
+pub struct InteractiveChangeRevision {
+    era: u64,
+    sequence: u64,
+}
+
+impl InteractiveChangeRevision {
+    fn checked_next(self) -> Option<Self> {
+        if self.sequence == u64::MAX {
+            Some(Self {
+                era: self.era.checked_add(1)?,
+                sequence: 0,
+            })
+        } else {
+            Some(Self {
+                era: self.era,
+                sequence: self.sequence + 1,
+            })
+        }
+    }
+}
 
 type ChangeCallback = Arc<dyn Fn(InteractiveChangeRevision) + Send + Sync + 'static>;
 
-#[derive(Default)]
 struct ChangeHubState {
     next_subscription_id: u64,
+    revision: InteractiveChangeRevision,
+    exhausted: bool,
+    dispatching: bool,
+    pending: VecDeque<PendingChange>,
     callbacks: HashMap<u64, ChangeCallback>,
+}
+
+struct PendingChange {
+    revision: InteractiveChangeRevision,
+    callbacks: Vec<ChangeCallback>,
+}
+
+impl Default for ChangeHubState {
+    fn default() -> Self {
+        Self {
+            next_subscription_id: 0,
+            revision: InteractiveChangeRevision {
+                era: 0,
+                sequence: 0,
+            },
+            exhausted: false,
+            dispatching: false,
+            pending: VecDeque::new(),
+            callbacks: HashMap::new(),
+        }
+    }
 }
 
 #[derive(Default)]
 struct ChangeHub {
-    revision: AtomicU64,
     state: Mutex<ChangeHubState>,
 }
 
 impl fmt::Debug for ChangeHub {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let state = self
-            .state
-            .lock()
-            .expect("InteractivePlotSession change hub lock poisoned");
+        let state = lock_recover(&self.state);
         formatter
             .debug_struct("ChangeHub")
-            .field(
-                "revision",
-                &InteractiveChangeRevision(self.revision.load(Ordering::Acquire)),
-            )
+            .field("revision", &state.revision)
+            .field("pending_count", &state.pending.len())
+            .field("dispatching", &state.dispatching)
             .field("subscription_count", &state.callbacks.len())
             .finish()
     }
@@ -72,21 +117,22 @@ impl fmt::Debug for ChangeHub {
 
 impl ChangeHub {
     fn revision(&self) -> InteractiveChangeRevision {
-        InteractiveChangeRevision(self.revision.load(Ordering::Acquire))
+        lock_recover(&self.state).revision
+    }
+
+    fn is_exhausted(&self) -> bool {
+        lock_recover(&self.state).exhausted
     }
 
     fn subscribe<F>(self: &Arc<Self>, callback: F) -> InteractiveChangeSubscription
     where
         F: Fn(InteractiveChangeRevision) + Send + Sync + 'static,
     {
-        let mut state = self
-            .state
-            .lock()
-            .expect("InteractivePlotSession change hub lock poisoned");
-        let id = state
-            .next_subscription_id
-            .checked_add(1)
-            .expect("interactive change subscription ID space exhausted");
+        let mut state = lock_recover(&self.state);
+        let mut id = state.next_subscription_id.wrapping_add(1).max(1);
+        while state.callbacks.contains_key(&id) {
+            id = id.wrapping_add(1).max(1);
+        }
         state.next_subscription_id = id;
         state.callbacks.insert(id, Arc::new(callback));
         InteractiveChangeSubscription {
@@ -96,35 +142,89 @@ impl ChangeHub {
     }
 
     fn notify(&self) -> InteractiveChangeRevision {
-        let (revision, callbacks) = {
-            let state = self
-                .state
-                .lock()
-                .expect("InteractivePlotSession change hub lock poisoned");
-            let revision = self
-                .revision
-                .fetch_update(Ordering::AcqRel, Ordering::Acquire, |revision| {
-                    revision.checked_add(1)
-                })
-                .expect("interactive change revision space exhausted")
-                + 1;
-            (
-                InteractiveChangeRevision(revision),
-                state.callbacks.values().cloned().collect::<Vec<_>>(),
-            )
+        let (revision, should_dispatch) = {
+            let mut state = lock_recover(&self.state);
+            let Some(revision) = state.revision.checked_next() else {
+                state.exhausted = true;
+                return state.revision;
+            };
+            state.revision = revision;
+            let mut callbacks = state
+                .callbacks
+                .iter()
+                .map(|(&id, callback)| (id, Arc::clone(callback)))
+                .collect::<Vec<_>>();
+            callbacks.sort_unstable_by_key(|(id, _)| *id);
+            state.pending.push_back(PendingChange {
+                revision,
+                callbacks: callbacks
+                    .into_iter()
+                    .map(|(_, callback)| callback)
+                    .collect(),
+            });
+            let should_dispatch = !state.dispatching;
+            if should_dispatch {
+                state.dispatching = true;
+            }
+            (revision, should_dispatch)
         };
-        for callback in callbacks {
-            callback(revision);
+
+        if !should_dispatch {
+            return revision;
+        }
+
+        let mut dispatch_guard = ChangeDispatchGuard {
+            hub: self,
+            armed: true,
+        };
+        let mut first_panic = None;
+        loop {
+            let pending = {
+                let mut state = lock_recover(&self.state);
+                match state.pending.pop_front() {
+                    Some(pending) => Some(pending),
+                    None => {
+                        state.dispatching = false;
+                        dispatch_guard.armed = false;
+                        None
+                    }
+                }
+            };
+            let Some(pending) = pending else {
+                break;
+            };
+            for callback in pending.callbacks {
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    callback(pending.revision);
+                }));
+                if first_panic.is_none()
+                    && let Err(payload) = result
+                {
+                    first_panic = Some(payload);
+                }
+            }
+        }
+        if let Some(payload) = first_panic {
+            std::panic::resume_unwind(payload);
         }
         revision
     }
 
     fn unsubscribe(&self, id: u64) {
-        self.state
-            .lock()
-            .expect("InteractivePlotSession change hub lock poisoned")
-            .callbacks
-            .remove(&id);
+        lock_recover(&self.state).callbacks.remove(&id);
+    }
+}
+
+struct ChangeDispatchGuard<'a> {
+    hub: &'a ChangeHub,
+    armed: bool,
+}
+
+impl Drop for ChangeDispatchGuard<'_> {
+    fn drop(&mut self) {
+        if self.armed {
+            lock_recover(&self.hub.state).dispatching = false;
+        }
     }
 }
 
@@ -604,7 +704,7 @@ pub struct InteractivePlotSession {
 
 #[derive(Debug)]
 struct InteractivePlotSessionInner {
-    session_token: u64,
+    session_token: Option<u64>,
     prepared: PreparedPlot,
     annotations: Mutex<DynamicAnnotations>,
     frame_pacing: Mutex<FramePacing>,
@@ -616,6 +716,7 @@ struct InteractivePlotSessionInner {
     dirty: Arc<Mutex<DirtyDomains>>,
     dirty_epoch: Arc<AtomicU64>,
     mutation_epoch: Arc<AtomicU64>,
+    epoch_exhausted: Arc<AtomicBool>,
     stats: Mutex<FrameStats>,
     reactive_epoch: Arc<AtomicU64>,
     change_hub: Arc<ChangeHub>,
@@ -1415,29 +1516,22 @@ impl InteractivePlotSession {
         let dirty_epoch = Arc::new(AtomicU64::new(0));
         let mutation_epoch = Arc::new(AtomicU64::new(0));
         let reactive_epoch = Arc::new(AtomicU64::new(0));
+        let epoch_exhausted = Arc::new(AtomicBool::new(false));
         let change_hub = Arc::new(ChangeHub::default());
         let dirty_for_callback = Arc::clone(&dirty);
         let dirty_epoch_for_callback = Arc::clone(&dirty_epoch);
         let mutation_epoch_for_callback = Arc::clone(&mutation_epoch);
+        let epoch_exhausted_for_callback = Arc::clone(&epoch_exhausted);
         let epoch_for_callback = Arc::clone(&reactive_epoch);
         let change_hub_for_callback = Arc::clone(&change_hub);
         let reactive_subscription = prepared.subscribe_reactive(move || {
-            if let Ok(mut domains) = dirty_for_callback.lock() {
-                advance_atomic_epoch(
-                    &mutation_epoch_for_callback,
-                    "interactive mutation epoch space exhausted",
-                );
-                advance_atomic_epoch(
-                    &dirty_epoch_for_callback,
-                    "interactive dirty epoch space exhausted",
-                );
-                domains.mark(DirtyDomain::Data);
-                domains.mark(DirtyDomain::Overlay);
-            }
-            advance_atomic_epoch(
-                &epoch_for_callback,
-                "interactive reactive epoch space exhausted",
-            );
+            let mut domains = lock_recover(&dirty_for_callback);
+            advance_atomic_epoch(&mutation_epoch_for_callback, &epoch_exhausted_for_callback);
+            advance_atomic_epoch(&dirty_epoch_for_callback, &epoch_exhausted_for_callback);
+            domains.mark(DirtyDomain::Data);
+            domains.mark(DirtyDomain::Overlay);
+            drop(domains);
+            advance_atomic_epoch(&epoch_for_callback, &epoch_exhausted_for_callback);
             change_hub_for_callback.notify();
         });
 
@@ -1455,11 +1549,7 @@ impl InteractivePlotSession {
 
         Self {
             inner: Arc::new(InteractivePlotSessionInner {
-                session_token: NEXT_INTERACTIVE_SESSION_TOKEN
-                    .fetch_update(Ordering::AcqRel, Ordering::Acquire, |token| {
-                        token.checked_add(1)
-                    })
-                    .expect("interactive session token space exhausted"),
+                session_token: reserve_atomic_id(&NEXT_INTERACTIVE_SESSION_TOKEN),
                 prepared,
                 annotations: Mutex::new(DynamicAnnotations::new()),
                 frame_pacing: Mutex::new(FramePacing::Display),
@@ -1471,6 +1561,7 @@ impl InteractivePlotSession {
                 dirty,
                 dirty_epoch,
                 mutation_epoch,
+                epoch_exhausted,
                 stats: Mutex::new(FrameStats::default()),
                 reactive_epoch,
                 change_hub,
@@ -1486,6 +1577,7 @@ impl InteractivePlotSession {
 
     /// Adds a session-owned annotation to the interactive overlay.
     pub fn add_annotation(&self, annotation: Annotation) -> Result<AnnotationId> {
+        self.repair_poisoned_session();
         {
             let layout = &self.inner.prepared.plot().layout;
             validate_dynamic_annotation(&annotation, &layout.x_scale, &layout.y_scale)?;
@@ -1526,6 +1618,7 @@ impl InteractivePlotSession {
 
     /// Replaces a session-owned annotation, including all geometry and style.
     pub fn update_annotation(&self, id: AnnotationId, annotation: Annotation) -> Result<()> {
+        self.repair_poisoned_session();
         {
             let layout = &self.inner.prepared.plot().layout;
             validate_dynamic_annotation(&annotation, &layout.x_scale, &layout.y_scale)?;
@@ -1549,6 +1642,7 @@ impl InteractivePlotSession {
     ///
     /// Foreign and stale IDs return [`PlottingError::UnknownAnnotationId`].
     pub fn remove_annotation(&self, id: AnnotationId) -> Result<bool> {
+        self.repair_poisoned_session();
         let mut annotations = self
             .inner
             .annotations
@@ -1582,11 +1676,18 @@ impl InteractivePlotSession {
     where
         F: Fn(InteractiveChangeRevision) + Send + Sync + 'static,
     {
-        self.inner.change_hub.subscribe(callback)
+        let subscription = self.inner.change_hub.subscribe(callback);
+        self.repair_poisoned_session();
+        subscription
     }
 
     /// Returns the latest session-local change revision.
     pub fn change_revision(&self) -> InteractiveChangeRevision {
+        self.repair_poisoned_session();
+        self.change_revision_raw()
+    }
+
+    fn change_revision_raw(&self) -> InteractiveChangeRevision {
         self.inner.change_hub.revision()
     }
 
@@ -1605,10 +1706,8 @@ impl InteractivePlotSession {
     /// by [`InteractiveFrameWithGeneration`] and reject coordinate queries while it differs from
     /// this value.
     pub fn displayed_frame_generation(&self) -> Option<u64> {
-        self.inner
-            .state
-            .lock()
-            .expect("InteractivePlotSession state lock poisoned")
+        self.repair_poisoned_session();
+        lock_recover(&self.inner.state)
             .base_cache
             .as_ref()
             .map(|cache| cache.generation)
@@ -1621,18 +1720,13 @@ impl InteractivePlotSession {
     /// are rejected. This remains safe across generation reuse and avoids
     /// presentation adapters comparing raw counters.
     pub fn is_render_stamp_current(&self, stamp: InteractiveRenderStamp) -> bool {
-        let state = self
-            .inner
-            .state
-            .lock()
-            .expect("InteractivePlotSession state lock poisoned");
-        let _dirty = self
-            .inner
-            .dirty
-            .lock()
-            .expect("InteractivePlotSession dirty lock poisoned");
-        stamp.session_token == self.inner.session_token
-            && stamp.change_revision == self.change_revision()
+        self.repair_poisoned_session();
+        let state = lock_recover(&self.inner.state);
+        let _dirty = lock_recover(&self.inner.dirty);
+        !self.inner.epoch_exhausted.load(Ordering::Acquire)
+            && !self.inner.change_hub.is_exhausted()
+            && Some(stamp.session_token) == self.inner.session_token
+            && stamp.change_revision == self.change_revision_raw()
             && stamp.mutation_epoch == self.inner.mutation_epoch.load(Ordering::Acquire)
             && stamp.dirty_epoch == self.inner.dirty_epoch.load(Ordering::Acquire)
             && state.base_cache.as_ref().map(|cache| cache.generation)
@@ -1641,25 +1735,16 @@ impl InteractivePlotSession {
 
     /// Drop cached geometry and layer images so the next frame rebuilds them.
     pub fn invalidate(&self) {
+        self.repair_poisoned_session();
         let mut state = self
             .inner
             .state
             .lock()
             .expect("InteractivePlotSession state lock poisoned");
         self.inner.prepared.invalidate();
-        let mut dirty = self
-            .inner
-            .dirty
-            .lock()
-            .expect("InteractivePlotSession dirty lock poisoned");
-        advance_atomic_epoch(
-            &self.inner.mutation_epoch,
-            "interactive mutation epoch space exhausted",
-        );
-        advance_atomic_epoch(
-            &self.inner.dirty_epoch,
-            "interactive dirty epoch space exhausted",
-        );
+        let mut dirty = lock_recover(&self.inner.dirty);
+        advance_atomic_epoch(&self.inner.mutation_epoch, &self.inner.epoch_exhausted);
+        advance_atomic_epoch(&self.inner.dirty_epoch, &self.inner.epoch_exhausted);
         state.base_cache = None;
         state.overlay_cache = None;
         state.geometry = None;
@@ -1670,19 +1755,12 @@ impl InteractivePlotSession {
     }
 
     pub fn frame_pacing(&self) -> FramePacing {
-        *self
-            .inner
-            .frame_pacing
-            .lock()
-            .expect("InteractivePlotSession frame pacing lock poisoned")
+        *lock_recover(&self.inner.frame_pacing)
     }
 
     pub fn set_frame_pacing(&self, pacing: FramePacing) {
-        let mut current = self
-            .inner
-            .frame_pacing
-            .lock()
-            .expect("InteractivePlotSession frame pacing lock poisoned");
+        self.repair_poisoned_session();
+        let mut current = lock_recover(&self.inner.frame_pacing);
         if *current == pacing {
             return;
         }
@@ -1693,19 +1771,12 @@ impl InteractivePlotSession {
     }
 
     pub fn quality_policy(&self) -> QualityPolicy {
-        *self
-            .inner
-            .quality_policy
-            .lock()
-            .expect("InteractivePlotSession quality policy lock poisoned")
+        *lock_recover(&self.inner.quality_policy)
     }
 
     pub fn set_quality_policy(&self, quality: QualityPolicy) {
-        let mut current = self
-            .inner
-            .quality_policy
-            .lock()
-            .expect("InteractivePlotSession quality policy lock poisoned");
+        self.repair_poisoned_session();
+        let mut current = lock_recover(&self.inner.quality_policy);
         if *current == quality {
             return;
         }
@@ -1716,19 +1787,12 @@ impl InteractivePlotSession {
     }
 
     pub fn prefer_gpu(&self) -> bool {
-        *self
-            .inner
-            .prefer_gpu
-            .lock()
-            .expect("InteractivePlotSession prefer_gpu lock poisoned")
+        *lock_recover(&self.inner.prefer_gpu)
     }
 
     pub fn set_prefer_gpu(&self, prefer_gpu: bool) {
-        let mut current = self
-            .inner
-            .prefer_gpu
-            .lock()
-            .expect("InteractivePlotSession prefer_gpu lock poisoned");
+        self.repair_poisoned_session();
+        let mut current = lock_recover(&self.inner.prefer_gpu);
         if *current == prefer_gpu {
             return;
         }
@@ -1746,6 +1810,7 @@ impl InteractivePlotSession {
     }
 
     pub fn resize(&self, size_px: (u32, u32), scale_factor: f32) {
+        self.repair_poisoned_session();
         let mut state = self
             .inner
             .state
@@ -1762,6 +1827,7 @@ impl InteractivePlotSession {
     }
 
     pub fn apply_input(&self, event: PlotInputEvent) {
+        self.repair_poisoned_session();
         let mut state = self
             .inner
             .state
@@ -2064,12 +2130,9 @@ impl InteractivePlotSession {
     /// the widget, or interaction-mode changes. Existing selection is
     /// preserved. Returns `true` only when transient brush state was cleared.
     pub fn cancel_interaction(&self) -> bool {
+        self.repair_poisoned_session();
         let changed = {
-            let mut state = self
-                .inner
-                .state
-                .lock()
-                .expect("InteractivePlotSession state lock poisoned");
+            let mut state = lock_recover(&self.inner.state);
             let had_anchor = state.brush_anchor.take().is_some();
             let had_region = state.brushed_region.take().is_some();
             let changed = had_anchor || had_region;
@@ -2085,6 +2148,7 @@ impl InteractivePlotSession {
     }
 
     pub fn hit_test(&self, position_px: ViewportPoint) -> HitResult {
+        self.repair_poisoned_session();
         let Some((geometry, displayed_data, point_hit_index)) = self.displayed_hit_test_data()
         else {
             return HitResult::None;
@@ -2189,6 +2253,7 @@ impl InteractivePlotSession {
     /// displayed plot area. An error is returned until a base frame has been
     /// rendered and its geometry is available.
     pub fn screen_to_data(&self, position_px: ViewportPoint) -> Result<Option<ViewportPoint>> {
+        self.repair_poisoned_session();
         let geometry = self.displayed_geometry()?;
         if !geometry.contains_screen(position_px) {
             return Ok(None);
@@ -2203,6 +2268,7 @@ impl InteractivePlotSession {
     /// An error is returned for non-finite input or until displayed geometry is
     /// available.
     pub fn screen_to_data_clamped(&self, position_px: ViewportPoint) -> Result<ViewportPoint> {
+        self.repair_poisoned_session();
         require_finite_point(position_px, "screen position")?;
         let geometry = self.displayed_geometry()?;
         let data = geometry.screen_to_data(geometry.clamp_screen(position_px));
@@ -2216,6 +2282,7 @@ impl InteractivePlotSession {
     /// displayed data bounds. An error is returned until displayed geometry is
     /// available.
     pub fn data_to_screen(&self, data_position: ViewportPoint) -> Result<Option<ViewportPoint>> {
+        self.repair_poisoned_session();
         let geometry = self.displayed_geometry()?;
         if !geometry.contains_data(data_position) {
             return Ok(None);
@@ -2230,6 +2297,7 @@ impl InteractivePlotSession {
     /// An error is returned for non-finite input or until displayed geometry is
     /// available.
     pub fn data_to_screen_clamped(&self, data_position: ViewportPoint) -> Result<ViewportPoint> {
+        self.repair_poisoned_session();
         require_finite_point(data_position, "data position")?;
         let geometry = self.displayed_geometry()?;
         let screen = geometry.data_to_screen(geometry.clamp_data(data_position));
@@ -2295,6 +2363,7 @@ impl InteractivePlotSession {
     }
 
     pub fn dirty_domains(&self) -> DirtyDomains {
+        self.repair_poisoned_session();
         *self
             .inner
             .dirty
@@ -2303,11 +2372,7 @@ impl InteractivePlotSession {
     }
 
     fn render_snapshot(&self) -> (SessionState, DirtyDomains, RenderEpoch) {
-        let state = self
-            .inner
-            .state
-            .lock()
-            .expect("InteractivePlotSession state lock poisoned");
+        let state = lock_recover(&self.inner.state);
         let dirty = self
             .inner
             .dirty
@@ -2326,11 +2391,7 @@ impl InteractivePlotSession {
     fn sync_reactive_epoch(&self) {
         let reactive_epoch = self.inner.reactive_epoch.load(Ordering::Acquire);
         let changed = {
-            let mut state = self
-                .inner
-                .state
-                .lock()
-                .expect("InteractivePlotSession state lock poisoned");
+            let mut state = lock_recover(&self.inner.state);
             if state.last_reactive_epoch == reactive_epoch {
                 false
             } else {
@@ -2346,6 +2407,7 @@ impl InteractivePlotSession {
 
     /// Returns the current interactive viewport state.
     pub fn viewport_snapshot(&self) -> Result<InteractiveViewportSnapshot> {
+        self.repair_poisoned_session();
         let geometry = self
             .displayed_geometry()
             .or_else(|_| self.geometry_snapshot())?;
@@ -2384,6 +2446,7 @@ impl InteractivePlotSession {
     /// bounds reflect input and restoration changes immediately, even when the
     /// latest displayed frame still uses older bounds.
     pub fn view_bounds_snapshot(&self) -> InteractiveViewBoundsSnapshot {
+        self.repair_poisoned_session();
         let state = self
             .inner
             .state
@@ -2400,6 +2463,7 @@ impl InteractivePlotSession {
 
     /// Restores the visible bounds for the interactive viewport.
     pub fn restore_visible_bounds(&self, bounds: ViewportRect) -> bool {
+        self.repair_poisoned_session();
         let next_visible = DataBounds::from_viewport_rect(bounds);
         if !bounds_have_extent(next_visible) {
             return false;
@@ -2472,6 +2536,7 @@ impl InteractivePlotSession {
     /// plot's current-time data bounds to be resolved before normalization.
     #[doc(hidden)]
     pub fn defer_visible_bounds_restore(&self, bounds: ViewportRect) -> bool {
+        self.repair_poisoned_session();
         let requested = DataBounds::from_viewport_rect(bounds);
         if !bounds_have_extent(requested) {
             return false;
@@ -2504,6 +2569,8 @@ impl InteractivePlotSession {
         scale_factor: f32,
         time_seconds: f64,
     ) -> Result<StampedInteractiveFrame> {
+        self.repair_poisoned_session();
+        self.ensure_epochs_available()?;
         // Synchronizing the request can emit change notifications. It must
         // happen before both the reentrancy guard and render gate so callbacks
         // may safely trigger a render of the latest state.
@@ -3152,6 +3219,47 @@ impl InteractivePlotSession {
         }
     }
 
+    /// Repairs invariant-bearing session state after a panic while holding the
+    /// state or dirty mutex.
+    ///
+    /// The canonical state-then-dirty lock order matches render snapshots.
+    /// Cached output is discarded and both epochs advance before poison is
+    /// cleared, so a stamp created before the panic cannot remain current.
+    /// Notification is deliberately delayed until both guards are released.
+    fn repair_poisoned_session(&self) -> bool {
+        if !self.inner.state.is_poisoned() && !self.inner.dirty.is_poisoned() {
+            return false;
+        }
+
+        let mut state = match self.inner.state.lock() {
+            Ok(state) => state,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        let mut dirty = match self.inner.dirty.lock() {
+            Ok(dirty) => dirty,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        let needs_repair = self.inner.state.is_poisoned() || self.inner.dirty.is_poisoned();
+        if !needs_repair {
+            return false;
+        }
+
+        state.base_cache = None;
+        state.overlay_cache = None;
+        state.geometry = None;
+        *dirty = DirtyDomains::with_all();
+        advance_atomic_epoch(&self.inner.mutation_epoch, &self.inner.epoch_exhausted);
+        advance_atomic_epoch(&self.inner.dirty_epoch, &self.inner.epoch_exhausted);
+        self.inner.state.clear_poison();
+        self.inner.dirty.clear_poison();
+        drop(dirty);
+        drop(state);
+
+        self.inner.prepared.invalidate();
+        self.inner.change_hub.notify();
+        true
+    }
+
     /// Records a state/configuration mutation while the caller still holds
     /// the lock that protects the mutated value.
     ///
@@ -3160,27 +3268,31 @@ impl InteractivePlotSession {
     /// prevents a renderer from observing new state with old clean flags.
     fn record_mutation(&self, domains: &[DirtyDomain]) {
         self.run_render_test_hook(RenderTestPoint::BeforeDirtyMark);
-        let mut dirty = self
-            .inner
-            .dirty
-            .lock()
-            .expect("InteractivePlotSession dirty lock poisoned");
-        advance_atomic_epoch(
-            &self.inner.mutation_epoch,
-            "interactive mutation epoch space exhausted",
-        );
-        advance_atomic_epoch(
-            &self.inner.dirty_epoch,
-            "interactive dirty epoch space exhausted",
-        );
+        let mut dirty = lock_recover(&self.inner.dirty);
+        advance_atomic_epoch(&self.inner.mutation_epoch, &self.inner.epoch_exhausted);
+        advance_atomic_epoch(&self.inner.dirty_epoch, &self.inner.epoch_exhausted);
         for &domain in domains {
             dirty.mark(domain);
         }
     }
 
     fn epochs_match(&self, expected: RenderEpoch) -> bool {
-        self.inner.mutation_epoch.load(Ordering::Acquire) == expected.mutation
+        !self.inner.epoch_exhausted.load(Ordering::Acquire)
+            && !self.inner.change_hub.is_exhausted()
+            && self.inner.mutation_epoch.load(Ordering::Acquire) == expected.mutation
             && self.inner.dirty_epoch.load(Ordering::Acquire) == expected.dirty
+    }
+
+    fn ensure_epochs_available(&self) -> Result<()> {
+        if self.inner.epoch_exhausted.load(Ordering::Acquire)
+            || self.inner.change_hub.is_exhausted()
+        {
+            Err(PlottingError::RenderError(
+                "interactive session revision space exhausted".to_string(),
+            ))
+        } else {
+            Ok(())
+        }
     }
 
     #[cfg(test)]
@@ -3211,10 +3323,7 @@ impl InteractivePlotSession {
             .dirty
             .lock()
             .expect("InteractivePlotSession dirty lock poisoned");
-        advance_atomic_epoch(
-            &self.inner.dirty_epoch,
-            "interactive dirty epoch space exhausted",
-        );
+        advance_atomic_epoch(&self.inner.dirty_epoch, &self.inner.epoch_exhausted);
         dirty.mark(domain);
         drop(dirty);
         self.inner.change_hub.notify();
@@ -3262,10 +3371,13 @@ impl InteractivePlotSession {
         }
         dirty.clear_base();
         dirty.clear_overlay();
+        let session_token = self.inner.session_token.ok_or_else(|| {
+            PlottingError::RenderError("interactive session identity space exhausted".to_string())
+        })?;
         Ok(InteractiveRenderStamp {
-            session_token: self.inner.session_token,
+            session_token,
             base_generation: generation,
-            change_revision: self.change_revision(),
+            change_revision: self.change_revision_raw(),
             mutation_epoch: expected_epoch.mutation,
             dirty_epoch: expected_epoch.dirty,
         })
@@ -3376,6 +3488,7 @@ impl InteractivePlotSession {
     }
 
     pub(crate) fn sync_legacy_viewport(&self, zoom_level: f64, pan_x: f64, pan_y: f64) {
+        self.repair_poisoned_session();
         let mut state = self
             .inner
             .state
@@ -3424,6 +3537,7 @@ impl InteractivePlotSession {
     }
 
     pub(crate) fn sync_legacy_hover(&self, data_position: Option<ViewportPoint>) {
+        self.repair_poisoned_session();
         let mut state = self
             .inner
             .state
@@ -4148,12 +4262,30 @@ fn render_superseded_error() -> PlottingError {
     PlottingError::RenderSuperseded
 }
 
-fn advance_atomic_epoch(epoch: &AtomicU64, exhausted: &'static str) {
-    epoch
-        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |value| {
-            value.checked_add(1)
+fn advance_atomic_epoch(epoch: &AtomicU64, exhausted: &AtomicBool) -> bool {
+    if exhausted.load(Ordering::Acquire) {
+        return false;
+    }
+    let mut current = epoch.load(Ordering::Acquire);
+    loop {
+        let Some(next) = current.checked_add(1) else {
+            exhausted.store(true, Ordering::Release);
+            return false;
+        };
+        match epoch.compare_exchange_weak(current, next, Ordering::AcqRel, Ordering::Acquire) {
+            Ok(_) => return true,
+            Err(observed) => current = observed,
+        }
+    }
+}
+
+fn reserve_atomic_id(counter: &AtomicU64) -> Option<u64> {
+    counter
+        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+            current.checked_add(1)
         })
-        .unwrap_or_else(|_| panic!("{exhausted}"));
+        .ok()
+        .filter(|&identity| identity != 0)
 }
 
 fn build_frame_key(plot: &Plot, state: &SessionState) -> InteractiveFrameKey {

@@ -4,8 +4,8 @@ use slint::{ComponentHandle as _, LogicalSize};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let dashboard = RuvizPlotGrid::new()?;
-    dashboard.set_columns(2);
-    dashboard.window().set_size(LogicalSize::new(1200.0, 520.0));
+    dashboard.set_columns(3);
+    dashboard.window().set_size(LogicalSize::new(1500.0, 520.0));
 
     let controller = RuvizController::attach(&dashboard);
     controller.on_error(|error| eprintln!("{error}"));
@@ -30,9 +30,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .title("Interactive 3D"),
         SlotOptions::default(),
     )?;
+    controller.set_plot3d(
+        2,
+        ruviz::scatter3d(&[-1.0, 0.0, 1.0], &[0.0, -1.0, 0.0], &[1.0, 0.0, -1.0])
+            .title("Static 3D"),
+        SlotOptions {
+            interaction: InteractionMode::Static,
+            ..SlotOptions::default()
+        },
+    )?;
     let scale = dashboard.window().scale_factor();
-    controller.resize(0, 596.0, 512.0, scale);
-    controller.resize(1, 596.0, 512.0, scale);
+    controller.resize(0, 496.0, 512.0, scale);
+    controller.resize(1, 496.0, 512.0, scale);
+    controller.resize(2, 496.0, 512.0, scale);
     dashboard.run()?;
     Ok(())
 }

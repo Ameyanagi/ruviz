@@ -182,7 +182,8 @@ jobs:
             ~/.cargo/git
             target
             crates/gui-adapters/target
-          key: ${{ runner.os }}-cargo-release-${{ hashFiles('Cargo.lock', 'crates/gui-adapters/Cargo.lock') }}
+            crates/ruviz-gpui/target
+          key: ${{ runner.os }}-cargo-release-${{ hashFiles('Cargo.lock', 'crates/gui-adapters/Cargo.lock', 'crates/ruviz-gpui/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-release-
 
       - name: Cache Bun
@@ -216,10 +217,20 @@ jobs:
       # [patch.crates-io] gpui override stops applying to every root cargo
       # command. It is not a root member: reach it by manifest path.
       - name: Verify ruviz-gpui compiles
-        run: cargo check --manifest-path crates/ruviz-gpui/Cargo.toml
+        run: cargo check --manifest-path crates/ruviz-gpui/Cargo.toml --locked
 
       - name: Verify ruviz-gpui examples compile
-        run: cargo check --manifest-path crates/ruviz-gpui/Cargo.toml --examples
+        run: |
+          cargo check --manifest-path crates/ruviz-gpui/Cargo.toml --examples --locked
+          cargo check --manifest-path crates/ruviz-gpui/Cargo.toml --example plot3d_embed --all-features --locked
+
+      - name: Test and build ruviz-gpui documentation
+        run: |
+          cargo test --manifest-path crates/ruviz-gpui/Cargo.toml --doc --locked
+          cargo test --manifest-path crates/ruviz-gpui/Cargo.toml --doc --all-features --locked
+          cargo doc --manifest-path crates/ruviz-gpui/Cargo.toml --all-features --no-deps --locked
+        env:
+          RUSTDOCFLAGS: -D warnings
 
       - name: Verify native GUI adapters and examples compile
         run: |

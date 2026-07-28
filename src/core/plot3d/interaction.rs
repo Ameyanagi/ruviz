@@ -3,9 +3,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use glam::Vec3;
 
-use crate::core::{Image, PlottingError, Result};
+use crate::core::{Bounds3D, FigureConfig, Image, PlottingError, Point3D, Result};
+use crate::render::Theme;
 use crate::render::three_d::overlay::compose_image;
-use crate::render::three_d::scene::Scene3D;
+use crate::render::three_d::scene::{Scene3D, SceneGeometry3D};
 use crate::render::three_d::software::raster::{SoftwareRenderOptions3D, render_scene};
 
 #[cfg(feature = "gpu")]
@@ -21,7 +22,7 @@ use super::builder::Plot3D;
 use super::layout::Axis3Layout;
 use super::picking::{Bvh3D, PickHit3D, pick_scene};
 use super::prepared::PreparedSceneCache3D;
-use super::resolve::ResolvedFrame3D;
+use super::resolve::{CacheKey3D, FrameKeys3D, ResolvedFrame3D};
 
 const DRAG_THRESHOLD_PX: f32 = 3.0;
 const ORBIT_DEGREES_PER_PIXEL: f32 = 0.25;
@@ -391,6 +392,58 @@ impl InteractivePlot3DSession {
         })
     }
 
+    /// Construct a non-rendering placeholder for adapters whose infallible
+    /// compatibility builder could not resolve the supplied plot.
+    ///
+    /// Adapters must retain and report the original construction error and
+    /// must not schedule render jobs for this placeholder. The reserved zero
+    /// scene generation keeps it distinct from normally constructed sessions.
+    #[doc(hidden)]
+    pub fn error_placeholder() -> Self {
+        let camera = Camera3D::default();
+        let frame = Arc::new(ResolvedFrame3D {
+            series: Vec::new(),
+            bounds: Bounds3D {
+                min: Point3D::new(-1.0, -1.0, -1.0),
+                max: Point3D::new(1.0, 1.0, 1.0),
+            },
+            camera,
+            figure: FigureConfig::default(),
+            theme: Theme::default(),
+            title: None,
+            xlabel: None,
+            ylabel: None,
+            zlabel: None,
+            legend: None,
+            keys: FrameKeys3D {
+                geometry: CacheKey3D(0),
+                appearance: CacheKey3D(0),
+                layout: CacheKey3D(0),
+                view: CacheKey3D(0),
+            },
+        });
+        let geometry = Arc::new(SceneGeometry3D::default());
+        Self {
+            frame,
+            scene: Arc::new(Scene3D {
+                geometry,
+                points: Vec::new(),
+                lines: Vec::new(),
+                meshes: Vec::new(),
+            }),
+            bvh: Arc::new(Bvh3D::default()),
+            initial_camera: camera,
+            scene_generation: 0,
+            camera_generation: 0,
+            target_generation: 0,
+            request_generation: 0,
+            active_drag: None,
+            current_pick: None,
+            #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
+            gpu_renderer: None,
+        }
+    }
+
     /// Current authoritative camera.
     pub fn camera(&self) -> Camera3D {
         self.frame.camera
@@ -755,7 +808,20 @@ impl InteractivePlot3DSession {
     /// Any retained GPU renderer is moved into the replacement session so
     /// adapters do not recreate a device for every plot replacement.
     pub fn replace(&mut self, replacement: Self) {
-        self.replace_inner(replacement);
+        // This compatibility API predates fallible replacement. If the
+        // request counter is exhausted, retain the complete old session
+        // instead of partially installing a replacement that cannot
+        // invalidate its previously-created jobs.
+        let _ = self.replace_inner(replacement);
+    }
+
+    /// Fallibly replace the retained scene and reset to its own camera.
+    ///
+    /// Unlike [`Self::replace`], this reports request-generation exhaustion.
+    /// Failure is atomic: the current session and retained renderer are left
+    /// unchanged.
+    pub fn try_replace(&mut self, replacement: Self) -> Result<()> {
+        self.replace_inner(replacement)
     }
 
     /// Replace the retained scene while keeping the current camera.
@@ -776,8 +842,7 @@ impl InteractivePlot3DSession {
             replacement.camera_generation = next_generation;
             replacement.current_pick = None;
         }
-        self.replace_inner(replacement);
-        Ok(())
+        self.replace_inner(replacement)
     }
 
     /// Render one retained interactive-quality CPU frame.
@@ -885,14 +950,19 @@ impl InteractivePlot3DSession {
         Ok(Some(diagnostics))
     }
 
-    fn replace_inner(&mut self, mut replacement: Self) {
+    fn replace_inner(&mut self, mut replacement: Self) -> Result<()> {
         // A replacement session may already have produced jobs, a selection,
         // or an in-progress drag before it is installed. None of that
         // frontend state is valid across the replacement boundary.
-        replacement.request_generation = replacement
-            .request_generation
-            .checked_add(1)
-            .expect("3D render request space was exhausted during replacement");
+        replacement.request_generation =
+            replacement
+                .request_generation
+                .checked_add(1)
+                .ok_or_else(|| {
+                    PlottingError::RenderError(
+                        "3D render request space was exhausted during replacement".to_string(),
+                    )
+                })?;
         replacement.active_drag = None;
         replacement.current_pick = None;
         #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
@@ -900,6 +970,7 @@ impl InteractivePlot3DSession {
             replacement.gpu_renderer = self.gpu_renderer.take();
         }
         *self = replacement;
+        Ok(())
     }
 }
 
@@ -1598,6 +1669,35 @@ mod tests {
 
         assert!(!current.is_render_current(stale_job.stamp()));
         assert!(!current.is_stamped_pick_current(&stale_pick));
+    }
+
+    #[test]
+    fn replacement_generation_exhaustion_is_atomic_and_never_panics() {
+        let mut current = scatter3d(&[0.0], &[0.0], &[0.0])
+            .interactive_session()
+            .expect("current");
+        current.orbit(8.0, -2.0).expect("orbit");
+        let original_view = current.view_stamp();
+        let original_camera = current.camera();
+
+        let mut replacement = scatter3d(&[1.0], &[1.0], &[1.0])
+            .interactive_session()
+            .expect("replacement");
+        replacement.request_generation = u64::MAX;
+        let error = current
+            .try_replace(replacement)
+            .expect_err("exhausted replacement must fail");
+        assert!(error.to_string().contains("request space was exhausted"));
+        assert_eq!(current.view_stamp(), original_view);
+        assert_eq!(current.camera(), original_camera);
+
+        let mut compatibility_replacement = scatter3d(&[2.0], &[2.0], &[2.0])
+            .interactive_session()
+            .expect("compatibility replacement");
+        compatibility_replacement.request_generation = u64::MAX;
+        current.replace(compatibility_replacement);
+        assert_eq!(current.view_stamp(), original_view);
+        assert_eq!(current.camera(), original_camera);
     }
 
     #[test]

@@ -11,7 +11,7 @@ use ruviz::core::{
 use crate::shared::{
     AdapterError, AdapterErrorKind, PlotSize, ViewMode, claim_scroll_y, color_image, fitted_rect,
     map_point, map_point_clamped, next_widget_id, paint_texture, press_starts_in,
-    release_is_cancelled, visible_content_rect,
+    visible_content_rect,
 };
 
 /// Start a feature-gated egui 3D adapter builder.
@@ -230,9 +230,8 @@ impl RuvizPlot3D {
     /// Replace the scene and reset to the replacement camera.
     pub fn set_plot(&mut self, plot: impl TryIntoPlot3DSession) -> ruviz::core::Result<()> {
         let replacement = plot.try_into_plot3d_session()?;
-        self.session.replace(replacement);
-        self.after_replacement();
-        Ok(())
+        let result = self.session.try_replace(replacement);
+        self.complete_replacement(result)
     }
 
     /// Replace the scene while preserving the current camera.
@@ -241,7 +240,12 @@ impl RuvizPlot3D {
         plot: impl TryIntoPlot3DSession,
     ) -> ruviz::core::Result<()> {
         let replacement = plot.try_into_plot3d_session()?;
-        self.session.replace_keep_camera(replacement)?;
+        let result = self.session.replace_keep_camera(replacement);
+        self.complete_replacement(result)
+    }
+
+    fn complete_replacement(&mut self, result: ruviz::core::Result<()>) -> ruviz::core::Result<()> {
+        result?;
         self.after_replacement();
         Ok(())
     }
@@ -353,10 +357,7 @@ impl RuvizPlot3D {
 
     fn after_replacement(&mut self) {
         self.last_requested_view = None;
-        self.scene_epoch = self
-            .scene_epoch
-            .checked_add(1)
-            .expect("ruviz-egui 3D replacement epoch exhausted");
+        self.scene_epoch = self.scene_epoch.wrapping_add(1);
         self.displayed_view = None;
         self.active_button = None;
         self.last_pointer = None;
@@ -400,25 +401,34 @@ impl RuvizPlot3D {
 
     fn drain_completions(&mut self, context: &egui::Context, events: &mut Vec<Plot3DEvent>) {
         while let Ok(completed) = self.completion_rx.try_recv() {
-            let Some(state) = self.scheduler.complete(completed.id) else {
-                continue;
-            };
-            if state.install && completed.scene_epoch == self.scene_epoch {
-                match completed.result {
-                    RenderResult3D::Frame(frame) => match self.session.classify_render(frame) {
-                        BackgroundRenderOutcome3D::Current(frame) => {
-                            self.displayed_view = Some(frame.stamp.view());
-                            self.install_image(context, frame.image);
-                            self.last_error = None;
-                        }
-                        BackgroundRenderOutcome3D::Superseded { .. } => {}
-                    },
-                    RenderResult3D::Error(error) => self.record_error(error, events),
-                }
+            self.handle_completion(context, events, completed);
+        }
+    }
+
+    fn handle_completion(
+        &mut self,
+        context: &egui::Context,
+        events: &mut Vec<Plot3DEvent>,
+        completed: RenderCompletion3D,
+    ) {
+        let Some(state) = self.scheduler.complete(completed.id) else {
+            return;
+        };
+        if state.install && completed.scene_epoch == self.scene_epoch {
+            match completed.result {
+                RenderResult3D::Frame(frame) => match self.session.classify_render(frame) {
+                    BackgroundRenderOutcome3D::Current(frame) => {
+                        self.displayed_view = Some(frame.stamp.view());
+                        self.install_image(context, frame.image);
+                        self.last_error = None;
+                    }
+                    BackgroundRenderOutcome3D::Superseded { .. } => {}
+                },
+                RenderResult3D::Error(error) => self.record_error(error, events),
             }
-            if let Some(next) = state.next {
-                self.spawn_render(next.id(), next.into_request());
-            }
+        }
+        if let Some(next) = state.next {
+            self.spawn_render(next.id(), next.into_request());
         }
     }
 
@@ -527,7 +537,9 @@ impl RuvizPlot3D {
                 && response.is_pointer_button_down_on()
                 && press_starts_in(visible_content, press_origin)
             {
-                let origin = press_origin.expect("visible pointer origin was checked above");
+                let Some(origin) = press_origin else {
+                    continue;
+                };
                 response.request_focus();
                 self.begin_pointer_interaction(
                     origin,
@@ -565,14 +577,10 @@ impl RuvizPlot3D {
                 )
             });
             if !down || !focused {
-                if !release_is_cancelled(visible_content, pointer, focused) {
-                    self.finish_drag(
-                        pointer.expect("known visible release was checked above"),
-                        content,
-                        image_size,
-                        button,
-                        &mut outcome,
-                    );
+                if let Some(position) =
+                    pointer.filter(|position| focused && visible_content.contains(*position))
+                {
+                    self.finish_drag(position, content, image_size, button, &mut outcome);
                 } else {
                     self.cancel_active_drag(&mut outcome);
                 }
@@ -677,11 +685,7 @@ fn spawn_render_worker(
     std::thread::Builder::new()
         .name("ruviz-egui-3d-render".to_string())
         .spawn(move || {
-            #[cfg(all(feature = "3d-gpu", not(target_arch = "wasm32")))]
-            let backend = BackgroundRenderBackend3D::GpuReadback;
-            #[cfg(not(all(feature = "3d-gpu", not(target_arch = "wasm32"))))]
-            let backend = BackgroundRenderBackend3D::Cpu;
-            let mut renderer = BackgroundRenderer3D::new(backend);
+            let mut renderer = BackgroundRenderer3D::new(worker_backend());
             while let Ok(work) = receiver.recv() {
                 let result = match renderer.render(work.request.job) {
                     Ok(frame) => RenderResult3D::Frame(frame),
@@ -698,6 +702,17 @@ fn spawn_render_worker(
             }
         })
         .map(|_| ())
+}
+
+const fn worker_backend() -> BackgroundRenderBackend3D {
+    #[cfg(all(feature = "3d-gpu", not(target_arch = "wasm32")))]
+    {
+        BackgroundRenderBackend3D::GpuReadback
+    }
+    #[cfg(not(all(feature = "3d-gpu", not(target_arch = "wasm32"))))]
+    {
+        BackgroundRenderBackend3D::Cpu
+    }
 }
 
 #[derive(Default)]
@@ -753,9 +768,74 @@ mod tests {
         let mut widget = plot3d_builder(plot()).build().unwrap();
         widget.image_size = Some((320, 200));
         widget.last_requested_view = Some(widget.session.view_stamp());
+        widget.scene_epoch = u64::MAX;
         widget.set_plot(plot()).unwrap();
         assert!(widget.last_requested_view.is_none());
         assert_eq!(widget.image_size, Some((320, 200)));
+        assert_eq!(widget.scene_epoch, 0);
+    }
+
+    #[test]
+    fn replacement_keeps_the_serial_worker_slot_and_coalesces_new_work() {
+        let mut widget = plot3d_builder(plot()).build().unwrap();
+        let repaint = egui::Context::default();
+        assert!(
+            widget
+                .scheduler
+                .request(RenderRequest3D {
+                    job: widget.session.background_render_job().unwrap(),
+                    scene_epoch: widget.scene_epoch,
+                    repaint: repaint.clone(),
+                })
+                .is_some()
+        );
+
+        widget.set_plot(plot()).unwrap();
+
+        assert!(!widget.scheduler.is_idle());
+        assert!(
+            widget
+                .scheduler
+                .request(RenderRequest3D {
+                    job: widget.session.background_render_job().unwrap(),
+                    scene_epoch: widget.scene_epoch,
+                    repaint,
+                })
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn request_generation_exhaustion_does_not_clear_adapter_state() {
+        let mut widget = plot3d_builder(plot()).build().unwrap();
+        let view = widget.session.view_stamp();
+        let pointer = egui::pos2(12.0, 34.0);
+        widget.scene_epoch = 41;
+        widget.last_requested_view = Some(view);
+        widget.displayed_view = Some(view);
+        widget.active_button = Some(PointerButton3D::Left);
+        widget.last_pointer = Some(pointer);
+        widget.last_hover_position = Some((12, 34));
+        widget.last_error = Some(AdapterError::new(AdapterErrorKind::Render, "old error"));
+
+        let error = widget
+            .complete_replacement(Err(ruviz::core::PlottingError::RenderError(
+                "3D render request space was exhausted during replacement".to_string(),
+            )))
+            .expect_err("request-generation exhaustion must be propagated");
+
+        assert!(error.to_string().contains("request space was exhausted"));
+        assert_eq!(widget.session.view_stamp(), view);
+        assert_eq!(widget.scene_epoch, 41);
+        assert_eq!(widget.last_requested_view, Some(view));
+        assert_eq!(widget.displayed_view, Some(view));
+        assert_eq!(widget.active_button, Some(PointerButton3D::Left));
+        assert_eq!(widget.last_pointer, Some(pointer));
+        assert_eq!(widget.last_hover_position, Some((12, 34)));
+        assert_eq!(
+            widget.last_error.as_ref().map(AdapterError::message),
+            Some("old error")
+        );
     }
 
     #[test]
@@ -774,6 +854,50 @@ mod tests {
         let mut widget = plot3d_builder(plot()).build().unwrap();
         let job = widget.session.background_render_job().unwrap();
         assert_send(&job);
+    }
+
+    #[cfg(all(feature = "3d-gpu", not(target_arch = "wasm32")))]
+    #[test]
+    fn gpu_readback_backend_installs_a_deterministic_worker_result() {
+        assert_eq!(worker_backend(), BackgroundRenderBackend3D::GpuReadback);
+        let mut widget = plot3d_builder(plot()).build().unwrap();
+        let context = egui::Context::default();
+        let job = widget.session.background_render_job().unwrap();
+        let stamp = job.stamp();
+        let scheduled = widget
+            .scheduler
+            .request(RenderRequest3D {
+                job,
+                scene_epoch: widget.scene_epoch,
+                repaint: context.clone(),
+            })
+            .unwrap();
+        let id = scheduled.id();
+        drop(scheduled);
+        let image = Image::new(
+            4,
+            3,
+            (0..12)
+                .flat_map(|index| [index as u8, 80, 160, 255])
+                .collect(),
+        );
+
+        widget.handle_completion(
+            &context,
+            &mut Vec::new(),
+            RenderCompletion3D {
+                id,
+                scene_epoch: widget.scene_epoch,
+                result: RenderResult3D::Frame(RenderedImage3D { image, stamp }),
+            },
+        );
+
+        assert_eq!(widget.displayed_view, Some(stamp.view()));
+        assert_eq!(widget.image_size, Some((4, 3)));
+        assert_eq!(
+            widget.texture.as_ref().map(TextureHandle::size),
+            Some([4, 3])
+        );
     }
 
     #[test]

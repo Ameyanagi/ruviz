@@ -121,9 +121,12 @@ where
         self
     }
 
-    /// Observe background render, resize, and interaction errors.
+    /// Observe background render, resize, interaction, and construction errors.
     ///
-    /// Initial builder conversion errors are returned from [`Self::try_build`].
+    /// [`Self::try_build`] returns construction errors directly. The
+    /// compatibility [`Self::build`] method creates a non-rendering entity and
+    /// reports its construction error through this callback and
+    /// [`Plot3DEvent::Error`].
     pub fn on_error<F>(mut self, handler: F) -> Self
     where
         F: Fn(PlottingError) + Send + Sync + 'static,
@@ -144,13 +147,36 @@ where
         Ok(cx.new(move |cx| RuvizPlot3D::new(session, options, on_pick, on_error, cx)))
     }
 
-    /// Create the retained GPUI entity, panicking if the 3D builder is invalid.
+    /// Create the retained GPUI entity.
+    ///
+    /// Invalid plots produce a non-rendering entity that reports the
+    /// construction error. Prefer [`Self::try_build`] when the caller can
+    /// handle the error synchronously.
     pub fn build<V>(self, cx: &mut Context<V>) -> Entity<RuvizPlot3D>
     where
         V: 'static,
     {
-        self.try_build(cx)
-            .unwrap_or_else(|error| panic!("failed to build RuvizPlot3D: {error}"))
+        let Self {
+            plot,
+            options,
+            on_pick,
+            on_error,
+        } = self;
+        match plot.try_into_plot3d_session() {
+            Ok(session) => {
+                cx.new(move |cx| RuvizPlot3D::new(session, options, on_pick, on_error, cx))
+            }
+            Err(error) => cx.new(move |cx| {
+                RuvizPlot3D::new_with_initial_error(
+                    InteractivePlot3DSession::error_placeholder(),
+                    options,
+                    on_pick,
+                    on_error,
+                    error,
+                    cx,
+                )
+            }),
+        }
     }
 }
 
@@ -203,6 +229,8 @@ pub struct RuvizPlot3D {
     selected: Option<StampedPick3D>,
     on_pick: Option<Plot3DPickHandler>,
     on_error: Option<Plot3DErrorHandler>,
+    construction_error: Option<PlottingError>,
+    construction_error_reported: bool,
 }
 
 impl RuvizPlot3D {
@@ -211,6 +239,28 @@ impl RuvizPlot3D {
         options: RuvizPlot3DOptions,
         on_pick: Option<Plot3DPickHandler>,
         on_error: Option<Plot3DErrorHandler>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self::new_inner(session, options, on_pick, on_error, None, cx)
+    }
+
+    fn new_with_initial_error(
+        session: InteractivePlot3DSession,
+        options: RuvizPlot3DOptions,
+        on_pick: Option<Plot3DPickHandler>,
+        on_error: Option<Plot3DErrorHandler>,
+        error: PlottingError,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self::new_inner(session, options, on_pick, on_error, Some(error), cx)
+    }
+
+    fn new_inner(
+        session: InteractivePlot3DSession,
+        options: RuvizPlot3DOptions,
+        on_pick: Option<Plot3DPickHandler>,
+        on_error: Option<Plot3DErrorHandler>,
+        construction_error: Option<PlottingError>,
         cx: &mut Context<Self>,
     ) -> Self {
         let background_renderer = Arc::new(Mutex::new(BackgroundRenderer3D::new(
@@ -232,6 +282,8 @@ impl RuvizPlot3D {
             selected: None,
             on_pick,
             on_error,
+            construction_error,
+            construction_error_reported: false,
         }
     }
 
@@ -260,10 +312,11 @@ impl RuvizPlot3D {
     }
 
     /// Most recent pick, only while its scene, camera, and target are current.
-    pub fn selected(&self) -> Option<PickHit3D> {
-        self.selected
-            .filter(|pick| self.session.is_stamped_pick_current(pick))
-            .map(|pick| pick.hit)
+    pub const fn selected(&self) -> Option<PickHit3D> {
+        match self.selected {
+            Some(pick) => Some(pick.hit),
+            None => None,
+        }
     }
 
     /// Current stamped pick for hosts that need to retain and validate it.
@@ -307,7 +360,9 @@ impl RuvizPlot3D {
     where
         P: TryIntoPlot3DSession,
     {
-        self.session.replace(plot.try_into_plot3d_session()?);
+        self.session.try_replace(plot.try_into_plot3d_session()?)?;
+        self.construction_error = None;
+        self.construction_error_reported = false;
         self.invalidate_view();
         cx.notify();
         Ok(())
@@ -320,6 +375,8 @@ impl RuvizPlot3D {
     {
         self.session
             .replace_keep_camera(plot.try_into_plot3d_session()?)?;
+        self.construction_error = None;
+        self.construction_error_reported = false;
         self.invalidate_view();
         cx.notify();
         Ok(())
@@ -390,6 +447,13 @@ impl RuvizPlot3D {
         cx: &mut Context<Self>,
     ) -> Option<PaintFrame3D> {
         self.component_bounds = Some(bounds);
+        if let Some(error) = self.construction_error.clone() {
+            if !self.construction_error_reported {
+                self.construction_error_reported = true;
+                self.report_error(error, cx);
+            }
+            return self.paint_frame(bounds);
+        }
         let scale_factor = window.scale_factor();
         let desired_size = Self::desired_size(bounds, scale_factor);
         let before_resize = self.session.view_stamp();
@@ -604,6 +668,12 @@ impl RuvizPlot3D {
     }
 
     fn pointer_up(&mut self, event: &MouseUpEvent, cx: &mut Context<Self>) -> Result<()> {
+        let Some(button) = Self::pointer_button(event.button) else {
+            return Ok(());
+        };
+        if self.active_pointer_button != Some(button) {
+            return Ok(());
+        }
         if !self.installed_view_is_current() {
             self.cancel_drag();
             return Ok(());
@@ -612,20 +682,27 @@ impl RuvizPlot3D {
             self.cancel_drag();
             return Ok(());
         };
-        let Some(button) = Self::pointer_button(event.button) else {
-            return Ok(());
-        };
+        if button == PointerButton3D::Left && event.click_count >= 2 {
+            self.cancel_drag();
+            return self.apply(InputEvent3D::DoubleClick { x, y, button }, cx);
+        }
         self.apply(InputEvent3D::PointerUp { x, y, button }, cx)?;
         self.active_pointer_button = None;
-        if button == PointerButton3D::Left && event.click_count >= 2 {
-            self.apply(InputEvent3D::DoubleClick { x, y, button }, cx)?;
-        }
         Ok(())
     }
 
     fn cancel_drag(&mut self) {
         self.active_pointer_button = None;
         self.session.cancel_drag();
+    }
+
+    fn cancel_drag_for_release(&mut self, button: MouseButton) {
+        let Some(button) = Self::pointer_button(button) else {
+            return;
+        };
+        if self.active_pointer_button == Some(button) {
+            self.cancel_drag();
+        }
     }
 
     fn scroll(&mut self, event: &ScrollWheelEvent, cx: &mut Context<Self>) -> Result<bool> {
@@ -778,8 +855,10 @@ fn pointer_up_handler(
 fn cancel_drag_handler(
     entity: Entity<RuvizPlot3D>,
 ) -> impl Fn(&MouseUpEvent, &mut Window, &mut App) + 'static {
-    move |_, _, cx| {
-        entity.update(cx, |view, _| view.cancel_drag());
+    move |event, _, cx| {
+        entity.update(cx, |view, _| {
+            view.cancel_drag_for_release(event.button);
+        });
     }
 }
 
@@ -1069,6 +1148,34 @@ mod tests {
     }
 
     #[test]
+    fn infallible_builder_retains_and_reports_invalid_plot_errors() {
+        struct TestHost {
+            plot: Entity<RuvizPlot3D>,
+        }
+
+        let cx = TestAppContext::single();
+        let host = cx.update(|cx| {
+            cx.new(|cx| TestHost {
+                plot: plot3d_builder(scatter3d(&[0.0], &[1.0, 2.0], &[3.0])).build(cx),
+            })
+        });
+        let entity = cx.read(|app| app.read_entity(&host, |host, _| host.plot.clone()));
+
+        cx.read(|app| {
+            app.read_entity(&entity, |view, _| {
+                let error = view
+                    .construction_error
+                    .as_ref()
+                    .expect("construction error");
+                assert!(error.to_string().contains("length"));
+                assert!(!view.construction_error_reported);
+                assert!(view.cached_frame.is_none());
+                assert!(view.requested_view.is_none());
+            });
+        });
+    }
+
+    #[test]
     fn default_backend_matches_the_compiled_gpui_feature() {
         #[cfg(feature = "gpu")]
         assert_eq!(
@@ -1080,6 +1187,69 @@ mod tests {
             RuvizPlot3DOptions::default().render_backend,
             BackgroundRenderBackend3D::Cpu
         );
+    }
+
+    #[cfg(feature = "gpu")]
+    #[test]
+    fn gpu_readback_selection_installs_a_deterministic_completed_image() {
+        let cx = TestAppContext::single();
+        let session = scatter3d(&[0.0], &[1.0], &[2.0])
+            .interactive_session()
+            .expect("initial session");
+        let entity = cx.update(|cx| {
+            cx.new(move |cx| {
+                RuvizPlot3D::new(session, RuvizPlot3DOptions::default(), None, None, cx)
+            })
+        });
+
+        cx.update(|cx| {
+            entity.update(cx, |view, cx| {
+                assert_eq!(
+                    view.options.render_backend,
+                    BackgroundRenderBackend3D::GpuReadback,
+                );
+                assert_eq!(
+                    view.background_renderer
+                        .lock()
+                        .expect("background renderer")
+                        .backend(),
+                    BackgroundRenderBackend3D::GpuReadback,
+                );
+
+                let job = view.session.background_render_job().expect("render job");
+                let stamp = job.stamp();
+                let scheduled = view
+                    .scheduler
+                    .request(RenderRequest3D {
+                        job,
+                        size_px: (2, 1),
+                    })
+                    .expect("first request should start");
+                view.finish_render(
+                    entity.clone(),
+                    scheduled.id(),
+                    stamp,
+                    (2, 1),
+                    Ok(ruviz::core::RenderedImage3D {
+                        image: ruviz::core::Image::new(
+                            2,
+                            1,
+                            vec![10, 20, 30, 255, 40, 50, 60, 255],
+                        ),
+                        stamp,
+                    }),
+                    cx,
+                );
+
+                let installed = view.cached_frame.as_ref().expect("installed frame");
+                assert_eq!(installed.size_px, (2, 1));
+                assert_eq!(installed.stamp, stamp);
+                assert_eq!(
+                    installed.image.as_bytes(0).expect("installed pixels"),
+                    &[30, 20, 10, 255, 60, 50, 40, 255],
+                );
+            });
+        });
     }
 
     #[test]
@@ -1132,6 +1302,54 @@ mod tests {
     }
 
     #[test]
+    fn selected_remains_const_and_is_eagerly_cleared_on_view_invalidation() {
+        const fn selected_from(view: &RuvizPlot3D) -> Option<PickHit3D> {
+            view.selected()
+        }
+
+        let cx = TestAppContext::single();
+        let mut session = scatter3d(&[0.0], &[1.0], &[2.0])
+            .interactive_session()
+            .expect("initial session");
+        let (width, height) = session.size_px();
+        let mut picked = false;
+        for y in (0..height).step_by(4) {
+            for x in (0..width).step_by(4) {
+                if session
+                    .pick(x as f32, y as f32)
+                    .expect("pickable-position search")
+                    .is_some()
+                {
+                    picked = true;
+                    break;
+                }
+            }
+            if picked {
+                break;
+            }
+        }
+        assert!(picked, "test plot must contain a pickable position");
+
+        let entity = cx.update(|cx| {
+            cx.new(move |cx| {
+                let mut view =
+                    RuvizPlot3D::new(session, RuvizPlot3DOptions::default(), None, None, cx);
+                view.selected = view.session.current_pick();
+                view
+            })
+        });
+
+        cx.update(|cx| {
+            entity.update(cx, |view, _| {
+                assert!(selected_from(view).is_some());
+                view.invalidate_view();
+                assert!(selected_from(view).is_none());
+                assert!(view.stamped_pick().is_none());
+            });
+        });
+    }
+
+    #[test]
     fn escape_cancels_an_active_drag_before_resetting() {
         let cx = TestAppContext::single();
         let session = scatter3d(&[0.0], &[1.0], &[2.0])
@@ -1156,6 +1374,219 @@ mod tests {
                 view.apply(InputEvent3D::Escape, cx).expect("escape");
                 assert!(!view.session.is_drag_active());
                 assert_eq!(view.active_pointer_button(), None);
+            });
+        });
+    }
+
+    #[test]
+    fn different_button_release_does_not_end_the_active_drag() {
+        let cx = TestAppContext::single();
+        let session = scatter3d(&[0.0], &[1.0], &[2.0])
+            .interactive_session()
+            .expect("initial session");
+        let entity = cx.update(|cx| {
+            cx.new(move |cx| {
+                RuvizPlot3D::new(session, RuvizPlot3DOptions::default(), None, None, cx)
+            })
+        });
+
+        cx.update(|cx| {
+            entity.update(cx, |view, cx| {
+                view.session
+                    .handle_input(InputEvent3D::PointerDown {
+                        x: 20.0,
+                        y: 20.0,
+                        button: PointerButton3D::Left,
+                    })
+                    .expect("pointer down");
+                view.active_pointer_button = Some(PointerButton3D::Left);
+
+                view.pointer_up(
+                    &MouseUpEvent {
+                        button: MouseButton::Right,
+                        ..MouseUpEvent::default()
+                    },
+                    cx,
+                )
+                .expect("unrelated release");
+
+                assert!(view.session.is_drag_active());
+                assert_eq!(view.active_pointer_button(), Some(PointerButton3D::Left));
+
+                view.cancel_drag_for_release(MouseButton::Right);
+                assert!(view.session.is_drag_active());
+                assert_eq!(view.active_pointer_button(), Some(PointerButton3D::Left));
+            });
+        });
+    }
+
+    #[test]
+    fn matching_release_cancels_a_drag_when_the_installed_view_is_stale() {
+        let cx = TestAppContext::single();
+        let session = scatter3d(&[0.0], &[1.0], &[2.0])
+            .interactive_session()
+            .expect("initial session");
+        let entity = cx.update(|cx| {
+            cx.new(move |cx| {
+                RuvizPlot3D::new(session, RuvizPlot3DOptions::default(), None, None, cx)
+            })
+        });
+
+        cx.update(|cx| {
+            entity.update(cx, |view, cx| {
+                view.session
+                    .handle_input(InputEvent3D::PointerDown {
+                        x: 20.0,
+                        y: 20.0,
+                        button: PointerButton3D::Left,
+                    })
+                    .expect("pointer down");
+                view.active_pointer_button = Some(PointerButton3D::Left);
+
+                view.pointer_up(
+                    &MouseUpEvent {
+                        button: MouseButton::Left,
+                        ..MouseUpEvent::default()
+                    },
+                    cx,
+                )
+                .expect("matching release");
+
+                assert!(!view.session.is_drag_active());
+                assert_eq!(view.active_pointer_button(), None);
+            });
+        });
+    }
+
+    #[test]
+    fn double_click_release_resets_without_emitting_a_second_pick() {
+        fn first_pickable_position(session: &mut InteractivePlot3DSession) -> (f32, f32) {
+            let (width, height) = session.size_px();
+            let center = (width as f32 * 0.5, height as f32 * 0.5);
+            if session
+                .pick(center.0, center.1)
+                .expect("center pick")
+                .is_some()
+            {
+                session.clear_pick();
+                return center;
+            }
+            for y in (0..height).step_by(4) {
+                for x in (0..width).step_by(4) {
+                    if session
+                        .pick(x as f32, y as f32)
+                        .expect("pickable-position search")
+                        .is_some()
+                    {
+                        session.clear_pick();
+                        return (x as f32, y as f32);
+                    }
+                }
+            }
+            panic!("test plot must contain a pickable position");
+        }
+
+        let picks = Arc::new(AtomicUsize::new(0));
+        let picks_for_handler = Arc::clone(&picks);
+        let cx = TestAppContext::single();
+        let mut session = scatter3d(&[0.0], &[1.0], &[2.0])
+            .interactive_session()
+            .expect("initial session");
+        let reset_camera = session.camera();
+        session.orbit(12.0, 0.0).expect("move camera");
+        let pick_position = first_pickable_position(&mut session);
+        let entity = cx.update(|cx| {
+            cx.new(move |cx| {
+                RuvizPlot3D::new(
+                    session,
+                    RuvizPlot3DOptions::default(),
+                    Some(Arc::new(move |_| {
+                        picks_for_handler.fetch_add(1, Ordering::Relaxed);
+                    })),
+                    None,
+                    cx,
+                )
+            })
+        });
+
+        cx.update(|cx| {
+            entity.update(cx, |view, cx| {
+                let size_px = view.session.size_px();
+                let stamp = view
+                    .session
+                    .background_render_job()
+                    .expect("render job")
+                    .stamp();
+                view.cached_frame = Some(CachedFrame3D {
+                    image: render_image_from_ruviz(ruviz::core::Image::new(
+                        1,
+                        1,
+                        vec![0, 0, 0, 255],
+                    )),
+                    stamp,
+                    size_px,
+                });
+                view.interaction_layout = Some(InteractionLayout3D {
+                    content: LogicalRect::new(0.0, 0.0, f64::from(size_px.0), f64::from(size_px.1)),
+                    frame_size_px: size_px,
+                });
+                view.component_bounds = Some(Bounds {
+                    origin: point(px(0.0), px(0.0)),
+                    size: size(px(size_px.0 as f32), px(size_px.1 as f32)),
+                });
+                let position = point(px(pick_position.0), px(pick_position.1));
+
+                view.pointer_down(
+                    &MouseDownEvent {
+                        button: MouseButton::Left,
+                        position,
+                        click_count: 1,
+                        ..MouseDownEvent::default()
+                    },
+                    cx,
+                )
+                .expect("first pointer down");
+                view.pointer_up(
+                    &MouseUpEvent {
+                        button: MouseButton::Left,
+                        position,
+                        click_count: 1,
+                        ..MouseUpEvent::default()
+                    },
+                    cx,
+                )
+                .expect("first pointer up");
+                assert_eq!(picks.load(Ordering::Relaxed), 1);
+
+                view.pointer_down(
+                    &MouseDownEvent {
+                        button: MouseButton::Left,
+                        position,
+                        click_count: 2,
+                        ..MouseDownEvent::default()
+                    },
+                    cx,
+                )
+                .expect("second pointer down");
+                view.pointer_up(
+                    &MouseUpEvent {
+                        button: MouseButton::Left,
+                        position,
+                        click_count: 2,
+                        ..MouseUpEvent::default()
+                    },
+                    cx,
+                )
+                .expect("double-click pointer up");
+
+                assert_eq!(
+                    picks.load(Ordering::Relaxed),
+                    1,
+                    "the reset click must not emit a second pick"
+                );
+                assert_eq!(view.active_pointer_button(), None);
+                assert!(!view.session.is_drag_active());
+                assert_eq!(view.session.camera(), reset_camera);
             });
         });
     }

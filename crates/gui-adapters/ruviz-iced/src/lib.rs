@@ -13,6 +13,8 @@
 mod state;
 mod widget;
 
+use std::sync::Arc;
+
 use iced::Task;
 use iced::widget::image;
 use ruviz::core::{AlphaMode, HitResult, PlottingError, StampedInteractiveFrame};
@@ -28,6 +30,23 @@ pub use state::{PlotState, interactive, static_view};
 #[cfg(feature = "3d")]
 pub use widget::{Plot3DWidget, plot3d};
 pub use widget::{PlotWidget, plot};
+
+#[derive(Clone, Debug)]
+struct StateIncarnation(Arc<()>);
+
+impl StateIncarnation {
+    fn new() -> Self {
+        Self(Arc::new(()))
+    }
+}
+
+impl PartialEq for StateIncarnation {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl Eq for StateIncarnation {}
 
 /// Whether a widget accepts plot interaction.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -165,14 +184,15 @@ enum MessageKind {
     Widget2D(WidgetEvent),
     Changed2D,
     Rendered2D {
-        incarnation: u64,
+        incarnation: StateIncarnation,
         request_id: ruviz::core::ScheduledRequestId,
+        change_revision: ruviz::core::InteractiveChangeRevision,
         result: Result<StampedInteractiveFrame, PlottingError>,
     },
     Allocated2D {
-        incarnation: u64,
+        incarnation: StateIncarnation,
         request_id: ruviz::core::ScheduledRequestId,
-        frame: StampedInteractiveFrame,
+        frame: Option<StampedInteractiveFrame>,
         source_alpha: AlphaMode,
         allocation: Result<image::Allocation, String>,
     },
@@ -180,15 +200,15 @@ enum MessageKind {
     Widget3D(WidgetEvent),
     #[cfg(feature = "3d")]
     Rendered3D {
-        incarnation: u64,
+        incarnation: StateIncarnation,
         request_id: ruviz::core::ScheduledRequestId,
         result: Result<RenderedImage3D, PlottingError>,
     },
     #[cfg(feature = "3d")]
     Allocated3D {
-        incarnation: u64,
+        incarnation: StateIncarnation,
         request_id: ruviz::core::ScheduledRequestId,
-        rendered: RenderedImage3D,
+        rendered: Option<RenderedImage3D>,
         source_alpha: AlphaMode,
         allocation: Result<image::Allocation, String>,
     },

@@ -84,8 +84,9 @@ Each slot supports:
 - pan, wheel zoom, hover, click selection, right-button brush, and reset;
 - release/capture/focus-loss drag cancellation;
 - reactive 2D redraws and latest-request-only presentation;
-- plot replacement with `set_plot_keep_view` or `set_plot3d_keep_view` to
-  preserve the 2D view or 3D camera;
+- plot replacement with `set_plot_keep_view` to preserve a customized 2D view
+  (an untouched view adopts the replacement's natural bounds), or
+  `set_plot3d_keep_view` to preserve the 3D camera;
 - 3D orbit, pan, zoom, reset, picking, and pick/camera/error callbacks.
 
 The backing size is computed from logical dimensions and the explicit
@@ -117,8 +118,8 @@ cargo run --manifest-path crates/gui-adapters/ruviz-slint/Cargo.toml \
   --example dashboard
 ```
 
-The mixed dashboard places a static 2D slot beside an interactive 3D slot and
-demonstrates pick and camera callbacks:
+The mixed dashboard places a static 2D slot beside interactive and static 3D
+slots, and demonstrates pick and camera callbacks:
 
 ```sh
 cargo run --manifest-path crates/gui-adapters/ruviz-slint/Cargo.toml \

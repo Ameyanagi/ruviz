@@ -12,7 +12,7 @@ use std::{
     collections::HashMap,
     fmt,
     sync::{
-        Arc, Mutex,
+        Arc, Mutex, MutexGuard,
         atomic::{AtomicU64, Ordering},
     },
 };
@@ -21,8 +21,10 @@ use ruviz::core::{
     AlphaMode, HitResult, ImageFit, ImageTarget, InteractiveChangeSubscription,
     InteractivePlotSession, InteractiveRenderStamp, IntoPlotSession, LatestRequestScheduler,
     LogicalPoint, LogicalRect, PlotInputEvent, ScheduledRequest, ScheduledRequestId, ViewportPoint,
-    fitted_content_rect, logical_to_physical, physical_backing_size, sanitize_scale_factor,
+    ViewportRect, fitted_content_rect, logical_to_physical, physical_backing_size,
+    sanitize_scale_factor,
 };
+use ruviz::prelude::AxisScale;
 use slint::{Model as _, Rgba8Pixel, SharedPixelBuffer};
 
 pub use ruviz;
@@ -39,6 +41,34 @@ pub mod slint_generated {
 pub use slint_generated::{RuvizImageFit, RuvizPlotGrid, RuvizRuntime, RuvizSlotState};
 
 static NEXT_SLOT_INCARNATION: AtomicU64 = AtomicU64::new(1);
+
+fn lock_scalar_recover<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    match mutex.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    }
+}
+
+fn catch_callback<T>(callback: impl FnOnce() -> T) -> Result<T, String> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(callback))
+        .map_err(|payload| panic_payload_message(payload.as_ref()))
+}
+
+fn panic_payload_message(payload: &(dyn std::any::Any + Send)) -> String {
+    if let Some(message) = payload.downcast_ref::<&str>() {
+        (*message).to_string()
+    } else if let Some(message) = payload.downcast_ref::<String>() {
+        message.clone()
+    } else {
+        "panic payload did not contain a message".to_string()
+    }
+}
+
+fn write_callback_diagnostic(message: &str) {
+    use std::io::Write as _;
+
+    let _ = writeln!(std::io::stderr().lock(), "ruviz-slint: {message}");
+}
 
 /// Stable identifier shared by a Slint `RuvizPlot` and its retained slot.
 pub type SlotId = i32;
@@ -176,6 +206,7 @@ pub struct RuvizController {
 
 struct ControllerInner {
     slots: Mutex<HashMap<SlotId, SlotState>>,
+    render_gates: Mutex<HashMap<SlotId, Arc<Mutex<()>>>>,
     frame_sink: FrameSink,
     dispatcher: Dispatcher,
     runtime_config_sink: Option<RuntimeConfigSink>,
@@ -196,6 +227,23 @@ struct SlotState {
     last_frame: Option<InstalledFrame>,
 }
 
+fn lock_slots(
+    slots: &Mutex<HashMap<SlotId, SlotState>>,
+) -> MutexGuard<'_, HashMap<SlotId, SlotState>> {
+    match slots.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            let mut guard = poisoned.into_inner();
+            guard.clear();
+            slots.clear_poison();
+            write_callback_diagnostic(
+                "slot state was poisoned; all retained slots were cleared to fail closed",
+            );
+            guard
+        }
+    }
+}
+
 enum PlotSlot {
     TwoD(InteractivePlotSession),
     #[cfg(feature = "3d")]
@@ -204,6 +252,43 @@ enum PlotSlot {
         renderer: Arc<Mutex<ruviz::core::BackgroundRenderer3D>>,
         backend: ruviz::core::BackgroundRenderBackend3D,
     },
+}
+
+impl PlotSlot {
+    fn customized_2d_visible_bounds(&self) -> Option<ViewportRect> {
+        match self {
+            Self::TwoD(session) => {
+                let view = session.view_bounds_snapshot();
+                viewport_bounds_materially_differ(
+                    view.visible_bounds,
+                    view.base_bounds,
+                    &view.x_scale,
+                    &view.y_scale,
+                )
+                .then_some(view.visible_bounds)
+            }
+            #[cfg(feature = "3d")]
+            Self::ThreeD { .. } => None,
+        }
+    }
+}
+
+#[cfg(feature = "3d")]
+fn lock_3d_session(
+    session: &Mutex<ruviz::core::InteractivePlot3DSession>,
+) -> Result<MutexGuard<'_, ruviz::core::InteractivePlot3DSession>, &'static str> {
+    session
+        .lock()
+        .map_err(|_| "3D session state is poisoned and cannot be used safely")
+}
+
+#[cfg(feature = "3d")]
+fn lock_3d_renderer(
+    renderer: &Mutex<ruviz::core::BackgroundRenderer3D>,
+) -> Result<MutexGuard<'_, ruviz::core::BackgroundRenderer3D>, &'static str> {
+    renderer
+        .lock()
+        .map_err(|_| "3D renderer state is poisoned and cannot be used safely")
 }
 
 #[derive(Clone)]
@@ -296,10 +381,9 @@ impl RenderValidity {
         match self {
             Self::TwoD { session, stamp } => session.is_render_stamp_current(*stamp),
             #[cfg(feature = "3d")]
-            Self::ThreeD { session, stamp } => session
-                .lock()
-                .expect("Slint 3D session lock poisoned")
-                .is_render_current(*stamp),
+            Self::ThreeD { session, stamp } => {
+                lock_3d_session(session).is_ok_and(|session| session.is_render_current(*stamp))
+            }
         }
     }
 }
@@ -347,6 +431,7 @@ impl RuvizController {
         Self {
             inner: Arc::new(ControllerInner {
                 slots: Mutex::new(HashMap::new()),
+                render_gates: Mutex::new(HashMap::new()),
                 frame_sink: Arc::new(frame_sink),
                 dispatcher: Arc::new(dispatcher),
                 runtime_config_sink,
@@ -444,7 +529,10 @@ impl RuvizController {
         self.set_plot_with_view_policy(slot, plot, options, false);
     }
 
-    /// Register or replace a retained 2D slot while preserving its visible bounds.
+    /// Replace a retained 2D slot while preserving a customized visible view.
+    ///
+    /// If the old view is still at its natural base bounds, the replacement
+    /// uses its own natural bounds.
     pub fn set_plot_keep_view(
         &self,
         slot: SlotId,
@@ -475,31 +563,22 @@ impl RuvizController {
                 inner.request_render(slot);
             }
         });
+        let Some(incarnation) = next_slot_incarnation() else {
+            self.inner
+                .report_error(slot, "Slint slot incarnation space exhausted".to_string());
+            return;
+        };
 
         let (layout, previous_bounds) = {
-            let mut slots = self.inner.slots.lock().expect("Slint slot lock poisoned");
+            let mut slots = lock_slots(&self.inner.slots);
             let old = slots.remove(&slot);
             let layout = old.as_ref().map_or(
                 SlotLayout::with_scale(self.inner.default_scale_factor),
                 |old| old.layout,
             );
             let bounds = if keep_view {
-                #[cfg(feature = "3d")]
-                {
-                    old.as_ref().and_then(|old| match &old.plot {
-                        PlotSlot::TwoD(session) => {
-                            Some(session.view_bounds_snapshot().visible_bounds)
-                        }
-                        PlotSlot::ThreeD { .. } => None,
-                    })
-                }
-                #[cfg(not(feature = "3d"))]
-                {
-                    old.as_ref().map(|old| {
-                        let PlotSlot::TwoD(session) = &old.plot;
-                        session.view_bounds_snapshot().visible_bounds
-                    })
-                }
+                old.as_ref()
+                    .and_then(|old| old.plot.customized_2d_visible_bounds())
             } else {
                 None
             };
@@ -511,7 +590,7 @@ impl RuvizController {
                 slot,
                 SlotState {
                     plot: PlotSlot::TwoD(session.clone()),
-                    incarnation: next_slot_incarnation(),
+                    incarnation,
                     options,
                     layout,
                     scheduler,
@@ -568,66 +647,62 @@ impl RuvizController {
             ));
         }
         let mut replacement = plot.try_into_plot3d_session()?;
-        let (layout, old_session, renderer, scheduler, last_frame) = {
-            let mut slots = self.inner.slots.lock().expect("Slint slot lock poisoned");
-            let old = slots.remove(&slot);
-            let layout = old.as_ref().map_or(
-                SlotLayout::with_scale(self.inner.default_scale_factor),
-                |old| old.layout,
-            );
-            let old_session = old.as_ref().and_then(|old| match &old.plot {
-                PlotSlot::ThreeD { session, .. } => Some(Arc::clone(session)),
-                PlotSlot::TwoD(_) => None,
-            });
-            let desired_backend = background_backend(options.prefer_gpu);
-            let renderer = old.as_ref().and_then(|old| match &old.plot {
-                PlotSlot::ThreeD {
-                    renderer, backend, ..
-                } if *backend == desired_backend => Some(Arc::clone(renderer)),
-                PlotSlot::TwoD(_) => None,
-                PlotSlot::ThreeD { .. } => None,
-            });
-            let (scheduler, last_frame) = old.map_or_else(
-                || (LatestRequestScheduler::default(), None),
-                |old| (old.scheduler, old.last_frame),
-            );
-            (layout, old_session, renderer, scheduler, last_frame)
-        };
-
-        if keep_view && let Some(old_session) = old_session {
-            replacement.restore_camera(
-                old_session
-                    .lock()
-                    .expect("Slint 3D session lock poisoned")
-                    .camera_snapshot(),
-            )?;
+        let incarnation = next_slot_incarnation().ok_or_else(|| {
+            ruviz::core::PlottingError::InvalidInput(
+                "Slint slot incarnation space exhausted".to_string(),
+            )
+        })?;
+        let mut slots = lock_slots(&self.inner.slots);
+        let old = slots.get(&slot);
+        let layout = old.map_or(
+            SlotLayout::with_scale(self.inner.default_scale_factor),
+            |old| old.layout,
+        );
+        if keep_view && let Some(PlotSlot::ThreeD { session, .. }) = old.map(|old| &old.plot) {
+            let snapshot = lock_3d_session(session)
+                .map_err(|message| ruviz::core::PlottingError::InvalidInput(message.to_string()))?
+                .camera_snapshot();
+            replacement.restore_camera(snapshot)?;
         }
         let target = target_size(layout, options.sizing);
         replacement.resize(target.0, target.1, layout.scale_factor)?;
-        let session = Arc::new(Mutex::new(replacement));
+
         let backend = background_backend(options.prefer_gpu);
-        let renderer = renderer.unwrap_or_else(|| new_background_renderer(options.prefer_gpu));
-        self.inner
-            .slots
-            .lock()
-            .expect("Slint slot lock poisoned")
-            .insert(
-                slot,
-                SlotState {
-                    plot: PlotSlot::ThreeD {
-                        session,
-                        renderer,
-                        backend,
-                    },
-                    incarnation: next_slot_incarnation(),
-                    options,
-                    layout,
-                    scheduler,
-                    drag: None,
-                    _subscription: None,
-                    last_frame,
+        let renderer = old
+            .and_then(|old| match &old.plot {
+                PlotSlot::ThreeD {
+                    renderer,
+                    backend: old_backend,
+                    ..
+                } if *old_backend == backend && !renderer.is_poisoned() => {
+                    Some(Arc::clone(renderer))
+                }
+                PlotSlot::TwoD(_) | PlotSlot::ThreeD { .. } => None,
+            })
+            .unwrap_or_else(|| new_background_renderer(options.prefer_gpu));
+        let (scheduler, last_frame) = slots.remove(&slot).map_or_else(
+            || (LatestRequestScheduler::default(), None),
+            |old| (old.scheduler, old.last_frame),
+        );
+        let session = Arc::new(Mutex::new(replacement));
+        slots.insert(
+            slot,
+            SlotState {
+                plot: PlotSlot::ThreeD {
+                    session,
+                    renderer,
+                    backend,
                 },
-            );
+                incarnation,
+                options,
+                layout,
+                scheduler,
+                drag: None,
+                _subscription: None,
+                last_frame,
+            },
+        );
+        drop(slots);
         self.inner.sync_runtime(slot);
         self.inner.request_render(slot);
         Ok(())
@@ -635,13 +710,7 @@ impl RuvizController {
 
     /// Remove a slot. In-flight frames become non-installable.
     pub fn remove_plot(&self, slot: SlotId) -> bool {
-        let removed = self
-            .inner
-            .slots
-            .lock()
-            .expect("Slint slot lock poisoned")
-            .remove(&slot)
-            .is_some();
+        let removed = lock_slots(&self.inner.slots).remove(&slot).is_some();
         if removed {
             self.inner.clear_runtime(slot);
         }
@@ -654,7 +723,7 @@ impl RuvizController {
     /// backend preference changes schedule a new background frame.
     pub fn set_options(&self, slot: SlotId, options: SlotOptions) -> bool {
         let (handle, layout, cancel) = {
-            let mut slots = self.inner.slots.lock().expect("Slint slot lock poisoned");
+            let mut slots = lock_slots(&self.inner.slots);
             let Some(state) = slots.get_mut(&slot) else {
                 return false;
             };
@@ -679,6 +748,14 @@ impl RuvizController {
         }
         if cancel {
             self.cancel_drag(slot);
+            match &handle {
+                PlotHandle::TwoD(session) => {
+                    session.apply_input(PlotInputEvent::ClearHover);
+                }
+                #[cfg(feature = "3d")]
+                PlotHandle::ThreeD(_) => {}
+            }
+            self.inner.request_render(slot);
         }
         self.resize(
             slot,
@@ -694,7 +771,7 @@ impl RuvizController {
     pub fn resize(&self, slot: SlotId, logical_width: f64, logical_height: f64, scale_factor: f32) {
         let scale_factor = sanitize_scale_factor(scale_factor);
         let (plot, target) = {
-            let mut slots = self.inner.slots.lock().expect("Slint slot lock poisoned");
+            let mut slots = lock_slots(&self.inner.slots);
             let Some(state) = slots.get_mut(&slot) else {
                 return;
             };
@@ -712,12 +789,14 @@ impl RuvizController {
             PlotHandle::TwoD(session) => session.resize(target, scale_factor),
             #[cfg(feature = "3d")]
             PlotHandle::ThreeD(session) => {
-                let result = session
-                    .lock()
-                    .expect("Slint 3D session lock poisoned")
-                    .resize(target.0, target.1, scale_factor);
-                if let Err(error) = result {
-                    self.inner.report_error(slot, error.to_string());
+                let result = match lock_3d_session(&session) {
+                    Ok(mut session) => session
+                        .resize(target.0, target.1, scale_factor)
+                        .map_err(|error| error.to_string()),
+                    Err(message) => Err(message.to_string()),
+                };
+                if let Err(message) = result {
+                    self.inner.report_error(slot, message);
                 } else {
                     self.inner.request_render(slot);
                 }
@@ -734,22 +813,33 @@ impl RuvizController {
     /// Apply one pointer transition.
     pub fn pointer_input(&self, slot: SlotId, input: PointerInput) {
         let action = {
-            let mut slots = self.inner.slots.lock().expect("Slint slot lock poisoned");
+            let mut slots = lock_slots(&self.inner.slots);
             let Some(state) = slots.get_mut(&slot) else {
                 return;
             };
             let handle = state.plot.clone_handle();
+            let mapped = state.map_point(input.position);
             if !state.pointer_input_enabled(input.kind) {
                 if matches!(input.kind, PointerKind::Up | PointerKind::Cancel) {
                     state.drag = None;
                     PointerAction::Cancel { handle }
+                } else if state.stale_hover_clear_enabled(input.kind, mapped) {
+                    PointerAction::Move {
+                        handle,
+                        mapped: None,
+                        input,
+                        drag: None,
+                    }
                 } else {
                     return;
                 }
             } else {
-                let mapped = state.map_point(input.position);
                 match input.kind {
                     PointerKind::Down => {
+                        if mapped.is_none() {
+                            state.drag = None;
+                            return;
+                        }
                         state.drag = Some(ActiveDrag {
                             button: input.button,
                             anchor: input.position,
@@ -827,7 +917,7 @@ impl RuvizController {
             return false;
         }
         let (handle, mapped) = {
-            let slots = self.inner.slots.lock().expect("Slint slot lock poisoned");
+            let slots = lock_slots(&self.inner.slots);
             let Some(state) = slots.get(&slot) else {
                 return false;
             };
@@ -883,7 +973,7 @@ impl RuvizController {
     /// Cancel a drag after release-outside, pointer capture loss, or focus loss.
     pub fn cancel_drag(&self, slot: SlotId) {
         let handle = {
-            let mut slots = self.inner.slots.lock().expect("Slint slot lock poisoned");
+            let mut slots = lock_slots(&self.inner.slots);
             let Some(state) = slots.get_mut(&slot) else {
                 return;
             };
@@ -895,12 +985,12 @@ impl RuvizController {
                 session.cancel_interaction();
             }
             #[cfg(feature = "3d")]
-            PlotHandle::ThreeD(session) => {
-                session
-                    .lock()
-                    .expect("Slint 3D session lock poisoned")
-                    .cancel_drag();
-            }
+            PlotHandle::ThreeD(session) => match lock_3d_session(&session) {
+                Ok(mut session) => {
+                    session.cancel_drag();
+                }
+                Err(message) => self.inner.report_error(slot, message.to_string()),
+            },
         }
         self.inner.sync_runtime(slot);
     }
@@ -908,7 +998,7 @@ impl RuvizController {
     /// Handle a double-click reset using fitted physical coordinates.
     pub fn double_click(&self, slot: SlotId, position: LogicalPoint) {
         let (handle, mapped) = {
-            let slots = self.inner.slots.lock().expect("Slint slot lock poisoned");
+            let slots = lock_slots(&self.inner.slots);
             let Some(state) = slots.get(&slot) else {
                 return;
             };
@@ -943,22 +1033,14 @@ impl RuvizController {
         self.inner.sync_runtime(slot);
     }
 
-    /// Install or clear the pointer report callback.
+    /// Install the pointer report callback.
     pub fn on_pointer(&self, callback: impl Fn(PointerReport) + Send + Sync + 'static) {
-        self.inner
-            .callbacks
-            .lock()
-            .expect("Slint callback lock poisoned")
-            .pointer = Some(Arc::new(callback));
+        lock_scalar_recover(&self.inner.callbacks).pointer = Some(Arc::new(callback));
     }
 
-    /// Install or clear the error callback.
+    /// Install the error callback.
     pub fn on_error(&self, callback: impl Fn(AdapterError) + Send + Sync + 'static) {
-        self.inner
-            .callbacks
-            .lock()
-            .expect("Slint callback lock poisoned")
-            .error = Some(Arc::new(callback));
+        lock_scalar_recover(&self.inner.callbacks).error = Some(Arc::new(callback));
     }
 
     /// Install the 3D pick callback.
@@ -967,11 +1049,7 @@ impl RuvizController {
         &self,
         callback: impl Fn(SlotId, ruviz::core::PickHit3D) + Send + Sync + 'static,
     ) {
-        self.inner
-            .callbacks
-            .lock()
-            .expect("Slint callback lock poisoned")
-            .pick = Some(Arc::new(callback));
+        lock_scalar_recover(&self.inner.callbacks).pick = Some(Arc::new(callback));
     }
 
     /// Install the callback invoked after an authoritative 3D camera change.
@@ -980,19 +1058,12 @@ impl RuvizController {
         &self,
         callback: impl Fn(SlotId, ruviz::core::CameraSnapshot3D) + Send + Sync + 'static,
     ) {
-        self.inner
-            .callbacks
-            .lock()
-            .expect("Slint callback lock poisoned")
-            .camera = Some(Arc::new(callback));
+        lock_scalar_recover(&self.inner.callbacks).camera = Some(Arc::new(callback));
     }
 
     /// Last frame dimensions installed for a slot.
     pub fn installed_size(&self, slot: SlotId) -> Option<(u32, u32)> {
-        self.inner
-            .slots
-            .lock()
-            .expect("Slint slot lock poisoned")
+        lock_slots(&self.inner.slots)
             .get(&slot)
             .and_then(|state| state.last_frame.as_ref())
             .map(|frame| frame.size_px)
@@ -1000,10 +1071,7 @@ impl RuvizController {
 
     /// Latest controller render generation installed for a slot.
     pub fn installed_generation(&self, slot: SlotId) -> Option<u64> {
-        self.inner
-            .slots
-            .lock()
-            .expect("Slint slot lock poisoned")
+        lock_slots(&self.inner.slots)
             .get(&slot)
             .and_then(|state| state.last_frame.as_ref())
             .map(|frame| frame.generation)
@@ -1173,10 +1241,12 @@ impl RuvizController {
                             },
                         );
                     } else {
-                        session
-                            .lock()
-                            .expect("Slint 3D session lock poisoned")
-                            .cancel_drag();
+                        match lock_3d_session(&session) {
+                            Ok(mut session) => {
+                                session.cancel_drag();
+                            }
+                            Err(message) => self.inner.report_error(slot, message.to_string()),
+                        }
                     }
                     self.report_pointer(
                         slot,
@@ -1193,12 +1263,12 @@ impl RuvizController {
                     session.cancel_interaction();
                 }
                 #[cfg(feature = "3d")]
-                PlotHandle::ThreeD(session) => {
-                    session
-                        .lock()
-                        .expect("Slint 3D session lock poisoned")
-                        .cancel_drag();
-                }
+                PlotHandle::ThreeD(session) => match lock_3d_session(&session) {
+                    Ok(mut session) => {
+                        session.cancel_drag();
+                    }
+                    Err(message) => self.inner.report_error(slot, message.to_string()),
+                },
             },
         }
     }
@@ -1212,25 +1282,24 @@ impl RuvizController {
         physical_position: Option<ViewportPoint>,
         session: Option<&InteractivePlotSession>,
     ) {
-        let callback = self
-            .inner
-            .callbacks
-            .lock()
-            .expect("Slint callback lock poisoned")
-            .pointer
-            .clone();
+        let callback = lock_scalar_recover(&self.inner.callbacks).pointer.clone();
         if let Some(callback) = callback {
             let hit = session
                 .zip(physical_position)
                 .map(|(session, position)| session.hit_test(position));
-            callback(PointerReport {
-                slot,
-                kind,
-                button,
-                logical_position,
-                physical_position,
-                hit,
-            });
+            if let Err(message) = catch_callback(|| {
+                callback(PointerReport {
+                    slot,
+                    kind,
+                    button,
+                    logical_position,
+                    physical_position,
+                    hit,
+                });
+            }) {
+                self.inner
+                    .report_error(slot, format!("pointer callback panicked: {message}"));
+            }
         }
     }
 
@@ -1241,33 +1310,40 @@ impl RuvizController {
         session: &Arc<Mutex<ruviz::core::InteractivePlot3DSession>>,
         event: ruviz::core::InputEvent3D,
     ) {
-        let result = session
-            .lock()
-            .expect("Slint 3D session lock poisoned")
-            .handle_input(event);
+        let result = match lock_3d_session(session) {
+            Ok(mut session) => session.handle_input(event),
+            Err(message) => {
+                self.inner.report_error(slot, message.to_string());
+                return;
+            }
+        };
         match result {
             Ok(result) => {
                 let (pick_callback, camera_callback) = {
-                    let callbacks = self
-                        .inner
-                        .callbacks
-                        .lock()
-                        .expect("Slint callback lock poisoned");
+                    let callbacks = lock_scalar_recover(&self.inner.callbacks);
                     (callbacks.pick.clone(), callbacks.camera.clone())
                 };
-                if let (Some(hit), Some(callback)) = (result.picked, pick_callback) {
-                    callback(slot, hit);
+                if let (Some(hit), Some(callback)) = (result.picked, pick_callback)
+                    && let Err(message) = catch_callback(|| callback(slot, hit))
+                {
+                    self.inner
+                        .report_error(slot, format!("pick callback panicked: {message}"));
                 }
                 if result.camera_changed
                     && let Some(callback) = camera_callback
                 {
-                    callback(
-                        slot,
-                        session
-                            .lock()
-                            .expect("Slint 3D session lock poisoned")
-                            .camera_snapshot(),
-                    );
+                    match lock_3d_session(session) {
+                        Ok(session) => {
+                            let snapshot = session.camera_snapshot();
+                            if let Err(message) = catch_callback(|| callback(slot, snapshot)) {
+                                self.inner.report_error(
+                                    slot,
+                                    format!("camera callback panicked: {message}"),
+                                );
+                            }
+                        }
+                        Err(message) => self.inner.report_error(slot, message.to_string()),
+                    }
                 }
                 if result.request_redraw {
                     self.inner.request_render(slot);
@@ -1283,12 +1359,8 @@ impl ControllerInner {
         let Some(config_sink) = self.runtime_config_sink.clone() else {
             return;
         };
-        let Some((incarnation, interaction, fit, scale)) = self
-            .slots
-            .lock()
-            .expect("Slint slot lock poisoned")
-            .get(&slot)
-            .map(|state| {
+        let Some((incarnation, interaction, fit, scale)) =
+            lock_slots(&self.slots).get(&slot).map(|state| {
                 (
                     state.incarnation,
                     state.options.interaction,
@@ -1304,17 +1376,19 @@ impl ControllerInner {
             let Some(inner) = weak.upgrade() else {
                 return;
             };
-            let current = inner
-                .slots
-                .lock()
-                .expect("Slint slot lock poisoned")
+            let current = lock_slots(&inner.slots)
                 .get(&slot)
                 .is_some_and(|state| state.incarnation == incarnation);
-            if current {
-                config_sink(slot, interaction, fit, scale);
+            if current
+                && let Err(message) = catch_callback(|| config_sink(slot, interaction, fit, scale))
+            {
+                inner.report_error_direct(
+                    slot,
+                    format!("runtime configuration callback panicked: {message}"),
+                );
             }
         });
-        if let Err(error) = (self.dispatcher)(task) {
+        if let Err(error) = self.dispatch(task) {
             self.report_error_direct(
                 slot,
                 format!("could not schedule runtime configuration: {error}"),
@@ -1330,27 +1404,34 @@ impl ControllerInner {
             let Some(inner) = weak.upgrade() else {
                 return;
             };
-            if inner
-                .slots
-                .lock()
-                .expect("Slint slot lock poisoned")
-                .contains_key(&slot)
-            {
+            if lock_slots(&inner.slots).contains_key(&slot) {
                 return;
             }
-            sink(slot, slint::Image::default());
-            if let Some(config_sink) = config_sink {
-                config_sink(slot, InteractionMode::Static, ImageFit::Contain, 1.0);
+            if let Err(message) = catch_callback(|| sink(slot, slint::Image::default())) {
+                inner.report_error_direct(
+                    slot,
+                    format!("runtime image callback panicked while clearing a slot: {message}"),
+                );
+            }
+            if let Some(config_sink) = config_sink
+                && let Err(message) = catch_callback(|| {
+                    config_sink(slot, InteractionMode::Static, ImageFit::Contain, 1.0);
+                })
+            {
+                inner.report_error_direct(
+                    slot,
+                    format!("runtime configuration callback panicked: {message}"),
+                );
             }
         });
-        if let Err(error) = (self.dispatcher)(task) {
+        if let Err(error) = self.dispatch(task) {
             self.report_error_direct(slot, format!("could not clear runtime slot: {error}"));
         }
     }
 
     fn request_render(self: &Arc<Self>, slot: SlotId) {
         let scheduled = {
-            let mut slots = self.slots.lock().expect("Slint slot lock poisoned");
+            let mut slots = lock_slots(&self.slots);
             let Some(state) = slots.get_mut(&slot) else {
                 return;
             };
@@ -1368,17 +1449,18 @@ impl ControllerInner {
                 #[cfg(feature = "3d")]
                 PlotSlot::ThreeD {
                     session, renderer, ..
-                } => session
-                    .lock()
-                    .expect("Slint 3D session lock poisoned")
-                    .background_render_job()
-                    .map(|job| RenderRequest::ThreeD {
-                        incarnation: state.incarnation,
-                        session: Arc::clone(session),
-                        renderer: Arc::clone(renderer),
-                        job,
-                    })
-                    .map_err(|error| error.to_string()),
+                } => match lock_3d_session(session) {
+                    Ok(mut session_guard) => session_guard
+                        .background_render_job()
+                        .map(|job| RenderRequest::ThreeD {
+                            incarnation: state.incarnation,
+                            session: Arc::clone(session),
+                            renderer: Arc::clone(renderer),
+                            job,
+                        })
+                        .map_err(|error| error.to_string()),
+                    Err(message) => Err(message.to_string()),
+                },
             };
             request.map(|request| state.scheduler.request(request))
         };
@@ -1391,33 +1473,30 @@ impl ControllerInner {
 
     fn spawn_render(self: &Arc<Self>, slot: SlotId, scheduled: ScheduledRequest<RenderRequest>) {
         let weak = Arc::downgrade(self);
+        let render_gate = self.render_gate(slot);
         let id = scheduled.id();
+        let worker_id = id.clone();
         let request = scheduled.into_request();
         let incarnation = request.incarnation();
         #[cfg(test)]
-        let render_barrier = self
-            .render_barrier
-            .lock()
-            .expect("Slint render barrier lock poisoned")
-            .clone();
+        let render_barrier = lock_scalar_recover(&self.render_barrier).clone();
         let spawn = std::thread::Builder::new()
             .name(format!("ruviz-slint-{slot}"))
             .spawn(move || {
+                let _serial_render = lock_scalar_recover(&render_gate);
                 #[cfg(test)]
                 if let Some((entered, release)) = render_barrier {
                     entered.wait();
                     release.wait();
                 }
-                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    render_request(request)
-                }))
-                .unwrap_or_else(|_| {
-                    Err(WorkerFailure::Error(
-                        "plot renderer panicked while producing a background frame".to_string(),
-                    ))
-                });
+                let result = match catch_callback(|| render_request(request)) {
+                    Ok(result) => result,
+                    Err(message) => Err(WorkerFailure::Error(format!(
+                        "plot renderer panicked while producing a background frame: {message}"
+                    ))),
+                };
                 if let Some(inner) = weak.upgrade() {
-                    inner.finish_render(slot, id, incarnation, result);
+                    inner.finish_render(slot, worker_id, incarnation, result);
                 }
             });
         if let Err(error) = spawn {
@@ -1432,6 +1511,14 @@ impl ControllerInner {
         }
     }
 
+    fn render_gate(&self, slot: SlotId) -> Arc<Mutex<()>> {
+        Arc::clone(
+            lock_scalar_recover(&self.render_gates)
+                .entry(slot)
+                .or_insert_with(|| Arc::new(Mutex::new(()))),
+        )
+    }
+
     fn finish_render(
         self: &Arc<Self>,
         slot: SlotId,
@@ -1440,11 +1527,11 @@ impl ControllerInner {
         result: Result<RenderedBuffer, WorkerFailure>,
     ) {
         let (install, next) = {
-            let mut slots = self.slots.lock().expect("Slint slot lock poisoned");
+            let mut slots = lock_slots(&self.slots);
             let Some(state) = slots.get_mut(&slot) else {
                 return;
             };
-            let Some(completion) = state.scheduler.complete(id) else {
+            let Some(completion) = state.scheduler.complete(id.clone()) else {
                 return;
             };
             (
@@ -1457,48 +1544,73 @@ impl ControllerInner {
             Ok(rendered) if install && rendered.is_current() => {
                 let weak = Arc::downgrade(self);
                 let sink = Arc::clone(&self.frame_sink);
+                let generation = id.generation();
                 let task = Box::new(move || {
                     let Some(inner) = weak.upgrade() else {
                         return;
                     };
-                    let current_generation = {
-                        let mut slots = inner.slots.lock().expect("Slint slot lock poisoned");
-                        let Some(state) = slots.get_mut(&slot) else {
-                            return;
-                        };
-                        if state.incarnation != incarnation
-                            || state.scheduler.latest_generation() != id.generation()
-                            || !rendered.is_current()
-                        {
-                            return;
-                        }
-                        let validity = rendered.validity.clone();
-                        state.last_frame = Some(InstalledFrame {
-                            size_px: rendered.size_px,
-                            generation: id.generation(),
-                            incarnation,
-                            validity,
-                        });
-                        id.generation()
+                    let still_current = {
+                        let slots = lock_slots(&inner.slots);
+                        matches!(
+                            slots.get(&slot),
+                            Some(state)
+                                if state.incarnation == incarnation
+                                    && state.scheduler.latest_generation() == generation
+                                    && rendered.is_current()
+                        )
                     };
-                    let image = match rendered.alpha_mode {
-                        AlphaMode::Straight => slint::Image::from_rgba8(rendered.buffer),
-                        AlphaMode::Premultiplied => {
-                            slint::Image::from_rgba8_premultiplied(rendered.buffer)
+                    if !still_current {
+                        return;
+                    }
+                    let RenderedBuffer {
+                        buffer,
+                        alpha_mode,
+                        size_px,
+                        validity,
+                    } = rendered;
+                    let image = match alpha_mode {
+                        AlphaMode::Straight => slint::Image::from_rgba8(buffer),
+                        AlphaMode::Premultiplied => slint::Image::from_rgba8_premultiplied(buffer),
+                    };
+                    if let Err(message) = catch_callback(|| sink(slot, image)) {
+                        inner.report_error_direct(
+                            slot,
+                            format!("runtime image callback panicked: {message}"),
+                        );
+                        return;
+                    }
+
+                    let committed = {
+                        let mut slots = lock_slots(&inner.slots);
+                        match slots.get_mut(&slot) {
+                            Some(state)
+                                if state.incarnation == incarnation
+                                    && state.scheduler.latest_generation() == generation
+                                    && validity.is_current() =>
+                            {
+                                state.last_frame = Some(InstalledFrame {
+                                    size_px,
+                                    generation,
+                                    incarnation,
+                                    validity,
+                                });
+                                true
+                            }
+                            _ => false,
                         }
                     };
-                    if current_generation == id.generation() {
-                        sink(slot, image);
+                    if committed {
                         inner.sync_runtime(slot);
                     }
                 });
-                if let Err(error) = (self.dispatcher)(task) {
+                if let Err(error) = self.dispatch(task) {
                     self.report_error(slot, format!("could not schedule frame install: {error}"));
                 }
             }
             Ok(_) => {}
             Err(WorkerFailure::Superseded) => {}
-            Err(WorkerFailure::Error(message)) => self.report_error(slot, message),
+            Err(WorkerFailure::Error(message)) if install => self.report_error(slot, message),
+            Err(WorkerFailure::Error(_)) => {}
         }
 
         if let Some(next) = next {
@@ -1507,23 +1619,25 @@ impl ControllerInner {
     }
 
     fn plot_handle(&self, slot: SlotId) -> Option<PlotHandle> {
-        self.slots
-            .lock()
-            .expect("Slint slot lock poisoned")
+        lock_slots(&self.slots)
             .get(&slot)
             .map(|state| state.plot.clone_handle())
     }
 
+    fn dispatch(&self, task: UiTask) -> Result<(), String> {
+        catch_callback(|| (self.dispatcher)(task))
+            .map_err(|message| format!("UI dispatcher panicked: {message}"))?
+    }
+
     fn report_error(&self, slot: SlotId, message: String) {
-        let callback = self
-            .callbacks
-            .lock()
-            .expect("Slint callback lock poisoned")
-            .error
-            .clone();
+        let callback = lock_scalar_recover(&self.callbacks).error.clone();
         if let Some(callback) = callback {
-            let task = Box::new(move || callback(AdapterError { slot, message }));
-            if let Err(error) = (self.dispatcher)(task) {
+            let task = Box::new(move || {
+                if let Err(message) = catch_callback(|| callback(AdapterError { slot, message })) {
+                    write_callback_diagnostic(&format!("error callback panicked: {message}"));
+                }
+            });
+            if let Err(error) = self.dispatch(task) {
                 self.report_error_direct(
                     slot,
                     format!("could not schedule error callback: {error}"),
@@ -1533,14 +1647,11 @@ impl ControllerInner {
     }
 
     fn report_error_direct(&self, slot: SlotId, message: String) {
-        let callback = self
-            .callbacks
-            .lock()
-            .expect("Slint callback lock poisoned")
-            .error
-            .clone();
-        if let Some(callback) = callback {
-            callback(AdapterError { slot, message });
+        let callback = lock_scalar_recover(&self.callbacks).error.clone();
+        if let Some(callback) = callback
+            && let Err(message) = catch_callback(|| callback(AdapterError { slot, message }))
+        {
+            write_callback_diagnostic(&format!("error callback panicked: {message}"));
         }
     }
 }
@@ -1550,10 +1661,9 @@ impl RenderedBuffer {
         match &self.validity {
             RenderValidity::TwoD { session, stamp } => session.is_render_stamp_current(*stamp),
             #[cfg(feature = "3d")]
-            RenderValidity::ThreeD { session, stamp } => session
-                .lock()
-                .expect("Slint 3D session lock poisoned")
-                .is_render_current(*stamp),
+            RenderValidity::ThreeD { session, stamp } => {
+                lock_3d_session(session).is_ok_and(|session| session.is_render_current(*stamp))
+            }
         }
     }
 }
@@ -1585,9 +1695,8 @@ fn render_request(request: RenderRequest) -> Result<RenderedBuffer, WorkerFailur
             renderer,
             job,
         } => {
-            let rendered = renderer
-                .lock()
-                .expect("Slint 3D renderer lock poisoned")
+            let rendered = lock_3d_renderer(&renderer)
+                .map_err(|message| WorkerFailure::Error(message.to_string()))?
                 .render(job)
                 .map_err(|error| WorkerFailure::Error(error.to_string()))?;
             let stamp = rendered.stamp;
@@ -1678,6 +1787,18 @@ impl SlotState {
                     )))
     }
 
+    fn stale_hover_clear_enabled(&self, kind: PointerKind, mapped: Option<ViewportPoint>) -> bool {
+        self.options.interaction == InteractionMode::Interactive
+            && matches!(&self.plot, PlotSlot::TwoD(_))
+            && kind == PointerKind::Move
+            && mapped.is_none()
+            && self.drag.is_none()
+            && self
+                .last_frame
+                .as_ref()
+                .is_some_and(|frame| frame.incarnation == self.incarnation && !frame.is_current())
+    }
+
     fn image_size(&self) -> (u32, u32) {
         self.last_frame.as_ref().map_or_else(
             || target_size(self.layout, self.options.sizing),
@@ -1705,6 +1826,38 @@ impl SlotState {
             delta.y / content.height.max(f64::EPSILON) * f64::from(image.1),
         )
     }
+}
+
+const VIEW_BOUNDS_NORMALIZED_TOLERANCE: f64 = 1e-12;
+
+fn viewport_bounds_materially_differ(
+    visible: ViewportRect,
+    base: ViewportRect,
+    x_scale: &AxisScale,
+    y_scale: &AxisScale,
+) -> bool {
+    !viewport_axis_bounds_close(
+        (visible.min.x, visible.max.x),
+        (base.min.x, base.max.x),
+        x_scale,
+    ) || !viewport_axis_bounds_close(
+        (visible.min.y, visible.max.y),
+        (base.min.y, base.max.y),
+        y_scale,
+    )
+}
+
+fn viewport_axis_bounds_close(visible: (f64, f64), base: (f64, f64), scale: &AxisScale) -> bool {
+    if (visible.1 - visible.0).is_sign_negative() != (base.1 - base.0).is_sign_negative() {
+        return false;
+    }
+
+    let start = scale.normalized_position(visible.0, base.0, base.1);
+    let end = scale.normalized_position(visible.1, base.0, base.1);
+    start.is_finite()
+        && end.is_finite()
+        && start.abs() <= VIEW_BOUNDS_NORMALIZED_TOLERANCE
+        && (end - 1.0).abs() <= VIEW_BOUNDS_NORMALIZED_TOLERANCE
 }
 
 fn target_size(layout: SlotLayout, sizing: SizingMode) -> (u32, u32) {
@@ -1739,12 +1892,16 @@ fn decode_button(value: i32) -> Option<PointerButton> {
     }
 }
 
-fn next_slot_incarnation() -> u64 {
-    NEXT_SLOT_INCARNATION
+fn next_slot_incarnation() -> Option<u64> {
+    reserve_slot_incarnation(&NEXT_SLOT_INCARNATION)
+}
+
+fn reserve_slot_incarnation(counter: &AtomicU64) -> Option<u64> {
+    counter
         .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
             value.checked_add(1)
         })
-        .expect("Slint slot incarnation space exhausted")
+        .ok()
 }
 
 fn update_runtime_image(runtime: &RuvizRuntime<'_>, slot: SlotId, image: slint::Image) {
@@ -1849,6 +2006,17 @@ mod tests {
         }
     }
 
+    #[test]
+    fn packaged_component_focuses_on_pointer_down() {
+        let component = include_str!("../ui/ruviz.slint");
+        assert!(
+            component.contains(
+                "if (event.kind == PointerEventKind.down) {\n                    input.focus();"
+            ),
+            "RuvizPlot must acquire focus on press so Escape and focus loss are routed"
+        );
+    }
+
     #[cfg(feature = "3d")]
     fn two_d_session(handle: PlotHandle) -> InteractivePlotSession {
         match handle {
@@ -1892,6 +2060,366 @@ mod tests {
         );
         controller.resize(7, 600.0, 400.0, 2.0);
         wait_for(|| controller.installed_size(7) == Some((96, 64)));
+    }
+
+    #[test]
+    fn keep_view_uses_replacement_bounds_when_old_view_is_untouched() {
+        let (controller, _) = test_controller();
+        controller.set_plot(
+            27,
+            ruviz::prelude::Plot::new()
+                .line(&[0.0, 10.0], &[0.0, 10.0])
+                .xlim(0.0, 10.0)
+                .ylim(0.0, 10.0),
+            SlotOptions::default(),
+        );
+        controller.set_plot_keep_view(
+            27,
+            ruviz::prelude::Plot::new()
+                .line(&[100.0, 200.0], &[-5.0, 5.0])
+                .xlim(100.0, 200.0)
+                .ylim(-5.0, 5.0),
+            SlotOptions::default(),
+        );
+
+        let session = two_d_session(controller.inner.plot_handle(27).unwrap());
+        let view = session.view_bounds_snapshot();
+        assert_eq!(view.visible_bounds, view.base_bounds);
+        assert_eq!(view.base_bounds.min.x, 100.0);
+        assert_eq!(view.base_bounds.max.x, 200.0);
+    }
+
+    #[test]
+    fn keep_view_preserves_a_customized_old_view() {
+        let (controller, _) = test_controller();
+        controller.set_plot(
+            28,
+            ruviz::prelude::Plot::new()
+                .line(&[0.0, 10.0], &[0.0, 10.0])
+                .xlim(0.0, 10.0)
+                .ylim(0.0, 10.0),
+            SlotOptions::default(),
+        );
+        controller.resize(28, 640.0, 480.0, 1.0);
+        wait_for(|| controller.installed_size(28) == Some((640, 480)));
+        let old = two_d_session(controller.inner.plot_handle(28).unwrap());
+        assert!(controller.wheel(28, -100.0, LogicalPoint::new(320.0, 240.0)));
+        let customized = old.view_bounds_snapshot();
+        assert_ne!(customized.visible_bounds, customized.base_bounds);
+
+        controller.set_plot_keep_view(
+            28,
+            ruviz::prelude::Plot::new()
+                .line(&[0.0, 20.0], &[0.0, 20.0])
+                .xlim(0.0, 20.0)
+                .ylim(0.0, 20.0),
+            SlotOptions::default(),
+        );
+
+        wait_for(|| lock_slots(&controller.inner.slots)[&28].interaction_enabled());
+        let replacement = two_d_session(controller.inner.plot_handle(28).unwrap());
+        let view = replacement.view_bounds_snapshot();
+        assert_eq!(view.visible_bounds, customized.visible_bounds);
+        assert_ne!(view.visible_bounds, view.base_bounds);
+    }
+
+    #[test]
+    fn poisoned_mutexes_recover_the_guarded_state() {
+        let value = Arc::new(Mutex::new(42));
+        let poison = Arc::clone(&value);
+        let result = std::thread::spawn(move || {
+            let _guard = poison.lock().expect("test lock should be available");
+            panic!("poison the test mutex");
+        })
+        .join();
+        assert!(result.is_err());
+        assert_eq!(*lock_scalar_recover(&value), 42);
+    }
+
+    #[test]
+    fn poisoned_slot_state_is_cleared_before_it_can_be_observed() {
+        let (controller, _) = test_controller();
+        controller.set_plot(
+            20,
+            ruviz::prelude::Plot::new().line(&[0.0, 1.0], &[1.0, 2.0]),
+            SlotOptions::default(),
+        );
+        wait_for(|| controller.installed_size(20).is_some());
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let mut slots = controller
+                .inner
+                .slots
+                .lock()
+                .expect("test slot lock should be available");
+            slots.get_mut(&20).expect("test slot should exist").drag = Some(ActiveDrag {
+                button: PointerButton::Left,
+                anchor: LogicalPoint::new(1.0, 1.0),
+                last: LogicalPoint::new(2.0, 2.0),
+                moved: true,
+            });
+            panic!("poison the slot state after a partial mutation");
+        }));
+        assert!(result.is_err());
+
+        assert_eq!(controller.installed_size(20), None);
+        assert!(controller.inner.plot_handle(20).is_none());
+    }
+
+    #[test]
+    fn incarnation_exhaustion_is_reported_without_a_panic() {
+        let counter = AtomicU64::new(u64::MAX);
+        assert_eq!(reserve_slot_incarnation(&counter), None);
+        assert_eq!(counter.load(Ordering::Relaxed), u64::MAX);
+    }
+
+    #[test]
+    fn frame_sink_panics_are_reported_as_adapter_errors() {
+        let errors = Arc::new(AtomicUsize::new(0));
+        let reported = Arc::clone(&errors);
+        let controller = RuvizController::with_dispatcher(
+            |_, _| panic!("frame sink failed"),
+            |task| {
+                task();
+                Ok(())
+            },
+        );
+        controller.on_error(move |_| {
+            reported.fetch_add(1, Ordering::SeqCst);
+        });
+        controller.set_plot(
+            19,
+            ruviz::prelude::Plot::new().line(&[0.0, 1.0], &[1.0, 2.0]),
+            SlotOptions::default(),
+        );
+        wait_for(|| errors.load(Ordering::SeqCst) >= 1);
+        assert_eq!(controller.installed_size(19), None);
+        assert_eq!(controller.installed_generation(19), None);
+    }
+
+    #[test]
+    fn reentrant_sink_cannot_commit_the_superseded_frame() {
+        let controller_cell = Arc::new(Mutex::new(None::<RuvizController>));
+        let callback_controller = Arc::clone(&controller_cell);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let callback_calls = Arc::clone(&calls);
+        let saw_early_commit = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let callback_saw_early_commit = Arc::clone(&saw_early_commit);
+        let controller = RuvizController::with_dispatcher(
+            move |slot, _| {
+                if callback_calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                    let controller = callback_controller
+                        .lock()
+                        .expect("test controller lock should be available")
+                        .clone()
+                        .expect("test controller should be installed");
+                    callback_saw_early_commit.store(
+                        controller.installed_generation(slot).is_some(),
+                        Ordering::SeqCst,
+                    );
+                    controller.resize(slot, 320.0, 240.0, 1.0);
+                }
+            },
+            |task| {
+                task();
+                Ok(())
+            },
+        );
+        *controller_cell
+            .lock()
+            .expect("test controller lock should be available") = Some(controller.clone());
+        controller.set_plot(
+            23,
+            ruviz::prelude::Plot::new().line(&[0.0, 1.0], &[1.0, 2.0]),
+            SlotOptions::default(),
+        );
+
+        wait_for(|| controller.installed_size(23) == Some((320, 240)));
+        assert!(!saw_early_commit.load(Ordering::SeqCst));
+        assert!(calls.load(Ordering::SeqCst) >= 2);
+        *controller_cell
+            .lock()
+            .expect("test controller lock should be available") = None;
+    }
+
+    #[cfg(feature = "3d")]
+    #[test]
+    fn poisoned_3d_session_fails_closed_and_reports_an_error() {
+        let (controller, _) = test_controller();
+        let errors = Arc::new(AtomicUsize::new(0));
+        let reported = Arc::clone(&errors);
+        controller.on_error(move |_| {
+            reported.fetch_add(1, Ordering::SeqCst);
+        });
+        controller
+            .set_plot3d(
+                21,
+                ruviz::scatter3d(&[0.0, 1.0], &[0.0, 1.0], &[0.0, 1.0]),
+                SlotOptions::default(),
+            )
+            .unwrap();
+        wait_for(|| controller.installed_size(21).is_some());
+        let session = match controller.inner.plot_handle(21).unwrap() {
+            PlotHandle::ThreeD(session) => session,
+            PlotHandle::TwoD(_) => unreachable!(),
+        };
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _session = session
+                .lock()
+                .expect("test 3D session lock should be available");
+            panic!("poison the 3D session");
+        }));
+        assert!(result.is_err());
+
+        controller.request_redraw(21);
+        wait_for(|| errors.load(Ordering::SeqCst) >= 1);
+        assert!(
+            !lock_slots(&controller.inner.slots)[&21].interaction_enabled(),
+            "a poisoned 3D session must invalidate the installed frame"
+        );
+    }
+
+    #[cfg(feature = "3d")]
+    #[test]
+    fn poisoned_3d_renderer_rejects_the_frame_and_preserves_last_good_generation() {
+        let (controller, _) = test_controller();
+        let errors = Arc::new(AtomicUsize::new(0));
+        let reported = Arc::clone(&errors);
+        controller.on_error(move |_| {
+            reported.fetch_add(1, Ordering::SeqCst);
+        });
+        controller
+            .set_plot3d(
+                22,
+                ruviz::scatter3d(&[0.0, 1.0], &[0.0, 1.0], &[0.0, 1.0]),
+                SlotOptions::default(),
+            )
+            .unwrap();
+        wait_for(|| controller.installed_generation(22).is_some());
+        let generation = controller.installed_generation(22);
+        let renderer = {
+            let slots = lock_slots(&controller.inner.slots);
+            match &slots[&22].plot {
+                PlotSlot::ThreeD { renderer, .. } => Arc::clone(renderer),
+                PlotSlot::TwoD(_) => unreachable!(),
+            }
+        };
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _renderer = renderer
+                .lock()
+                .expect("test 3D renderer lock should be available");
+            panic!("poison the 3D renderer");
+        }));
+        assert!(result.is_err());
+
+        controller.request_redraw(22);
+        wait_for(|| errors.load(Ordering::SeqCst) >= 1);
+        assert_eq!(controller.installed_generation(22), generation);
+    }
+
+    #[cfg(feature = "3d")]
+    #[test]
+    fn static_3d_slot_renders_but_rejects_interaction() {
+        let (controller, _) = test_controller();
+        controller
+            .set_plot3d(
+                26,
+                ruviz::scatter3d(&[0.0, 1.0], &[0.0, 1.0], &[0.0, 1.0]),
+                SlotOptions {
+                    interaction: InteractionMode::Static,
+                    ..SlotOptions::default()
+                },
+            )
+            .unwrap();
+        controller.resize(26, 160.0, 120.0, 1.0);
+        wait_for(|| controller.installed_size(26) == Some((160, 120)));
+        let session = match controller.inner.plot_handle(26).unwrap() {
+            PlotHandle::ThreeD(session) => session,
+            PlotHandle::TwoD(_) => unreachable!(),
+        };
+        let initial = session
+            .lock()
+            .expect("test 3D session lock should be available")
+            .camera();
+
+        assert!(!controller.wheel(26, -20.0, LogicalPoint::new(80.0, 60.0)));
+        controller.pointer_input(
+            26,
+            PointerInput {
+                kind: PointerKind::Down,
+                button: PointerButton::Left,
+                position: LogicalPoint::new(80.0, 60.0),
+            },
+        );
+        controller.pointer_input(
+            26,
+            PointerInput {
+                kind: PointerKind::Move,
+                button: PointerButton::Left,
+                position: LogicalPoint::new(110.0, 70.0),
+            },
+        );
+        assert_eq!(
+            session
+                .lock()
+                .expect("test 3D session lock should be available")
+                .camera(),
+            initial
+        );
+    }
+
+    #[cfg(all(feature = "3d-gpu", not(target_arch = "wasm32")))]
+    #[test]
+    fn gpu_readback_backend_is_selected_and_installs_the_returned_image() {
+        let images = Arc::new(Mutex::new(Vec::<(u32, u32)>::new()));
+        let installed = Arc::clone(&images);
+        let controller = RuvizController::with_dispatcher(
+            move |_, image| {
+                let size = image.size();
+                lock_scalar_recover(&installed).push((size.width, size.height));
+            },
+            |task| {
+                task();
+                Ok(())
+            },
+        );
+        controller
+            .set_plot3d(
+                32,
+                ruviz::scatter3d(&[0.0, 1.0], &[0.0, 1.0], &[0.0, 1.0]),
+                SlotOptions {
+                    interaction: InteractionMode::Static,
+                    sizing: SizingMode::Fixed {
+                        width_px: 64,
+                        height_px: 48,
+                    },
+                    prefer_gpu: true,
+                    ..SlotOptions::default()
+                },
+            )
+            .unwrap();
+        let (backend, renderer) = {
+            let slots = lock_slots(&controller.inner.slots);
+            match &slots[&32].plot {
+                PlotSlot::ThreeD {
+                    renderer, backend, ..
+                } => (*backend, Arc::clone(renderer)),
+                PlotSlot::TwoD(_) => unreachable!(),
+            }
+        };
+        assert_eq!(backend, ruviz::core::BackgroundRenderBackend3D::GpuReadback);
+        assert_eq!(
+            lock_3d_renderer(&renderer)
+                .expect("test renderer should not be poisoned")
+                .backend(),
+            ruviz::core::BackgroundRenderBackend3D::GpuReadback
+        );
+
+        wait_for(|| controller.installed_size(32) == Some((64, 48)));
+        assert!(
+            lock_scalar_recover(&images).contains(&(64, 48)),
+            "the GPU-readback image must be converted and installed in Slint"
+        );
     }
 
     #[test]
@@ -2004,6 +2532,32 @@ mod tests {
         wait_for(|| {
             controller.installed_size(3) == Some((83, 60))
                 && controller.installed_size(8) == Some((88, 60))
+        });
+    }
+
+    #[test]
+    fn reactive_observable_change_schedules_and_installs_a_new_frame() {
+        let (controller, frames) = test_controller();
+        let x = ruviz::data::Observable::new(vec![0.0, 1.0, 2.0]);
+        let y = ruviz::data::Observable::new(vec![0.0, 1.0, 4.0]);
+        controller.set_plot(
+            31,
+            ruviz::prelude::Plot::new().line_source(x.clone(), y),
+            SlotOptions::default(),
+        );
+        wait_for(|| controller.installed_generation(31).is_some());
+        let initial_generation = controller
+            .installed_generation(31)
+            .expect("initial reactive frame should be installed");
+        let initial_frames = frames.load(Ordering::SeqCst);
+
+        x.set(vec![0.0, 1.0, 3.0]);
+
+        wait_for(|| {
+            controller
+                .installed_generation(31)
+                .is_some_and(|generation| generation > initial_generation)
+                && frames.load(Ordering::SeqCst) > initial_frames
         });
     }
 
@@ -2185,6 +2739,52 @@ mod tests {
     }
 
     #[test]
+    fn delayed_ui_install_does_not_present_a_replaced_incarnation() {
+        let frames = Arc::new(AtomicUsize::new(0));
+        let installed = Arc::clone(&frames);
+        let tasks = Arc::new(Mutex::new(Vec::<UiTask>::new()));
+        let dispatched = Arc::clone(&tasks);
+        let controller = RuvizController::with_dispatcher(
+            move |_, _| {
+                installed.fetch_add(1, Ordering::SeqCst);
+            },
+            move |task| {
+                dispatched
+                    .lock()
+                    .expect("test task queue lock should be available")
+                    .push(task);
+                Ok(())
+            },
+        );
+
+        controller.set_plot(
+            24,
+            ruviz::prelude::Plot::new().line(&[0.0, 1.0], &[0.0, 1.0]),
+            SlotOptions::default(),
+        );
+        wait_for(|| {
+            !tasks
+                .lock()
+                .expect("test task queue lock should be available")
+                .is_empty()
+        });
+        let stale_install = tasks
+            .lock()
+            .expect("test task queue lock should be available")
+            .remove(0);
+
+        controller.set_plot(
+            24,
+            ruviz::prelude::Plot::new().bar(&["new"], &[7.0]),
+            SlotOptions::default(),
+        );
+        stale_install();
+
+        assert_eq!(frames.load(Ordering::SeqCst), 0);
+        assert_eq!(controller.installed_generation(24), None);
+    }
+
+    #[test]
     fn remove_and_readd_is_safe_from_slot_aba_completion() {
         let (controller, _) = test_controller();
         let entered = Arc::new(std::sync::Barrier::new(2));
@@ -2218,15 +2818,19 @@ mod tests {
             ruviz::prelude::Plot::new().scatter(&[0.0, 1.0], &[4.0, 3.0]),
             SlotOptions::default(),
         );
-        wait_for(|| controller.installed_generation(12).is_some());
         let new_incarnation = controller
             .inner
             .slots
             .lock()
             .expect("Slint slot lock poisoned")[&12]
             .incarnation;
-        let installed = controller.installed_generation(12);
         assert_ne!(old_incarnation, new_incarnation);
+        assert_eq!(controller.installed_generation(12), None);
+        let serial_gate = controller.inner.render_gate(12);
+        assert!(
+            serial_gate.try_lock().is_err(),
+            "the detached old worker must retain the physical render lane"
+        );
         release.wait();
         wait_for(|| {
             controller
@@ -2238,7 +2842,7 @@ mod tests {
                 .as_ref()
                 .is_some_and(InstalledFrame::is_current)
         });
-        assert_eq!(controller.installed_generation(12), installed);
+        assert!(controller.installed_generation(12).is_some());
     }
 
     #[test]
@@ -2283,6 +2887,54 @@ mod tests {
     }
 
     #[test]
+    fn letterbox_press_is_rejected_before_drag_state_is_created() {
+        let (controller, _) = test_controller();
+        let reports = Arc::new(AtomicUsize::new(0));
+        let reported = Arc::clone(&reports);
+        controller.on_pointer(move |_| {
+            reported.fetch_add(1, Ordering::SeqCst);
+        });
+        controller.set_plot(
+            29,
+            ruviz::prelude::Plot::new().line(&[0.0, 1.0], &[0.0, 1.0]),
+            SlotOptions {
+                sizing: SizingMode::Fixed {
+                    width_px: 800,
+                    height_px: 400,
+                },
+                fit: ImageFit::Contain,
+                ..SlotOptions::default()
+            },
+        );
+        controller.resize(29, 400.0, 400.0, 1.0);
+        wait_for(|| controller.installed_size(29) == Some((800, 400)));
+        let session = two_d_session(controller.inner.plot_handle(29).unwrap());
+        let before = session.view_bounds_snapshot().visible_bounds;
+
+        controller.pointer_input(
+            29,
+            PointerInput {
+                kind: PointerKind::Down,
+                button: PointerButton::Left,
+                position: LogicalPoint::new(200.0, 20.0),
+            },
+        );
+
+        assert_eq!(reports.load(Ordering::SeqCst), 0);
+        assert!(lock_slots(&controller.inner.slots)[&29].drag.is_none());
+        controller.pointer_input(
+            29,
+            PointerInput {
+                kind: PointerKind::Move,
+                button: PointerButton::Left,
+                position: LogicalPoint::new(240.0, 200.0),
+            },
+        );
+        assert_eq!(session.view_bounds_snapshot().visible_bounds, before);
+        assert!(lock_slots(&controller.inner.slots)[&29].drag.is_none());
+    }
+
+    #[test]
     fn stale_presented_frame_disables_followup_input() {
         let (controller, _) = test_controller();
         controller.set_plot(
@@ -2312,6 +2964,132 @@ mod tests {
             .lock()
             .expect("Slint render barrier lock poisoned") = None;
         release.wait();
+    }
+
+    #[test]
+    fn stale_2d_frame_allows_only_outside_hover_clear_move() {
+        let (controller, _) = test_controller();
+        let reports = Arc::new(Mutex::new(Vec::<PointerReport>::new()));
+        let reported = Arc::clone(&reports);
+        controller.on_pointer(move |report| {
+            lock_scalar_recover(&reported).push(report);
+        });
+        controller.set_plot(
+            30,
+            ruviz::prelude::Plot::new().line(&[0.0, 1.0], &[0.0, 1.0]),
+            SlotOptions::default(),
+        );
+        controller.resize(30, 200.0, 120.0, 1.0);
+        wait_for(|| controller.installed_size(30) == Some((200, 120)));
+        let entered = Arc::new(std::sync::Barrier::new(2));
+        let release = Arc::new(std::sync::Barrier::new(2));
+        *controller
+            .inner
+            .render_barrier
+            .lock()
+            .expect("Slint render barrier lock poisoned") =
+            Some((Arc::clone(&entered), Arc::clone(&release)));
+        assert!(controller.wheel(30, -20.0, LogicalPoint::new(100.0, 60.0)));
+        entered.wait();
+        assert!(!lock_slots(&controller.inner.slots)[&30].interaction_enabled());
+
+        controller.pointer_input(
+            30,
+            PointerInput {
+                kind: PointerKind::Move,
+                button: PointerButton::None,
+                position: LogicalPoint::new(-10.0, -10.0),
+            },
+        );
+        {
+            let reports = lock_scalar_recover(&reports);
+            assert_eq!(reports.len(), 1);
+            assert_eq!(reports[0].kind, PointerKind::Move);
+            assert_eq!(reports[0].physical_position, None);
+        }
+
+        controller.pointer_input(
+            30,
+            PointerInput {
+                kind: PointerKind::Move,
+                button: PointerButton::None,
+                position: LogicalPoint::new(100.0, 60.0),
+            },
+        );
+        assert_eq!(lock_scalar_recover(&reports).len(), 1);
+        *controller
+            .inner
+            .render_barrier
+            .lock()
+            .expect("Slint render barrier lock poisoned") = None;
+        release.wait();
+    }
+
+    #[test]
+    fn switching_to_static_clears_hover_and_installs_cleanup_frame() {
+        let (controller, _) = test_controller();
+        controller.set_plot(
+            33,
+            ruviz::prelude::Plot::new().scatter(&[0.0, 1.0, 2.0], &[0.0, 1.0, 0.0]),
+            SlotOptions::default(),
+        );
+        controller.resize(33, 640.0, 480.0, 1.0);
+        wait_for(|| controller.installed_generation(33).is_some());
+        let session = two_d_session(controller.inner.plot_handle(33).unwrap());
+        let mut hit_position = None;
+        'search: for y in (0..480).step_by(4) {
+            for x in (0..640).step_by(4) {
+                let position = ViewportPoint::new(f64::from(x), f64::from(y));
+                if !matches!(session.hit_test(position), HitResult::None) {
+                    hit_position = Some(position);
+                    break 'search;
+                }
+            }
+        }
+        let hit_position = hit_position.expect("rendered scatter must expose a hit target");
+        let before_hover = controller
+            .installed_generation(33)
+            .expect("initial frame should be installed");
+        controller.pointer_input(
+            33,
+            PointerInput {
+                kind: PointerKind::Move,
+                button: PointerButton::None,
+                position: LogicalPoint::new(hit_position.x, hit_position.y),
+            },
+        );
+        wait_for(|| {
+            controller
+                .installed_generation(33)
+                .is_some_and(|generation| generation > before_hover)
+        });
+        let hover_generation = controller
+            .installed_generation(33)
+            .expect("hover frame should be installed");
+
+        assert!(controller.set_options(
+            33,
+            SlotOptions {
+                interaction: InteractionMode::Static,
+                ..SlotOptions::default()
+            }
+        ));
+        wait_for(|| {
+            controller
+                .installed_generation(33)
+                .is_some_and(|generation| generation > hover_generation)
+        });
+        let notifications = Arc::new(AtomicUsize::new(0));
+        let observed = Arc::clone(&notifications);
+        let _subscription = session.subscribe_changes(move |_| {
+            observed.fetch_add(1, Ordering::SeqCst);
+        });
+        session.apply_input(PlotInputEvent::ClearHover);
+        assert_eq!(
+            notifications.load(Ordering::SeqCst),
+            0,
+            "static-mode transition must already clear hover and its tooltip"
+        );
     }
 
     #[test]
@@ -2450,6 +3228,48 @@ mod tests {
             PlotHandle::TwoD(_) => unreachable!(),
         };
         assert_eq!(kept, changed);
+    }
+
+    #[cfg(feature = "3d")]
+    #[test]
+    fn failed_three_d_keep_view_replacement_retains_the_old_slot() {
+        let (controller, _) = test_controller();
+        controller
+            .set_plot3d(
+                25,
+                ruviz::scatter3d(&[0.0, 1.0], &[0.0, 1.0], &[0.0, 1.0]),
+                SlotOptions::default(),
+            )
+            .unwrap();
+        wait_for(|| controller.installed_size(25).is_some());
+        let old_session = match controller.inner.plot_handle(25).unwrap() {
+            PlotHandle::ThreeD(session) => session,
+            PlotHandle::TwoD(_) => unreachable!(),
+        };
+        let poison = Arc::clone(&old_session);
+        assert!(
+            std::thread::spawn(move || {
+                let _guard = poison
+                    .lock()
+                    .expect("test 3D session lock should be available");
+                panic!("poison the old 3D session");
+            })
+            .join()
+            .is_err()
+        );
+
+        let result = controller.set_plot3d_keep_view(
+            25,
+            ruviz::scatter3d(&[2.0, 3.0], &[1.0, 2.0], &[4.0, 5.0]),
+            SlotOptions::default(),
+        );
+
+        assert!(result.is_err());
+        let retained = match controller.inner.plot_handle(25).unwrap() {
+            PlotHandle::ThreeD(session) => session,
+            PlotHandle::TwoD(_) => unreachable!(),
+        };
+        assert!(Arc::ptr_eq(&retained, &old_session));
     }
 
     #[test]

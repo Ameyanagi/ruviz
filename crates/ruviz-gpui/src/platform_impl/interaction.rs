@@ -101,6 +101,19 @@ pub(super) fn window_distance_px(a: Point<Pixels>, b: Point<Pixels>) -> f64 {
 }
 
 impl RuvizPlot {
+    fn accepts_user_input(&self) -> bool {
+        self.accepts_user_input
+    }
+
+    fn begin_user_input(&mut self) -> bool {
+        if !self.accepts_user_input {
+            return false;
+        }
+        self.failed_request = None;
+        self.last_error = None;
+        true
+    }
+
     fn pointer_base_generation_is_current(&mut self, cx: &mut Context<Self>) -> bool {
         let is_current = self.cached_frame.as_ref().is_some_and(|frame| {
             self.session.displayed_frame_generation() == Some(frame.base_generation)
@@ -117,6 +130,9 @@ impl RuvizPlot {
         window_position: Point<Pixels>,
         cx: &mut Context<Self>,
     ) -> Result<()> {
+        if !self.accepts_user_input() {
+            return Ok(());
+        }
         let Some(event) = self.build_plot_pointer_event(
             PlotPointerEventKind::Click,
             Some(MouseButton::Left),
@@ -138,6 +154,9 @@ impl RuvizPlot {
         mouse_button: Option<MouseButton>,
         cx: &mut Context<Self>,
     ) -> Result<()> {
+        if !self.begin_user_input() {
+            return Ok(());
+        }
         let Some(event) = self.build_plot_pointer_event(
             PlotPointerEventKind::Hover,
             mouse_button,
@@ -399,7 +418,7 @@ impl RuvizPlot {
         cursor_position_px: ViewportPoint,
         cx: &mut Context<Self>,
     ) -> Result<()> {
-        if !self.options.context_menu.enabled {
+        if !self.accepts_user_input() || !self.options.context_menu.enabled {
             return Ok(());
         }
 
@@ -497,7 +516,10 @@ impl RuvizPlot {
         &self,
         event: &KeyDownEvent,
     ) -> Option<BuiltinContextMenuAction> {
-        if !event.keystroke.modifiers.secondary() || event.keystroke.modifiers.alt {
+        if !self.accepts_user_input()
+            || !event.keystroke.modifiers.secondary()
+            || event.keystroke.modifiers.alt
+        {
             return None;
         }
 
@@ -542,6 +564,9 @@ impl RuvizPlot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Result<()> {
+        if !self.begin_user_input() {
+            return Ok(());
+        }
         cx.focus_self(window);
 
         if !self.pointer_base_generation_is_current(cx) {
@@ -602,6 +627,9 @@ impl RuvizPlot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Result<()> {
+        if !self.begin_user_input() {
+            return Ok(());
+        }
         cx.focus_self(window);
         if !self.pointer_base_generation_is_current(cx) {
             return Ok(());
@@ -631,6 +659,9 @@ impl RuvizPlot {
         event: &MouseMoveEvent,
         cx: &mut Context<Self>,
     ) -> Result<()> {
+        if !self.begin_user_input() {
+            return Ok(());
+        }
         if self.interaction_state.context_menu.is_some() {
             let hovered_index = self.context_menu_entry_index_at(event.position);
             self.update_context_menu_hover(hovered_index, cx);
@@ -800,6 +831,9 @@ impl RuvizPlot {
         event: &MouseUpEvent,
         cx: &mut Context<Self>,
     ) -> Result<()> {
+        if !self.begin_user_input() {
+            return Ok(());
+        }
         if !self.pointer_base_generation_is_current(cx) {
             return Ok(());
         }
@@ -881,6 +915,9 @@ impl RuvizPlot {
         event: &MouseUpEvent,
         cx: &mut Context<Self>,
     ) -> Result<()> {
+        if !self.begin_user_input() {
+            return Ok(());
+        }
         if !self.pointer_base_generation_is_current(cx) {
             return Ok(());
         }
@@ -930,7 +967,7 @@ impl RuvizPlot {
     }
 
     pub(super) fn handle_hover_change(&mut self, hovered: bool, cx: &mut Context<Self>) {
-        if hovered {
+        if hovered || !self.begin_user_input() {
             return;
         }
 
@@ -938,12 +975,14 @@ impl RuvizPlot {
             self.update_context_menu_hover(None, cx);
             return;
         }
-        if !self.pointer_base_generation_is_current(cx) {
+        let pointer_base_is_current = self.pointer_base_generation_is_current(cx);
+        self.session.apply_input(PlotInputEvent::ClearHover);
+        self.session.apply_input(PlotInputEvent::HideTooltip);
+        if !pointer_base_is_current {
+            cx.notify();
             return;
         }
 
-        self.session.apply_input(PlotInputEvent::ClearHover);
-        self.session.apply_input(PlotInputEvent::HideTooltip);
         if !matches!(
             self.interaction_state.active_drag,
             ActiveDrag::RightZoom { .. }
@@ -971,6 +1010,9 @@ impl RuvizPlot {
         if !self.options.interaction.zoom || self.interaction_state.context_menu.is_some() {
             return Ok(());
         }
+        if !self.begin_user_input() {
+            return Ok(());
+        }
         if !self.pointer_base_generation_is_current(cx) {
             return Ok(());
         }
@@ -994,6 +1036,9 @@ impl RuvizPlot {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> Result<bool> {
+        if !self.begin_user_input() {
+            return Ok(false);
+        }
         if let Some(action) = self.builtin_shortcut_action_for_keystroke(event) {
             self.close_context_menu(cx);
             self.execute_builtin_context_menu_action(action, None, window, cx)?;
@@ -1019,6 +1064,9 @@ impl RuvizPlot {
     }
 
     pub(super) fn render_zoom_overlay(&self, bounds: Bounds<Pixels>) -> AnyElement {
+        if !self.accepts_user_input() {
+            return div().into_any_element();
+        }
         let Some(layout) = self.last_layout.as_ref() else {
             return div().into_any_element();
         };
@@ -1038,6 +1086,9 @@ impl RuvizPlot {
     }
 
     pub(super) fn render_context_menu_overlay(&self) -> Option<AnyElement> {
+        if !self.accepts_user_input() {
+            return None;
+        }
         let layout = self.last_layout.as_ref()?;
         let menu = self.interaction_state.context_menu.as_ref()?;
         let panel_left = menu.panel_bounds.origin.x - layout.component_bounds.origin.x;
