@@ -2311,11 +2311,11 @@ impl Plot {
         let ds_image = datashader.render();
 
         // Convert to Image format
-        let image = Image {
-            width: ds_image.width as u32,
-            height: ds_image.height as u32,
-            pixels: ds_image.pixels,
-        };
+        let image = Image::from_straight_rgba(
+            ds_image.width as u32,
+            ds_image.height as u32,
+            ds_image.pixels,
+        );
 
         Ok(image)
     }

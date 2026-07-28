@@ -673,7 +673,7 @@ fn readback_image(
     // straight alpha, so divide the coverage back out here — in linear space,
     // because that is the space the resolve averaged in.
     unpremultiply_linear_srgb_bytes(&mut pixels);
-    Ok(Image::new(width, height, pixels))
+    Ok(Image::from_straight_rgba(width, height, pixels))
 }
 
 fn validate_dimensions(width: u32, height: u32, maximum: u32) -> Result<()> {

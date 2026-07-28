@@ -13,7 +13,10 @@ pub use crate::render::three_d::release_3d_gpu_resources;
 pub use builder::{Line3DBuilder, Scatter3DBuilder, Surface3DBuilder, Wireframe3DBuilder};
 pub use diagnostics::RenderDiagnostics3D;
 pub use interaction::{
-    CameraSnapshot3D, InputEvent3D, InteractionResult3D, InteractivePlot3DSession, PointerButton3D,
+    BackgroundRenderBackend3D, BackgroundRenderJob3D, BackgroundRenderOutcome3D,
+    BackgroundRenderer3D, CameraSnapshot3D, InputEvent3D, InteractionResult3D,
+    InteractivePlot3DSession, PointerButton3D, RenderStamp3D, RenderedImage3D, StampedPick3D,
+    ViewStamp3D,
 };
 #[cfg(feature = "gpu")]
 #[doc(hidden)]

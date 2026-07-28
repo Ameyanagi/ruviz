@@ -5,6 +5,37 @@ use ruviz::core::{
 use ruviz::prelude::*;
 
 #[test]
+fn image_struct_literals_remain_source_compatible() {
+    let image = Image {
+        width: 1,
+        height: 1,
+        pixels: vec![20, 40, 60, 128],
+    };
+
+    assert_eq!(image.alpha_mode(), AlphaMode::Straight);
+    assert_eq!(
+        image
+            .pixels_in_alpha_mode(AlphaMode::Premultiplied)
+            .as_ref(),
+        &[10, 20, 30, 128]
+    );
+}
+
+#[test]
+fn image_alpha_conversion_preserves_the_straight_storage_contract() {
+    let image = Image::from_premultiplied_rgba(1, 1, vec![64, 32, 16, 128]);
+
+    assert_eq!(image.alpha_mode(), AlphaMode::Straight);
+    assert_eq!(image.pixels, vec![128, 64, 32, 128]);
+    assert_eq!(
+        image
+            .pixels_in_alpha_mode(AlphaMode::Premultiplied)
+            .as_ref(),
+        &[64, 32, 16, 128]
+    );
+}
+
+#[test]
 fn layout_structs_support_exhaustive_external_construction() {
     let plot_area = LayoutRect {
         left: 10.0,

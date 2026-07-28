@@ -10,12 +10,14 @@
 //! - `RuvizPlot` for embedding static or interactive plots in GPUI views
 //! - configurable presentation modes for image-backed and hybrid rendering
 //! - built-in pan, zoom, hover, selection, and context-menu behavior
+//! - background-rendered static and interactive 3D views behind the `3d` feature
 //! - absolute-window coordinate mapping and frame-aware click/hover callbacks
 //! - clipboard and PNG save helpers routed through the host platform
 //!
 //! # Coordinates And Pointer Events
 //!
-//! [`RuvizPlot::data_at`] accepts an absolute GPUI window [`Point<Pixels>`], while
+//! [`RuvizPlot::data_at`] accepts an absolute GPUI window
+//! [`Point<Pixels>`](gpui::Point), while
 //! [`RuvizPlot::screen_at`] returns one. Both methods use the currently displayed
 //! backing frame and return `Ok(None)` when layout or a valid in-bounds mapping is
 //! unavailable. Click and hover callbacks share [`PlotPointerEvent`]:
@@ -47,8 +49,8 @@
 //!
 //! ```toml
 //! [dependencies]
-//! ruviz = "0.5.0"
-//! ruviz-gpui = "0.5.0"
+//! ruviz = "0.6.0"
+//! ruviz-gpui = "0.6.0"
 //! ```
 //!
 //! Then build a normal `ruviz::Plot` or `PreparedPlot` and hand it to the GPUI
@@ -107,10 +109,11 @@ mod platform_impl {
         axes::AxisScale,
         core::plot::Image as RuvizImage,
         core::{
-            Annotation, AnnotationId, FramePacing, FrameStats, HitResult, ImageTarget,
-            InteractivePlotSession, InteractiveViewportSnapshot, Plot, PlotInputEvent, PlotResult,
+            AlphaMode, Annotation, AnnotationId, FramePacing, FrameStats, HitResult, ImageTarget,
+            InteractivePlotSession, InteractiveViewportSnapshot, PlotInputEvent, PlotResult,
             PlottingError, PreparedPlot, QualityPolicy, ReactiveSubscription, RenderTargetKind,
             Result, SurfaceCapability, SurfaceTarget, ViewportPoint, ViewportRect,
+            source_over_straight_rgba,
         },
         export::write_rgba_png_atomic,
     };
@@ -151,27 +154,11 @@ mod platform_impl {
         hover: Option<PlotPointerEventHandler>,
     }
 
-    pub trait IntoPlotSession {
-        fn into_plot_session(self) -> InteractivePlotSession;
-    }
-
-    impl IntoPlotSession for InteractivePlotSession {
-        fn into_plot_session(self) -> InteractivePlotSession {
-            self
-        }
-    }
-
-    impl IntoPlotSession for PreparedPlot {
-        fn into_plot_session(self) -> InteractivePlotSession {
-            self.into_interactive()
-        }
-    }
-
-    impl IntoPlotSession for Plot {
-        fn into_plot_session(self) -> InteractivePlotSession {
-            self.prepare_interactive()
-        }
-    }
+    /// Shared framework-neutral plot-to-session conversion contract.
+    ///
+    /// Re-exported here for source compatibility with earlier `ruviz-gpui`
+    /// releases; the trait itself is defined by `ruviz::core`.
+    pub use ruviz::core::IntoPlotSession;
 
     #[deprecated(note = "Use IntoPlotSession instead.")]
     pub trait IntoRuvizSession {
@@ -1656,6 +1643,33 @@ mod platform_impl {
         }
 
         #[test]
+        fn test_render_image_normalizes_recorded_premultiplied_alpha() {
+            let original =
+                ruviz::core::plot::Image::from_premultiplied_rgba(1, 1, vec![64, 32, 16, 128]);
+            let render = render_image_from_ruviz(original);
+            assert_eq!(
+                render.as_bytes(0).expect("render bytes"),
+                &[32, 64, 128, 128]
+            );
+            let restored = render_image_to_ruviz(render.as_ref()).expect("straight RGBA image");
+            assert_eq!(restored.alpha_mode(), AlphaMode::Straight);
+            assert_eq!(restored.pixels, vec![128, 64, 32, 128]);
+        }
+
+        #[test]
+        fn test_rgba_compositor_handles_transparent_and_translucent_destinations() {
+            let source = [255, 0, 0, 128];
+
+            let mut transparent = [0, 0, 255, 0];
+            blend_rgba_into_rgba(&source, &mut transparent);
+            assert_eq!(transparent, [255, 0, 0, 128]);
+
+            let mut translucent = [0, 0, 255, 128];
+            blend_rgba_into_rgba(&source, &mut translucent);
+            assert_eq!(translucent, [170, 0, 85, 192]);
+        }
+
+        #[test]
         fn test_cached_frame_capture_reuses_cached_image_and_overlay() {
             let cx = TestAppContext::single();
             let focus_handle = cx.update(|cx| cx.focus_handle());
@@ -2620,7 +2634,10 @@ mod platform_impl {
                         .expect("temporal replacement frame should render");
                     let snapshot = view.session.viewport_snapshot().unwrap();
                     assert_viewport_bounds_close(snapshot.visible_bounds, custom_view);
-                    assert_eq!(snapshot.base_bounds, viewport_rect(0.0, 1.0, 0.0, 100.0));
+                    // The replacement has an explicit x limit but an automatic
+                    // y range, so the core's default 5% autoscale margin is
+                    // part of the resolved base bounds.
+                    assert_eq!(snapshot.base_bounds, viewport_rect(0.0, 1.0, -5.0, 105.0));
                 })
             });
         }

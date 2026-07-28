@@ -2718,15 +2718,10 @@ impl SkiaRenderer {
 
     /// Consume the renderer and convert to an `Image`.
     ///
-    /// The returned pixel buffer preserves tiny-skia's native premultiplied
-    /// alpha representation so it can be composed back into other pixmaps
-    /// without a lossy round-trip.
+    /// Tiny-skia's native premultiplied buffer is normalized to [`Image`]'s
+    /// canonical straight-alpha representation.
     pub fn into_image(self) -> Image {
-        Image {
-            width: self.width,
-            height: self.height,
-            pixels: self.pixmap.data().to_vec(),
-        }
+        Image::from_premultiplied_rgba(self.width, self.height, self.pixmap.data().to_vec())
     }
 
     /// Consume the renderer and convert to an `Image` with straight-alpha
@@ -2735,11 +2730,7 @@ impl SkiaRenderer {
     /// Use this when the buffer will be composed by straight-alpha blenders
     /// (e.g. the interactive overlay compositor) rather than tiny-skia.
     pub fn into_image_demultiplied(self) -> Image {
-        Image {
-            width: self.width,
-            height: self.height,
-            pixels: self.pixmap.take_demultiplied(),
-        }
+        Image::from_straight_rgba(self.width, self.height, self.pixmap.take_demultiplied())
     }
 
     /// Save the current pixmap as a PNG with straight-alpha RGBA encoding.
@@ -2749,11 +2740,11 @@ impl SkiaRenderer {
 
     /// Encode the current pixmap as PNG bytes with straight-alpha RGBA encoding.
     pub fn encode_png_bytes(&self) -> Result<Vec<u8>> {
-        let image = Image {
-            width: self.width,
-            height: self.height,
-            pixels: self.pixmap.clone().take_demultiplied(),
-        };
+        let image = Image::from_straight_rgba(
+            self.width,
+            self.height,
+            self.pixmap.clone().take_demultiplied(),
+        );
         crate::export::encode_rgba_png(&image)
     }
 
@@ -2787,9 +2778,7 @@ impl SkiaRenderer {
 
     /// Draw a subplot image at the specified position.
     ///
-    /// Alias for [`Self::draw_image_layer`]; `subplot_image` must carry
-    /// straight (non-premultiplied) alpha, which is what the PNG round-trip
-    /// this used to perform already assumed. Prefer `draw_image_layer`, which
+    /// Alias for [`Self::draw_image_layer`]. Prefer `draw_image_layer`, which
     /// borrows instead of consuming.
     pub fn draw_subplot(
         &mut self,
@@ -2800,7 +2789,7 @@ impl SkiaRenderer {
         self.draw_image_layer(&subplot_image, x, y)
     }
 
-    /// Compose a straight-alpha RGBA image onto the canvas.
+    /// Compose an RGBA image onto the canvas.
     ///
     /// This is the only way an [`Image`] is put on
     /// the canvas — [`Self::draw_subplot`] is a thin alias — so the 2D subplot
@@ -2809,7 +2798,8 @@ impl SkiaRenderer {
     /// It used to go through `encode_png` + `decode_png`, which cost a full
     /// deflate *and* inflate of the whole canvas for every composited frame
     /// (~11 MB per 1920x1440 3D orbit frame) purely to change alpha
-    /// representation. The premultiply below is that conversion, done directly.
+    /// representation. The canonical straight-alpha input is premultiplied
+    /// directly here.
     pub fn draw_image_layer(
         &mut self,
         image: &crate::core::plot::Image,
@@ -2825,21 +2815,12 @@ impl SkiaRenderer {
             ));
         }
 
-        let mut premultiplied = vec![0_u8; expected];
-        for (destination, source) in premultiplied
-            .chunks_exact_mut(4)
-            .zip(image.pixels.chunks_exact(4))
-        {
-            let alpha = u32::from(source[3]);
-            destination[0] = ((u32::from(source[0]) * alpha + 127) / 255) as u8;
-            destination[1] = ((u32::from(source[1]) * alpha + 127) / 255) as u8;
-            destination[2] = ((u32::from(source[2]) * alpha + 127) / 255) as u8;
-            destination[3] = source[3];
-        }
+        let premultiplied = image.pixels_in_alpha_mode(crate::core::plot::AlphaMode::Premultiplied);
 
         let size = tiny_skia::IntSize::from_wh(image.width, image.height)
             .ok_or(PlottingError::OutOfMemory)?;
-        let layer = Pixmap::from_vec(premultiplied, size).ok_or(PlottingError::OutOfMemory)?;
+        let layer =
+            Pixmap::from_vec(premultiplied.into_owned(), size).ok_or(PlottingError::OutOfMemory)?;
         self.pixmap.draw_pixmap(
             x as i32,
             y as i32,

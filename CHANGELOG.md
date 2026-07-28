@@ -18,6 +18,19 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- Added the separately packaged `ruviz-egui`, `ruviz-iced`, and `ruviz-slint`
+  native GUI adapters, with static and interactive 2D/3D plots, responsive
+  HiDPI rendering, framework-native events, reactive redraws, replacement
+  with optional view preservation, and optional GPU rendering followed by
+  readback.
+- Added shared native-adapter contracts for plot/session conversion, logical
+  and fitted-image geometry, opaque latest-request scheduling, explicit RGBA
+  alpha conversion, stamped 2D frames, and retained background 3D rendering.
+- Added a packaged Slint `@Ruviz` component library with a multi-slot runtime
+  and retained Rust controller.
+- Added a GPUI 3D builder matching the 2D adapter, including static and
+  interactive modes, fill/fixed sizing, fitted input mapping, replacement,
+  pick/camera/error callbacks, and background CPU or GPU-readback rendering.
 - Added `Plot3D::legend(Legend)`, so 3D figures configure their legend with the same `Legend` type, position, font size, colours, spacing, style and layout routine as 2D. Without it the legend is derived from the theme, as before; a legend with `enabled` false suppresses both the legend and the band reserved for it.
 - Added `SkiaRenderer::draw_image_layer`, which composes a straight-alpha RGBA image without the PNG encode/decode round-trip `draw_subplot` used to perform.
 - Added `layout_legend`, `measure_legend_size`, `LegendLayout`, `LegendPlacement`, `LegendOccupancy`, `LegendEntryLayout`, `LegendTitleLayout` and `estimated_label_width` to `ruviz::core`.
@@ -26,6 +39,18 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- Native GUI renders now use one in-flight request plus one coalesced latest
+  request, retain the last good image while work is pending, and reject input
+  against stale frame/view stamps. Rendering no longer runs in adapter paint
+  or view callbacks.
+- Added `PlottingError::RenderSuperseded` to the already non-exhaustive error
+  enum so obsolete background work can be handled without parsing strings.
+- 3D render jobs retain shared resolved scene data and reusable CPU/GPU worker
+  resources instead of copying a scene or rebuilding a renderer per frame.
+- Rendered `Image` values, including `SkiaRenderer::into_image()`, now have
+  canonical straight-alpha RGBA semantics, with explicit conversion helpers
+  for consumers that require premultiplied alpha. Callers that previously
+  treated `SkiaRenderer::into_image()` bytes as premultiplied must update.
 - `LegendPosition::Best` now consults where the data actually is. Both the raster and the SVG paths build an occupancy grid from the projected samples and score candidate corners against it; previously `Best` always answered `UpperRight`.
 - 3D surfaces are lit in linear space. `shade()` used to scale sRGB bytes directly, which systematically darkened and desaturated every lit surface; it now decodes to linear, applies the Lambert term and re-encodes, which is what the GPU already did for free from its sRGB target. `render()` and `render_gpu()` therefore agree instead of producing different figures on different machines. Every lit 3D image is brighter.
 - Both 3D backends emit straight (non-premultiplied) alpha layers, matching PNG, the SVG data URI and every `SkiaRenderer` entry point. Antialiased 3D silhouettes are no longer darkened by the compositor, so markers, lines and surface edges lose the dark halo they used to carry.

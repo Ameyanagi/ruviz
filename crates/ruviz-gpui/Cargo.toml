@@ -68,6 +68,11 @@ rfd = { version = "0.15", default-features = false }
 [dev-dependencies]
 smol = "2"
 
+[[example]]
+name = "plot3d_embed"
+path = "examples/plot3d_embed.rs"
+required-features = ["3d"]
+
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 gpui = { version = "0.2.2", features = ["test-support"] }
 # Pinned to the same zed rev as the `[patch.crates-io]` override above; the

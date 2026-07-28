@@ -148,6 +148,12 @@ pub enum PlottingError {
     /// Theme configuration error
     #[error("Theme error: {0}")]
     ThemeError(String),
+    /// An interactive render was made stale before it could be committed.
+    ///
+    /// This is an expected cancellation outcome for latest-request-wins
+    /// presentation adapters, not a renderer failure.
+    #[error("interactive render superseded by a newer mutation, invalidation, or dirty update")]
+    RenderSuperseded,
     /// Rendering backend error
     #[error("Rendering error: {0}")]
     RenderError(String),
@@ -367,6 +373,14 @@ impl From<crate::render::gpu::GpuError> for PlottingError {
 
 // Helper functions for common validation
 impl PlottingError {
+    /// Returns whether this error represents an expected superseded render.
+    ///
+    /// Native GUI adapters can use this predicate to silently discard work
+    /// made stale by a newer request without parsing an error message.
+    pub fn is_render_superseded(&self) -> bool {
+        matches!(self, Self::RenderSuperseded)
+    }
+
     /// Check if data contains invalid values (NaN, Inf)
     pub fn validate_data(data: &[f64]) -> Result<()> {
         for (i, &value) in data.iter().enumerate() {

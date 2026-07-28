@@ -958,7 +958,10 @@ pub(super) fn render_frame_from_session(
 pub(super) fn render_image_from_ruviz(image: RuvizImage) -> Arc<RenderImage> {
     let width = image.width;
     let height = image.height;
-    let mut pixels = image.pixels;
+    // GPUI's `RenderImage` byte contract is straight-alpha BGRA. Normalize
+    // explicitly from ruviz's recorded alpha mode before swapping channels;
+    // translucent renderer output must never rely on a guessed convention.
+    let mut pixels = image.pixels_in_alpha_mode(AlphaMode::Straight).into_owned();
     rgba_to_bgra_in_place(&mut pixels);
     let actual_len = pixels.len();
     let expected_len = width as usize * height as usize * 4;
@@ -989,31 +992,8 @@ pub(super) fn rgba_to_bgra_in_place(pixels: &mut [u8]) {
 
 pub(super) fn blend_rgba_into_rgba(src_rgba: &[u8], dst_rgba: &mut [u8]) {
     for (src, dst) in src_rgba.chunks_exact(4).zip(dst_rgba.chunks_exact_mut(4)) {
-        let alpha = src[3];
-        if alpha == 0 {
-            continue;
-        }
-        if alpha == u8::MAX {
-            dst.copy_from_slice(src);
-            continue;
-        }
-
-        let alpha = alpha as f32 / 255.0;
-        dst[0] = blend_channel(dst[0], src[0], alpha);
-        dst[1] = blend_channel(dst[1], src[1], alpha);
-        dst[2] = blend_channel(dst[2], src[2], alpha);
-        dst[3] = alpha_blend_alpha(dst[3], src[3]);
+        let destination = [dst[0], dst[1], dst[2], dst[3]];
+        let source = [src[0], src[1], src[2], src[3]];
+        dst.copy_from_slice(&source_over_straight_rgba(destination, source));
     }
-}
-
-fn blend_channel(background: u8, foreground: u8, alpha: f32) -> u8 {
-    let bg = background as f32 / 255.0;
-    let fg = foreground as f32 / 255.0;
-    ((bg * (1.0 - alpha) + fg * alpha) * 255.0) as u8
-}
-
-fn alpha_blend_alpha(background: u8, foreground: u8) -> u8 {
-    let bg = background as f32 / 255.0;
-    let fg = foreground as f32 / 255.0;
-    ((fg + bg * (1.0 - fg)) * 255.0) as u8
 }

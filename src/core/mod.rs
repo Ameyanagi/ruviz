@@ -1,5 +1,6 @@
 //! Core plotting functionality and main API
 
+pub mod adapter;
 pub mod annotation;
 pub mod config;
 pub mod constants;
@@ -19,6 +20,13 @@ pub mod transform;
 pub mod types;
 pub mod units;
 
+#[cfg(feature = "3d")]
+pub use adapter::TryIntoPlot3DSession;
+pub use adapter::{
+    ImageFit, IntoPlotSession, LatestRequestScheduler, LogicalPoint, LogicalRect,
+    RequestCompletion, ScheduledRequest, ScheduledRequestId, fitted_content_rect,
+    logical_to_physical, physical_backing_size, sanitize_scale_factor,
+};
 pub use annotation::{
     Annotation, ArrowHead, ArrowStyle, FillStyle, HatchPattern, ShapeStyle, TextAlign, TextStyle,
     TextVAlign,
@@ -44,13 +52,15 @@ pub use legend::{
     layout_legend, measure_legend_size,
 };
 pub use plot::{
-    AnnotationId, BackendFallbackReason, BackendOperation, BackendResolution, BackendType,
-    BuilderWhen, DirtyDomain, DirtyDomains, FramePacing, FrameStats, HitResult, Image, ImageTarget,
-    InsetAnchor, InsetLayout, InteractiveFrame, InteractiveFrameWithGeneration,
-    InteractivePlotSession, InteractiveViewportSnapshot, IntoPlot, LayerRenderState, Plot,
-    PlotBuilder, PlotInputEvent, PlotSource, PreparedPlot, QualityPolicy, ReactiveSubscription,
-    ReactiveValue, RenderTargetKind, SurfaceCapability, SurfaceTarget, TextEngineMode,
-    TickDirection, TickSides, ViewportPoint, ViewportRect,
+    AlphaMode, AnnotationId, BackendFallbackReason, BackendOperation, BackendResolution,
+    BackendType, BuilderWhen, DirtyDomain, DirtyDomains, FramePacing, FrameStats, HitResult, Image,
+    ImageTarget, InsetAnchor, InsetLayout, InteractiveChangeRevision,
+    InteractiveChangeSubscription, InteractiveFrame, InteractiveFrameWithGeneration,
+    InteractivePlotSession, InteractiveRenderStamp, InteractiveViewportSnapshot, IntoPlot,
+    LayerRenderState, Plot, PlotBuilder, PlotInputEvent, PlotSource, PreparedPlot, QualityPolicy,
+    ReactiveSubscription, ReactiveValue, RenderTargetKind, StampedInteractiveFrame,
+    SurfaceCapability, SurfaceTarget, TextEngineMode, TickDirection, TickSides, ViewportPoint,
+    ViewportRect, source_over_straight_rgba,
 };
 // `PlotInput` and `SeriesStyle` are internal representations of a half-built series
 // (`SeriesStyle` alone has 18 public fields, including reactive-animation plumbing).
@@ -61,10 +71,12 @@ pub(crate) use plot::{PlotInput, SeriesStyle};
 pub use plot3d::GpuBenchmarkSession3D;
 #[cfg(feature = "3d")]
 pub use plot3d::{
-    AxisAspect3D, Bounds3D, Camera3D, CameraSnapshot3D, InputEvent3D, InteractionResult3D,
+    AxisAspect3D, BackgroundRenderBackend3D, BackgroundRenderJob3D, BackgroundRenderOutcome3D,
+    BackgroundRenderer3D, Bounds3D, Camera3D, CameraSnapshot3D, InputEvent3D, InteractionResult3D,
     InteractivePlot3DSession, Line3DBuilder, PickHit3D, PickPrimitive3D, Point3D, PointerButton3D,
-    ProjectedPoint3D, Projection3D, RenderDiagnostics3D, Scatter3DBuilder, ScreenRay3D,
-    Surface3DBuilder, Wireframe3DBuilder, release_3d_gpu_resources,
+    ProjectedPoint3D, Projection3D, RenderDiagnostics3D, RenderStamp3D, RenderedImage3D,
+    Scatter3DBuilder, ScreenRay3D, StampedPick3D, Surface3DBuilder, ViewStamp3D,
+    Wireframe3DBuilder, release_3d_gpu_resources,
 };
 #[cfg(all(feature = "3d", feature = "gpu"))]
 #[doc(hidden)]

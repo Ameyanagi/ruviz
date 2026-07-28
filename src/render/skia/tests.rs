@@ -1478,13 +1478,13 @@ fn draw_image_layer_matches_the_png_round_trip_it_replaced() {
 
     // Straight-alpha RGBA, deliberately including partial coverage: with a
     // fully opaque layer a double premultiply or a channel swap is invisible.
-    let layer = Image {
-        width: 4,
-        height: 2,
-        pixels: (0..8_u8)
+    let layer = Image::from_straight_rgba(
+        4,
+        2,
+        (0..8_u8)
             .flat_map(|index| [index * 31, 255 - index * 31, index * 17, index * 36])
             .collect(),
-    };
+    );
 
     let mut direct = SkiaRenderer::new(6, 4, Theme::light()).unwrap();
     direct.clear();
@@ -1525,11 +1525,7 @@ fn draw_image_layer_treats_its_input_as_straight_alpha() {
     renderer.clear();
     renderer
         .draw_image_layer(
-            &Image {
-                width: 2,
-                height: 1,
-                pixels: vec![255, 0, 0, 128, 0, 255, 0, 255],
-            },
+            &Image::from_straight_rgba(2, 1, vec![255, 0, 0, 128, 0, 255, 0, 255]),
             0,
             0,
         )
@@ -1544,19 +1540,33 @@ fn draw_image_layer_treats_its_input_as_straight_alpha() {
 }
 
 #[test]
+fn draw_image_layer_does_not_premultiply_native_pixels_twice() {
+    use crate::core::plot::Image;
+
+    let mut renderer = SkiaRenderer::new(1, 1, Theme::light()).unwrap();
+    renderer.clear();
+    renderer
+        .draw_image_layer(
+            &Image::from_premultiplied_rgba(1, 1, vec![128, 0, 0, 128]),
+            0,
+            0,
+        )
+        .unwrap();
+
+    let composed = renderer.into_image_demultiplied();
+    let pixel = image_pixel_rgba(&composed, 0, 0);
+    assert_eq!(pixel[0], 255);
+    assert!(pixel[1].abs_diff(127) <= 2, "{pixel:?}");
+    assert!(pixel[2].abs_diff(127) <= 2, "{pixel:?}");
+}
+
+#[test]
 fn draw_image_layer_rejects_a_buffer_that_does_not_match_its_dimensions() {
     use crate::core::plot::Image;
 
     let mut renderer = SkiaRenderer::new(4, 4, Theme::light()).unwrap();
-    let result = renderer.draw_image_layer(
-        &Image {
-            width: 2,
-            height: 2,
-            pixels: vec![0; 4 * 4 * 3],
-        },
-        0,
-        0,
-    );
+    let result =
+        renderer.draw_image_layer(&Image::from_straight_rgba(2, 2, vec![0; 4 * 4 * 3]), 0, 0);
     assert!(result.is_err());
 }
 

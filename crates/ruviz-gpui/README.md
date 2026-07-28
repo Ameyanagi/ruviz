@@ -10,8 +10,8 @@ own the window, layout tree, and surrounding application shell.
 
 ```toml
 [dependencies]
-ruviz = "0.5.0"
-ruviz-gpui = "0.5.0"
+ruviz = { version = "0.6.0", features = ["3d"] }
+ruviz-gpui = { version = "0.6.0", features = ["3d"] }
 ```
 
 ## What This Crate Provides
@@ -21,6 +21,45 @@ ruviz-gpui = "0.5.0"
 - pan, zoom, hover, selection, and context-menu integration
 - absolute-window coordinate conversion and frame-aware click/hover callbacks
 - PNG save and clipboard-copy actions routed through the host platform
+- static and interactive image-backed 3D views with background rendering
+
+## 3D plots
+
+The 3D builder accepts a normal ruviz 3D builder or an existing
+`InteractivePlot3DSession`:
+
+```rust,ignore,reason=requires-a-gpui-view-context
+let plot = ruviz_gpui::plot3d_builder(
+    ruviz::surface(&x, &y, &z)
+        .title("Surface")
+        .xlabel("x")
+        .ylabel("y")
+        .zlabel("z"),
+)
+.interactive()
+.fill()
+.on_pick(|hit| println!("picked {hit:?}"))
+.on_error(|error| eprintln!("render failed: {error}"))
+.build(cx);
+```
+
+Primary-button drag orbits, secondary/middle drag pans, the wheel zooms, and a
+double-click or Escape resets the camera. Use `.static_view()` to keep
+responsive resize and replacement while ignoring user input. Rendering runs on
+GPUI's background executor with latest-request-wins scheduling, and the last
+good frame remains visible while a newer frame is pending.
+
+Use `RuvizPlot3D::set_plot` to replace the scene and reset its camera, or
+`RuvizPlot3D::set_plot_keep_view` to replace the scene while retaining the
+current camera. The older `set_plot_keep_camera` spelling remains as a
+deprecated compatibility alias. Direct `session_mut()` access is also
+deprecated because GPUI cannot automatically observe mutations made through
+the returned core session.
+
+The adapter is image-backed. With `3d-gpu`, a worker-owned GPU renderer is
+created lazily and retained across frames, but each completed frame is read back
+and uploaded as a GPUI image. The feature does not imply zero-copy or direct
+GPUI texture presentation. Without `3d-gpu`, the worker uses CPU rendering.
 
 ## Coordinates and pointer callbacks
 
@@ -87,6 +126,7 @@ cargo run --example static_embed
 cargo run --example observable_embed
 cargo run --example streaming_embed
 cargo run --example coordinate_events
+cargo run --example plot3d_embed --features 3d
 ```
 
 ## Updating Data and Replacing Plots

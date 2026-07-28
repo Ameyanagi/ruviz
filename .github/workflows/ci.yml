@@ -38,6 +38,9 @@ jobs:
       - name: Check ruviz-gpui formatting
         run: cargo fmt --all --manifest-path crates/ruviz-gpui/Cargo.toml -- --check
 
+      - name: Check native GUI adapter formatting
+        run: cargo fmt --all --manifest-path crates/gui-adapters/Cargo.toml -- --check
+
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
@@ -63,6 +66,7 @@ jobs:
             ~/.cargo/git
             target
             crates/ruviz-gpui/target
+            crates/gui-adapters/target
           key: ${{ runner.os }}-cargo-clippy-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Run clippy
@@ -74,8 +78,15 @@ jobs:
       # ruviz-gpui is its own workspace (see the root Cargo.toml), so it is not
       # reachable by `-p` from here and needs an explicit manifest path. This is
       # the only CI step that resolves the zed GPUI checkout.
-      - name: Run clippy for the GPUI 3D feature surface
-        run: cargo clippy --manifest-path crates/ruviz-gpui/Cargo.toml --all-targets --all-features -- -D warnings
+      - name: Run clippy for the GPUI default and 3D feature surfaces
+        run: |
+          cargo clippy --manifest-path crates/ruviz-gpui/Cargo.toml --all-targets --locked -- -D warnings
+          cargo clippy --manifest-path crates/ruviz-gpui/Cargo.toml --all-targets --all-features --locked -- -D warnings
+
+      - name: Run clippy for native GUI adapters
+        run: |
+          cargo clippy --manifest-path crates/gui-adapters/Cargo.toml --workspace --all-targets --locked -- -D warnings
+          cargo clippy --manifest-path crates/gui-adapters/Cargo.toml --workspace --all-targets --all-features --locked -- -D warnings
 
       - name: Test production unwrap checker
         run: python3 -m unittest scripts/test_check_no_new_production_unwraps.py
@@ -139,6 +150,92 @@ jobs:
 
       - name: Verify packaged crates from an external consumer
         run: uv run python scripts/verify_packaged_crates.py --mode ci
+
+  gui-adapter-packages:
+    name: Packaged Native GUI Adapters
+    runs-on: ubuntu-latest
+    needs: [fmt, clippy]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v8.0.0
+
+      - name: Cache GUI adapter package sources
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            crates/gui-adapters/target
+          key: ${{ runner.os }}-cargo-gui-adapter-packages-${{ hashFiles('crates/gui-adapters/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-gui-adapter-packages-
+
+      - name: Test native GUI adapter package verifier
+        run: uv run python -m unittest scripts/test_verify_gui_adapter_packages.py
+
+      - name: Verify packaged adapters from a fresh consumer
+        run: uv run python scripts/verify_gui_adapter_packages.py --mode ci
+
+  native-gui-tests:
+    name: Native GUI Behavioral Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux desktop build dependencies
+        uses: ./.github/actions/install-linux-desktop-build-deps
+
+      - name: Cache native GUI test workspaces
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            crates/gui-adapters/target
+            crates/ruviz-gpui/target
+          key: ${{ runner.os }}-cargo-native-gui-tests-${{ hashFiles('crates/gui-adapters/Cargo.lock', 'crates/ruviz-gpui/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-native-gui-tests-
+
+      - name: Test adapter default behavior
+        run: cargo test --manifest-path crates/gui-adapters/Cargo.toml --workspace --lib --locked
+
+      - name: Test adapter 3D behavior
+        run: cargo test --manifest-path crates/gui-adapters/Cargo.toml --workspace --lib --features 3d --locked
+
+      - name: Test all adapter feature behavior
+        run: cargo test --manifest-path crates/gui-adapters/Cargo.toml --workspace --lib --all-features --locked
+
+      - name: Test adapter documentation
+        run: |
+          cargo test --manifest-path crates/gui-adapters/Cargo.toml --workspace --doc --locked
+          cargo test --manifest-path crates/gui-adapters/Cargo.toml --workspace --doc --all-features --locked
+
+      - name: Test GPUI default behavior
+        run: cargo test --manifest-path crates/ruviz-gpui/Cargo.toml --lib --locked
+
+      - name: Test GPUI 3D behavior
+        run: cargo test --manifest-path crates/ruviz-gpui/Cargo.toml --lib --no-default-features --features 3d --locked
+
+      - name: Test all GPUI feature behavior
+        run: cargo test --manifest-path crates/ruviz-gpui/Cargo.toml --lib --all-features --locked
+
+      - name: Test GPUI documentation
+        run: |
+          cargo test --manifest-path crates/ruviz-gpui/Cargo.toml --doc --locked
+          cargo test --manifest-path crates/ruviz-gpui/Cargo.toml --doc --all-features --locked
 
   test-fast:
     name: Test Fast Lane
@@ -469,6 +566,9 @@ jobs:
           sudo apt-get install -y mesa-vulkan-drivers vulkan-tools
           vulkaninfo --summary
 
+      # `three_d_gpu_test` includes the same retained
+      # `BackgroundRenderer3D::GpuReadback` path used by every native adapter,
+      # and asserts a non-empty adapter name plus positive readback bytes.
       - name: Run direct 3D GPU suite with a required adapter
         run: |
           mkdir -p generated/tests/render
@@ -571,6 +671,53 @@ jobs:
 
       - name: Check all-feature examples
         run: cargo check --examples --all-features
+
+  gui-adapters-msrv:
+    name: Native GUI Adapter MSRV (1.92)
+    runs-on: ubuntu-latest
+    env:
+      RUSTUP_TOOLCHAIN: 1.92.0
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust 1.92
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.92.0
+
+      - name: Assert the MSRV rustc is the one that runs
+        env:
+          EXPECTED_RUSTC: "1.92.0"
+        run: |
+          actual="$(rustc --version | cut -d' ' -f2)"
+          if [[ "${actual}" != "${EXPECTED_RUSTC}" ]]; then
+            echo "::error::expected rustc ${EXPECTED_RUSTC}, got ${actual}"
+            exit 1
+          fi
+
+      - name: Install Linux desktop build dependencies
+        uses: ./.github/actions/install-linux-desktop-build-deps
+
+      - name: Cache MSRV GUI adapter workspace
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            crates/gui-adapters/target
+          key: ${{ runner.os }}-cargo-gui-adapters-msrv-1.92-${{ hashFiles('crates/gui-adapters/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-gui-adapters-msrv-1.92-
+
+      - name: Check default adapter features on the MSRV
+        run: cargo check --manifest-path crates/gui-adapters/Cargo.toml --workspace --locked
+
+      - name: Check 3D adapter features on the MSRV
+        run: cargo check --manifest-path crates/gui-adapters/Cargo.toml --workspace --features 3d --locked
+
+      - name: Check all adapter features and examples on the MSRV
+        run: |
+          cargo check --manifest-path crates/gui-adapters/Cargo.toml --workspace --all-features --locked
+          cargo check --manifest-path crates/gui-adapters/Cargo.toml --workspace --examples --all-features --locked
 
   python:
     name: Python
@@ -853,6 +1000,62 @@ jobs:
         if: ${{ !matrix.platform.cross }}
         run: cargo check --manifest-path crates/ruviz-gpui/Cargo.toml --target ${{ matrix.platform.target }} --examples
 
+  gui-adapters:
+    name: Native GUI Adapters (${{ matrix.platform.name }})
+    runs-on: ${{ matrix.platform.os }}
+    needs: [fmt, clippy]
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - name: Linux
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - name: macOS
+            os: macos-14
+            target: aarch64-apple-darwin
+          - name: Windows
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform.target }}
+
+      - name: Install Linux desktop build dependencies
+        if: runner.os == 'Linux'
+        uses: ./.github/actions/install-linux-desktop-build-deps
+
+      - name: Cache native GUI adapter workspace
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            crates/gui-adapters/target
+          key: ${{ runner.os }}-${{ matrix.platform.target }}-cargo-gui-adapters-${{ hashFiles('crates/gui-adapters/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-${{ matrix.platform.target }}-cargo-gui-adapters-
+
+      - name: Check default adapter features
+        run: cargo check --manifest-path crates/gui-adapters/Cargo.toml --workspace --target ${{ matrix.platform.target }} --locked
+
+      - name: Check 3D adapter features
+        run: cargo check --manifest-path crates/gui-adapters/Cargo.toml --workspace --target ${{ matrix.platform.target }} --features 3d --locked
+
+      - name: Check all adapter features
+        run: cargo check --manifest-path crates/gui-adapters/Cargo.toml --workspace --target ${{ matrix.platform.target }} --all-features --locked
+
+      - name: Check adapter examples
+        run: cargo check --manifest-path crates/gui-adapters/Cargo.toml --workspace --target ${{ matrix.platform.target }} --examples --all-features --locked
+
+      - name: Build adapter documentation
+        run: cargo doc --manifest-path crates/gui-adapters/Cargo.toml --workspace --target ${{ matrix.platform.target }} --all-features --no-deps --locked
+        env:
+          RUSTDOCFLAGS: -D warnings
+
   wasm-web:
     name: WASM + Web
     runs-on: ubuntu-latest
@@ -970,6 +1173,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
+            crates/gui-adapters/target
           key: ${{ runner.os }}-cargo-docs-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Install Linux desktop build dependencies
@@ -1001,6 +1205,11 @@ jobs:
 
       - name: Build documentation
         run: cargo doc --all-features --no-deps
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+      - name: Build native GUI adapter documentation
+        run: cargo doc --manifest-path crates/gui-adapters/Cargo.toml --workspace --all-features --no-deps --locked
         env:
           RUSTDOCFLAGS: -D warnings
 

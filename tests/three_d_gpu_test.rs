@@ -176,3 +176,33 @@ fn interactive_gpu_image_path_is_truthfully_labeled_as_readback_fallback() {
     assert!(diagnostics.readback_bytes > 0);
     assert!(diagnostics.adapter_name.is_some());
 }
+
+#[test]
+fn adapter_background_renderer_executes_gpu_readback_on_required_adapter() {
+    let mut session = scatter3d(&[0.0, 1.0], &[0.0, 1.0], &[0.0, 1.0])
+        .interactive_session()
+        .expect("interactive session");
+    let job = session
+        .background_render_job()
+        .expect("immutable adapter render job");
+    let mut renderer = BackgroundRenderer3D::new(BackgroundRenderBackend3D::GpuReadback);
+    let (rendered, diagnostics) = renderer
+        .render_with_diagnostics(job)
+        .expect("adapter GPU readback");
+
+    assert!(rendered.image.pixels.iter().any(|&channel| channel != 0));
+    assert_eq!(diagnostics.actual_backend, "gpu3d-background-readback");
+    assert!(diagnostics.readback_bytes > 0);
+    assert!(
+        diagnostics
+            .adapter_name
+            .as_deref()
+            .is_some_and(|name| !name.is_empty())
+    );
+    assert!(
+        diagnostics
+            .fallback_reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("readback"))
+    );
+}

@@ -1,0 +1,159 @@
+// Copyright 2026 the ruviz contributors.
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+export enum RuvizImageFit {
+    contain,
+    cover,
+    fill,
+}
+
+export struct RuvizSlotState {
+    source: image,
+    interactive: bool,
+    device-scale: float,
+    image-fit: RuvizImageFit,
+}
+
+/// Application-wide bridge shared by every `RuvizPlot` in one Slint component
+/// tree. The Rust controller owns the slots model and callback handlers.
+export global RuvizRuntime {
+    in-out property <[RuvizSlotState]> slots;
+    callback resized(slot-id: int, width: float, height: float, device-scale: float);
+    callback pointer-event(
+        slot-id: int,
+        kind: int,
+        button: int,
+        x: float,
+        y: float,
+    );
+    callback wheel-event(
+        slot-id: int,
+        delta-x: float,
+        delta-y: float,
+        x: float,
+        y: float,
+    ) -> bool;
+    callback double-clicked(slot-id: int, x: float, y: float);
+    callback escape(slot-id: int);
+    callback focus-lost(slot-id: int);
+}
+
+/// Image-backed native ruviz presentation surface.
+///
+/// The Rust `RuvizController` supplies frames and handles callbacks. `slot-id`
+/// allows any number of components to share one retained controller.
+export component RuvizPlot inherits Rectangle {
+    in property <int> slot-id;
+    private property <bool> slot-valid:
+        root.slot-id >= 0 && root.slot-id < RuvizRuntime.slots.length;
+    private property <bool> interactive:
+        root.slot-valid && RuvizRuntime.slots[root.slot-id].interactive;
+    private property <float> device-scale:
+        root.slot-valid ? RuvizRuntime.slots[root.slot-id].device-scale : 1.0;
+    private property <RuvizImageFit> image-fit:
+        root.slot-valid ? RuvizRuntime.slots[root.slot-id].image-fit : RuvizImageFit.contain;
+
+    min-width: 1px;
+    min-height: 1px;
+    clip: true;
+
+    changed width => {
+        RuvizRuntime.resized(root.slot-id, root.width / 1px, root.height / 1px, root.device-scale);
+    }
+    changed height => {
+        RuvizRuntime.resized(root.slot-id, root.width / 1px, root.height / 1px, root.device-scale);
+    }
+    changed device-scale => {
+        RuvizRuntime.resized(root.slot-id, root.width / 1px, root.height / 1px, root.device-scale);
+    }
+    changed slot-valid => {
+        if (root.slot-valid) {
+            RuvizRuntime.resized(root.slot-id, root.width / 1px, root.height / 1px, root.device-scale);
+        }
+    }
+
+    Image {
+        width: parent.width;
+        height: parent.height;
+        source: root.slot-valid ? RuvizRuntime.slots[root.slot-id].source : @image-url("");
+        image-fit:
+            root.image-fit == RuvizImageFit.cover ? ImageFit.cover :
+            root.image-fit == RuvizImageFit.fill ? ImageFit.fill :
+            ImageFit.contain;
+    }
+
+    input := FocusScope {
+        width: parent.width;
+        height: parent.height;
+        enabled: root.interactive;
+
+        focus-lost(_) => {
+            RuvizRuntime.focus-lost(root.slot-id);
+        }
+
+        key-pressed(event) => {
+            if (event.text == Key.Escape) {
+                RuvizRuntime.escape(root.slot-id);
+                accept
+            } else {
+                reject
+            }
+        }
+
+        TouchArea {
+            enabled: root.interactive;
+
+            pointer-event(event) => {
+                RuvizRuntime.pointer-event(
+                    root.slot-id,
+                    event.kind == PointerEventKind.down ? 0 :
+                    event.kind == PointerEventKind.up ? 1 :
+                    event.kind == PointerEventKind.move ? 2 : 3,
+                    event.button == PointerEventButton.left ? 1 :
+                    event.button == PointerEventButton.right ? 2 :
+                    event.button == PointerEventButton.middle ? 3 : 0,
+                    self.mouse-x / 1px,
+                    self.mouse-y / 1px,
+                );
+            }
+
+            scroll-event(event) => {
+                if (RuvizRuntime.wheel-event(
+                    root.slot-id,
+                    event.delta-x / 1px,
+                    event.delta-y / 1px,
+                    self.mouse-x / 1px,
+                    self.mouse-y / 1px,
+                )) {
+                    accept
+                } else {
+                    reject
+                }
+            }
+
+            double-clicked => {
+                RuvizRuntime.double-clicked(
+                    root.slot-id,
+                    self.mouse-x / 1px,
+                    self.mouse-y / 1px,
+                );
+            }
+        }
+    }
+}
+
+/// Responsive multi-slot grid backed by the shared `RuvizRuntime` model.
+export component RuvizPlotGrid inherits Rectangle {
+    in property <int> columns: 2;
+    min-width: 1px;
+    min-height: 1px;
+
+    GridLayout {
+        spacing: 8px;
+        for slot[index] in RuvizRuntime.slots: RuvizPlot {
+            slot-id: index;
+            row: index / max(1, root.columns);
+            col: Math.mod(index, max(1, root.columns));
+        }
+    }
+}
