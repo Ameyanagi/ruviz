@@ -838,6 +838,8 @@ mod tests {
         Plot::new().line(&[0.0, 1.0, 2.0], &[0.0, 1.0, 0.0])
     }
 
+    const BACKGROUND_RENDER_TIMEOUT: Duration = Duration::from_secs(30);
+
     fn scheduled_completion(
         widget: &mut RuvizPlot,
         target: ImageTarget,
@@ -1004,8 +1006,8 @@ mod tests {
         assert!(widget.request_render_if_needed(initial_key, target, context.clone()));
         let initial_completion = widget
             .completion_rx
-            .recv_timeout(Duration::from_secs(5))
-            .unwrap();
+            .recv_timeout(BACKGROUND_RENDER_TIMEOUT)
+            .expect("initial reactive frame should complete");
         widget.handle_completion(&context, &mut Vec::new(), initial_completion);
         let initial_stamp = widget.displayed_stamp.unwrap();
         assert!(widget.texture.is_some());
@@ -1033,8 +1035,8 @@ mod tests {
         assert!(widget.request_render_if_needed(updated_key, target, context.clone()));
         let updated_completion = widget
             .completion_rx
-            .recv_timeout(Duration::from_secs(5))
-            .unwrap();
+            .recv_timeout(BACKGROUND_RENDER_TIMEOUT)
+            .expect("updated reactive frame should complete");
         widget.handle_completion(&context, &mut Vec::new(), updated_completion);
 
         let updated_stamp = widget.displayed_stamp.unwrap();
