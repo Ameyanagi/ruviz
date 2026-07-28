@@ -2008,7 +2008,7 @@ mod tests {
 
     #[test]
     fn packaged_component_focuses_on_pointer_down() {
-        let component = include_str!("../ui/ruviz.slint");
+        let component = include_str!("../ui/ruviz.slint").replace("\r\n", "\n");
         assert!(
             component.contains(
                 "if (event.kind == PointerEventKind.down) {\n                    input.focus();"
