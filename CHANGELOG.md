@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+_None yet._
+
+## [0.6.0] - 2026-07-28
+
 ### Breaking
 
 - Removed the unreachable 2D series-parallel renderer. `Plot::with_parallel`, `Plot::parallel_threshold`, `ruviz::render::{ParallelRenderer, ParallelConfig, SeriesRenderData, PerformanceStats, DetailedPerformanceInfo}` and `RenderPipeline::{parallel_renderer, parallel_renderer_mut}` are gone. No public `render()`/`save()` could reach that path, and `.backend(BackendType::Parallel)` still resolves to Skia with an explicit `UnsupportedOperation` fallback reason (previously `FeatureDisabled` without the `parallel` feature).

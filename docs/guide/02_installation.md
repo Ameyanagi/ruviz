@@ -62,7 +62,7 @@ Add ruviz to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-ruviz = "0.5.0"
+ruviz = "0.6.0"
 ```
 
 Or with specific features:
@@ -79,7 +79,7 @@ ruviz uses feature flags to enable optional functionality. Choose based on your 
 ### Default Features
 
 ```toml
-ruviz = "0.5.0"  # Includes: ndarray_support, parallel
+ruviz = "0.6.0"  # Includes: ndarray_support, parallel
 ```
 
 **Enabled by default**:
@@ -282,7 +282,7 @@ rustup update
 
 ### Feature Conflicts
 
-**Problem**: `error: package ruviz v0.5.0 cannot be built because it requires rustc 1.92 or newer`
+**Problem**: `error: package ruviz v0.6.0 cannot be built because it requires rustc 1.92 or newer`
 
 **Solution**: Update Rust:
 ```bash
