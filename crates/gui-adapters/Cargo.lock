@@ -5285,6 +5285,7 @@ dependencies = [
 name = "ruviz-slint"
 version = "0.6.0"
 dependencies = [
+ "i-slint-backend-testing",
  "ruviz",
  "slint",
  "slint-build",

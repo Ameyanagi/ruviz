@@ -148,15 +148,22 @@ export component RuvizPlot inherits Rectangle {
 /// Responsive multi-slot grid backed by the shared `RuvizRuntime` model.
 export component RuvizPlotGrid inherits Rectangle {
     in property <int> columns: 2;
+    private property <int> safe-columns: max(1, root.columns);
+    private property <int> rows:
+        max(1, (RuvizRuntime.slots.length + root.safe-columns - 1) / root.safe-columns);
+    private property <length> spacing: 8px;
+    private property <length> cell-width:
+        max(1px, (root.width - (root.safe-columns - 1) * root.spacing) / root.safe-columns);
+    private property <length> cell-height:
+        max(1px, (root.height - (root.rows - 1) * root.spacing) / root.rows);
     min-width: 1px;
     min-height: 1px;
 
-    GridLayout {
-        spacing: 8px;
-        for slot[index] in RuvizRuntime.slots: RuvizPlot {
-            slot-id: index;
-            row: index / max(1, root.columns);
-            col: Math.mod(index, max(1, root.columns));
-        }
+    for slot[index] in RuvizRuntime.slots: RuvizPlot {
+        slot-id: index;
+        x: Math.mod(index, root.safe-columns) * (root.cell-width + root.spacing);
+        y: (index / root.safe-columns) * (root.cell-height + root.spacing);
+        width: root.cell-width;
+        height: root.cell-height;
     }
 }

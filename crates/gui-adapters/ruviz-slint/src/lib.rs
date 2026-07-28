@@ -2017,6 +2017,20 @@ mod tests {
         );
     }
 
+    #[test]
+    fn packaged_grid_avoids_dynamic_grid_layout_metadata() {
+        let component = include_str!("../ui/ruviz.slint");
+        assert!(
+            !component.contains("GridLayout"),
+            "runtime slot repeaters must not participate in Slint's grid-layout metadata"
+        );
+        assert!(
+            component.contains("width: root.cell-width;")
+                && component.contains("height: root.cell-height;"),
+            "runtime slots must retain explicit responsive cell geometry"
+        );
+    }
+
     #[cfg(feature = "3d")]
     fn two_d_session(handle: PlotHandle) -> InteractivePlotSession {
         match handle {
