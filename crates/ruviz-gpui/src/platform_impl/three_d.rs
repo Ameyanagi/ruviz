@@ -832,7 +832,7 @@ fn pointer_down_handler(
 ) -> impl Fn(&MouseDownEvent, &mut Window, &mut App) + 'static {
     move |event, window, cx| {
         entity.update(cx, |view, cx| {
-            window.focus(&view.focus_handle, cx);
+            cx.focus_self(window);
             if let Err(error) = view.pointer_down(event, cx) {
                 view.report_error(error, cx);
             }
