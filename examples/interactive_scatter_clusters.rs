@@ -6,7 +6,7 @@
 
 use ruviz::prelude::*;
 
-fn main() -> Result<()> {
+fn main() -> PlotResult<()> {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -14,7 +14,7 @@ fn main() -> Result<()> {
         .block_on(async_main())
 }
 
-async fn async_main() -> Result<()> {
+async fn async_main() -> PlotResult<()> {
     println!("Starting interactive scatter cluster example...");
     println!("Controls:");
     println!("  - Mouse wheel: Zoom in/out");
@@ -37,7 +37,7 @@ async fn async_main() -> Result<()> {
         .title("Interactive Clustered Scatter")
         .xlabel("Feature 1")
         .ylabel("Feature 2")
-        .legend(Position::TopLeft)
+        .legend(LegendPosition::UpperLeft)
         .xlim(-1.5, 12.0)
         .ylim(-1.5, 9.5)
         .scatter(&cluster_a_x, &cluster_a_y)

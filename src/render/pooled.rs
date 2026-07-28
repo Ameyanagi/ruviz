@@ -68,12 +68,10 @@ impl PooledRenderer {
             return Ok(PooledVec::new(self.f32_pool.clone()));
         }
 
-        // Get pooled buffer instead of Vec::with_capacity
-        let mut result = PooledVec::with_capacity(len, self.f32_pool.clone());
-
         let range = max - min;
         if range == 0.0 {
             // All points have same x coordinate
+            let mut result = PooledVec::with_capacity(len, self.f32_pool.clone());
             let mid_x = left + (right - left) / 2.0;
             result.resize(len, mid_x);
             return Ok(result);
@@ -81,66 +79,7 @@ impl PooledRenderer {
 
         let scale = (right - left) as f64 / range;
         let offset = left as f64 - min * scale;
-
-        #[cfg(feature = "simd")]
-        {
-            // Use SIMD for batch processing with pooled memory
-            if len >= 4 {
-                let scale_vec = f32x4::splat(scale as f32);
-                let offset_vec = f32x4::splat(offset as f32);
-
-                // Process data in chunks of 4 using SIMD
-                let mut i = 0;
-                while i + 4 <= len {
-                    let chunk = [
-                        x_data.get(i).copied().unwrap_or(0.0) as f32,
-                        x_data.get(i + 1).copied().unwrap_or(0.0) as f32,
-                        x_data.get(i + 2).copied().unwrap_or(0.0) as f32,
-                        x_data.get(i + 3).copied().unwrap_or(0.0) as f32,
-                    ];
-
-                    let x_vec = f32x4::new(chunk);
-                    let transformed = x_vec * scale_vec + offset_vec;
-                    let output = transformed.to_array();
-
-                    result.push(output[0]);
-                    result.push(output[1]);
-                    result.push(output[2]);
-                    result.push(output[3]);
-
-                    i += 4;
-                }
-
-                // Handle remaining elements
-                while i < len {
-                    if let Some(x) = x_data.get(i) {
-                        let transformed = (*x * scale + offset) as f32;
-                        result.push(transformed);
-                    }
-                    i += 1;
-                }
-            } else {
-                // Process small datasets without SIMD
-                for i in 0..len {
-                    if let Some(x) = x_data.get(i) {
-                        let transformed = (*x * scale + offset) as f32;
-                        result.push(transformed);
-                    }
-                }
-            }
-        }
-        #[cfg(not(feature = "simd"))]
-        {
-            // Process all datasets without SIMD
-            for i in 0..len {
-                if let Some(x) = x_data.get(i) {
-                    let transformed = (*x * scale + offset) as f32;
-                    result.push(transformed);
-                }
-            }
-        }
-
-        Ok(result)
+        Ok(self.transform_axis_pooled(x_data, len, scale, offset))
     }
 
     /// Transform Y coordinates using SIMD with memory pooling
@@ -160,12 +99,10 @@ impl PooledRenderer {
             return Ok(PooledVec::new(self.f32_pool.clone()));
         }
 
-        // Get pooled buffer instead of Vec::with_capacity
-        let mut result = PooledVec::with_capacity(len, self.f32_pool.clone());
-
         let range = max - min;
         if range == 0.0 {
             // All points have same y coordinate
+            let mut result = PooledVec::with_capacity(len, self.f32_pool.clone());
             let mid_y = top + (bottom - top) / 2.0;
             result.resize(len, mid_y);
             return Ok(result);
@@ -174,11 +111,56 @@ impl PooledRenderer {
         // Note: Y-axis is flipped (higher values are lower on screen)
         let scale = (top - bottom) as f64 / range;
         let offset = bottom as f64 - min * scale;
+        Ok(self.transform_axis_pooled(y_data, len, scale, offset))
+    }
 
+    /// Map one axis's samples onto their pixel positions: `value * scale + offset`.
+    ///
+    /// X and Y differ only in how `scale` and `offset` are derived and in what a
+    /// degenerate range collapses to, so everything after that is shared. Two
+    /// copies of a SIMD loop, a remainder loop and a scalar fallback — one per
+    /// axis — is exactly the shape in which the two axes drift apart.
+    fn transform_axis_pooled<T>(
+        &self,
+        data: &T,
+        len: usize,
+        scale: f64,
+        offset: f64,
+    ) -> PooledVec<f32>
+    where
+        T: crate::data::Data1D<f64>,
+    {
+        // Get pooled buffer instead of Vec::with_capacity
+        let mut result = PooledVec::with_capacity(len, self.f32_pool.clone());
+
+        // Contiguous storage hands the loop a plain slice, whose bounds checks
+        // the optimiser can hoist; anything else keeps the per-element accessor.
+        // The two arms are separate monomorphisations, so neither pays a branch
+        // per point, and both compute the identical value for every element.
+        match data.as_slice() {
+            Some(values) => {
+                Self::transform_samples(len, |i| values.get(i).copied(), scale, offset, &mut result)
+            }
+            None => {
+                Self::transform_samples(len, |i| data.get(i).copied(), scale, offset, &mut result)
+            }
+        }
+
+        result
+    }
+
+    /// Push `at(i) * scale + offset` for every `i` the accessor answers.
+    ///
+    /// A sample the accessor cannot produce is skipped rather than defaulted,
+    /// which is why `at` returns an `Option` instead of a `f64`.
+    fn transform_samples<F>(len: usize, at: F, scale: f64, offset: f64, result: &mut PooledVec<f32>)
+    where
+        F: Fn(usize) -> Option<f64>,
+    {
         #[cfg(feature = "simd")]
         {
-            // Use SIMD for batch processing with pooled memory
             if len >= 4 {
+                // Use SIMD for batch processing with pooled memory
                 let scale_vec = f32x4::splat(scale as f32);
                 let offset_vec = f32x4::splat(offset as f32);
 
@@ -186,14 +168,13 @@ impl PooledRenderer {
                 let mut i = 0;
                 while i + 4 <= len {
                     let chunk = [
-                        y_data.get(i).copied().unwrap_or(0.0) as f32,
-                        y_data.get(i + 1).copied().unwrap_or(0.0) as f32,
-                        y_data.get(i + 2).copied().unwrap_or(0.0) as f32,
-                        y_data.get(i + 3).copied().unwrap_or(0.0) as f32,
+                        at(i).unwrap_or(0.0) as f32,
+                        at(i + 1).unwrap_or(0.0) as f32,
+                        at(i + 2).unwrap_or(0.0) as f32,
+                        at(i + 3).unwrap_or(0.0) as f32,
                     ];
 
-                    let y_vec = f32x4::new(chunk);
-                    let transformed = y_vec * scale_vec + offset_vec;
+                    let transformed = f32x4::new(chunk) * scale_vec + offset_vec;
                     let output = transformed.to_array();
 
                     result.push(output[0]);
@@ -206,34 +187,22 @@ impl PooledRenderer {
 
                 // Handle remaining elements
                 while i < len {
-                    if let Some(y) = y_data.get(i) {
-                        let transformed = (*y * scale + offset) as f32;
-                        result.push(transformed);
+                    if let Some(value) = at(i) {
+                        result.push((value * scale + offset) as f32);
                     }
                     i += 1;
                 }
-            } else {
-                // Process small datasets without SIMD
-                for i in 0..len {
-                    if let Some(y) = y_data.get(i) {
-                        let transformed = (*y * scale + offset) as f32;
-                        result.push(transformed);
-                    }
-                }
-            }
-        }
-        #[cfg(not(feature = "simd"))]
-        {
-            // Process all datasets without SIMD
-            for i in 0..len {
-                if let Some(y) = y_data.get(i) {
-                    let transformed = (*y * scale + offset) as f32;
-                    result.push(transformed);
-                }
+
+                return;
             }
         }
 
-        Ok(result)
+        // Small datasets, and every dataset when `simd` is off.
+        for i in 0..len {
+            if let Some(value) = at(i) {
+                result.push((value * scale + offset) as f32);
+            }
+        }
     }
 
     /// Transform both X and Y coordinates in one call using SIMD and memory pooling
@@ -258,10 +227,12 @@ impl PooledRenderer {
         Ok((x_result, y_result))
     }
 
-    /// Generate tick marks using pooled memory
+    /// Generate tick marks into pooled memory
     ///
-    /// Replaces the frequent small allocations in tick generation with
-    /// pooled buffer reuse for better performance.
+    /// The tick *values* come from [`crate::axes::generate_ticks`], the single
+    /// canonical generator; this wrapper only chooses where they are stored, so
+    /// the pooled path can never produce a different axis from the raster, SVG
+    /// or layout paths.
     pub fn generate_ticks_pooled(&self, min: f64, max: f64, target_count: usize) -> PooledVec<f64> {
         let mut ticks = PooledVec::new(SharedMemoryPool::new(target_count.max(10)));
 
@@ -269,43 +240,8 @@ impl PooledRenderer {
             return ticks;
         }
 
-        if target_count <= 1 {
-            ticks.push(min);
-            return ticks;
-        }
-
-        if target_count == 2 {
-            ticks.push(min);
-            ticks.push(max);
-            return ticks;
-        }
-
-        let range = max - min;
-        let raw_step = range / (target_count - 1) as f64;
-
-        // Find nice step size
-        let magnitude = 10.0_f64.powf(raw_step.log10().floor());
-        let normalized_step = raw_step / magnitude;
-
-        let nice_step = if normalized_step <= 1.0 {
-            1.0
-        } else if normalized_step <= 2.0 {
-            2.0
-        } else if normalized_step <= 5.0 {
-            5.0
-        } else {
-            10.0
-        } * magnitude;
-
-        // Generate ticks
-        let start = (min / nice_step).ceil() * nice_step;
-        let mut current = start;
-
-        while current <= max + nice_step * 0.001 {
-            if current >= min - nice_step * 0.001 {
-                ticks.push(current);
-            }
-            current += nice_step;
+        for value in crate::axes::generate_ticks(min, max, target_count) {
+            ticks.push(value);
         }
 
         ticks
@@ -446,6 +382,53 @@ mod tests {
         assert!((result[4] - 100.0).abs() < 0.001); // 5.0 -> 100.0
     }
 
+    /// The contiguous fast path and the per-element path must produce the same
+    /// pixels, or the optimisation is a rendering change wearing a performance
+    /// label. Both axes are checked, because they now share one loop.
+    #[test]
+    fn test_pooled_transform_is_identical_with_and_without_a_contiguous_view() {
+        /// `Vec<f64>` with `Data1D::as_slice` left at its default `None`.
+        struct NoSlice(Vec<f64>);
+
+        impl crate::data::Data1D<f64> for NoSlice {
+            fn len(&self) -> usize {
+                self.0.len()
+            }
+
+            fn get(&self, index: usize) -> Option<&f64> {
+                self.0.get(index)
+            }
+
+            fn iter(&self) -> Box<dyn Iterator<Item = &f64> + '_> {
+                Box::new(self.0.iter())
+            }
+        }
+
+        let renderer = PooledRenderer::new();
+        // Deliberately not a multiple of four, so the SIMD tail runs too.
+        let values: Vec<f64> = (0..11).map(|i| f64::from(i) * 0.7 - 2.0).collect();
+        let slow = NoSlice(values.clone());
+
+        let fast_x = renderer
+            .transform_x_coordinates_pooled(&values, -2.0, 5.0, 10.0, 310.0)
+            .unwrap();
+        let slow_x = renderer
+            .transform_x_coordinates_pooled(&slow, -2.0, 5.0, 10.0, 310.0)
+            .unwrap();
+        let fast_y = renderer
+            .transform_y_coordinates_pooled(&values, -2.0, 5.0, 20.0, 220.0)
+            .unwrap();
+        let slow_y = renderer
+            .transform_y_coordinates_pooled(&slow, -2.0, 5.0, 20.0, 220.0)
+            .unwrap();
+
+        assert_eq!(fast_x.as_slice(), slow_x.as_slice());
+        assert_eq!(fast_y.as_slice(), slow_y.as_slice());
+        assert_eq!(fast_x.len(), values.len());
+        // The y axis is flipped, so the smallest sample sits at the bottom.
+        assert!(fast_y[0] > fast_y[values.len() - 1]);
+    }
+
     #[test]
     fn test_pooled_tick_generation() {
         let renderer = PooledRenderer::new();
@@ -454,6 +437,33 @@ mod tests {
         assert!(ticks.len() >= 2); // At least min and max
         assert!(ticks[0] >= 0.0);
         assert!(ticks[ticks.len() - 1] <= 10.0);
+    }
+
+    /// The pooled path used to carry its own 1/2/5/10 ladder and so produced a
+    /// different axis from every other backend. It must now be nothing but a
+    /// storage choice over [`crate::axes::generate_ticks`].
+    #[test]
+    fn test_pooled_tick_generation_matches_canonical_generator() {
+        let renderer = PooledRenderer::new();
+
+        for (min, max, target) in [
+            (0.0, 10.0, 6),
+            (0.7, 9.3, 5),
+            (-5.0, 5.0, 8),
+            (0.0, 100.0, 6),
+            (1.0, 2.0, 10),
+        ] {
+            let pooled: Vec<f64> = renderer
+                .generate_ticks_pooled(min, max, target)
+                .iter()
+                .copied()
+                .collect();
+            assert_eq!(
+                pooled,
+                crate::axes::generate_ticks(min, max, target),
+                "pooled ticks diverged from the canonical generator for ({min}, {max}, {target})"
+            );
+        }
     }
 
     #[test]

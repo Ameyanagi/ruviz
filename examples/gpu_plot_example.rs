@@ -17,7 +17,7 @@ fn report(label: &str, plot: &Plot) {
     println!("  fallback: {:?}", resolution.fallback_reason());
 }
 
-fn main() -> Result<()> {
+fn main() -> PlotResult<()> {
     std::fs::create_dir_all("generated/examples")?;
 
     let x: Vec<f64> = (0..10_000).map(|i| i as f64 * 0.001).collect();

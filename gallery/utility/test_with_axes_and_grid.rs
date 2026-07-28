@@ -40,9 +40,9 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .ylabel("Amplitude")
         .grid(true)
         .line(&x_data, &y_data)
-        .color(Color::new(255, 0, 0)) // Red for sine
+        .color(Color::from_rgb(255, 0, 0)) // Red for sine
         .line(&x_data, &y2_data)
-        .color(Color::new(0, 0, 255)) // Blue for cosine
+        .color(Color::from_rgb(0, 0, 255)) // Blue for cosine
         .save("axes_test/03_multi_series_grid.png")?;
 
     // 4. Scatter plot with grid
@@ -56,7 +56,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .ylabel("Squared Values")
         .grid(true)
         .scatter(&scatter_x, &scatter_y)
-        .color(Color::new(0, 150, 0)) // Green
+        .color(Color::from_rgb(0, 150, 0)) // Green
         .save("axes_test/04_scatter_grid.png")?;
 
     println!("\n✅ Axes and grid test complete!");

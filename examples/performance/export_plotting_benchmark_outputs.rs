@@ -38,7 +38,7 @@ fn scatter_dataset(points: usize) -> (Vec<f64>, Vec<f64>) {
         .unzip()
 }
 
-fn save_line_100k(output_dir: &Path) -> Result<()> {
+fn save_line_100k(output_dir: &Path) -> PlotResult<()> {
     let (x, y) = line_dataset(100_000);
     let plot = Plot::new()
         .size_px(640, 480)
@@ -50,7 +50,7 @@ fn save_line_100k(output_dir: &Path) -> Result<()> {
     plot.save(output_dir.join("line-100k.png"))
 }
 
-fn save_scatter_100k(output_dir: &Path) -> Result<()> {
+fn save_scatter_100k(output_dir: &Path) -> PlotResult<()> {
     let (x, y) = scatter_dataset(100_000);
     let auto = Plot::new()
         .size_px(640, 480)

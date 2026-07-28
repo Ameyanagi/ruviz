@@ -2,12 +2,11 @@
 
 pub mod backend;
 pub mod color;
+pub mod colorbar;
 pub mod cosmic_text_renderer;
 pub(crate) mod font_registry;
 #[cfg(feature = "gpu")]
 pub mod gpu;
-#[cfg(feature = "parallel")]
-pub mod parallel;
 pub mod pooled;
 pub mod primitives;
 #[cfg(feature = "simd")]
@@ -17,22 +16,20 @@ pub mod style;
 pub mod text;
 pub(crate) mod text_anchor;
 pub mod theme;
+#[cfg(feature = "3d")]
+pub(crate) mod three_d;
 pub mod typst_text;
 
 pub use backend::Renderer;
-pub use color::{Color, ColorError, ColorMap};
+pub use color::{Color, ColorError, ColorMap, ColorMapSpec};
 pub use cosmic_text_renderer::CosmicTextRenderer;
 #[cfg(feature = "gpu")]
 pub use gpu::{GpuBackend, GpuRenderer, initialize_gpu_backend, is_gpu_available};
-#[cfg(feature = "parallel")]
-pub use parallel::{
-    DetailedPerformanceInfo, ParallelConfig, ParallelRenderer, PerformanceStats, SeriesRenderData,
-};
 pub use pooled::{LineSegment, PooledRenderer, PooledRendererStats, get_pooled_renderer};
 pub use primitives::{Arc, Arrow, Polygon, Wedge};
 #[cfg(feature = "simd")]
 pub use simd::{CoordinateBounds, PixelViewport, SIMDPerformanceInfo, SIMDTransformer};
-pub use skia::SkiaRenderer;
+pub use skia::{SkiaRenderer, XTickLabelPlan, XTickRotation, XTickRowBounds, XTickRowMetrics};
 pub use style::{LineStyle, MarkerStyle};
 pub use text::{FontConfig, FontFamily, FontStyle, FontWeight};
 pub use text::{

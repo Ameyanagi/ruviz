@@ -7,7 +7,7 @@
 
 use ruviz::prelude::*;
 
-fn main() -> Result<()> {
+fn main() -> PlotResult<()> {
     let x = vec![0.0, 1.0, 2.0, 3.0, 4.0];
     let y = vec![0.0, 1.0, 4.0, 9.0, 16.0];
 
@@ -68,16 +68,13 @@ fn main() -> Result<()> {
         .title("Heatmap Log Scale + Masking")
         .xlabel("Column")
         .ylabel("Row")
-        .heatmap(
+        .heatmap_with(
             &heatmap_data,
-            Some(
-                HeatmapConfig::new()
-                    .value_scale(AxisScale::Log)
-                    .colorbar(true)
-                    .colorbar_log_subticks(true)
-                    .colorbar_label("Absorbed Energy")
-                    .aspect(1.0),
-            ),
+            HeatmapConfig::new()
+                .value_scale(AxisScale::Log)
+                .colorbar(true)
+                .colorbar_log_subticks(true)
+                .colorbar_label("Absorbed Energy"),
         );
 
     subplots(1, 3, 1800, 560)?

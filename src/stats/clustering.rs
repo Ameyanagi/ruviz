@@ -16,9 +16,24 @@ pub enum LinkageMethod {
 }
 
 /// Result of hierarchical clustering
+///
+/// The matrix uses SciPy's `scipy.cluster.hierarchy.linkage` convention, which
+/// every consumer in this crate (and every reader who has met a linkage matrix
+/// before) already knows:
+///
+/// * ids `0 .. n` are the original observations (leaves);
+/// * row `i` of the matrix describes the cluster with id `n + i`, so a merged
+///   cluster is always nameable and always has an id `>= n`;
+/// * each row is `[left_id, right_id, merge_distance, cluster_size]` with
+///   `left_id < right_id`.
+///
+/// Getting this wrong is not cosmetic: a consumer that reads `n + i` from a
+/// matrix that reuses leaf ids draws a structurally wrong tree, because every
+/// merged cluster is indistinguishable from one of its own leaves.
 #[derive(Debug, Clone)]
 pub struct Linkage {
-    /// Linkage matrix: each row is [cluster1, cluster2, distance, size]
+    /// Linkage matrix: each row is `[cluster1, cluster2, distance, size]`,
+    /// where row `i` defines cluster `n + i`. See the type docs.
     pub matrix: Vec<[f64; 4]>,
     /// Optimal leaf ordering
     pub leaves: Vec<usize>,
@@ -55,25 +70,35 @@ pub fn linkage(distance_matrix: &[Vec<f64>], method: LinkageMethod) -> Linkage {
     // Track cluster sizes and membership
     let mut cluster_size = vec![1usize; n];
     let mut active = vec![true; n];
+    // The distance matrix is indexed by *slot*; `cluster_id[slot]` is the
+    // SciPy-convention id of the cluster currently living in that slot. The
+    // merged cluster stays in slot `min_i` but takes a fresh id `n + step`, so
+    // no id is ever reused and every consumer can tell a merge from a leaf.
+    let mut cluster_id: Vec<usize> = (0..n).collect();
     let mut linkage_matrix = Vec::with_capacity(n - 1);
 
-    for _ in 0..(n - 1) {
+    for step in 0..(n - 1) {
         // Find minimum distance between active clusters
         let (min_i, min_j, min_dist) = find_min_distance(&dist, &active);
 
         // Record linkage
         let size = cluster_size[min_i] + cluster_size[min_j];
-        linkage_matrix.push([min_i as f64, min_j as f64, min_dist, size as f64]);
+        let (left, right) = {
+            let (a, b) = (cluster_id[min_i], cluster_id[min_j]);
+            (a.min(b), a.max(b))
+        };
+        linkage_matrix.push([left as f64, right as f64, min_dist, size as f64]);
 
         // Update distances to merged cluster
         update_distances(&mut dist, &cluster_size, min_i, min_j, method);
 
-        // Mark j as inactive, update i's size
+        // Mark j as inactive, update i's size and give the merge its own id
         active[min_j] = false;
         cluster_size[min_i] = size;
+        cluster_id[min_i] = n + step;
     }
 
-    // Compute optimal leaf ordering (simple version: in-order traversal)
+    // Compute optimal leaf ordering (in-order traversal of the tree)
     let leaves = compute_leaf_order(&linkage_matrix, n);
 
     Linkage {
@@ -134,9 +159,15 @@ fn update_distances(
             LinkageMethod::Complete => d_ik.max(d_jk),
             LinkageMethod::Average => (ni * d_ik + nj * d_jk) / (ni + nj),
             LinkageMethod::Ward => {
+                // Lance-Williams for Ward is defined on SQUARED distances. Applying
+                // it to raw distances (as this once did) is not a small error: it
+                // produces INVERSIONS, i.e. a parent merging lower than its own
+                // child, which is structurally impossible for a real dendrogram.
                 let n_total = ni + nj + nk;
                 let d_ij = dist[i.min(j)][i.max(j)];
-                (((ni + nk) * d_ik + (nj + nk) * d_jk - nk * d_ij) / n_total).sqrt()
+                (((ni + nk) * d_ik * d_ik + (nj + nk) * d_jk * d_jk - nk * d_ij * d_ij) / n_total)
+                    .max(0.0)
+                    .sqrt()
             }
         };
 
@@ -145,7 +176,11 @@ fn update_distances(
     }
 }
 
-/// Compute leaf order from linkage matrix
+/// Compute leaf order from a SciPy-convention linkage matrix.
+///
+/// This is an in-order traversal of the merge tree from its root, which is what
+/// makes a dendrogram drawable without crossing arms: every cluster's leaves are
+/// contiguous in the returned order.
 fn compute_leaf_order(linkage: &[[f64; 4]], n: usize) -> Vec<usize> {
     if n == 0 {
         return vec![];
@@ -154,32 +189,33 @@ fn compute_leaf_order(linkage: &[[f64; 4]], n: usize) -> Vec<usize> {
         return vec![0];
     }
 
-    // Since the implementation reuses indices, we need to track which original
-    // leaves are absorbed into which clusters. For simplicity, return
-    // a basic ordering based on the linkage sequence.
-    let mut absorbed = vec![false; n];
     let mut order = Vec::with_capacity(n);
+    let mut visited = vec![false; n];
 
-    // Process linkage in order - add leaves as they first appear in merges
-    for row in linkage {
-        let left = row[0] as usize;
-        let right = row[1] as usize;
-
-        // Only original indices (< n) are leaves
-        if left < n && !absorbed[left] {
-            order.push(left);
-            absorbed[left] = true;
+    // Iterative post/in-order walk from the root (the last merge). Iterative
+    // rather than recursive so a pathological chain of 10^5 merges cannot blow
+    // the stack.
+    let mut stack = vec![n + linkage.len() - 1];
+    while let Some(id) = stack.pop() {
+        if id < n {
+            if !visited[id] {
+                visited[id] = true;
+                order.push(id);
+            }
+            continue;
         }
-        if right < n && !absorbed[right] {
-            order.push(right);
-            absorbed[right] = true;
+        match linkage.get(id - n) {
+            // Push right first so the left subtree is expanded first.
+            Some(row) => stack.extend([row[1] as usize, row[0] as usize]),
+            None => continue,
         }
     }
 
-    // Add any remaining leaves that weren't merged
-    for (i, &was_absorbed) in absorbed.iter().enumerate() {
-        if !was_absorbed {
-            order.push(i);
+    // Any leaf the tree never reached (only possible for a malformed matrix)
+    // still has to appear, or it would silently vanish from the plot.
+    for (leaf, &seen) in visited.iter().enumerate() {
+        if !seen {
+            order.push(leaf);
         }
     }
 
@@ -254,6 +290,117 @@ mod tests {
         assert!((dist[0][1] - 1.0).abs() < 1e-10);
         assert!((dist[0][2] - 1.0).abs() < 1e-10);
         assert!((dist[1][2] - 2.0_f64.sqrt()).abs() < 1e-10);
+    }
+
+    /// Three well-separated pairs, so the merge order is unambiguous.
+    fn three_clusters() -> Vec<Vec<f64>> {
+        pdist_euclidean(&[
+            vec![0.0, 0.0],
+            vec![0.2, 0.1],
+            vec![5.0, 0.0],
+            vec![5.2, 0.2],
+            vec![0.0, 9.0],
+            vec![0.3, 9.3],
+        ])
+    }
+
+    #[test]
+    fn every_merge_gets_an_id_of_its_own() {
+        let result = linkage(&three_clusters(), LinkageMethod::Average);
+        let n = 6;
+
+        for (step, row) in result.matrix.iter().enumerate() {
+            let (left, right) = (row[0] as usize, row[1] as usize);
+            assert!(
+                left < right,
+                "row {step} is not in ascending id order: {row:?}"
+            );
+            // A child must already exist: a leaf, or a cluster merged earlier.
+            for child in [left, right] {
+                assert!(
+                    child < n + step,
+                    "row {step} names cluster {child}, which does not exist yet"
+                );
+            }
+        }
+
+        // Reusing a leaf id for a merge is the failure this guards: every
+        // consumer reads `n + i` to tell a merge from a leaf, so an id below `n`
+        // that is really a merge silently becomes a leaf at height zero.
+        let merges: Vec<usize> = (0..result.matrix.len()).map(|i| n + i).collect();
+        assert_eq!(merges, vec![6, 7, 8, 9, 10]);
+    }
+
+    #[test]
+    fn merge_heights_never_invert() {
+        // A parent merging *below* its own child is structurally impossible for
+        // a real dendrogram. Ward produced exactly that, because Lance-Williams
+        // for Ward is defined on squared distances and was applied to raw ones.
+        for method in [
+            LinkageMethod::Single,
+            LinkageMethod::Complete,
+            LinkageMethod::Average,
+            LinkageMethod::Ward,
+        ] {
+            let result = linkage(&three_clusters(), method);
+            let n = 6;
+            for (step, row) in result.matrix.iter().enumerate() {
+                for child in [row[0] as usize, row[1] as usize] {
+                    let child_height = match child < n {
+                        true => 0.0,
+                        false => result.matrix[child - n][2],
+                    };
+                    assert!(
+                        row[2] >= child_height,
+                        "{method:?}: cluster {} merges at {:.4}, below its child \
+                         {child} at {child_height:.4}",
+                        n + step,
+                        row[2],
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn every_cluster_owns_a_contiguous_run_of_leaves() {
+        // This is what makes a dendrogram drawable without crossing arms, and
+        // it is the reason the leaf order is a tree traversal rather than the
+        // order names happened to appear in the merge sequence.
+        let result = linkage(&three_clusters(), LinkageMethod::Average);
+        let n = 6;
+        assert_eq!(result.leaves.len(), n);
+
+        let slot = |leaf: usize| {
+            result
+                .leaves
+                .iter()
+                .position(|&placed| placed == leaf)
+                .expect("every leaf is placed exactly once")
+        };
+
+        fn leaves_of(matrix: &[[f64; 4]], n: usize, id: usize, out: &mut Vec<usize>) {
+            if id < n {
+                out.push(id);
+                return;
+            }
+            let row = matrix[id - n];
+            leaves_of(matrix, n, row[0] as usize, out);
+            leaves_of(matrix, n, row[1] as usize, out);
+        }
+
+        for id in n..(n + result.matrix.len()) {
+            let mut members = Vec::new();
+            leaves_of(&result.matrix, n, id, &mut members);
+            let mut slots: Vec<usize> = members.iter().map(|&leaf| slot(leaf)).collect();
+            slots.sort_unstable();
+            let span = slots[slots.len() - 1] - slots[0] + 1;
+            assert_eq!(
+                span,
+                slots.len(),
+                "cluster {id} occupies slots {slots:?}, which are not contiguous"
+            );
+        }
     }
 
     #[test]

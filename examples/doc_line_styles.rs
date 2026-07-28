@@ -5,7 +5,7 @@
 use ruviz::prelude::*;
 use ruviz::render::LineStyle;
 
-fn main() -> Result<()> {
+fn main() -> PlotResult<()> {
     let x: Vec<f64> = (0..100).map(|i| i as f64 * 0.1).collect();
 
     // Create different y values for each line (offset for visibility)
@@ -23,19 +23,19 @@ fn main() -> Result<()> {
         .legend_position(LegendPosition::Best)
         .line(&x, &y_solid)
         .label("Solid")
-        .style(LineStyle::Solid)
+        .line_style(LineStyle::Solid)
         .line(&x, &y_dashed)
         .label("Dashed")
-        .style(LineStyle::Dashed)
+        .line_style(LineStyle::Dashed)
         .line(&x, &y_dotted)
         .label("Dotted")
-        .style(LineStyle::Dotted)
+        .line_style(LineStyle::Dotted)
         .line(&x, &y_dashdot)
         .label("DashDot")
-        .style(LineStyle::DashDot)
+        .line_style(LineStyle::DashDot)
         .line(&x, &y_dashdotdot)
         .label("DashDotDot")
-        .style(LineStyle::DashDotDot)
+        .line_style(LineStyle::DashDotDot)
         .save("docs/assets/rustdoc/line_styles.png")?;
 
     println!("✓ Generated docs/assets/rustdoc/line_styles.png");

@@ -49,7 +49,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     Plot::new()
         .title("Minimal Test")
         .line(&minimal_x, &minimal_y)
-        .color(Color::new(255, 0, 0)) // Bright red line
+        .color(Color::from_rgb(255, 0, 0)) // Bright red line
         .save("verify_axes/minimal_test.png")?;
 
     println!("✅ Verification complete!");

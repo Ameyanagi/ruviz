@@ -46,11 +46,11 @@ Plot::new()
 | `plt.plot(x, y)` | `Plot::new().line(&x, &y)` | Builder pattern |
 | `plt.scatter(x, y)` | `Plot::new().scatter(&x, &y)` | |
 | `plt.bar(x, y)` | `Plot::new().bar(&categories, &values)` | |
-| `plt.hist(data)` | `Plot::new().histogram(&data, None)` | |
+| `plt.hist(data)` | `Plot::new().histogram(&data)` | |
 | `plt.title('text')` | `.title("text")` | Method chaining |
 | `plt.xlabel('text')` | `.xlabel("text")` | |
 | `plt.ylabel('text')` | `.ylabel("text")` | |
-| `plt.legend()` | `.legend(Position::TopRight)` | Explicit position |
+| `plt.legend()` | `.legend(LegendPosition::UpperRight)` | Explicit position |
 | `plt.grid(True)` | `.grid(true)` | |
 | `plt.xlim(0, 10)` | `.xlim(0.0, 10.0)` | |
 | `plt.ylim(0, 10)` | `.ylim(0.0, 10.0)` | |
@@ -76,7 +76,7 @@ Plot::new()
     .line(&x, &y1).label("Linear")
     .line(&x, &y2).label("Quadratic")
     .line(&x, &y3).label("Cubic")
-    .legend(Position::TopLeft)
+    .legend(LegendPosition::UpperLeft)
     .save("multi_series.png")?;
 ```
 
@@ -91,7 +91,7 @@ plt.plot(x, y, color='red', linewidth=2, linestyle='--', marker='o')
 ```rust
 Plot::new()
     .line(&x, &y)
-    .color(Color::new(255, 0, 0))
+    .color(Color::from_rgb(255, 0, 0))
     .line_width(2.0)
     .line_style(LineStyle::Dashed)
     .marker(MarkerStyle::Circle)
@@ -116,7 +116,7 @@ plt.savefig('subplots.png')
 let plot1 = Plot::new().line(&x, &y1).title("Plot 1").into_plot();
 let plot2 = Plot::new().scatter(&x, &y2).title("Plot 2").into_plot();
 let plot3 = Plot::new().bar(&cats, &vals).title("Plot 3").into_plot();
-let plot4 = Plot::new().histogram(&data, None).title("Plot 4").into_plot();
+let plot4 = Plot::new().histogram(&data).title("Plot 4").into_plot();
 
 subplots(2, 2, 1200, 900)?
     .subplot(0, 0, plot1)?
@@ -184,7 +184,7 @@ Plot::new()
 | SVG export | `savefig('file.svg')` | Supported via `.export_svg("file.svg")?` |
 | Heatmaps | `imshow()`, `pcolormesh()` | Supported via `.heatmap(...)` |
 | Contour plots | `contour()` | Supported via `.contour(...)` |
-| 3D plots | `mpl_toolkits.mplot3d` | Planned v1.0+ |
+| 3D plots | `mpl_toolkits.mplot3d` | Opt-in alpha with exact feature `3d`; see the [3D guide](../guide/12_3d.md) and [Matplotlib 3D migration notes](matplotlib-3d.md) |
 | Interactive plots | `%matplotlib notebook` | Experimental via `show_interactive(plot).await` |
 | Polar plots | `projection='polar'` | Supported via `.polar_line(...)` |
 | Animations | `FuncAnimation` | Supported with the `record!` macro |
@@ -304,18 +304,18 @@ Plot::new()
     .size(10.0, 6.0)
     .dpi(300)
     .line(&x, &y_sin)
-        .color(Color::new(0, 0, 255))
+        .color(Color::from_rgb(0, 0, 255))
         .line_width(2.0)
         .label("sin(x)")
     .line(&x, &y_cos)
-        .color(Color::new(255, 0, 0))
+        .color(Color::from_rgb(255, 0, 0))
         .line_style(LineStyle::Dashed)
         .line_width(2.0)
         .label("cos(x)")
     .title("Trigonometric Functions")
     .xlabel("x (radians)")
     .ylabel("y")
-    .legend(Position::TopRight)
+    .legend(LegendPosition::UpperRight)
     .grid(true)
     .save("trig.png")?;
 ```
@@ -393,7 +393,7 @@ Plot::new()
 **A**: Yes, but differently:
 ```rust
 // Custom colors
-.color(Color::new(255, 128, 0))
+.color(Color::from_rgb(255, 128, 0))
 .color(Color::from_hex("#FF8000")?)
 
 let viridis_like = Theme::builder()

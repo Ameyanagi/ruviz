@@ -64,7 +64,7 @@ Plot::new()
 
 ```toml
 [dependencies]
-ruviz = { version = "0.5.0", features = ["ndarray_support"] }
+ruviz = { version = "0.6.0", features = ["ndarray_support"] }
 ndarray = "0.17"
 ```
 
@@ -105,20 +105,20 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     Plot::new()
         .line(&x, &y_sin)
             .label("sin(x)")
-            .color(Color::new(255, 0, 0))
+            .color(Color::from_rgb(255, 0, 0))
         .line(&x, &y_cos)
             .label("cos(x)")
-            .color(Color::new(0, 0, 255))
+            .color(Color::from_rgb(0, 0, 255))
             .line_style(LineStyle::Dashed)
         .line(&x, &y_tan)
             .label("tan(x/2)")
-            .color(Color::new(0, 128, 0))
+            .color(Color::from_rgb(0, 128, 0))
             .line_style(LineStyle::Dotted)
         .title("Trigonometric Functions")
         .xlabel("x (radians)")
         .ylabel("y")
         .ylim(-2.0, 2.0)
-        .legend(Position::TopRight)
+        .legend(LegendPosition::UpperRight)
         .grid(true)
         .save("trig_functions.png")?;
 
@@ -167,7 +167,7 @@ let data: Array1<f64> = Array::from_shape_fn(n, |_| {
 });
 
 Plot::new()
-    .histogram(&data.to_vec(), None)  // Convert to Vec
+    .histogram(&data.to_vec())  // Convert to Vec
     .title("Normal Distribution")
     .xlabel("Value")
     .ylabel("Frequency")
@@ -183,7 +183,7 @@ Plot::new()
 
 ```toml
 [dependencies]
-ruviz = { version = "0.5.0", features = ["nalgebra_support"] }
+ruviz = { version = "0.6.0", features = ["nalgebra_support"] }
 nalgebra = "0.32"
 ```
 
@@ -208,7 +208,7 @@ let heatmap_config = HeatmapConfig::new()
     .colorbar_label("Intensity");
 
 Plot::new()
-    .heatmap(&z, Some(heatmap_config))
+    .heatmap_with(&z, heatmap_config)
     .title("nalgebra DMatrix Heatmap")
     .save("nalgebra_heatmap.png")?;
 ```
@@ -229,7 +229,7 @@ synthetic absorbed-energy style example.
 
 ```toml
 [dependencies]
-ruviz = { version = "0.5.0", features = ["polars_support"] }
+ruviz = { version = "0.6.0", features = ["polars_support"] }
 polars = { version = "0.50", features = ["lazy", "rolling_window"] }
 ```
 
@@ -373,15 +373,15 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     Plot::new()
         .line(&x_values, &original)
             .label("Original")
-            .color(Color::new_rgba(0, 0, 255, 100))
+            .color(Color::from_rgba(0, 0, 255, 100))
         .line(&x_values, &smoothed)
             .label("Rolling Average")
-            .color(Color::new(255, 0, 0))
+            .color(Color::from_rgb(255, 0, 0))
             .line_width(2.0)
         .title("Time Series with Rolling Average")
         .xlabel("Time")
         .ylabel("Value")
-        .legend(Position::TopRight)
+        .legend(LegendPosition::UpperRight)
         .save("timeseries_polars.png")?;
 
     Ok(())
@@ -574,7 +574,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     println!("Creating plot...");
     Plot::new()
         .bar(&conditions, &means)
-        .color(Color::new(70, 130, 180))
+        .color(Color::from_rgb(70, 130, 180))
         .title("Experimental Results by Condition")
         .xlabel("Condition")
         .ylabel("Mean Measurement")
@@ -618,7 +618,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
     let panel_b: Plot = Plot::new()
         .theme(Theme::seaborn())
-        .histogram(&signal_vec, None)
+        .histogram(&signal_vec)
         .title("B) Distribution")
         .xlabel("Amplitude")
         .ylabel("Frequency")
@@ -636,7 +636,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
     let panel_c: Plot = Plot::new()
         .theme(Theme::seaborn())
-        .boxplot(&group_a, None)
+        .boxplot(&group_a)
         .title("C) Group Analysis")
         .xlabel("Group")
         .ylabel("Value")

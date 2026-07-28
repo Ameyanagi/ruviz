@@ -149,7 +149,7 @@ fn scientific_unicode_preserves_light_on_dark_edges_and_rotation() {
     let renderer = TextRenderer::new();
     let config = FontConfig::new(FontFamily::Name("Noto Sans".to_string()), 48.0);
     let text = "Å χ ² μ";
-    let ink = Color::new(235, 235, 245);
+    let ink = Color::from_rgb(235, 235, 245);
     let background = tiny_skia::Color::from_rgba8(16, 16, 24, 255);
     let mut normal = Pixmap::new(512, 192).expect("failed to create normal text pixmap");
     let mut rotated = Pixmap::new(256, 512).expect("failed to create rotated text pixmap");

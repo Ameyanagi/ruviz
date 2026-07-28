@@ -26,6 +26,7 @@
 //! let edge = resolver.edge_color(fill_color, config.edge_color);
 //! ```
 
+use crate::core::units::pt_to_px;
 use crate::render::{Color, Theme};
 
 /// Central utility for resolving styling values with theme fallbacks
@@ -102,6 +103,29 @@ impl<'a> StyleResolver<'a> {
         explicit.unwrap_or_else(|| fill.darken(0.3))
     }
 
+    /// Resolve a filled patch's edge into the `(colour, width_in_points)` pair
+    /// the backends stroke with.
+    ///
+    /// This is the single place both halves of the edge rule live:
+    /// - an `explicit` colour of `None` means "derive from the fill" (see
+    ///   [`Self::edge_color`]);
+    /// - a non-positive `width` means there is no edge at all, rather than a
+    ///   hairline floored to some minimum.
+    ///
+    /// Bars, histograms, box plots and marker rims all funnel through it, so
+    /// the raster, parallel and SVG backends cannot drift apart. The width
+    /// stays in **points**; each renderer converts it to device pixels, which
+    /// is what makes a patch edge the same physical thickness at every DPI.
+    #[inline]
+    pub fn patch_edge(
+        &self,
+        fill: Color,
+        explicit: Option<Color>,
+        width: f32,
+    ) -> Option<(Color, f32)> {
+        (width > 0.0).then(|| (self.edge_color(fill, explicit), width))
+    }
+
     /// Resolve edge color with custom darkening factor
     ///
     /// # Arguments
@@ -118,12 +142,24 @@ impl<'a> StyleResolver<'a> {
         explicit.unwrap_or_else(|| fill.darken(darken_factor))
     }
 
-    /// Get grid line width (typically thinner than data lines)
+    /// Get grid line width in points (typically thinner than data lines)
     ///
     /// Returns theme.line_width * 0.5 by default.
     #[inline]
     pub fn grid_line_width(&self) -> f32 {
         self.theme.line_width * 0.5
+    }
+
+    /// Get grid line width in device pixels at the given DPI
+    ///
+    /// Scales [`Self::grid_line_width`] by DPI and then applies a floor of
+    /// [`defaults::MIN_GRID_LINE_WIDTH_PX`]. Without the floor, a sub-pixel
+    /// stroke at low DPI is spread by the antialiaser across two pixel rows,
+    /// halving its effective contrast and making the grid disappear. The floor
+    /// is a minimum only - at high DPI the DPI-scaled value wins unchanged.
+    #[inline]
+    pub fn grid_line_width_px(&self, dpi: f32) -> f32 {
+        pt_to_px(self.grid_line_width(), dpi).max(defaults::MIN_GRID_LINE_WIDTH_PX)
     }
 
     /// Get axis line width
@@ -240,6 +276,12 @@ pub mod defaults {
 
     /// Default rug alpha
     pub const RUG_ALPHA: f32 = 0.5;
+
+    /// Minimum grid stroke width in device pixels
+    ///
+    /// A grid line narrower than one device pixel gets antialiased into a
+    /// washed-out grey band, which is what made the default grid unreadable.
+    pub const MIN_GRID_LINE_WIDTH_PX: f32 = 1.0;
 }
 
 #[cfg(test)]
@@ -308,7 +350,7 @@ mod tests {
         let theme = Theme::light();
         let resolver = StyleResolver::new(&theme);
 
-        let fill = Color::new(100, 150, 200);
+        let fill = Color::from_rgb(100, 150, 200);
 
         // Auto-derived (30% darker)
         let edge = resolver.edge_color(fill, None);
@@ -322,7 +364,7 @@ mod tests {
         let theme = Theme::light();
         let resolver = StyleResolver::new(&theme);
 
-        let fill = Color::new(100, 150, 200);
+        let fill = Color::from_rgb(100, 150, 200);
 
         // 50% darker
         let edge = resolver.edge_color_with_factor(fill, None, 0.5);
@@ -339,6 +381,35 @@ mod tests {
         assert_eq!(resolver.grid_line_width(), theme.line_width * 0.5);
         assert_eq!(resolver.axis_line_width(), theme.line_width * 0.5);
         assert_eq!(resolver.tick_line_width(), theme.line_width * 0.4);
+    }
+
+    #[test]
+    fn test_grid_line_width_px_floors_at_one_device_pixel() {
+        let theme = Theme::light();
+        let resolver = StyleResolver::new(&theme);
+
+        // 1.5pt theme line width -> 0.75pt grid, which is sub-pixel below 96 DPI
+        assert!(pt_to_px(resolver.grid_line_width(), 72.0) < 1.0);
+        assert_eq!(
+            resolver.grid_line_width_px(72.0),
+            defaults::MIN_GRID_LINE_WIDTH_PX
+        );
+    }
+
+    #[test]
+    fn test_grid_line_width_px_still_scales_with_dpi() {
+        let theme = Theme::light();
+        let resolver = StyleResolver::new(&theme);
+
+        // Above the floor the DPI-scaled value is used verbatim
+        for dpi in [100.0_f32, 150.0, 300.0] {
+            let expected = pt_to_px(resolver.grid_line_width(), dpi);
+            assert!(expected > defaults::MIN_GRID_LINE_WIDTH_PX);
+            assert!((resolver.grid_line_width_px(dpi) - expected).abs() < 1e-6);
+        }
+
+        // And it is monotonic in DPI
+        assert!(resolver.grid_line_width_px(300.0) > resolver.grid_line_width_px(100.0));
     }
 
     #[test]
@@ -407,5 +478,37 @@ mod tests {
 
         // Colors should differ
         assert_ne!(light_resolver.background(), dark_resolver.background());
+    }
+
+    #[test]
+    fn test_patch_edge_derives_its_colour_from_the_fill() {
+        let theme = Theme::light();
+        assert_eq!(
+            StyleResolver::new(&theme).patch_edge(Color::BLUE, None, 0.8),
+            Some((Color::BLUE.darken(0.3), 0.8)),
+            "an unset edge colour must darken the fill"
+        );
+    }
+
+    #[test]
+    fn test_patch_edge_keeps_an_explicit_colour() {
+        let theme = Theme::light();
+        assert_eq!(
+            StyleResolver::new(&theme).patch_edge(Color::BLUE, Some(Color::RED), 1.5),
+            Some((Color::RED, 1.5)),
+            "an explicit edge colour must survive untouched"
+        );
+    }
+
+    #[test]
+    fn test_patch_edge_of_non_positive_width_is_no_edge() {
+        let theme = Theme::light();
+        let resolver = StyleResolver::new(&theme);
+        assert_eq!(
+            resolver.patch_edge(Color::BLUE, Some(Color::RED), 0.0),
+            None,
+            "a zero width must switch the edge off, not floor it to a hairline"
+        );
+        assert_eq!(resolver.patch_edge(Color::BLUE, None, -1.0), None);
     }
 }

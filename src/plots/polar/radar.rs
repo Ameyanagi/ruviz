@@ -37,6 +37,20 @@ use crate::render::skia::SkiaRenderer;
 use crate::render::{Color, LineStyle, MarkerStyle, Theme};
 use std::f64::consts::PI;
 
+/// Radius (in normalized radar units, where the outer ring is 1.0) at which the
+/// per-axis category labels are placed.
+pub(crate) const RADAR_LABEL_RADIUS: f64 = 1.15;
+
+/// Extra breathing room added around the label ring so glyphs are not clipped by
+/// the canvas edge.
+pub(crate) const RADAR_LABEL_PAD: f64 = 0.10;
+
+/// Half-extent of the data range a radar chart needs in both x and y.
+///
+/// Both the raster bounds arm and the SVG path derive their bounds from this so
+/// the two backends agree by construction instead of by coincidence.
+pub(crate) const RADAR_BOUNDS_RADIUS: f64 = RADAR_LABEL_RADIUS + RADAR_LABEL_PAD;
+
 /// Configuration for radar chart
 #[derive(Debug, Clone)]
 pub struct RadarConfig {
@@ -155,6 +169,30 @@ impl RadarConfig {
     pub fn label_font_size(mut self, size: f32) -> Self {
         self.label_font_size = size.max(1.0);
         self
+    }
+
+    /// Fill alpha for `series_idx`, falling back to the chart-wide default.
+    pub(crate) fn series_fill_alpha(&self, series_idx: usize) -> f32 {
+        self.per_series_fill_alphas
+            .get(series_idx)
+            .copied()
+            .flatten()
+            .map_or(self.fill_alpha, |alpha| alpha.clamp(0.0, 1.0))
+    }
+
+    /// Line width for `series_idx`, falling back to the chart-wide default.
+    pub(crate) fn series_line_width(&self, series_idx: usize) -> f32 {
+        self.series_line_width_or(series_idx, self.line_width)
+    }
+
+    /// Line width for `series_idx`, falling back to a caller-supplied width
+    /// (the styled render path resolves its own default from the theme).
+    pub(crate) fn series_line_width_or(&self, series_idx: usize, fallback: f32) -> f32 {
+        self.per_series_line_widths
+            .get(series_idx)
+            .copied()
+            .flatten()
+            .map_or(fallback, |width| width.max(0.1))
     }
 }
 
@@ -307,7 +345,8 @@ pub fn compute_radar_chart_with_labels(
                 .get(i)
                 .cloned()
                 .unwrap_or_else(|| format!("Axis {}", i + 1));
-            let label_r = 1.15; // Slightly outside the chart
+            // Slightly outside the outer ring; the bounds arms reserve room for it.
+            let label_r = RADAR_LABEL_RADIUS;
             (label, label_r * theta.cos(), label_r * theta.sin())
         })
         .collect();
@@ -383,8 +422,12 @@ impl PlotCompute for Radar {
 
 impl PlotData for RadarPlotData {
     fn data_bounds(&self) -> ((f64, f64), (f64, f64)) {
-        // Radar plots use normalized -1 to 1 range (1.1 for labels)
-        ((-1.1, 1.1), (-1.1, 1.1))
+        // Radar polygons live inside the unit circle, but the axis labels sit at
+        // `RADAR_LABEL_RADIUS`, so the bounds must cover the label ring plus pad.
+        (
+            (-RADAR_BOUNDS_RADIUS, RADAR_BOUNDS_RADIUS),
+            (-RADAR_BOUNDS_RADIUS, RADAR_BOUNDS_RADIUS),
+        )
     }
 
     fn is_empty(&self) -> bool {
@@ -459,8 +502,7 @@ impl PlotRender for RadarPlotData {
             }
         }
 
-        // Scale line width and marker size by DPI
-        let scaled_line_width = render_scale.points_to_pixels(config.line_width);
+        // Scale marker size by DPI (line width is resolved per series below)
         let scaled_marker_size = render_scale.points_to_pixels(config.marker_size);
 
         // Draw each series
@@ -472,10 +514,12 @@ impl PlotRender for RadarPlotData {
                 .and_then(|colors| colors.get(series_idx).copied())
                 .filter(|color| *color != Color::TRANSPARENT)
                 .unwrap_or_else(|| theme.get_color(series_idx));
+            let scaled_line_width =
+                render_scale.points_to_pixels(config.series_line_width(series_idx));
 
             // Draw fill if enabled
             if config.fill && !series.polygon.is_empty() {
-                let fill_color = series_color.with_alpha(config.fill_alpha);
+                let fill_color = series_color.with_alpha(config.series_fill_alpha(series_idx));
                 let screen_polygon: Vec<(f32, f32)> = series
                     .polygon
                     .iter()
@@ -553,9 +597,9 @@ impl PlotRender for RadarPlotData {
 
         let render_scale = renderer.render_scale();
         let label_font_size_px = render_scale.points_to_pixels(config.label_font_size);
-        let effective_line_width = render_scale.points_to_pixels(
-            line_width.unwrap_or_else(|| resolver.line_width(Some(config.line_width))),
-        );
+        // Chart-wide default; each series may override it below.
+        let base_line_width =
+            line_width.unwrap_or_else(|| resolver.line_width(Some(config.line_width)));
         let scaled_marker_size = render_scale.points_to_pixels(config.marker_size);
 
         // Draw grid rings
@@ -626,10 +670,12 @@ impl PlotRender for RadarPlotData {
                 .unwrap_or_else(|| theme.get_color(series_idx));
             let series_alpha = (f32::from(series_color.a) / 255.0) * alpha.clamp(0.0, 1.0);
             let stroke_color = series_color.with_alpha(series_alpha);
+            let effective_line_width = render_scale
+                .points_to_pixels(config.series_line_width_or(series_idx, base_line_width));
 
             // Draw fill if enabled - use provided alpha
             if config.fill && !series.polygon.is_empty() {
-                let fill_alpha = series_alpha * config.fill_alpha;
+                let fill_alpha = series_alpha * config.series_fill_alpha(series_idx);
                 let fill_color = series_color.with_alpha(fill_alpha);
                 let screen_polygon: Vec<(f32, f32)> = series
                     .polygon
@@ -769,13 +815,30 @@ mod tests {
 
         // Test data_bounds
         let ((x_min, x_max), (y_min, y_max)) = radar_data.data_bounds();
-        assert!((x_min - (-1.1)).abs() < 1e-10);
-        assert!((x_max - 1.1).abs() < 1e-10);
-        assert!((y_min - (-1.1)).abs() < 1e-10);
-        assert!((y_max - 1.1).abs() < 1e-10);
+        assert!((x_min - (-RADAR_BOUNDS_RADIUS)).abs() < 1e-10);
+        assert!((x_max - RADAR_BOUNDS_RADIUS).abs() < 1e-10);
+        assert!((y_min - (-RADAR_BOUNDS_RADIUS)).abs() < 1e-10);
+        assert!((y_max - RADAR_BOUNDS_RADIUS).abs() < 1e-10);
 
         // Test is_empty
         assert!(!radar_data.is_empty());
+    }
+
+    #[test]
+    fn test_radar_bounds_cover_axis_labels() {
+        let data = vec![vec![1.0, 1.0, 1.0, 1.0, 1.0]];
+        let config = RadarConfig::default().value_range(0.0, 1.0);
+        let plot = compute_radar_chart(&data, &config);
+
+        // Labels sit on the label ring, which must be strictly inside the bounds.
+        for (_, x, y) in &plot.axis_labels {
+            assert!((x.hypot(*y) - RADAR_LABEL_RADIUS).abs() < 1e-10);
+            assert!(x.abs() <= RADAR_BOUNDS_RADIUS);
+            assert!(y.abs() <= RADAR_BOUNDS_RADIUS);
+        }
+
+        const { assert!(RADAR_BOUNDS_RADIUS > RADAR_LABEL_RADIUS) };
+        assert!((RADAR_BOUNDS_RADIUS - 1.25).abs() < 1e-10);
     }
 
     #[test]
@@ -802,6 +865,45 @@ mod tests {
 
         assert_eq!(config.per_series_line_widths[0], Some(2.0));
         assert_eq!(config.per_series_line_widths[1], None);
+    }
+
+    #[test]
+    fn test_radar_per_series_style_is_read_by_the_render_paths() {
+        let config = RadarConfig {
+            fill_alpha: 0.25,
+            line_width: 2.0,
+            per_series_fill_alphas: vec![Some(0.6), None],
+            per_series_line_widths: vec![None, Some(4.0)],
+            ..Default::default()
+        };
+
+        // Series 0 overrides the alpha, series 1 falls back to the default.
+        assert!((config.series_fill_alpha(0) - 0.6).abs() < 1e-6);
+        assert!((config.series_fill_alpha(1) - 0.25).abs() < 1e-6);
+        // Series 1 overrides the width, series 0 falls back to the default.
+        assert!((config.series_line_width(0) - 2.0).abs() < 1e-6);
+        assert!((config.series_line_width(1) - 4.0).abs() < 1e-6);
+
+        // An index past the end of the override vectors uses the defaults.
+        assert!((config.series_fill_alpha(9) - 0.25).abs() < 1e-6);
+        assert!((config.series_line_width(9) - 2.0).abs() < 1e-6);
+
+        // The styled path resolves its own default, which an override still wins over.
+        assert!((config.series_line_width_or(0, 7.0) - 7.0).abs() < 1e-6);
+        assert!((config.series_line_width_or(1, 7.0) - 4.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_radar_per_series_style_is_sanitized() {
+        let config = RadarConfig {
+            per_series_fill_alphas: vec![Some(1.5), Some(-0.5)],
+            per_series_line_widths: vec![Some(0.0)],
+            ..Default::default()
+        };
+
+        assert!((config.series_fill_alpha(0) - 1.0).abs() < 1e-6);
+        assert!(config.series_fill_alpha(1).abs() < 1e-6);
+        assert!((config.series_line_width(0) - 0.1).abs() < 1e-6);
     }
 
     #[test]

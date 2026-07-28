@@ -69,7 +69,7 @@ Or with specific features:
 
 ```toml
 [dependencies]
-ruviz = { version = "0.5.0", features = ["ndarray_support", "parallel"] }
+ruviz = { version = "0.6.0", features = ["ndarray_support", "parallel"] }
 ```
 
 ## Feature Flags
@@ -84,7 +84,7 @@ ruviz = "0.5.0"  # Includes: ndarray_support, parallel
 
 **Enabled by default**:
 - `ndarray_support` - ndarray support for scientific computing
-- `parallel` - internal parallel renderer support and backend metadata
+- `parallel` - multi-threaded tile rasterization for the software 3D backend
 
 ### Core Features
 
@@ -92,13 +92,15 @@ ruviz = "0.5.0"  # Includes: ndarray_support, parallel
 |---------|-------------|----------|
 | `ndarray_support` | ndarray integration (canonical) | Scientific computing, numpy-like arrays |
 | `ndarray` | Compatibility alias for `ndarray_support` | Existing manifests using the historical name |
-| `nalgebra_support` | nalgebra integration | Dense vectors/matrices, linear algebra |
-| `polars_support` | polars integration | Data analysis, DataFrame support |
-| `parallel` | Internal parallel renderer support | Opt-in renderer experiments, metadata |
+| `nalgebra_support` | nalgebra integration (canonical) | Dense vectors/matrices, linear algebra |
+| `nalgebra` | Compatibility alias for `nalgebra_support` | Existing manifests using the historical name |
+| `polars_support` | polars integration (canonical) | Data analysis, DataFrame support |
+| `polars` | Compatibility alias for `polars_support` | Existing manifests using the historical name |
+| `parallel` | Multi-threaded 3D software tile rasterization | 3D surface/scatter rendering |
 | `simd` | SIMD support | Measured performance-sensitive paths |
 | `gpu` | GPU types and metadata | GPU-capable interactive work |
 | `interactive` | Interactive plots | Real-time exploration, data brushing |
-| `window` | Window support | Desktop applications |
+| `window` | Compatibility alias for `interactive` | Existing manifests using the historical name |
 | `serde` | Serialization | Save/load plot configurations |
 | `pdf` | PDF export | Publication-ready vector output |
 
@@ -108,40 +110,40 @@ SVG export is available without an extra feature flag. The legacy `svg` feature 
 
 ```toml
 # High performance (parallel + SIMD)
-ruviz = { version = "0.5.0", features = ["performance"] }
+ruviz = { version = "0.6.0", features = ["performance"] }
 
 # Maximum capability (all features)
-ruviz = { version = "0.5.0", features = ["full"] }
+ruviz = { version = "0.6.0", features = ["full"] }
 
 # Minimal (no default features)
-ruviz = { version = "0.5.0", default-features = false }
+ruviz = { version = "0.6.0", default-features = false }
 ```
 
 ### Feature Combinations
 
 **Scientific Computing**:
 ```toml
-ruviz = { version = "0.5.0", features = ["ndarray_support", "parallel"] }
+ruviz = { version = "0.6.0", features = ["ndarray_support", "parallel"] }
 ```
 
 **Data Analysis**:
 ```toml
-ruviz = { version = "0.5.0", features = ["polars_support", "performance"] }
+ruviz = { version = "0.6.0", features = ["polars_support", "performance"] }
 ```
 
 **Publication Quality**:
 ```toml
-ruviz = { version = "0.5.0", features = ["serde", "pdf"] }
+ruviz = { version = "0.6.0", features = ["serde", "pdf"] }
 ```
 
 **Real-time Visualization**:
 ```toml
-ruviz = { version = "0.5.0", features = ["interactive-gpu"] }
+ruviz = { version = "0.6.0", features = ["interactive-gpu"] }
 ```
 
 **Large Datasets**:
 ```toml
-ruviz = { version = "0.5.0", features = ["parallel", "simd", "gpu"] }
+ruviz = { version = "0.6.0", features = ["parallel", "simd", "gpu"] }
 ```
 
 ## Verification
@@ -187,7 +189,7 @@ Test specific features:
 **ndarray**:
 ```toml
 [dependencies]
-ruviz = { version = "0.5.0", features = ["ndarray_support"] }
+ruviz = { version = "0.6.0", features = ["ndarray_support"] }
 ndarray = "0.17"
 ```
 
@@ -304,7 +306,7 @@ vulkaninfo
 
 Or disable GPU features:
 ```toml
-ruviz = { version = "0.5.0", default-features = false, features = ["parallel"] }
+ruviz = { version = "0.6.0", default-features = false, features = ["parallel"] }
 ```
 
 ### Memory Issues (Large Datasets)
@@ -351,14 +353,6 @@ let y = vec![0.0, 1.0, 4.0];
 let _image = Plot::new()
     .line(&x, &y)
     .render()?;
-```
-
-**Memory pooling** (opt-in):
-```rust
-Plot::new()
-    .with_memory_pooling(true)
-    .line(&x, &y)
-    .save("pooled.png")?;
 ```
 
 ## Platform-Specific Notes

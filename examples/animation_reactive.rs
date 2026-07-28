@@ -125,13 +125,13 @@ fn create_circle_plot(x: f64, y: f64, r: f64, time: f64, label: &str) -> Plot {
     Plot::new()
         // Circle outline
         .line(&circle_x, &circle_y)
-        .color(Color::new(0x22, 0x77, 0xDD))
+        .color(Color::from_rgb(0x22, 0x77, 0xDD))
         .line_width(2.0)
         .label(format!("Circle (r={:.2})", r))
         // Center point
         .scatter(&[x], &[y])
         .marker_size(10.0)
-        .color(Color::new(0xDD, 0x44, 0x44))
+        .color(Color::from_rgb(0xDD, 0x44, 0x44))
         .label("Center")
         .title(format!("{} (t={:.2}s)", label, time))
         .xlabel("X")
@@ -139,4 +139,5 @@ fn create_circle_plot(x: f64, y: f64, r: f64, time: f64, label: &str) -> Plot {
         .xlim(-2.0, 12.0)
         .ylim(-2.0, 10.0)
         .legend_position(LegendPosition::UpperRight)
+        .into_plot()
 }

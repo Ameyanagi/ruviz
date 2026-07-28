@@ -4,7 +4,53 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-_None yet._
+### Breaking
+
+- Removed the unreachable 2D series-parallel renderer. `Plot::with_parallel`, `Plot::parallel_threshold`, `ruviz::render::{ParallelRenderer, ParallelConfig, SeriesRenderData, PerformanceStats, DetailedPerformanceInfo}` and `RenderPipeline::{parallel_renderer, parallel_renderer_mut}` are gone. No public `render()`/`save()` could reach that path, and `.backend(BackendType::Parallel)` still resolves to Skia with an explicit `UnsupportedOperation` fallback reason (previously `FeatureDisabled` without the `parallel` feature).
+- The `parallel` cargo feature remains a default feature. It is not inert: the software 3D rasterizer parallelizes its tiles with it. It has no effect on 2D output or 2D timings.
+- Removed the inert pooled-rendering knobs `Plot::with_memory_pooling`, `Plot::with_pool_sizes`, `Plot::pool_stats` and `RenderPipeline::{set_pooled_rendering, pooled_rendering_enabled, set_pooled_renderer, pooled_renderer, pooled_renderer_mut}`. Nothing on the render path consulted them. `ruviz::render::PooledRenderer` itself is unchanged and still usable directly.
+- Removed the `animation-gif` (an exact duplicate of `animation`) and `animation-hq-gif` cargo features, along with the unused `gifski` dependency. Neither gated any code; use `animation`.
+- Optional dependencies no longer leak as implicit cargo features. `--features rayon`, `--features wgpu`, `--features gif` and similar bare crate names are now unknown features; `--features polars`, `--features ndarray` and `--features nalgebra` remain as explicit aliases.
+- `--features window` now enables the `interactive` code as well as the desktop dependencies; previously it pulled winit + softbuffer + rfd + arboard and gated nothing.
+- Removed `Legend::calculate_size`; use `measure_legend_size` or `layout_legend`.
+- Replaced `ruviz::interactive::test_utils::MockEventHandler::assert_60fps_compliance(Duration)` with `assert_no_frames_dropped(frames_recorded: usize)`; `PerformanceMonitor` gains `frame_count()`.
+- `SkiaRenderer::draw_legend_full` and `SvgRenderer::draw_legend_full` take `Option<&LegendOccupancy>` where they took `Option<&[(f32, f32, f32, f32)]>`.
+
+### Added
+
+- Added `Plot3D::legend(Legend)`, so 3D figures configure their legend with the same `Legend` type, position, font size, colours, spacing, style and layout routine as 2D. Without it the legend is derived from the theme, as before; a legend with `enabled` false suppresses both the legend and the band reserved for it.
+- Added `SkiaRenderer::draw_image_layer`, which composes a straight-alpha RGBA image without the PNG encode/decode round-trip `draw_subplot` used to perform.
+- Added `layout_legend`, `measure_legend_size`, `LegendLayout`, `LegendPlacement`, `LegendOccupancy`, `LegendEntryLayout`, `LegendTitleLayout` and `estimated_label_width` to `ruviz::core`.
+- Added `release_3d_gpu_resources` to the prelude, and a public entry point that tears down the process-wide 3D renderer, its scene buffers and its offscreen attachments. It is a no-op without the `gpu` feature.
+- Added `RenderDiagnostics3D::buffer_evictions`, reporting evictions from the now-bounded LRU GPU resource cache.
+
+### Changed
+
+- `LegendPosition::Best` now consults where the data actually is. Both the raster and the SVG paths build an occupancy grid from the projected samples and score candidate corners against it; previously `Best` always answered `UpperRight`.
+- 3D surfaces are lit in linear space. `shade()` used to scale sRGB bytes directly, which systematically darkened and desaturated every lit surface; it now decodes to linear, applies the Lambert term and re-encodes, which is what the GPU already did for free from its sRGB target. `render()` and `render_gpu()` therefore agree instead of producing different figures on different machines. Every lit 3D image is brighter.
+- Both 3D backends emit straight (non-premultiplied) alpha layers, matching PNG, the SVG data URI and every `SkiaRenderer` entry point. Antialiased 3D silhouettes are no longer darkened by the compositor, so markers, lines and surface edges lose the dark halo they used to carry.
+- 3D surface normals are aspect-corrected, so shading is correct for every non-`Equal` axis aspect including the default.
+- The 3D camera derives its scene radius from the real aspect-scaled bounding box instead of a constant tuned for the default aspect. Perspective figures with a non-default `axis_aspect` are framed correctly; previously the camera sat too close and the plotting box could nearly overflow its viewport. The default orthographic camera is bit-identical.
+- `Camera3D::look_at` targets outside the resolved bounds are clamped to the plotting box, and `pan` stores the clamped target so a long drag cannot accumulate an unreachable one.
+- CPU `MarkerStyle::Triangle` now points up, matching the GPU and the 2D marker paths; it used to be drawn upside down.
+- CPU point markers whose centre leaves the side clip planes now draw their visible sliver instead of being dropped whole, matching the GPU's per-pixel clipping, so edge markers no longer pop during an orbit.
+- The GPU 3D resource cache is a bounded LRU, and the GPU scene pipelines blend instead of overwriting, so translucent 3D colours composite.
+- Inside legends are sized from the text the renderer actually draws rather than from a byte count times a guessed advance, so every PNG/SVG golden with an inside legend shifts slightly and non-ASCII labels are sized correctly.
+- The CI test-coverage guard no longer credits a `cargo test` invocation to a job that cannot run on a pull request. A schedule- or dispatch-gated job now covers nothing, so moving the whole-suite run out of the pull-request lanes is a test failure instead of a silent hole.
+- The 2D data-bounds routine moved from `src/core/plot/parallel_render.rs` to `src/core/plot/bounds.rs`. There is still exactly one implementation; no public API changed.
+
+### Fixed
+
+- Fixed the 3D legend painting its labels at `Theme::legend_font_size` while sizing its frame from `Legend::font_size`. The two disagreed for every user-set size: a small font produced a label wider than its own box and clipped by the canvas edge, a large one produced a box full of air. The overlay now draws at the size the shared layout measured, and honours `Legend::text_color`, `Legend::style` and `Legend::title`, which it previously ignored (the title was measured into the frame but never painted). Theme-derived 3D legends are byte-identical.
+- Fixed `Legend::position` being ignored by 3D figures. An inside position — including `Best`, which resolves to one — now places the legend inside the plotting box; outside positions resolve to the right-hand decoration band, which no longer reserves width for a legend that is not in it.
+- Fixed a 3D legend wider than its capped decoration band painting its label off the edge of the canvas. The frame now grows leftwards over the plotting box instead, so the label always fits inside the frame that was measured for it.
+- Fixed `MockEventHandler::assert_60fps_compliance` asserting a frame count its own caller could never reach: the loop paces itself with `thread::sleep(16ms)`, which always overshoots a 60fps budget, so the assertion measured `thread::sleep` accuracy rather than this crate. Replaced by `assert_no_frames_dropped`, which checks the handler's counters against the independently recorded frame count; `PerformanceMonitor::record_frame` also no longer fabricates a 16.67ms first sample.
+- Fixed `ManagedBuffer::into_inner` never recycling its buffer and never decrementing `MemoryStats::active_allocations`, which made the reported allocation count grow monotonically and never shrink.
+- Fixed `SkiaRenderer::draw_datashader_image` writing B, G, R, A into tiny-skia's premultiplied **RGBA** pixel buffer, swapping red and blue in the DataShader tint. Invisible with every stock theme, whose foreground is black, white or grey.
+- Fixed the 2D subplot compositor handing premultiplied pixels to a compositor that expects straight alpha. Output is unchanged for opaque subplots, which is every subplot today.
+- Fixed 3D composition paying a full PNG encode and decode of the whole canvas for every frame — roughly 11 MB per 1920x1440 orbit frame.
+- Fixed `clipped_bounds` saturating a far-off-screen primitive onto the viewport edge pixel, which reported a culled primitive as drawn and binned it into a tile it never touches. A point whose centre projects to a non-finite position is now culled rather than aborting the render.
+- `ParallelRenderer::process_series_parallel` no longer called `rayon::build_global()`, so nothing in the crate attempts to resize the application's global thread pool (the whole type is now gone).
 
 ## [0.5.0] - 2026-07-17
 

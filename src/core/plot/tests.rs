@@ -19,7 +19,7 @@ impl crate::data::NumericData1D for FailingIngestionData {
         _null_policy: crate::data::NullPolicy,
     ) -> crate::core::Result<Vec<f64>> {
         Err(PlottingError::DataExtractionFailed {
-            source: "test::failing-ingestion".to_string(),
+            origin: "test::failing-ingestion".to_string(),
             message: "forced ingestion failure".to_string(),
         })
     }
@@ -420,18 +420,8 @@ fn test_plot_series_static_source_helpers_materialize_values() {
         },
         streaming_source: None,
         label: None,
-        color: None,
-        color_source: None,
-        line_width: None,
-        line_width_source: None,
-        line_style: None,
-        line_style_source: None,
-        marker_style: None,
-        marker_style_source: None,
-        marker_size: None,
-        marker_size_source: None,
-        alpha: None,
-        alpha_source: None,
+        props: SeriesStyleProps::default(),
+        marker_edge: None,
         y_errors: None,
         x_errors: None,
         error_config: None,
@@ -440,25 +430,28 @@ fn test_plot_series_static_source_helpers_materialize_values() {
         resolved_radar_colors: None,
     };
 
-    series.set_color_source_value(Color::RED.into());
-    series.set_line_width_source_value(0.01_f32.into());
-    series.set_line_style_source_value(LineStyle::Dashed.into());
-    series.set_marker_style_source_value(MarkerStyle::Square.into());
-    series.set_marker_size_source_value(0.01_f32.into());
-    series.set_alpha_source_value(1.5_f32.into());
+    series.props.color.set(Color::RED.into());
+    series.props.line_width.set(0.01_f32.into());
+    series.props.line_style.set(LineStyle::Dashed.into());
+    series.props.marker_style.set(MarkerStyle::Square.into());
+    series.props.marker_size.set(0.01_f32.into());
+    series.props.alpha.set(1.5_f32.into());
 
-    assert_eq!(series.color, Some(Color::RED));
-    assert!(series.color_source.is_none());
-    assert_eq!(series.line_width, Some(0.1));
-    assert!(series.line_width_source.is_none());
-    assert_eq!(series.line_style, Some(LineStyle::Dashed));
-    assert!(series.line_style_source.is_none());
-    assert_eq!(series.marker_style, Some(MarkerStyle::Square));
-    assert!(series.marker_style_source.is_none());
-    assert_eq!(series.marker_size, Some(0.1));
-    assert!(series.marker_size_source.is_none());
-    assert_eq!(series.alpha, Some(1.0));
-    assert!(series.alpha_source.is_none());
+    assert_eq!(series.props.color.cloned(), Some(Color::RED));
+    assert!(series.props.color.source().is_none());
+    assert_eq!(series.props.line_width.cloned(), Some(0.1));
+    assert!(series.props.line_width.source().is_none());
+    assert_eq!(series.props.line_style.cloned(), Some(LineStyle::Dashed));
+    assert!(series.props.line_style.source().is_none());
+    assert_eq!(
+        series.props.marker_style.cloned(),
+        Some(MarkerStyle::Square)
+    );
+    assert!(series.props.marker_style.source().is_none());
+    assert_eq!(series.props.marker_size.cloned(), Some(0.1));
+    assert!(series.props.marker_size.source().is_none());
+    assert_eq!(series.props.alpha.cloned(), Some(1.0));
+    assert!(series.props.alpha.source().is_none());
 }
 
 #[test]
@@ -473,14 +466,14 @@ fn test_series_group_builder_static_source_setters_materialize_values() {
     });
 
     let series = &plot.series_mgr.series[0];
-    assert_eq!(series.color, Some(Color::RED));
-    assert!(series.color_source.is_none());
-    assert_eq!(series.line_width, Some(0.1));
-    assert!(series.line_width_source.is_none());
-    assert_eq!(series.line_style, Some(LineStyle::Dashed));
-    assert!(series.line_style_source.is_none());
-    assert_eq!(series.alpha, Some(1.0));
-    assert!(series.alpha_source.is_none());
+    assert_eq!(series.props.color.cloned(), Some(Color::RED));
+    assert!(series.props.color.source().is_none());
+    assert_eq!(series.props.line_width.cloned(), Some(0.1));
+    assert!(series.props.line_width.source().is_none());
+    assert_eq!(series.props.line_style.cloned(), Some(LineStyle::Dashed));
+    assert!(series.props.line_style.source().is_none());
+    assert_eq!(series.props.alpha.cloned(), Some(1.0));
+    assert!(series.props.alpha.source().is_none());
 }
 
 fn extract_svg_root_attr(svg: &str, attr: &str) -> f32 {
@@ -599,6 +592,19 @@ fn dark_pixel_run_right_from(image: &Image, x: u32, y: u32) -> usize {
     current
 }
 
+/// Pixel x of the middle configured major x tick, as `render()` places it.
+fn middle_x_tick_pixel(plot: &Plot, plot_area: tiny_skia::Rect) -> u32 {
+    let (x_min, x_max, y_min, y_max) = plot
+        .effective_data_bounds()
+        .expect("data bounds should be available");
+    let (x_ticks, _) = plot.configured_major_ticks(x_min, x_max, y_min, y_max);
+    assert!(!x_ticks.is_empty(), "plot should have at least one x tick");
+    let tick = x_ticks[x_ticks.len() / 2];
+    crate::render::skia::map_data_to_pixels(tick, 0.0, x_min, x_max, y_min, y_max, plot_area)
+        .0
+        .round() as u32
+}
+
 fn dark_pixel_run_down_from(image: &Image, x: u32, y: u32) -> usize {
     let mut current = 0;
     for sample_y in y..image.height {
@@ -629,8 +635,9 @@ fn compute_render_plot_area(plot: &Plot) -> tiny_skia::Rect {
 }
 
 fn compute_render_layout(plot: &Plot) -> ResolvedLayout {
+    // Mirror render(): it draws with the margined effective bounds.
     let (x_min, x_max, y_min, y_max) = plot
-        .calculate_data_bounds()
+        .effective_data_bounds()
         .expect("data bounds should be available");
     let content = plot.create_plot_content(y_min, y_max);
     let mut measurement_renderer = crate::render::SkiaRenderer::new(
@@ -657,8 +664,9 @@ fn compute_render_layout(plot: &Plot) -> ResolvedLayout {
 }
 
 fn compute_render_tick_probe_points(plot: &Plot) -> ((u32, u32), (u32, u32)) {
+    // Mirror render(): it draws with the margined effective bounds.
     let (x_min, x_max, y_min, y_max) = plot
-        .calculate_data_bounds()
+        .effective_data_bounds()
         .expect("data bounds should be available");
     let content = plot.create_plot_content(y_min, y_max);
     let mut measurement_renderer = crate::render::SkiaRenderer::new(
@@ -709,8 +717,9 @@ fn compute_render_tick_probe_points(plot: &Plot) -> ((u32, u32), (u32, u32)) {
 }
 
 fn compute_layout_without_tick_measurements(plot: &Plot) -> ResolvedLayout {
+    // Mirror render(): it draws with the margined effective bounds.
     let (x_min, x_max, y_min, y_max) = plot
-        .calculate_data_bounds()
+        .effective_data_bounds()
         .expect("data bounds should be available");
     let content = plot.create_plot_content(y_min, y_max);
 
@@ -794,8 +803,8 @@ fn test_pending_ingestion_error_preserves_single_error_shape() {
 
     let err = Plot::new().line(&bad, &y).render().unwrap_err();
     match err {
-        PlottingError::DataExtractionFailed { source, message } => {
-            assert_eq!(source, "test::failing-ingestion");
+        PlottingError::DataExtractionFailed { origin, message } => {
+            assert_eq!(origin, "test::failing-ingestion");
             assert_eq!(message, "forced ingestion failure");
         }
         other => panic!("expected DataExtractionFailed, got {other:?}"),
@@ -842,8 +851,8 @@ fn test_quiver_preserves_ingestion_error_before_length_validation() {
         .unwrap_err();
 
     match err {
-        PlottingError::DataExtractionFailed { source, message } => {
-            assert_eq!(source, "test::failing-ingestion");
+        PlottingError::DataExtractionFailed { origin, message } => {
+            assert_eq!(origin, "test::failing-ingestion");
             assert_eq!(message, "forced ingestion failure");
         }
         other => panic!("expected DataExtractionFailed, got {other:?}"),
@@ -1039,11 +1048,11 @@ fn test_resolved_svg_accepts_dedicated_series_variants() {
             .color(Color::RED)
             .into_plot(),
         Plot::new()
-            .boxplot(&[1.0, 2.0, 3.0], None)
+            .boxplot(&[1.0, 2.0, 3.0])
             .color(Color::RED)
             .into_plot(),
         Plot::new()
-            .histogram(&[1.0, 1.5, 2.0, 2.5], None)
+            .histogram(&[1.0, 1.5, 2.0, 2.5])
             .color(Color::RED)
             .into_plot(),
     ];
@@ -1095,9 +1104,7 @@ fn test_dedicated_error_bars_honor_asymmetric_overrides_in_svg_and_raster() {
 
 #[test]
 fn test_resolved_histogram_preserves_raw_sample_validation() {
-    let plot = Plot::new()
-        .histogram(&[1.0, f64::NAN, 2.0], None)
-        .into_plot();
+    let plot = Plot::new().histogram(&[1.0, f64::NAN, 2.0]).into_plot();
 
     assert!(matches!(
         plot.render(),
@@ -1108,7 +1115,7 @@ fn test_resolved_histogram_preserves_raw_sample_validation() {
 #[test]
 fn test_snapshot_bounds_cover_heatmap_and_pie_series() {
     let heatmap = Plot::new()
-        .heatmap(&vec![vec![1.0, 2.0], vec![3.0, 4.0]], None)
+        .heatmap(&vec![vec![1.0, 2.0], vec![3.0, 4.0]])
         .end_series();
     let heatmap_bounds = heatmap
         .calculate_data_bounds_for_series(&heatmap.snapshot_series(0.0))
@@ -1140,9 +1147,9 @@ fn test_heatmap_render_preserves_downsampled_vertical_feature() {
 
     let plot = Plot::new()
         .size_px(120, 120)
-        .heatmap(
+        .heatmap_with(
             &values,
-            Some(crate::plots::heatmap::HeatmapConfig::new().colorbar(false)),
+            crate::plots::heatmap::HeatmapConfig::new().colorbar(false),
         )
         .end_series();
     let image = plot.render().expect("heatmap render should succeed");
@@ -1194,15 +1201,13 @@ fn test_heatmap_extent_maps_cells_into_physical_axis_limits() {
 
     let plot = Plot::new()
         .size_px(240, 160)
-        .heatmap(
+        .heatmap_with(
             &values,
-            Some(
-                crate::plots::heatmap::HeatmapConfig::new()
-                    .colorbar(false)
-                    .vmin(0.0)
-                    .vmax(1.0)
-                    .extent(0.0, 8.0, 0.0, 2.4),
-            ),
+            crate::plots::heatmap::HeatmapConfig::new()
+                .colorbar(false)
+                .vmin(0.0)
+                .vmax(1.0)
+                .extent(0.0, 8.0, 0.0, 2.4),
         )
         .xlim(0.0, 8.0)
         .ylim(0.0, 2.4)
@@ -1231,14 +1236,12 @@ fn test_heatmap_render_default_has_no_cell_seams() {
     let values = vec![vec![0.5, 0.5], vec![0.5, 0.5]];
     let plot = Plot::new()
         .size_px(240, 160)
-        .heatmap(
+        .heatmap_with(
             &values,
-            Some(
-                crate::plots::heatmap::HeatmapConfig::new()
-                    .colorbar(false)
-                    .vmin(0.0)
-                    .vmax(1.0),
-            ),
+            crate::plots::heatmap::HeatmapConfig::new()
+                .colorbar(false)
+                .vmin(0.0)
+                .vmax(1.0),
         )
         .end_series();
     let image = plot.render().expect("uniform heatmap should render");
@@ -1266,15 +1269,13 @@ fn test_heatmap_render_cell_borders_are_opt_in() {
     let values = vec![vec![0.5, 0.5], vec![0.5, 0.5]];
     let plot = Plot::new()
         .size_px(240, 160)
-        .heatmap(
+        .heatmap_with(
             &values,
-            Some(
-                crate::plots::heatmap::HeatmapConfig::new()
-                    .colorbar(false)
-                    .vmin(0.0)
-                    .vmax(1.0)
-                    .cell_borders(true),
-            ),
+            crate::plots::heatmap::HeatmapConfig::new()
+                .colorbar(false)
+                .vmin(0.0)
+                .vmax(1.0)
+                .cell_borders(true),
         )
         .end_series();
     let image = plot.render().expect("heatmap with borders should render");
@@ -1295,9 +1296,9 @@ fn test_heatmap_render_cell_borders_are_opt_in() {
 fn test_heatmap_render_skips_non_finite_cells() {
     let plot = Plot::new()
         .size_px(240, 160)
-        .heatmap(
+        .heatmap_with(
             &vec![vec![0.0, f64::NAN, 1.0]],
-            Some(crate::plots::heatmap::HeatmapConfig::new().colorbar(false)),
+            crate::plots::heatmap::HeatmapConfig::new().colorbar(false),
         )
         .end_series();
     let image = plot
@@ -1370,13 +1371,11 @@ fn test_filled_contour_without_lines_has_no_cell_seams() {
 fn test_heatmap_render_skips_nonpositive_cells_on_log_scale() {
     let plot = Plot::new()
         .size_px(240, 160)
-        .heatmap(
+        .heatmap_with(
             &vec![vec![0.0, 1.0, 10.0]],
-            Some(
-                crate::plots::heatmap::HeatmapConfig::new()
-                    .colorbar(false)
-                    .value_scale(crate::axes::AxisScale::Log),
-            ),
+            crate::plots::heatmap::HeatmapConfig::new()
+                .colorbar(false)
+                .value_scale(crate::axes::AxisScale::Log),
         )
         .end_series();
     let image = plot
@@ -1412,25 +1411,21 @@ fn test_heatmap_log_colorbar_layout_reserves_right_margin() {
     let values = vec![vec![0.0, 1e-5, 1e-4, 1e-3], vec![1e-2, 1e-1, 1.0, 10.0]];
     let without_colorbar = Plot::new()
         .size_px(360, 220)
-        .heatmap(
+        .heatmap_with(
             &values,
-            Some(
-                crate::plots::heatmap::HeatmapConfig::new()
-                    .value_scale(crate::axes::AxisScale::Log)
-                    .colorbar(false),
-            ),
+            crate::plots::heatmap::HeatmapConfig::new()
+                .value_scale(crate::axes::AxisScale::Log)
+                .colorbar(false),
         )
         .end_series();
     let with_colorbar = Plot::new()
         .size_px(360, 220)
-        .heatmap(
+        .heatmap_with(
             &values,
-            Some(
-                crate::plots::heatmap::HeatmapConfig::new()
-                    .value_scale(crate::axes::AxisScale::Log)
-                    .colorbar(true)
-                    .colorbar_label("Absorbed Energy"),
-            ),
+            crate::plots::heatmap::HeatmapConfig::new()
+                .value_scale(crate::axes::AxisScale::Log)
+                .colorbar(true)
+                .colorbar_label("Absorbed Energy"),
         )
         .end_series();
 
@@ -1460,11 +1455,11 @@ fn test_heatmap_colorbar_layout_scales_with_dpi() {
 
     let low_dpi = Plot::new()
         .dpi(100)
-        .heatmap(&values, Some(config()))
+        .heatmap_with(&values, config())
         .end_series();
     let high_dpi = Plot::new()
         .dpi(200)
-        .heatmap(&values, Some(config()))
+        .heatmap_with(&values, config())
         .end_series();
 
     let low_layout = compute_render_layout(&low_dpi);
@@ -1523,7 +1518,7 @@ fn test_auto_datashader_policy_keeps_large_scatter_series_eligible() {
 #[test]
 fn test_auto_datashader_policy_excludes_large_histogram_series() {
     let samples: Vec<f64> = (0..100_000).map(|i| (i as f64 * 0.0002).sin()).collect();
-    let plot = Plot::new().histogram(&samples, None).end_series();
+    let plot = Plot::new().histogram(&samples).end_series();
     let snapshot_series = plot.snapshot_series(0.0);
     let total_points = Plot::calculate_total_points_for_series(&snapshot_series);
 
@@ -1854,9 +1849,8 @@ fn test_render_with_datashader_uses_captured_snapshot_for_reactive_series() {
     assert!(image.height > 0);
 }
 
-#[cfg(feature = "parallel")]
 #[test]
-fn test_render_parallel_path_still_validates_empty_series() {
+fn test_render_path_still_validates_empty_series() {
     let empty: Vec<f64> = Vec::new();
 
     let err = Plot::new()
@@ -1864,7 +1858,7 @@ fn test_render_parallel_path_still_validates_empty_series() {
         .end_series()
         .line(&[0.0, 1.0], &[1.0, 2.0])
         .render()
-        .expect_err("parallel path should reject empty inputs");
+        .expect_err("render path should reject empty inputs");
 
     assert!(matches!(err, PlottingError::EmptyDataSet));
 }
@@ -1875,13 +1869,40 @@ fn test_pending_ingestion_error_reports_additional_failures() {
 
     let err = Plot::new().line(&bad, &bad).render().unwrap_err();
     match err {
-        PlottingError::DataExtractionFailed { source, message } => {
-            assert_eq!(source, "ruviz::plot-ingestion");
+        PlottingError::DataExtractionFailed { origin, message } => {
+            assert_eq!(origin, "ruviz::plot-ingestion");
             assert!(message.contains("forced ingestion failure"));
             assert!(message.contains("1 additional ingestion error"));
         }
         other => panic!("expected DataExtractionFailed, got {other:?}"),
     }
+}
+
+/// The multi-error wrapper prefixes the first error exactly once.
+///
+/// This pins a message that CHANGED when [`PendingIngestionError`] started
+/// holding the real [`PlottingError`]. The mirror enum it replaced had no
+/// `RaggedData2D` arm, so a ragged grid was flattened into
+/// `DataExtractionFailed { origin: "ruviz::plot-ingestion" }` on the way in and
+/// then wrapped in that same prefix again on the way out — the message read
+/// `Failed to extract numeric data from ruviz::plot-ingestion: Failed to
+/// extract numeric data from ruviz::plot-ingestion: …`. Nothing asserted the
+/// stutter, which is how it survived; this asserts its absence so the wrapper
+/// cannot grow a second prefix back.
+///
+/// [`PendingIngestionError`]: super::types::PendingIngestionError
+#[test]
+fn test_pending_ingestion_error_wraps_the_first_error_exactly_once() {
+    let ragged = vec![vec![1.0, 2.0], vec![3.0]];
+
+    let err = Plot::new().heatmap(&ragged).render().unwrap_err();
+
+    assert_eq!(
+        err.to_string(),
+        "Failed to extract numeric data from ruviz::plot-ingestion: \
+         NumericData2D: row 1 has 1 values, expected 2 \
+         (and 1 additional ingestion error)"
+    );
 }
 
 #[test]
@@ -1904,29 +1925,47 @@ fn test_group_scopes_shared_style_and_does_not_leak() {
         .end_series();
 
     assert_eq!(plot.series_mgr.series.len(), 3);
-    assert_eq!(plot.series_mgr.series[0].color, Some(Color::RED));
-    assert_eq!(plot.series_mgr.series[1].color, Some(Color::RED));
-    assert_eq!(plot.series_mgr.series[0].line_width, Some(3.0));
-    assert_eq!(plot.series_mgr.series[1].line_width, Some(3.0));
+    assert_eq!(
+        plot.series_mgr.series[0].props.color.cloned(),
+        Some(Color::RED)
+    );
+    assert_eq!(
+        plot.series_mgr.series[1].props.color.cloned(),
+        Some(Color::RED)
+    );
+    assert_eq!(
+        plot.series_mgr.series[0].props.line_width.cloned(),
+        Some(3.0)
+    );
+    assert_eq!(
+        plot.series_mgr.series[1].props.line_width.cloned(),
+        Some(3.0)
+    );
     assert!(matches!(
-        plot.series_mgr.series[0].line_style,
+        plot.series_mgr.series[0].props.line_style.cloned(),
         Some(LineStyle::Dashed)
     ));
     assert!(matches!(
-        plot.series_mgr.series[1].line_style,
+        plot.series_mgr.series[1].props.line_style.cloned(),
         Some(LineStyle::Dashed)
     ));
-    assert_eq!(plot.series_mgr.series[0].alpha, Some(0.35));
-    assert_eq!(plot.series_mgr.series[1].alpha, Some(0.35));
+    assert_eq!(plot.series_mgr.series[0].props.alpha.cloned(), Some(0.35));
+    assert_eq!(plot.series_mgr.series[1].props.alpha.cloned(), Some(0.35));
 
     // Outside the group, styles should fall back to normal per-series defaults.
-    assert_ne!(plot.series_mgr.series[2].color, Some(Color::RED));
-    assert_ne!(plot.series_mgr.series[2].line_width, Some(3.0));
+    assert_ne!(
+        plot.series_mgr.series[2].props.color.cloned(),
+        Some(Color::RED)
+    );
+    assert_ne!(
+        plot.series_mgr.series[2].props.line_width.cloned(),
+        Some(3.0)
+    );
     assert!(matches!(
-        plot.series_mgr.series[2].line_style,
+        plot.series_mgr.series[2].props.line_style.cloned(),
         Some(LineStyle::Solid)
     ));
-    assert_eq!(plot.series_mgr.series[2].alpha, Some(1.0));
+    assert_eq!(plot.series_mgr.series[2].props.alpha.cloned(), Some(1.0));
 }
 
 #[test]
@@ -1957,6 +1996,183 @@ fn test_group_label_collapses_legend_to_single_item() {
         .find(|item| item.label == "Grouped")
         .expect("group legend item should exist");
     assert!(matches!(grouped.item_type, LegendItemType::Line { .. }));
+}
+
+#[test]
+fn test_labeled_fill_between_reaches_the_legend() {
+    let x = vec![0.0, 1.0, 2.0];
+    let lower = vec![0.0, 1.0, 2.0];
+    let upper = vec![1.0, 2.0, 3.0];
+
+    let plot = Plot::new()
+        .line(&x, &upper)
+        .label("mean")
+        .end_series()
+        .fill_between_labeled(&x, &lower, &upper, Color::BLUE, "95% CI");
+
+    let legend_items = plot.collect_legend_items();
+    assert_eq!(legend_items.len(), 2);
+    let band = legend_items
+        .iter()
+        .find(|item| item.label == "95% CI")
+        .expect("labelled fill should get a legend entry");
+    assert!(matches!(band.item_type, LegendItemType::Area { .. }));
+    // The swatch carries the band's own translucency, not a flat blue.
+    assert!(band.color.a < 255);
+}
+
+#[test]
+fn test_unlabeled_fill_between_stays_out_of_the_legend() {
+    let x = vec![0.0, 1.0, 2.0];
+    let lower = vec![0.0, 1.0, 2.0];
+    let upper = vec![1.0, 2.0, 3.0];
+
+    let plot = Plot::new()
+        .line(&x, &upper)
+        .label("mean")
+        .end_series()
+        .fill_between(&x, &lower, &upper);
+
+    let legend_items = plot.collect_legend_items();
+    assert_eq!(legend_items.len(), 1);
+    assert_eq!(legend_items[0].label, "mean");
+}
+
+#[test]
+fn test_user_headless_arrows_render_as_overlay() {
+    use crate::core::ArrowHead;
+
+    // A caller-built arrow with no heads is still a caller's annotation and
+    // belongs on top of the data. Provenance now rides on `ArrowStyle::origin`
+    // rather than being sniffed from the head style, so only `Plot::stem()`'s
+    // own arrows go into the underlay (covered by
+    // `series_api::tests::test_stem_plot_draws_its_stems_under_its_markers`).
+    let headless = Annotation::arrow_styled(
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        ArrowStyle::new()
+            .head_style(ArrowHead::None)
+            .tail_style(ArrowHead::None),
+    );
+    assert!(Plot::is_overlay_annotation(&headless));
+    assert!(!Plot::is_underlay_annotation(&headless));
+
+    let pointer = Annotation::arrow_styled(0.0, 0.0, 1.0, 1.0, ArrowStyle::new());
+    assert!(Plot::is_overlay_annotation(&pointer));
+}
+
+/// The item type of the single legend key of a one-series plot.
+fn only_legend_item_type(plot: &Plot) -> crate::core::LegendItemType {
+    let mut items = plot.collect_legend_items();
+    assert_eq!(items.len(), 1, "expected exactly one legend item");
+    items.remove(0).item_type
+}
+
+#[test]
+fn test_bar_legend_key_carries_the_edge_the_bars_are_drawn_with() {
+    let categories = ["A", "B", "C"];
+    let values = [2.0, 4.0, 3.0];
+    let plot = Plot::new()
+        .bar(&categories, &values)
+        .label("bars")
+        .color(Color::BLUE)
+        .end_series();
+
+    let LegendItemType::Bar { edge } = only_legend_item_type(&plot) else {
+        panic!("a bar series must produce a bar legend key");
+    };
+    let (edge_color, edge_width) = edge.expect("bars carry a default edge, so the key must too");
+    // Same resolution the renderer uses: the fill darkened 30%, 0.8pt.
+    assert_eq!(edge_color, Color::BLUE.darken(0.3));
+    assert!((edge_width - 0.8).abs() < f32::EPSILON);
+}
+
+#[test]
+fn test_bar_legend_key_is_flat_when_the_bars_are_flat() {
+    let categories = ["A", "B"];
+    let values = [1.0, 2.0];
+    let plot = Plot::new()
+        .bar(&categories, &values)
+        .label("bars")
+        .edge_width(0.0)
+        .end_series();
+
+    assert!(
+        matches!(
+            only_legend_item_type(&plot),
+            LegendItemType::Bar { edge: None }
+        ),
+        "edge_width(0.0) draws flat bars, so the key must be flat as well"
+    );
+}
+
+#[test]
+fn test_histogram_legend_key_carries_the_bin_edge() {
+    let data = vec![0.1, 0.4, 0.6, 0.9, 1.2, 1.5, 1.9, 2.4];
+    let plot = Plot::new().histogram(&data).label("hist").end_series();
+
+    let LegendItemType::Histogram { edge } = only_legend_item_type(&plot) else {
+        panic!("a histogram series must produce a histogram legend key");
+    };
+    let (_, edge_width) = edge.expect("histogram bins are always stroked, so the key must be too");
+    assert!((edge_width - 0.8).abs() < f32::EPSILON);
+}
+
+#[test]
+fn test_svg_bars_carry_the_same_edge_as_raster_bars() {
+    // PNG bars regained their edge; the SVG twin must not stay flat.
+    let categories = ["A", "B", "C"];
+    let values = [2.0, 4.0, 3.0];
+    let svg = Plot::new()
+        .bar(&categories, &values)
+        .color(Color::BLUE)
+        .edge_color(Color::RED)
+        .end_series()
+        .render_to_svg()
+        .expect("bar SVG render should succeed");
+
+    assert!(
+        svg.contains(r#"fill="rgb(0,0,255)" stroke="rgb(255,0,0)""#),
+        "expected blue bars stroked in red in the SVG: {svg}"
+    );
+}
+
+#[test]
+fn test_svg_bars_are_flat_when_the_edge_is_switched_off() {
+    let categories = ["A", "B"];
+    let values = [1.0, 2.0];
+    let svg = Plot::new()
+        .bar(&categories, &values)
+        .color(Color::BLUE)
+        .edge_width(0.0)
+        .end_series()
+        .render_to_svg()
+        .expect("bar SVG render should succeed");
+
+    assert!(
+        !svg.contains(r#"fill="rgb(0,0,255)" stroke="#),
+        "edge_width(0.0) must leave the SVG bars unstroked: {svg}"
+    );
+}
+
+#[test]
+fn test_svg_scatter_markers_carry_a_requested_rim() {
+    let x = [0.0, 1.0, 2.0];
+    let y = [1.0, 3.0, 2.0];
+    let svg = Plot::new()
+        .scatter(&x, &y)
+        .color(Color::BLUE)
+        .edge_color(Color::RED)
+        .end_series()
+        .render_to_svg()
+        .expect("scatter SVG render should succeed");
+
+    assert!(
+        svg.contains(r#"stroke="rgb(255,0,0)""#),
+        "an explicit marker edge colour must reach the SVG: {svg}"
+    );
 }
 
 #[test]
@@ -2191,13 +2407,11 @@ fn test_outside_right_legend_is_additive_with_colorbar_band() {
     let values = vec![vec![0.0, 0.5], vec![1.0, 1.5]];
     let base = Plot::new()
         .size_px(640, 480)
-        .heatmap(
+        .heatmap_with(
             &values,
-            Some(
-                crate::plots::heatmap::HeatmapConfig::new()
-                    .colorbar(true)
-                    .colorbar_label("Field"),
-            ),
+            crate::plots::heatmap::HeatmapConfig::new()
+                .colorbar(true)
+                .colorbar_label("Field"),
         )
         .line(&[0.0, 1.0], &[0.0, 1.0])
         .label("Overlay")
@@ -2293,7 +2507,7 @@ fn test_png_and_svg_resolve_identical_outside_legend_rect() {
 fn test_legacy_position_api_keeps_inside_layout_behavior() {
     let legacy = Plot::new()
         .size_px(640, 480)
-        .legend(Position::TopRight)
+        .legend(LegendPosition::UpperRight)
         .line(&[0.0, 1.0], &[0.0, 1.0])
         .label("Legacy")
         .end_series();
@@ -2310,70 +2524,6 @@ fn test_legacy_position_api_keeps_inside_layout_behavior() {
         compute_render_layout(&modern)
     );
     assert!(compute_render_layout(&legacy).legend_rect.is_none());
-}
-
-#[cfg(feature = "parallel")]
-#[test]
-fn test_parallel_render_honors_resolved_outside_legend_rect() {
-    let x: Vec<f64> = (0..25_000).map(|index| index as f64 / 250.0).collect();
-    let y: Vec<f64> = x.iter().map(|value| value.sin()).collect();
-    let plot = Plot::new()
-        .size_px(640, 480)
-        .with_parallel(None)
-        .legend_position(LegendPosition::OutsideRight)
-        .scatter(&x, &y)
-        .label("Parallel samples")
-        .end_series();
-
-    let layout = compute_render_layout(&plot);
-    assert!(layout.legend_rect.unwrap().left > layout.plot_area.right);
-    plot.render_with_parallel()
-        .expect("parallel outside legend should render");
-}
-
-#[cfg(feature = "parallel")]
-#[test]
-fn test_parallel_render_draws_enabled_legend() {
-    let x: Vec<f64> = (0..25_000).map(|index| index as f64 / 250.0).collect();
-    let y: Vec<f64> = x.iter().map(|value| value.sin() * 0.2 + 0.5).collect();
-
-    let make_plot = |legend: bool| -> Plot {
-        let plot = Plot::new()
-            .scatter(&x, &y)
-            .label("Samples")
-            .end_series()
-            .xlim(0.0, 100.0)
-            .ylim(0.0, 1.0)
-            .set_output_pixels(420, 320);
-
-        if legend { plot.legend_best() } else { plot }
-    };
-
-    let with_legend = make_plot(true)
-        .render_with_parallel()
-        .expect("parallel render with legend should succeed");
-    let without_legend = make_plot(false)
-        .render_with_parallel()
-        .expect("parallel render without legend should succeed");
-
-    assert_eq!(with_legend.width, without_legend.width);
-    assert_eq!(with_legend.height, without_legend.height);
-
-    let differing_pixels = with_legend
-        .pixels
-        .chunks_exact(4)
-        .zip(without_legend.pixels.chunks_exact(4))
-        .filter(|(left, right)| {
-            left.iter()
-                .zip(right.iter())
-                .any(|(lhs, rhs)| (*lhs as i16 - *rhs as i16).abs() > 8)
-        })
-        .count();
-
-    assert!(
-        differing_pixels > 250,
-        "legend should visibly change parallel render output; differing pixels={differing_pixels}"
-    );
 }
 
 #[test]
@@ -2448,7 +2598,8 @@ fn test_png_annotation_hline_uses_log_y_scale() {
 
     let image = plot.render().unwrap();
     let plot_area = compute_render_plot_area(&plot);
-    let (x_min, x_max, y_min, y_max) = plot.calculate_data_bounds().unwrap();
+    // Render uses the margined effective bounds, not the raw data bounds.
+    let (x_min, x_max, y_min, y_max) = plot.effective_data_bounds().unwrap();
     let (expected_x, expected_y) = crate::render::skia::map_data_to_pixels_scaled(
         0.5,
         10.0,
@@ -2533,14 +2684,45 @@ fn test_svg_line_uses_log_y_scale_for_geometry() {
 
 #[test]
 fn test_log_axis_rejects_non_positive_render_range() {
+    // An explicit limit a log axis cannot represent is the user asking for
+    // something impossible, and is still refused.
     let result = Plot::new()
-        .line(&[0.0, 1.0], &[0.0, 1.0])
+        .line(&[1.0, 2.0], &[1.0, 10.0])
         .yscale(crate::axes::AxisScale::Log)
+        .ylim(0.0, 10.0)
         .render();
 
-    let err = result.expect_err("log scale should reject zero y range bound");
+    let err = result.expect_err("log scale should reject a zero y limit");
     assert!(matches!(err, PlottingError::InvalidInput(_)));
     assert!(err.to_string().contains("Invalid y-axis range"));
+}
+
+#[test]
+fn test_log_axis_autoscale_skips_samples_it_cannot_place() {
+    // Auto-scaled bounds are derived only from the samples the axis can place,
+    // so a zero in the data no longer drags the range down to a value a log
+    // axis has no position for. The zero itself is simply not drawn.
+    Plot::new()
+        .line(&[0.0, 1.0], &[0.0, 1.0])
+        .yscale(crate::axes::AxisScale::Log)
+        .render()
+        .expect("a log axis autoscales to the samples it can place");
+}
+
+#[test]
+fn test_log_axis_reports_data_it_cannot_place_at_all() {
+    // But a series whose every sample is off the axis would render a blank
+    // figure, so it is named instead of silently dropped.
+    let err = Plot::new()
+        .line(&[1.0, 2.0], &[-3.0, -1.0])
+        .yscale(crate::axes::AxisScale::Log)
+        .render()
+        .expect_err("a log axis with no placeable sample must say so");
+
+    assert!(matches!(err, PlottingError::InvalidInput(_)));
+    let message = err.to_string();
+    assert!(message.contains("logarithmic y axis"), "{message}");
+    assert!(message.contains("yscale"), "{message}");
 }
 
 #[test]
@@ -2734,8 +2916,9 @@ fn test_render_layout_uses_configured_major_ticks() {
         .major_ticks_y(3)
         .line(&[0.0, 1.0, 2.0, 3.0], &[1.0, 4.0, 9.0, 16.0])
         .end_series();
+    // Mirror render(): it draws with the margined effective bounds.
     let (x_min, x_max, y_min, y_max) = plot
-        .calculate_data_bounds()
+        .effective_data_bounds()
         .expect("data bounds should be available");
     let content = plot.create_plot_content(y_min, y_max);
     let mut measurement_renderer = crate::render::SkiaRenderer::new(
@@ -2770,6 +2953,9 @@ fn test_render_layout_uses_configured_major_ticks() {
 fn test_render_honors_top_and_right_tick_sides() {
     let base_plot = Plot::new()
         .size_px(400, 300)
+        // Grid off: the now-visible default grid draws a dark column at every
+        // tick, which would mask whether a top/right tick mark was emitted.
+        .grid(false)
         .line(&[0.0, 10.0, 20.0], &[0.0, 50.0, 100.0])
         .end_series();
     let all_sides = base_plot.clone().ticks_all_sides();
@@ -2781,31 +2967,38 @@ fn test_render_honors_top_and_right_tick_sides() {
         .render()
         .expect("bottom-left render should succeed");
 
-    assert!(image_pixel_is_dark(
+    // Radius 1: a tick centre can land on a sub-pixel boundary, so the drawn
+    // 1px line may sit one row/column off the rounded probe.
+    assert!(image_has_dark_pixel_near(
         &image_all_sides,
         top_probe.0,
-        top_probe.1
+        top_probe.1,
+        1
     ));
-    assert!(!image_pixel_is_dark(
+    assert!(!image_has_dark_pixel_near(
         &image_bottom_left,
         top_probe.0,
-        top_probe.1
+        top_probe.1,
+        1
     ));
-    assert!(image_pixel_is_dark(
+    assert!(image_has_dark_pixel_near(
         &image_all_sides,
         right_probe.0,
-        right_probe.1
+        right_probe.1,
+        1
     ));
-    assert!(!image_pixel_is_dark(
+    assert!(!image_has_dark_pixel_near(
         &image_bottom_left,
         right_probe.0,
-        right_probe.1
+        right_probe.1,
+        1
     ));
 }
 
 fn compute_categorical_render_top_tick_probe(plot: &Plot) -> (u32, u32) {
+    // Mirror render(): it draws with the margined effective bounds.
     let (x_min, x_max, y_min, y_max) = plot
-        .calculate_data_bounds()
+        .effective_data_bounds()
         .expect("data bounds should be available");
     let content = plot.create_plot_content(y_min, y_max);
     let mut measurement_renderer = crate::render::SkiaRenderer::new(
@@ -2829,20 +3022,10 @@ fn compute_categorical_render_top_tick_probe(plot: &Plot) -> (u32, u32) {
         )
         .expect("configured layout with tick measurements");
     let plot_area = Plot::plot_area_from_layout(&layout).expect("valid plot area");
-    let categories = plot
-        .series_mgr
-        .series
-        .iter()
-        .find_map(|series| {
-            if let SeriesType::Bar { categories, .. } = &series.series_type {
-                Some(categories.len())
-            } else {
-                None
-            }
-        })
+    let category_axis = super::series_internal::CategoryAxis::harvest(&plot.series_mgr.series)
         .expect("categorical plot should contain bar categories");
     let x_tick_pixels =
-        Plot::categorical_x_tick_pixels(plot_area, x_min, x_max, Some(categories), &[])
+        Plot::categorical_x_tick_pixels(plot_area, x_min, x_max, &category_axis.positions)
             .expect("categorical ticks should be available");
     let x_probe = x_tick_pixels[0].round() as u32;
     (x_probe, (plot_area.top() + 3.0).round() as u32)
@@ -2854,6 +3037,8 @@ fn test_render_honors_top_ticks_for_categorical_bar() {
     let values = [2.0, 4.0, 3.0];
     let base_plot = Plot::new()
         .size_px(400, 300)
+        // Grid off: see test_render_honors_top_and_right_tick_sides.
+        .grid(false)
         .bar(&categories, &values)
         .end_series();
     let all_sides = base_plot.clone().ticks_all_sides();
@@ -2885,6 +3070,8 @@ fn test_render_to_renderer_honors_top_ticks_for_categorical_bar() {
     let values = [2.0, 4.0, 3.0];
     let base_plot = Plot::new()
         .size_px(400, 300)
+        // Grid off: see test_render_honors_top_and_right_tick_sides.
+        .grid(false)
         .bar(&categories, &values)
         .end_series();
     let all_sides = base_plot.clone().ticks_all_sides();
@@ -2936,8 +3123,9 @@ fn test_render_to_svg_uses_layout_positions_for_title_and_labels() {
 
     let svg = plot.render_to_svg().expect("SVG render should succeed");
 
+    // Mirror render(): it draws with the margined effective bounds.
     let (x_min, x_max, y_min, y_max) = plot
-        .calculate_data_bounds()
+        .effective_data_bounds()
         .expect("data bounds should be available");
     let content = plot.create_plot_content(y_min, y_max);
     let mut measurement_renderer = crate::render::SkiaRenderer::new(
@@ -3032,7 +3220,7 @@ fn test_render_to_svg_uses_layout_positions_for_title_and_labels() {
 
 #[test]
 fn test_render_to_svg_preserves_line_marker_shape() {
-    let marker_color = Color::new(17, 119, 51);
+    let marker_color = Color::from_rgb(17, 119, 51);
     let plot = Plot::new()
         .line(&[0.0, 1.0], &[0.0, 1.0])
         .color(marker_color)
@@ -3261,8 +3449,10 @@ fn test_rendered_axis_and_tick_geometry_follow_line_config() {
     let thin_axis_run = dark_pixel_run_right_from(&thin_image, thin_axis_x, thin_axis_y);
     let thick_axis_run = dark_pixel_run_right_from(&thick_image, thick_axis_x, thick_axis_y);
 
-    let thin_tick_x = (thin_area.left() + thin_area.width() * 0.5).round() as u32;
-    let thick_tick_x = (thick_area.left() + thick_area.width() * 0.5).round() as u32;
+    // Probe at a real tick position: the plot-area centre is not guaranteed to
+    // carry a tick once the autoscale margin widens the range.
+    let thin_tick_x = middle_x_tick_pixel(&thin_plot, thin_area);
+    let thick_tick_x = middle_x_tick_pixel(&thick_plot, thick_area);
     let thin_tick_y = thin_area.bottom().round() as u32;
     let thick_tick_y = thick_area.bottom().round() as u32;
     let thin_tick_run = dark_pixel_run_down_from(&thin_image, thin_tick_x, thin_tick_y);
@@ -3293,8 +3483,9 @@ fn test_render_to_svg_typst_uses_layout_anchor_contract() {
 
     let svg = plot.render_to_svg().expect("SVG render should succeed");
 
+    // Mirror render(): it draws with the margined effective bounds.
     let (x_min, x_max, y_min, y_max) = plot
-        .calculate_data_bounds()
+        .effective_data_bounds()
         .expect("data bounds should be available");
     let content = plot.create_plot_content(y_min, y_max);
     let mut measurement_renderer = crate::render::SkiaRenderer::new(
@@ -3543,7 +3734,7 @@ fn test_plot_series_builder_gpu_method() {
     let x_data: Vec<f64> = (0..100).map(|i| i as f64).collect();
     let y_data: Vec<f64> = x_data.iter().map(|x| x * 2.0).collect();
 
-    // Test that gpu() works on PlotSeriesBuilder
+    // Test that gpu() works on PlotBuilder<C>
     let plot = Plot::new().line(&x_data, &y_data).gpu(true);
 
     assert_eq!(plot.get_backend_name(), "gpu");
@@ -3695,7 +3886,7 @@ fn test_public_png_auto_optimize_refuses_unroutable_large_line_backend() {
 fn test_benchmark_save_png_bytes_keeps_large_histogram_on_skia() {
     let samples: Vec<f64> = (0..100_000).map(|i| (i as f64 * 0.0002).sin()).collect();
 
-    let plot = Plot::new().histogram(&samples, None).end_series();
+    let plot = Plot::new().histogram(&samples).end_series();
     let (_, backend) = plot.benchmark_save_png_bytes().unwrap();
 
     assert_eq!(backend, "skia");
@@ -3767,6 +3958,91 @@ fn test_reference_save_png_reports_marker_sprite_compositor_for_large_scatter() 
     assert!(diagnostics.used_marker_sprite_cache);
     assert!(!diagnostics.used_marker_sprite_fallback);
     assert!(diagnostics.used_marker_scanline_blit);
+}
+
+#[test]
+#[cfg(not(target_arch = "wasm32"))]
+fn test_reference_save_png_marker_edge_keeps_the_sprite_compositor() {
+    // The sprite cache is keyed on (style, size, colour, EDGE, phase), so the
+    // rim is part of the sprite's identity and an edged batch keeps the fast
+    // path. Dropping off the compositor is what used to make a marker rim
+    // expensive enough to be worth disabling by default.
+    let (x, y) = large_xy_data();
+    let plot = Plot::new()
+        .size_px(640, 480)
+        .ticks(false)
+        .grid(false)
+        .scatter(&x, &y)
+        .marker(MarkerStyle::Circle)
+        .marker_size(6.0)
+        .edge_color(Color::BLACK)
+        .into_plot();
+
+    let (png, _, diagnostics) = plot
+        .benchmark_save_png_bytes_with_diagnostics()
+        .expect("reference edged-scatter PNG render should produce diagnostics");
+
+    assert!(
+        diagnostics.used_marker_sprite_compositor,
+        "an edged marker batch must still use the sprite compositor"
+    );
+
+    // The rim has to actually be in the pixels, not just in the diagnostics.
+    let image = decode_png_rgba(&png);
+    let black_pixels = image
+        .pixels()
+        .filter(|p| p.0[3] == 255 && p.0[0] < 40 && p.0[1] < 40 && p.0[2] < 40)
+        .count();
+    assert!(
+        black_pixels > 200,
+        "the requested black rim must be painted through the sprite path, saw {black_pixels} px"
+    );
+}
+
+#[test]
+#[cfg(not(target_arch = "wasm32"))]
+fn test_edged_marker_batch_matches_across_the_sprite_threshold() {
+    // The sprite compositor only engages at 32 points. An edged batch must look
+    // the same either side of that threshold, or the same series would render
+    // differently for want of one more point.
+    let render = |count: usize| {
+        // The 32nd point duplicates the 1st, so both batches draw the same
+        // geometry and only the code path differs.
+        let x: Vec<f64> = (0..count).map(|i| ((i % 31) % 8) as f64).collect();
+        let y: Vec<f64> = (0..count).map(|i| ((i % 31) / 8) as f64).collect();
+        Plot::new()
+            .size_px(320, 240)
+            .ticks(false)
+            .grid(false)
+            .scatter(&x, &y)
+            .marker(MarkerStyle::Square)
+            .marker_size(10.0)
+            .edge_color(Color::from_rgb(255, 0, 0))
+            .edge_width(2.0)
+            .into_plot()
+            .benchmark_save_png_bytes_with_diagnostics()
+            .expect("threshold scatter PNG render should succeed")
+    };
+
+    let (vector_png, _, vector_diagnostics) = render(31);
+    let (sprite_png, _, sprite_diagnostics) = render(32);
+    assert!(!vector_diagnostics.used_marker_sprite_compositor);
+    assert!(sprite_diagnostics.used_marker_sprite_compositor);
+
+    let red = |png: &[u8]| {
+        decode_png_rgba(png)
+            .pixels()
+            .filter(|p| p.0 == [255, 0, 0, 255])
+            .count()
+    };
+    let vector_red = red(&vector_png);
+    let sprite_red = red(&sprite_png);
+    assert!(vector_red > 0, "the vector path must paint the rim");
+    let delta = vector_red.abs_diff(sprite_red);
+    assert!(
+        delta * 20 <= vector_red,
+        "vector and sprite rims must agree within 5%: {vector_red} vs {sprite_red}"
+    );
 }
 
 #[test]
@@ -3864,9 +4140,9 @@ fn test_reference_save_png_reports_direct_rect_fill_for_large_heatmap() {
     let heatmap_values = large_heatmap_matrix();
     let plot = Plot::new()
         .size_px(640, 480)
-        .heatmap(
+        .heatmap_with(
             &heatmap_values,
-            Some(crate::plots::heatmap::HeatmapConfig::new().colorbar(false)),
+            crate::plots::heatmap::HeatmapConfig::new().colorbar(false),
         )
         .into_plot();
 
@@ -3948,7 +4224,7 @@ fn test_render_large_line_and_histogram_png_preserve_background() {
     let histogram_input: Vec<f64> = (0..100_000).map(|i| (i as f64 * 0.0001).sin()).collect();
     let histogram_png = Plot::new()
         .size_px(640, 480)
-        .histogram(&histogram_input, None)
+        .histogram(&histogram_input)
         .render_png_bytes()
         .expect("large histogram should render as PNG");
     assert_png_background_preserved("large histogram", &histogram_png);
@@ -4080,14 +4356,14 @@ fn test_large_distribution_and_categorical_png_and_save_paths_stay_visually_sane
     let histogram = Plot::new()
         .size_px(320, 200)
         .ticks(false)
-        .histogram(&samples, None)
+        .histogram(&samples)
         .into_plot();
     assert_large_plot_png_and_save("large-distribution-histogram", &histogram);
 
     let boxplot = Plot::new()
         .size_px(320, 200)
         .ticks(false)
-        .boxplot(&samples, None)
+        .boxplot(&samples)
         .into_plot();
     assert_large_plot_png_and_save("large-distribution-boxplot", &boxplot);
 
@@ -4129,9 +4405,9 @@ fn test_large_grid_family_png_and_save_paths_stay_visually_sane() {
     let heatmap = Plot::new()
         .size_px(320, 200)
         .ticks(false)
-        .heatmap(
+        .heatmap_with(
             &heatmap_values,
-            Some(crate::plots::heatmap::HeatmapConfig::new().colorbar(false)),
+            crate::plots::heatmap::HeatmapConfig::new().colorbar(false),
         )
         .into_plot();
     assert_large_plot_png_and_save("large-grid-heatmap", &heatmap);
@@ -4494,16 +4770,22 @@ fn test_streaming_with_styling() {
 
     let plot = Plot::new()
         .line_streaming(&stream)
-        .color(Color::new(255, 0, 0))
-        .width(3.0)
+        .color(Color::from_rgb(255, 0, 0))
+        .line_width(3.0)
         .label("Styled Streaming")
         .title("Styled Streaming Plot")
         .xlabel("X Axis")
         .ylabel("Y Axis")
         .end_series();
 
-    assert_eq!(plot.series_mgr.series[0].color, Some(Color::new(255, 0, 0)));
-    assert_eq!(plot.series_mgr.series[0].line_width, Some(3.0));
+    assert_eq!(
+        plot.series_mgr.series[0].props.color.cloned(),
+        Some(Color::from_rgb(255, 0, 0))
+    );
+    assert_eq!(
+        plot.series_mgr.series[0].props.line_width.cloned(),
+        Some(3.0)
+    );
 
     let result = plot.render();
     assert!(result.is_ok());
@@ -4518,12 +4800,18 @@ fn test_streaming_scatter_with_styling() {
 
     let plot = Plot::new()
         .scatter_streaming(&stream)
-        .color(Color::new(0, 255, 0))
+        .color(Color::from_rgb(0, 255, 0))
         .marker_size(10.0)
         .end_series();
 
-    assert_eq!(plot.series_mgr.series[0].color, Some(Color::new(0, 255, 0)));
-    assert_eq!(plot.series_mgr.series[0].marker_size, Some(10.0));
+    assert_eq!(
+        plot.series_mgr.series[0].props.color.cloned(),
+        Some(Color::from_rgb(0, 255, 0))
+    );
+    assert_eq!(
+        plot.series_mgr.series[0].props.marker_size.cloned(),
+        Some(10.0)
+    );
 
     let result = plot.render();
     assert!(result.is_ok());
@@ -4909,7 +5197,7 @@ fn test_render_rejects_non_positive_figure_width_before_sanitizing() {
 fn test_plot_builder_can_chain_histogram_without_end_series() {
     let plot: Plot = Plot::new()
         .line(&[0.0, 10.0], &[0.0, 1.0])
-        .histogram(&[1.0, 2.0, 3.0, 4.0], None)
+        .histogram(&[1.0, 2.0, 3.0, 4.0])
         .into();
 
     assert_eq!(plot.series_mgr.series.len(), 2);
@@ -4925,7 +5213,7 @@ fn test_plot_builder_can_chain_histogram_without_end_series() {
 
 #[test]
 fn test_static_histogram_prepares_histogram_data() {
-    let plot: Plot = Plot::new().histogram(&[1.0, 2.0, 3.0, 4.0], None).into();
+    let plot: Plot = Plot::new().histogram(&[1.0, 2.0, 3.0, 4.0]).into();
 
     match &plot.series_mgr.series[0].series_type {
         SeriesType::Histogram { prepared, .. } => {
@@ -4940,7 +5228,7 @@ fn test_static_histogram_prepares_histogram_data() {
 #[test]
 fn test_histogram_source_keeps_prepared_histogram_lazy() {
     let plot: Plot = Plot::new()
-        .histogram_source(vec![1.0, 2.0, 3.0, 4.0], None)
+        .histogram_source(vec![1.0, 2.0, 3.0, 4.0])
         .into();
 
     match &plot.series_mgr.series[0].series_type {
@@ -4961,11 +5249,11 @@ fn test_histogram_prepared_and_source_backed_paths_match() {
 
     let static_plot: Plot = Plot::new()
         .size_px(320, 240)
-        .histogram(&data, Some(config.clone()))
+        .histogram_with(&data, config.clone())
         .into();
     let source_plot: Plot = Plot::new()
         .size_px(320, 240)
-        .histogram_source(data.clone(), Some(config))
+        .histogram_source_with(data.clone(), config)
         .into();
 
     let static_hist = static_plot.series_mgr.series[0]
@@ -5017,8 +5305,8 @@ fn test_plot_builder_can_add_styled_vline_without_end_series() {
 #[test]
 fn test_plot_series_builder_can_chain_boxplot_without_end_series() {
     let plot: Plot = Plot::new()
-        .histogram(&[1.0, 2.0, 3.0, 4.0], None)
-        .boxplot(&[2.0, 3.0, 5.0, 8.0], None)
+        .histogram(&[1.0, 2.0, 3.0, 4.0])
+        .boxplot(&[2.0, 3.0, 5.0, 8.0])
         .into();
 
     assert_eq!(plot.series_mgr.series.len(), 2);
@@ -5168,7 +5456,7 @@ fn test_quiver_svg_scales_stroke_width_with_dpi() {
     let plot: Plot = Plot::new()
         .dpi(200)
         .quiver(&x, &y, &u, &v)
-        .width(1.2)
+        .arrow_width(1.2)
         .into();
     let expected_stroke_width = match &plot.series_mgr.series[0].series_type {
         SeriesType::Quiver { data } => plot.render_scale().points_to_pixels(data.config.width),
@@ -5202,14 +5490,15 @@ fn test_quiver_png_uses_log_x_scale_for_geometry() {
         .marker_size(0.1)
         .quiver(&x, &y, &u, &v)
         .color(Color::RED)
-        .width(4.0)
-        .headlength(0.0)
-        .headwidth(0.0)
+        .arrow_width(4.0)
+        .arrow_head_length(0.0)
+        .arrow_head_width(0.0)
         .into();
 
     let image = plot.render().unwrap();
     let plot_area = compute_render_plot_area(&plot);
-    let (x_min, x_max, y_min, y_max) = plot.calculate_data_bounds().unwrap();
+    // Render uses the margined effective bounds, not the raw data bounds.
+    let (x_min, x_max, y_min, y_max) = plot.effective_data_bounds().unwrap();
     let data_midpoint = (10.0_f64 * 100.0).sqrt();
     let (expected_x, expected_y) = crate::render::skia::map_data_to_pixels_scaled(
         data_midpoint,
@@ -5256,8 +5545,8 @@ fn test_quiver_bounds_include_arrow_head_vertices() {
 
     let plot: Plot = Plot::new()
         .quiver(&x, &y, &u, &v)
-        .headlength(0.2)
-        .headwidth(1.0)
+        .arrow_head_length(0.2)
+        .arrow_head_width(1.0)
         .into();
 
     let (_, _, y_min, y_max) = plot.calculate_data_bounds().unwrap();
@@ -5334,31 +5623,44 @@ fn test_auto_placed_insets_preserve_gap_with_mixed_sizes() {
 }
 
 #[test]
-fn test_radar_plot_area_centers_portrait_insets_before_title_clearance() {
+fn test_radar_plot_area_is_the_largest_centered_square() {
+    // Portrait plot area: the square is limited by the width and must sit in the
+    // vertical middle, not be pushed down by a redundant title clearance.
     let plot_area =
         tiny_skia::Rect::from_ltrb(100.0, 200.0, 300.0, 600.0).expect("valid test rect");
     let area = Plot::radar_plot_area(plot_area, -1.25, 1.25, -1.25, 1.25);
 
+    assert!(
+        (area.width - 200.0).abs() < 0.01,
+        "unexpected radar inset width: {}",
+        area.width
+    );
+    assert!(
+        (area.height - 200.0).abs() < 0.01,
+        "unexpected radar inset height: {}",
+        area.height
+    );
     assert!(
         (area.x - 100.0).abs() < 0.01,
         "unexpected radar inset x: {}",
         area.x
     );
     assert!(
-        (area.y - 340.0).abs() < 0.01,
+        (area.y - 300.0).abs() < 0.01,
         "unexpected radar inset y: {}",
         area.y
     );
-    assert!(
-        (area.width - 160.0).abs() < 0.01,
-        "unexpected radar inset width: {}",
-        area.width
-    );
-    assert!(
-        (area.height - 160.0).abs() < 0.01,
-        "unexpected radar inset height: {}",
-        area.height
-    );
+
+    // The square's center must coincide with the plot area's center on both axes.
+    assert!((area.x + area.width * 0.5 - 200.0).abs() < 0.01);
+    assert!((area.y + area.height * 0.5 - 400.0).abs() < 0.01);
+
+    // Landscape plot area: same contract, limited by height this time.
+    let landscape = tiny_skia::Rect::from_ltrb(0.0, 0.0, 640.0, 400.0).expect("valid test rect");
+    let area = Plot::radar_plot_area(landscape, -1.25, 1.25, -1.25, 1.25);
+    assert!((area.width - 400.0).abs() < 0.01);
+    assert!((area.x + area.width * 0.5 - 320.0).abs() < 0.01);
+    assert!((area.y + area.height * 0.5 - 200.0).abs() < 0.01);
 }
 
 #[test]
@@ -5463,7 +5765,7 @@ fn test_radar_top_level_reactive_color_styles_unconfigured_internal_series_once(
     let plot: Plot = Plot::new()
         .radar(&["A", "B", "C"])
         .add_series("configured", &[1.0, 2.0, 3.0])
-        .with_color(Color::GREEN)
+        .series_color(Color::GREEN)
         .add_series("reactive", &[3.0, 2.0, 1.0])
         .color_source(color)
         .into();
@@ -5542,7 +5844,7 @@ fn test_resolved_shell_shares_specialized_payloads() {
 
 #[test]
 fn test_from_plot_series_builder_for_plot() {
-    // Test From<PlotSeriesBuilder> for Plot
+    // Test From<PlotBuilder<C>> for Plot
     let x_data = vec![1.0, 2.0, 3.0];
     let y_data = vec![2.0, 4.0, 3.0];
 
@@ -5667,7 +5969,7 @@ fn test_generic_function_with_into_plot() {
     // Works with Plot
     assert_eq!(count_series(Plot::new()), 0);
 
-    // Works with PlotSeriesBuilder
+    // Works with PlotBuilder<C>
     let builder = Plot::new().line(&x_data, &y_data);
     assert_eq!(count_series(builder), 1);
 }
@@ -5717,8 +6019,12 @@ fn test_horizontal_boxen_bounds_put_data_range_on_x_axis() {
 
     assert!(x_min <= 10.0);
     assert!(x_max >= 30.0);
-    assert!(y_min <= 0.0);
-    assert!(y_max >= 1.0);
+
+    // The category axis carries the boxen's unit-wide slot, not a 0..1
+    // placeholder: with no `.category()` it owns slot 0, i.e. -0.5..0.5.
+    let (slot_lo, slot_hi) = crate::plots::boxplot::category_slot_span(0.0);
+    assert!(y_min <= slot_lo);
+    assert!(y_max >= slot_hi);
 }
 
 #[test]
@@ -5800,6 +6106,69 @@ fn differing_pixel_count(left: &Image, right: &Image) -> usize {
         .count()
 }
 
+/// `LegendPosition::Best` must actually look at the data.
+///
+/// The occupancy grid existed and was unit-tested, but no production call site
+/// fed it, so `Best` silently answered `UpperRight` in every real figure. Data
+/// packed into the top-right corner therefore got a legend sitting on top of
+/// it. `find_best_position` breaks ties towards the first candidate, so with the
+/// top-right occupied the answer must be `UpperLeft` — and it must be reached
+/// through the public render path, on both backends.
+#[test]
+fn best_legend_avoids_the_data_on_both_backends() {
+    // Every sample in the top-right corner of the axes, nothing anywhere else.
+    let x: Vec<f64> = (0..200).map(|index| 0.6 + index as f64 * 0.002).collect();
+    let y: Vec<f64> = x.iter().map(|value| 0.7 + value * 0.25).collect();
+
+    let build = |position: LegendPosition| -> Plot {
+        let plot = Plot::new()
+            .size_px(640, 480)
+            .xlim(0.0, 1.0)
+            .ylim(0.0, 1.0)
+            .line(&x, &y)
+            .label("top right")
+            .end_series();
+        match position {
+            LegendPosition::Best => plot.legend_best(),
+            explicit => plot.legend_position(explicit),
+        }
+    };
+
+    let best = build(LegendPosition::Best).render().expect("best raster");
+    let upper_left = build(LegendPosition::UpperLeft)
+        .render()
+        .expect("upper-left raster");
+    let upper_right = build(LegendPosition::UpperRight)
+        .render()
+        .expect("upper-right raster");
+
+    assert_eq!(
+        differing_pixel_count(&best, &upper_left),
+        0,
+        "`Best` should have picked the empty upper-left corner"
+    );
+    assert!(
+        differing_pixel_count(&best, &upper_right) > 0,
+        "`Best` degraded to `UpperRight`, which is where the data is"
+    );
+
+    let best_svg = build(LegendPosition::Best)
+        .render_to_svg()
+        .expect("best svg");
+    let upper_left_svg = build(LegendPosition::UpperLeft)
+        .render_to_svg()
+        .expect("upper-left svg");
+    let upper_right_svg = build(LegendPosition::UpperRight)
+        .render_to_svg()
+        .expect("upper-right svg");
+
+    assert_eq!(
+        best_svg, upper_left_svg,
+        "the SVG backend must resolve `Best` the same way the raster backend does"
+    );
+    assert_ne!(best_svg, upper_right_svg);
+}
+
 #[test]
 fn plain_svg_multiline_title_uses_weighted_measurement_and_reserves_each_line() {
     let build = |title: &str| {
@@ -5876,24 +6245,6 @@ fn serial_raster_title_honors_weight_without_changing_annotation_weight() {
     );
 }
 
-#[cfg(feature = "parallel")]
-#[test]
-fn parallel_raster_title_honors_weight_without_changing_annotation_weight() {
-    let normal = plot_with_weighted_title(crate::render::FontWeight::Normal)
-        .render_with_parallel()
-        .expect("normal-weight parallel raster");
-    let bold = plot_with_weighted_title(crate::render::FontWeight::Bold)
-        .render_with_parallel()
-        .expect("bold parallel raster");
-
-    assert!(differing_pixel_count(&normal, &bold) > 20);
-    assert_eq!(
-        blue_dominant_pixel_indices(&normal),
-        blue_dominant_pixel_indices(&bold),
-        "title weight must not leak into parallel annotation text"
-    );
-}
-
 #[test]
 fn test_svg_text_annotation_uses_resolved_typography_and_full_text_style() {
     let x = vec![0.0, 1.0];
@@ -5911,11 +6262,11 @@ fn test_svg_text_annotation_uses_resolved_typography_and_full_text_style() {
         .build();
     let style = crate::core::TextStyle {
         font_size: 10.0,
-        color: Color::new_rgba(20, 30, 40, 200),
+        color: Color::from_rgba(20, 30, 40, 200),
         align: crate::core::TextAlign::Right,
         valign: crate::core::TextVAlign::Bottom,
         rotation: 25.0,
-        background: Some(Color::new_rgba(240, 230, 220, 128)),
+        background: Some(Color::from_rgba(240, 230, 220, 128)),
         padding: 3.0,
         border_color: Some(Color::BLUE),
         border_width: 2.0,
@@ -6049,6 +6400,102 @@ fn test_new_plot_preserves_established_default_grid_color() {
 }
 
 #[test]
+fn test_grid_layers_keep_minor_lines_subordinate_to_major() {
+    let style = GridStyle::default();
+    let x_major = [10.0f32, 20.0];
+    let y_major = [30.0f32];
+    let x_minor = [12.0f32, 14.0];
+    let y_minor = [32.0f32, 34.0];
+    // 4 px per point keeps both widths above the sub-pixel floor, so the
+    // major/minor comparison below is about the style, not the floor.
+    let to_px = |points: f32| points * 4.0;
+
+    let major_only = Plot::grid_layers(
+        &style,
+        &GridMode::MajorOnly,
+        &x_major,
+        &y_major,
+        &x_minor,
+        &y_minor,
+        to_px,
+    );
+    assert_eq!(major_only.len(), 1);
+    assert_eq!(major_only[0].x_pixels, x_major.to_vec());
+    assert_eq!(major_only[0].y_pixels, y_major.to_vec());
+    assert_eq!(major_only[0].color, style.effective_color());
+
+    let minor_only = Plot::grid_layers(
+        &style,
+        &GridMode::MinorOnly,
+        &x_major,
+        &y_major,
+        &x_minor,
+        &y_minor,
+        to_px,
+    );
+    assert_eq!(minor_only.len(), 1);
+    assert_eq!(minor_only[0].x_pixels, x_minor.to_vec());
+    assert_eq!(minor_only[0].color, style.effective_minor_color());
+
+    // `Both` must not concatenate the two tick sets into one stroke: that is
+    // what made `minor_alpha` / `minor_line_width` inert and drew minor lines at
+    // full major weight.
+    let both = Plot::grid_layers(
+        &style,
+        &GridMode::Both,
+        &x_major,
+        &y_major,
+        &x_minor,
+        &y_minor,
+        to_px,
+    );
+    assert_eq!(both.len(), 2, "Both must emit a minor and a major pass");
+
+    let (minor, major) = (&both[0], &both[1]);
+    assert_eq!(minor.x_pixels, x_minor.to_vec());
+    assert_eq!(minor.y_pixels, y_minor.to_vec());
+    assert_eq!(major.x_pixels, x_major.to_vec());
+    assert_eq!(major.y_pixels, y_major.to_vec());
+
+    // Minor is drawn first so major overdraws any coincident line, and it is
+    // strictly lighter and no thicker.
+    assert!(
+        minor.color.a < major.color.a,
+        "minor grid must be more transparent: {} vs {}",
+        minor.color.a,
+        major.color.a
+    );
+    assert!(
+        minor.width_px < major.width_px,
+        "minor grid must be thinner: {} vs {}",
+        minor.width_px,
+        major.width_px
+    );
+}
+
+#[test]
+fn test_grid_layers_floor_every_pass_at_one_device_pixel() {
+    let style = GridStyle::default();
+    let layers = Plot::grid_layers(
+        &style,
+        &GridMode::Both,
+        &[1.0],
+        &[2.0],
+        &[3.0],
+        &[4.0],
+        // A sub-pixel converter, as a low-DPI render produces for both widths.
+        |points| points * 0.1,
+    );
+    for layer in &layers {
+        assert!(
+            layer.width_px >= crate::core::style_utils::defaults::MIN_GRID_LINE_WIDTH_PX,
+            "grid stroke must not fall below one device pixel: {}",
+            layer.width_px
+        );
+    }
+}
+
+#[test]
 fn test_invalid_theme_base_font_does_not_poison_resolved_typography() {
     for invalid in [0.0, f32::NAN, f32::INFINITY] {
         let theme = Theme {
@@ -6116,14 +6563,17 @@ fn test_absent_series_metrics_preserve_established_fallbacks() {
     let mut plot = Plot::new();
     plot.add_line(&[0.0, 1.0], &[0.0, 1.0])
         .expect("line should be added");
-    plot.series_mgr.series[0].marker_style = Some(MarkerStyle::Circle);
+    plot.series_mgr.series[0]
+        .props
+        .marker_style
+        .set(MarkerStyle::Circle.into());
     let frame = plot.resolve_frame(0.0).expect("frame should resolve");
     assert_eq!(frame.style.series[0].line_width, None);
     assert_eq!(frame.style.series[0].marker_size, None);
 
     let shell = plot.resolved_style_shell(&frame.style);
-    assert_eq!(shell.series_mgr.series[0].line_width, None);
-    assert_eq!(shell.series_mgr.series[0].marker_size, None);
+    assert_eq!(shell.series_mgr.series[0].props.line_width.cloned(), None);
+    assert_eq!(shell.series_mgr.series[0].props.marker_size.cloned(), None);
 
     let line: Plot = Plot::new()
         .line(&[0.0, 1.0], &[0.0, 1.0])
@@ -6139,36 +6589,6 @@ fn test_absent_series_metrics_preserve_established_fallbacks() {
         .expect("scatter frame should resolve");
     assert_eq!(scatter_frame.style.series[0].line_width, None);
     assert_eq!(scatter_frame.style.series[0].marker_size, None);
-}
-
-#[cfg(feature = "parallel")]
-#[test]
-fn test_parallel_marker_size_uses_resolved_points_and_dpi() {
-    let mut plot: Plot = Plot::new()
-        .dpi(200)
-        .scatter(&[0.0, 1.0], &[0.0, 1.0])
-        .into();
-    plot.series_mgr.series[0].marker_size = Some(9.0);
-    let frame = plot.resolve_frame(0.0).expect("frame should resolve");
-    let shell = plot.resolved_style_shell(&frame.style);
-    let series = &shell.series_mgr.series[0];
-    assert_eq!(
-        shell.parallel_marker_size_px(series, 10.0),
-        shell.render_scale().points_to_pixels(9.0)
-    );
-
-    let fallback_plot: Plot = Plot::new()
-        .dpi(200)
-        .scatter(&[0.0, 1.0], &[0.0, 1.0])
-        .into();
-    let fallback_frame = fallback_plot
-        .resolve_frame(0.0)
-        .expect("frame should resolve");
-    let fallback_shell = fallback_plot.resolved_style_shell(&fallback_frame.style);
-    assert_eq!(
-        fallback_shell.parallel_marker_size_px(&fallback_shell.series_mgr.series[0], 10.0),
-        fallback_shell.render_scale().points_to_pixels(10.0)
-    );
 }
 
 #[test]
@@ -6248,7 +6668,7 @@ fn test_auto_palette_color_is_resolved_after_late_theme_change() {
     let x = vec![0.0, 1.0];
     let y = vec![1.0, 2.0];
     let plot: Plot = Plot::new().line(&x, &y).into();
-    assert_eq!(plot.series_mgr.series[0].color, None);
+    assert_eq!(plot.series_mgr.series[0].props.color.cloned(), None);
 
     let mut theme = Theme::dark();
     theme.color_palette = vec![Color::RED, Color::BLUE];
@@ -6273,9 +6693,9 @@ fn test_resolved_series_metrics_stay_in_points_across_backend_shells() {
 
     for backend_shell in [&style_shell, &prepared_shell] {
         let series = &backend_shell.series_mgr.series[0];
-        assert_eq!(series.line_width, resolved.line_width);
-        assert_eq!(series.marker_size, resolved.marker_size);
-        assert_eq!(series.marker_style, resolved.marker_style);
+        assert_eq!(series.props.line_width.cloned(), resolved.line_width);
+        assert_eq!(series.props.marker_size.cloned(), resolved.marker_size);
+        assert_eq!(series.props.marker_style.cloned(), resolved.marker_style);
     }
 
     let svg = plot.render_to_svg().expect("SVG should render");
@@ -6361,3 +6781,310 @@ fn test_backend_getter_does_not_sample_reactive_style() {
 
 #[cfg(feature = "typst-math")]
 mod typst;
+
+/// Adjacent histogram bins of equal height must still read as separate bins.
+///
+/// The rectangle primitive draws an honest flat fill with no implicit border, so
+/// the bin boundaries only survive if the histogram render path asks for an edge
+/// explicitly. Without that edge, equal-height neighbours merge into one
+/// silhouette; this test fails the moment that happens again.
+#[test]
+#[cfg(not(target_arch = "wasm32"))]
+fn test_histogram_adjacent_bins_keep_a_visible_boundary() {
+    // Four bins of exactly two samples each: every neighbour has the same height.
+    let samples: Vec<f64> = (0..8).map(|value| value as f64).collect();
+    let config = crate::plots::histogram::HistogramConfig::new().bins(4);
+
+    let png = Plot::new()
+        .size_px(400, 300)
+        .ticks(false)
+        .grid(false)
+        .histogram_with(&samples, config)
+        .end_series()
+        .render_png_bytes()
+        .expect("histogram should render as PNG");
+    let image = decode_png_rgba(&png);
+
+    // A row three quarters down the canvas crosses every bar.
+    let row = image.height() * 3 / 4;
+    let scanline: Vec<[u8; 4]> = (0..image.width())
+        .map(|column| image.get_pixel(column, row).0)
+        .collect();
+
+    // The fill is whatever colour dominates the scanline outside the background.
+    let mut counts: std::collections::HashMap<[u8; 4], usize> = std::collections::HashMap::new();
+    for pixel in &scanline {
+        if pixel[0] < 240 || pixel[1] < 240 || pixel[2] < 240 {
+            *counts.entry(*pixel).or_default() += 1;
+        }
+    }
+    let (fill, fill_count) = counts
+        .into_iter()
+        .max_by_key(|(_, count)| *count)
+        .expect("the scanline should cross the histogram bars");
+    assert!(
+        fill_count > 100,
+        "expected a wide run of bar fill, got {fill_count} px"
+    );
+
+    let luminance = |pixel: &[u8; 4]| pixel[0] as i32 + pixel[1] as i32 + pixel[2] as i32;
+    let fill_luminance = luminance(&fill);
+
+    // Count maximal runs that are clearly darker than the fill: the two outer
+    // edges plus one boundary between each adjacent pair of bins.
+    let mut boundaries = 0usize;
+    let mut inside_dark = false;
+    for pixel in &scanline {
+        let dark = pixel[3] > 0 && luminance(pixel) < fill_luminance - 45;
+        if dark && !inside_dark {
+            boundaries += 1;
+        }
+        inside_dark = dark;
+    }
+
+    assert!(
+        boundaries >= 5,
+        "expected 4 bins to show 5 edges (2 outer + 3 shared), found {boundaries}"
+    );
+}
+
+/// A sample a log axis cannot place must break the line in *every* backend.
+///
+/// Before the shared run splitter, each backend answered this differently: the
+/// raster path handed a `NaN` pixel to tiny-skia, the SVG path wrote `NaN` into
+/// the `points` attribute, and the parallel path did neither. Joining across the
+/// gap draws a segment the user never supplied, so the line has to stop and
+/// restart instead.
+#[test]
+fn test_log_axis_gap_breaks_the_line_in_the_svg_backend() {
+    // The 0.0 sample has no position on a log y axis.
+    let x = [1.0, 2.0, 3.0, 4.0, 5.0];
+    let y = [1.0, 10.0, 0.0, 100.0, 1000.0];
+
+    let svg = Plot::new()
+        .line(&x, &y)
+        .into_plot()
+        .yscale(crate::axes::AxisScale::Log)
+        .ylim(1.0, 1000.0)
+        .xlim(1.0, 5.0)
+        .render_to_svg()
+        .expect("log-axis line with a gap should render");
+
+    assert!(
+        !svg.contains("NaN"),
+        "no NaN coordinate may reach the SVG output"
+    );
+
+    let polylines = svg.matches("<polyline").count();
+    assert_eq!(
+        polylines, 2,
+        "the unrepresentable sample must split the series into two sub-paths, got {polylines}"
+    );
+}
+
+/// The same plot with every sample representable must stay a single sub-path —
+/// the splitter must not fragment ordinary series.
+#[test]
+fn test_log_axis_without_gaps_stays_one_polyline() {
+    let x = [1.0, 2.0, 3.0, 4.0, 5.0];
+    let y = [1.0, 10.0, 50.0, 100.0, 1000.0];
+
+    let svg = Plot::new()
+        .line(&x, &y)
+        .into_plot()
+        .yscale(crate::axes::AxisScale::Log)
+        .ylim(1.0, 1000.0)
+        .xlim(1.0, 5.0)
+        .render_to_svg()
+        .expect("log-axis line should render");
+
+    assert_eq!(svg.matches("<polyline").count(), 1);
+}
+
+/// The x tick rotation knob reaches the row that is actually drawn, in the SVG
+/// backend as well as the raster one.
+///
+/// Both backends resolve one plan through `Plot::resolve_x_tick_label_row`, so
+/// asserting on the SVG markup asserts on the shared decision, not on an
+/// SVG-only branch. A rotated row emits `rotate(-90` per label; a horizontal
+/// one emits none.
+mod xtick_rotation_knob {
+    use super::*;
+    use crate::render::XTickRotation;
+
+    /// Names long enough that a horizontal row of them cannot fit 640 px.
+    fn colliding_categories() -> (Vec<String>, Vec<f64>) {
+        let names: Vec<String> = [
+            "North Atlantic Basin",
+            "South Atlantic Basin",
+            "Eastern Pacific Basin",
+            "Western Pacific Basin",
+            "Northern Indian Basin",
+            "Southern Indian Basin",
+        ]
+        .iter()
+        .map(|s| (*s).to_string())
+        .collect();
+        let values = vec![3.0, 5.0, 2.0, 8.0, 4.0, 6.0];
+        (names, values)
+    }
+
+    fn bar_svg(rotation: XTickRotation) -> String {
+        let (names, values) = colliding_categories();
+        Plot::new()
+            .size_px(640, 480)
+            .bar(&names, &values)
+            .into_plot()
+            .xtick_rotation(rotation)
+            .render_to_svg()
+            .expect("a categorical bar chart should render to SVG")
+    }
+
+    #[test]
+    fn vertical_turns_the_row_a_quarter_turn() {
+        let svg = bar_svg(XTickRotation::Vertical);
+        assert_eq!(
+            svg.matches("rotate(-90").count(),
+            6,
+            "every category label must be drawn rotated: {svg}"
+        );
+    }
+
+    #[test]
+    fn horizontal_never_rotates_however_badly_the_labels_collide() {
+        let svg = bar_svg(XTickRotation::Horizontal);
+        assert_eq!(
+            svg.matches("rotate(-90").count(),
+            0,
+            "an explicit `Horizontal` must thin the row, never turn it"
+        );
+    }
+
+    #[test]
+    fn auto_rotates_a_row_that_would_collide() {
+        let svg = bar_svg(XTickRotation::Auto);
+        assert!(
+            svg.contains("rotate(-90"),
+            "six long names under a 640 px axis collide, so `Auto` must rotate them"
+        );
+    }
+
+    /// The knob is a no-op on a row that already fits, so short labels keep the
+    /// horizontal presentation every existing figure has.
+    #[test]
+    fn auto_leaves_a_row_that_fits_alone() {
+        let svg = Plot::new()
+            .size_px(640, 480)
+            .bar(&["A", "B", "C"], &[1.0, 2.0, 3.0])
+            .into_plot()
+            .xtick_rotation(XTickRotation::Auto)
+            .render_to_svg()
+            .expect("a short categorical bar chart should render to SVG");
+
+        assert_eq!(
+            svg.matches("rotate(-90").count(),
+            0,
+            "three one-character labels fit, so nothing may be rotated"
+        );
+    }
+
+    /// `Plot` and `PlotBuilder` spell the knob the same way and mean the same
+    /// thing — the builder forwards rather than keeping its own copy.
+    #[test]
+    fn the_builder_forwards_to_the_plot() {
+        let (names, values) = colliding_categories();
+
+        let via_builder = Plot::new()
+            .size_px(640, 480)
+            .bar(&names, &values)
+            .xtick_rotation(XTickRotation::Vertical)
+            .render_to_svg()
+            .expect("builder-side knob should render");
+        let via_plot = bar_svg(XTickRotation::Vertical);
+
+        assert_eq!(via_builder, via_plot);
+    }
+}
+
+/// A magnitude-coloured quiver reserves room for, and draws, the same colour key
+/// heatmap/contour/hexbin draw — in both backends, through the one dispatcher.
+mod quiver_colour_key {
+    use super::*;
+
+    fn field() -> (Vec<f64>, Vec<f64>, Vec<f64>, Vec<f64>) {
+        let x = vec![0.0, 1.0, 2.0, 3.0];
+        let y = vec![0.0, 1.0, 0.0, 1.0];
+        let u = vec![1.0, 0.5, -1.0, 0.25];
+        let v = vec![0.0, 1.0, 0.5, -1.0];
+        (x, y, u, v)
+    }
+
+    #[test]
+    fn magnitude_colours_reserve_the_right_margin_a_colorbar_needs() {
+        let (x, y, u, v) = field();
+        let without = Plot::new()
+            .size_px(360, 220)
+            .quiver(&x, &y, &u, &v)
+            .color_by_magnitude(true)
+            .colorbar(false)
+            .into_plot();
+        let with = Plot::new()
+            .size_px(360, 220)
+            .quiver(&x, &y, &u, &v)
+            .color_by_magnitude(true)
+            .colorbar_label("wind speed (m/s)")
+            .into_plot();
+
+        let without_layout = compute_render_layout(&without);
+        let with_layout = compute_render_layout(&with);
+
+        assert!(
+            with_layout.margins.right > without_layout.margins.right + 40.0,
+            "a quiver colour key must reserve right margin like every other one: \
+             without={} with={}",
+            without_layout.margins.right,
+            with_layout.margins.right
+        );
+    }
+
+    /// The default is on, exactly as it is for heatmap, contour and hexbin — an
+    /// arrow's colour is the only thing reporting its magnitude.
+    #[test]
+    fn the_key_is_on_by_default_but_only_when_colour_carries_meaning() {
+        let (x, y, u, v) = field();
+        let plain = Plot::new()
+            .size_px(360, 220)
+            .quiver(&x, &y, &u, &v)
+            .into_plot();
+        let coloured = Plot::new()
+            .size_px(360, 220)
+            .quiver(&x, &y, &u, &v)
+            .color_by_magnitude(true)
+            .into_plot();
+
+        assert!(
+            compute_render_layout(&coloured).margins.right
+                > compute_render_layout(&plain).margins.right,
+            "one uniform colour decodes nothing, so a plain quiver must not grow a key"
+        );
+    }
+
+    /// Both backends read the same `series_colorbar_request`, so the SVG export
+    /// cannot silently lose the value scale the PNG shows.
+    #[test]
+    fn the_svg_export_draws_the_same_key() {
+        let (x, y, u, v) = field();
+        let svg = Plot::new()
+            .size_px(360, 220)
+            .quiver(&x, &y, &u, &v)
+            .color_by_magnitude(true)
+            .colorbar_label("wind speed (m/s)")
+            .render_to_svg()
+            .expect("a magnitude-coloured quiver should render to SVG");
+
+        assert!(
+            svg.contains("wind speed (m/s)"),
+            "the colorbar caption must reach the SVG export"
+        );
+    }
+}

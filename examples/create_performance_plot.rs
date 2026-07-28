@@ -6,7 +6,7 @@
 use ruviz::core::{BackendOperation, BackendType};
 use ruviz::prelude::*;
 
-fn main() -> Result<()> {
+fn main() -> PlotResult<()> {
     let x: Vec<f64> = (0..50_000).map(|i| i as f64 * 0.001).collect();
     let y: Vec<f64> = x.iter().map(|value| value.cos()).collect();
 

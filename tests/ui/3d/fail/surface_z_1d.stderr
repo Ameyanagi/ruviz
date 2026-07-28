@@ -1,0 +1,26 @@
+error[E0277]: the trait bound `[{float}; 2]: NumericData2D` is not satisfied
+ --> tests/ui/3d/fail/surface_z_1d.rs:7:29
+  |
+7 |     let _ = surface(&x, &y, &z);
+  |             -------         ^^ the trait `NumericData2D` is not implemented for `[{float}; 2]`
+  |             |
+  |             required by a bound introduced by this call
+  |
+  = help: the following other types implement trait `NumericData2D`:
+            [Vec<f32>]
+            [Vec<f64>]
+            [Vec<i16>]
+            [Vec<i32>]
+            [Vec<i64>]
+            [Vec<i8>]
+            [Vec<isize>]
+            [Vec<u16>]
+          and $N others
+note: required by a bound in `surface`
+ --> src/lib.rs
+  |
+  | pub fn surface<X, Y, Z>(x: &X, y: &Y, z: &Z) -> Surface3DBuilder
+  |        ------- required by a bound in this function
+...
+  |     Z: NumericData2D + ?Sized,
+  |        ^^^^^^^^^^^^^ required by this bound in `surface`

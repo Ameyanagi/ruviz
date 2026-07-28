@@ -2,8 +2,11 @@
 //!
 //! Provides a single source of truth for tick positions used by grid lines,
 //! tick marks, and tick labels to ensure perfect alignment.
+//!
+//! Both positions and labels come from the canonical implementations in
+//! [`super::ticks`], so a layout computed here matches what any backend draws.
 
-use super::{AxisScale, generate_ticks_for_scale};
+use super::{AxisScale, format_tick_labels_for_scale, generate_ticks_for_scale};
 
 /// Complete tick layout for an axis
 ///
@@ -21,6 +24,28 @@ pub struct TickLayout {
     pub data_range: (f64, f64),
     /// The pixel range (min, max)
     pub pixel_range: (f32, f32),
+}
+
+/// Place a normalised axis position between two pixel bounds, exactly.
+///
+/// `at_zero + t * (at_one - at_zero)` drifts below `at_one` at `t == 1.0`:
+/// with a plot area from 38.61 to 573.19, `573.19 - 1.0 * (573.19 - 38.61)`
+/// evaluates to 38.6099854 in `f32`, which is *outside* the plot area by a
+/// quarter of a ULP. Every backend then filters its ticks with
+/// `pos >= plot_top`, so an axis whose topmost tick sits exactly on `data_max`
+/// silently lost that tick — mark, gridline and label — in whichever backend
+/// happened to round the wrong way.
+///
+/// Pinning the two endpoints makes the mapping exact where it matters and
+/// leaves the interior to ordinary interpolation.
+fn place_normalized(normalized: f64, at_zero: f32, at_one: f32) -> f32 {
+    if normalized <= 0.0 {
+        at_zero
+    } else if normalized >= 1.0 {
+        at_one
+    } else {
+        at_zero + (normalized as f32) * (at_one - at_zero)
+    }
 }
 
 impl TickLayout {
@@ -47,8 +72,6 @@ impl TickLayout {
         // Generate tick positions in data coordinates
         let data_positions = generate_ticks_for_scale(data_min, data_max, target_ticks, scale);
 
-        let pixel_range = pixel_max - pixel_min;
-
         let pixel_positions: Vec<f32> = data_positions
             .iter()
             .map(|&data_pos| {
@@ -56,13 +79,13 @@ impl TickLayout {
                     pixel_min
                 } else {
                     let normalized = scale.normalized_position(data_pos, data_min, data_max);
-                    pixel_min + (normalized as f32) * pixel_range
+                    place_normalized(normalized, pixel_min, pixel_max)
                 }
             })
             .collect();
 
-        // Format labels with appropriate precision
-        let labels = Self::format_labels(&data_positions, scale);
+        // Format labels through the canonical, per-axis formatter
+        let labels = format_tick_labels_for_scale(&data_positions, scale);
 
         Self {
             data_positions,
@@ -87,23 +110,22 @@ impl TickLayout {
         // Generate tick positions in data coordinates
         let data_positions = generate_ticks_for_scale(data_min, data_max, target_ticks, scale);
 
-        let pixel_range = pixel_bottom - pixel_top;
-
         let pixel_positions: Vec<f32> = data_positions
             .iter()
             .map(|&data_pos| {
                 if scale_range_is_degenerate(data_min, data_max, scale) {
                     pixel_bottom
                 } else {
-                    // Invert: higher data values -> lower pixel values
+                    // Invert: higher data values sit at LOWER pixel values, so
+                    // normalised 1.0 lands on `pixel_top`.
                     let normalized = scale.normalized_position(data_pos, data_min, data_max);
-                    pixel_bottom - (normalized as f32) * pixel_range
+                    place_normalized(normalized, pixel_bottom, pixel_top)
                 }
             })
             .collect();
 
-        // Format labels with appropriate precision
-        let labels = Self::format_labels(&data_positions, scale);
+        // Format labels through the canonical, per-axis formatter
+        let labels = format_tick_labels_for_scale(&data_positions, scale);
 
         Self {
             data_positions,
@@ -111,71 +133,6 @@ impl TickLayout {
             labels,
             data_range: (data_min, data_max),
             pixel_range: (pixel_top, pixel_bottom),
-        }
-    }
-
-    /// Format tick labels with appropriate precision
-    fn format_labels(positions: &[f64], scale: &AxisScale) -> Vec<String> {
-        positions
-            .iter()
-            .map(|&pos| Self::format_tick_value(pos, scale))
-            .collect()
-    }
-
-    /// Format a single tick value
-    fn format_tick_value(value: f64, scale: &AxisScale) -> String {
-        match scale {
-            AxisScale::Log => {
-                // For log scale, show as power of 10 if it's a clean power
-                let log_val = value.log10();
-                if (log_val.round() - log_val).abs() < 1e-10 {
-                    let exp = log_val.round() as i32;
-                    if exp == 0 {
-                        "1".to_string()
-                    } else if exp == 1 {
-                        "10".to_string()
-                    } else {
-                        format!("10^{}", exp)
-                    }
-                } else {
-                    Self::format_number(value)
-                }
-            }
-            _ => Self::format_number(value),
-        }
-    }
-
-    /// Format a number with appropriate precision
-    fn format_number(value: f64) -> String {
-        let abs_val = value.abs();
-
-        if abs_val == 0.0 {
-            return "0".to_string();
-        }
-
-        // Use scientific notation for very large or very small numbers
-        if abs_val >= 1e5 || (abs_val < 1e-3 && abs_val > 0.0) {
-            return format!("{:.1e}", value);
-        }
-
-        // Determine appropriate decimal places based on magnitude
-        let magnitude = abs_val.log10().floor() as i32;
-        let decimals = if magnitude >= 2 {
-            0
-        } else if magnitude >= 0 {
-            1
-        } else {
-            (-magnitude + 1).min(4) as usize
-        };
-
-        let formatted = format!("{:.prec$}", value, prec = decimals);
-
-        // Remove trailing zeros after decimal point
-        if formatted.contains('.') {
-            let trimmed = formatted.trim_end_matches('0').trim_end_matches('.');
-            trimmed.to_string()
-        } else {
-            formatted
         }
     }
 
@@ -317,31 +274,52 @@ mod tests {
     }
 
     #[test]
-    fn test_format_number() {
-        assert_eq!(TickLayout::format_number(0.0), "0");
-        assert_eq!(TickLayout::format_number(1.0), "1");
-        assert_eq!(TickLayout::format_number(10.0), "10");
-        assert_eq!(TickLayout::format_number(100.0), "100");
-        assert_eq!(TickLayout::format_number(0.5), "0.5");
-        assert_eq!(TickLayout::format_number(0.25), "0.25");
+    fn test_layout_labels_come_from_the_canonical_formatter() {
+        // `TickLayout` used to carry its own `format_number`, which switched to
+        // scientific notation per value. Labels now come from the same
+        // formatter the raster backend uses, so PNG and SVG cannot disagree.
+        for (min, max, scale) in [
+            (0.0, 100.0, AxisScale::Linear),
+            (0.0, 1e6, AxisScale::Linear),
+            (0.0, 0.001, AxisScale::Linear),
+            (1.0, 1000.0, AxisScale::Log),
+        ] {
+            let layout = TickLayout::compute(min, max, 0.0, 500.0, &scale, 6);
+            assert_eq!(
+                layout.labels,
+                format_tick_labels_for_scale(&layout.data_positions, &scale),
+                "layout labels diverged from the canonical formatter for ({min}, {max})"
+            );
+        }
     }
 
     #[test]
-    fn test_format_large_numbers() {
-        let formatted = TickLayout::format_number(1000000.0);
-        assert!(
-            formatted.contains('e'),
-            "Large numbers should use scientific notation"
-        );
+    fn test_layout_labels_never_mix_notations() {
+        for (min, max, scale) in [
+            (0.0, 1e6, AxisScale::Linear),
+            (0.0, 0.001, AxisScale::Linear),
+            (99000.0, 101000.0, AxisScale::Linear),
+        ] {
+            let layout = TickLayout::compute(min, max, 0.0, 500.0, &scale, 6);
+            let scientific = layout
+                .labels
+                .iter()
+                .filter(|label| label.contains('e'))
+                .count();
+            assert!(
+                scientific == 0 || scientific == layout.labels.len(),
+                "({min}, {max}) mixed notations: {:?}",
+                layout.labels
+            );
+        }
     }
 
     #[test]
-    fn test_format_small_numbers() {
-        let formatted = TickLayout::format_number(0.0001);
-        assert!(
-            formatted.contains('e'),
-            "Small numbers should use scientific notation"
-        );
+    fn test_log_layout_labels_use_superscript_decades() {
+        let layout = TickLayout::compute(1.0, 1000.0, 0.0, 300.0, &AxisScale::Log, 4);
+
+        // Was "1", "10", "10^2", "10^3" here and "10⁰"… in the raster backend.
+        assert_eq!(layout.labels, vec!["10⁰", "10¹", "10²", "10³"]);
     }
 
     #[test]

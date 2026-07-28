@@ -1,0 +1,79 @@
+{
+  "schema_version": 1,
+  "feature": "3d",
+  "generator": {
+    "command": "cargo run --no-default-features --features 3d --example 3d_dataset_manifest",
+    "source": "examples/performance/3d_dataset_manifest.rs",
+    "hash_contract": "FNV-1a 64-bit over the dataset size and little-endian IEEE-754 f64 bits in x, y, z order"
+  },
+  "viewport": {
+    "width": 640,
+    "height": 480,
+    "dpi": 100
+  },
+  "cameras": [
+    {
+      "id": "default-orthographic",
+      "azimuth_deg": -60.0,
+      "elevation_deg": 30.0,
+      "roll_deg": 0.0,
+      "projection": "orthographic",
+      "zoom": 1.0,
+      "axis_aspect": "auto-4:4:3"
+    },
+    {
+      "id": "reference-perspective",
+      "azimuth_deg": -60.0,
+      "elevation_deg": 30.0,
+      "roll_deg": 0.0,
+      "projection": "perspective",
+      "vertical_fov_deg": 45.0,
+      "zoom": 1.0,
+      "axis_aspect": "auto-4:4:3"
+    }
+  ],
+  "datasets": [
+    {
+      "id": "scatter-wave-100000",
+      "kind": "scatter",
+      "elements": 100000,
+      "hash": "fnv1a64:563cdc01ad1eeb73"
+    },
+    {
+      "id": "scatter-wave-1000000",
+      "kind": "scatter",
+      "elements": 1000000,
+      "hash": "fnv1a64:972504aed2ab168f"
+    },
+    {
+      "id": "scatter-wave-10000000",
+      "kind": "scatter",
+      "elements": 10000000,
+      "hash": "fnv1a64:e69b349e155a24fb"
+    },
+    {
+      "id": "surface-sinc-100",
+      "kind": "surface",
+      "rows": 100,
+      "columns": 100,
+      "triangles": 19602,
+      "hash": "fnv1a64:354d9b31c0459a42"
+    },
+    {
+      "id": "surface-sinc-512",
+      "kind": "surface",
+      "rows": 512,
+      "columns": 512,
+      "triangles": 522242,
+      "hash": "fnv1a64:737feb3efa48f02a"
+    },
+    {
+      "id": "surface-sinc-1024",
+      "kind": "surface",
+      "rows": 1024,
+      "columns": 1024,
+      "triangles": 2093058,
+      "hash": "fnv1a64:088ae7aeb8af9dec"
+    }
+  ]
+}

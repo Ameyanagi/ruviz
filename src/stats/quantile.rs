@@ -26,7 +26,7 @@ pub fn quantiles(data: &[f64], probs: &[f64]) -> Vec<f64> {
 }
 
 /// Calculate quantile from sorted data
-fn quantile_sorted(sorted: &[f64], p: f64) -> f64 {
+pub(crate) fn quantile_sorted(sorted: &[f64], p: f64) -> f64 {
     let p = p.clamp(0.0, 1.0);
     let n = sorted.len();
 

@@ -44,6 +44,8 @@ mod wasm {
     use std::{mem, sync::OnceLock};
 
     use js_sys::Reflect;
+    #[cfg(feature = "3d-gpu")]
+    use ruviz::core::{GpuSurfacePresentStatus3D, GpuSurfaceSession3D, RenderDiagnostics3D};
     use ruviz::{
         core::{
             Image, ImageTarget, InteractivePlotSession, IntoPlot, Plot, PlotInputEvent,
@@ -51,6 +53,11 @@ mod wasm {
         },
         data::{Observable, Signal},
         render::register_font_bytes,
+    };
+    #[cfg(feature = "3d")]
+    use ruviz::{
+        core::{InputEvent3D, InteractivePlot3DSession, PickHit3D, PointerButton3D},
+        line3d, scatter3d, surface, wireframe,
     };
     use wasm_bindgen::{Clamped, JsCast, JsValue, prelude::*};
     use web_sys::{
@@ -212,6 +219,10 @@ mod wasm {
             self.inner.read().len()
         }
 
+        pub fn is_empty(&self) -> bool {
+            self.inner.read().is_empty()
+        }
+
         pub fn clone_handle(&self) -> ObservableVecF64 {
             Self {
                 inner: self.inner.clone(),
@@ -228,6 +239,7 @@ mod wasm {
     #[wasm_bindgen]
     impl SignalVecF64 {
         #[wasm_bindgen(js_name = sineWave)]
+        #[allow(clippy::too_many_arguments)]
         pub fn sine_wave(
             points: usize,
             domain_start: f64,
@@ -294,6 +306,10 @@ mod wasm {
 
         pub fn len(&self) -> usize {
             self.len
+        }
+
+        pub fn is_empty(&self) -> bool {
+            self.len == 0
         }
 
         pub fn clone_handle(&self) -> SignalVecF64 {
@@ -365,6 +381,12 @@ mod wasm {
         }
     }
 
+    impl Default for JsPlot {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
     #[wasm_bindgen]
     impl JsPlot {
         #[wasm_bindgen(constructor)]
@@ -418,21 +440,21 @@ mod wasm {
         }
 
         pub fn histogram(&mut self, data: Vec<f64>) {
-            self.replace_with_series(|plot| plot.histogram(&data, None).into_plot());
+            self.replace_with_series(|plot| plot.histogram(&data).into_plot());
         }
 
         pub fn histogram_observable(&mut self, data: &ObservableVecF64) {
             let data_source = data.inner.clone();
-            self.replace_with_series(|plot| plot.histogram_source(data_source, None).into_plot());
+            self.replace_with_series(|plot| plot.histogram_source(data_source).into_plot());
         }
 
         pub fn boxplot(&mut self, data: Vec<f64>) {
-            self.replace_with_series(|plot| plot.boxplot(&data, None).into_plot());
+            self.replace_with_series(|plot| plot.boxplot(&data).into_plot());
         }
 
         pub fn boxplot_observable(&mut self, data: &ObservableVecF64) {
             let data_source = data.inner.clone();
-            self.replace_with_series(|plot| plot.boxplot_source(data_source, None).into_plot());
+            self.replace_with_series(|plot| plot.boxplot_source(data_source).into_plot());
         }
 
         pub fn heatmap(
@@ -442,7 +464,7 @@ mod wasm {
             cols: usize,
         ) -> Result<(), JsValue> {
             let matrix = Self::flatten_grid(values, rows, cols)?;
-            self.replace_with_series(|plot| plot.heatmap(&matrix, None).into_plot());
+            self.replace_with_series(|plot| plot.heatmap(&matrix).into_plot());
             Ok(())
         }
 
@@ -574,7 +596,7 @@ mod wasm {
             }
 
             let points_per_series = labels.len();
-            if series_values.is_empty() || series_values.len() % points_per_series != 0 {
+            if series_values.is_empty() || !series_values.len().is_multiple_of(points_per_series) {
                 return Err(JsValue::from_str(
                     "radar series values length must be a multiple of labels length",
                 ));
@@ -1126,6 +1148,894 @@ mod wasm {
                     context.clear_rect(0.0, 0.0, canvas.width() as f64, canvas.height() as f64);
                 }
             }
+        }
+    }
+
+    #[cfg(feature = "3d")]
+    enum WebPlot3DKind {
+        Scatter {
+            x: Vec<f64>,
+            y: Vec<f64>,
+            z: Vec<f64>,
+        },
+        Line {
+            x: Vec<f64>,
+            y: Vec<f64>,
+            z: Vec<f64>,
+        },
+        Surface {
+            x: Vec<f64>,
+            y: Vec<f64>,
+            z: Vec<Vec<f64>>,
+        },
+        Wireframe {
+            x: Vec<f64>,
+            y: Vec<f64>,
+            z: Vec<Vec<f64>>,
+        },
+    }
+
+    #[cfg(feature = "3d")]
+    type WebGrid3D = (Vec<f64>, Vec<f64>, Vec<Vec<f64>>);
+
+    /// Small JavaScript-owned 3d plot description.
+    #[cfg(feature = "3d")]
+    #[wasm_bindgen]
+    pub struct JsPlot3D {
+        kind: Option<WebPlot3DKind>,
+        title: Option<String>,
+    }
+
+    #[cfg(feature = "3d")]
+    impl JsPlot3D {
+        fn validate_points(x: &[f64], y: &[f64], z: &[f64]) -> Result<(), JsValue> {
+            if x.len() == y.len() && y.len() == z.len() {
+                Ok(())
+            } else {
+                Err(JsValue::from_str(
+                    "3d x, y, and z must have the same length",
+                ))
+            }
+        }
+
+        fn grid(x: Vec<f64>, y: Vec<f64>, z: Vec<f64>) -> Result<WebGrid3D, JsValue> {
+            if x.is_empty() || y.is_empty() || z.len() != x.len().saturating_mul(y.len()) {
+                return Err(JsValue::from_str(
+                    "3d surface z length must equal x.length * y.length",
+                ));
+            }
+            let rows = z.chunks(x.len()).map(<[f64]>::to_vec).collect();
+            Ok((x, y, rows))
+        }
+
+        fn build_session(&self) -> Result<InteractivePlot3DSession, JsValue> {
+            match self.kind.as_ref() {
+                Some(WebPlot3DKind::Scatter { x, y, z }) => {
+                    let builder = scatter3d(x, y, z);
+                    match &self.title {
+                        Some(title) => builder.title(title).interactive_session(),
+                        None => builder.interactive_session(),
+                    }
+                }
+                Some(WebPlot3DKind::Line { x, y, z }) => {
+                    let builder = line3d(x, y, z);
+                    match &self.title {
+                        Some(title) => builder.title(title).interactive_session(),
+                        None => builder.interactive_session(),
+                    }
+                }
+                Some(WebPlot3DKind::Surface { x, y, z }) => {
+                    let builder = surface(x, y, z);
+                    match &self.title {
+                        Some(title) => builder.title(title).interactive_session(),
+                        None => builder.interactive_session(),
+                    }
+                }
+                Some(WebPlot3DKind::Wireframe { x, y, z }) => {
+                    let builder = wireframe(x, y, z);
+                    match &self.title {
+                        Some(title) => builder.title(title).interactive_session(),
+                        None => builder.interactive_session(),
+                    }
+                }
+                None => Err(ruviz::core::PlottingError::NoDataSeries),
+            }
+            .map_err(js_err)
+        }
+    }
+
+    #[cfg(feature = "3d")]
+    impl Default for JsPlot3D {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
+    #[cfg(feature = "3d")]
+    #[wasm_bindgen]
+    impl JsPlot3D {
+        #[wasm_bindgen(constructor)]
+        pub fn new() -> Self {
+            Self {
+                kind: None,
+                title: None,
+            }
+        }
+
+        pub fn scatter3d(&mut self, x: Vec<f64>, y: Vec<f64>, z: Vec<f64>) -> Result<(), JsValue> {
+            Self::validate_points(&x, &y, &z)?;
+            self.kind = Some(WebPlot3DKind::Scatter { x, y, z });
+            Ok(())
+        }
+
+        pub fn line3d(&mut self, x: Vec<f64>, y: Vec<f64>, z: Vec<f64>) -> Result<(), JsValue> {
+            Self::validate_points(&x, &y, &z)?;
+            self.kind = Some(WebPlot3DKind::Line { x, y, z });
+            Ok(())
+        }
+
+        pub fn surface(&mut self, x: Vec<f64>, y: Vec<f64>, z: Vec<f64>) -> Result<(), JsValue> {
+            let (x, y, z) = Self::grid(x, y, z)?;
+            self.kind = Some(WebPlot3DKind::Surface { x, y, z });
+            Ok(())
+        }
+
+        pub fn wireframe(&mut self, x: Vec<f64>, y: Vec<f64>, z: Vec<f64>) -> Result<(), JsValue> {
+            let (x, y, z) = Self::grid(x, y, z)?;
+            self.kind = Some(WebPlot3DKind::Wireframe { x, y, z });
+            Ok(())
+        }
+
+        pub fn title(&mut self, title: &str) {
+            self.title = (!title.is_empty()).then(|| title.to_string());
+        }
+    }
+
+    #[cfg(feature = "3d")]
+    struct Browser3DSession {
+        session: Option<InteractivePlot3DSession>,
+        surface: CanvasSurface,
+        selected: Option<PickHit3D>,
+        scale_factor: f32,
+    }
+
+    #[cfg(feature = "3d")]
+    impl Browser3DSession {
+        fn new(surface: CanvasSurface) -> Self {
+            Self {
+                session: None,
+                surface,
+                selected: None,
+                scale_factor: 1.0,
+            }
+        }
+
+        fn session_mut(&mut self) -> Result<&mut InteractivePlot3DSession, JsValue> {
+            self.session
+                .as_mut()
+                .ok_or_else(|| JsValue::from_str("no 3d plot is attached to this session"))
+        }
+
+        fn set_plot(&mut self, plot: &JsPlot3D) -> Result<(), JsValue> {
+            let mut session = plot.build_session()?;
+            let (width, height) = self.surface.size_px();
+            session
+                .resize(width.max(1), height.max(1), self.scale_factor)
+                .map_err(js_err)?;
+            self.session = Some(session);
+            self.selected = None;
+            self.render()
+        }
+
+        fn resize(&mut self, width: u32, height: u32, scale_factor: f32) -> Result<(), JsValue> {
+            self.scale_factor = if scale_factor.is_finite() && scale_factor > 0.0 {
+                scale_factor
+            } else {
+                1.0
+            };
+            self.surface.set_size(width.max(1), height.max(1));
+            if let Some(session) = &mut self.session {
+                session
+                    .resize(width.max(1), height.max(1), self.scale_factor)
+                    .map_err(js_err)?;
+                self.render()?;
+            }
+            Ok(())
+        }
+
+        fn apply(&mut self, event: InputEvent3D, render: bool) -> Result<(), JsValue> {
+            let result = self.session_mut()?.handle_input(event).map_err(js_err)?;
+            if let Some(hit) = result.picked {
+                self.selected = Some(hit);
+            }
+            if render && result.request_redraw {
+                self.render()?;
+            }
+            Ok(())
+        }
+
+        fn pointer_button(button: i16) -> Result<PointerButton3D, JsValue> {
+            match button {
+                0 => Ok(PointerButton3D::Left),
+                1 => Ok(PointerButton3D::Middle),
+                2 => Ok(PointerButton3D::Right),
+                _ => Err(JsValue::from_str(
+                    "3d pointer button must be 0 (left), 1 (middle), or 2 (right)",
+                )),
+            }
+        }
+
+        fn render(&mut self) -> Result<(), JsValue> {
+            let image = self.session_mut()?.render().map_err(js_err)?;
+            self.surface.draw_image(&image)
+        }
+
+        fn selected_series(&self) -> i32 {
+            self.selected.map_or(-1, |hit| hit.series_index as i32)
+        }
+
+        fn selected_source(&self) -> i32 {
+            self.selected
+                .and_then(|hit| hit.sources().first().copied())
+                .map_or(-1, |index| index as i32)
+        }
+
+        fn destroy(&mut self) {
+            self.session = None;
+            self.selected = None;
+            self.surface.clear();
+        }
+    }
+
+    /// Main-thread Canvas2D correctness adapter for retained 3d plots.
+    #[cfg(feature = "3d")]
+    #[wasm_bindgen]
+    pub struct Web3DCanvasSession {
+        browser: Browser3DSession,
+    }
+
+    #[cfg(feature = "3d")]
+    #[wasm_bindgen]
+    impl Web3DCanvasSession {
+        #[wasm_bindgen(constructor)]
+        pub fn new(canvas: HtmlCanvasElement) -> Result<Self, JsValue> {
+            ensure_default_browser_fonts()?;
+            Ok(Self {
+                browser: Browser3DSession::new(CanvasSurface::from_html(canvas)?),
+            })
+        }
+
+        pub fn set_plot(&mut self, plot: &JsPlot3D) -> Result<(), JsValue> {
+            self.browser.set_plot(plot)
+        }
+
+        pub fn resize(
+            &mut self,
+            width: u32,
+            height: u32,
+            scale_factor: f32,
+        ) -> Result<(), JsValue> {
+            self.browser.resize(width, height, scale_factor)
+        }
+
+        pub fn pointer_down(&mut self, x: f32, y: f32, button: i16) -> Result<(), JsValue> {
+            self.browser.apply(
+                InputEvent3D::PointerDown {
+                    x,
+                    y,
+                    button: Browser3DSession::pointer_button(button)?,
+                },
+                false,
+            )
+        }
+
+        pub fn pointer_move(&mut self, x: f32, y: f32) -> Result<(), JsValue> {
+            self.browser.apply(InputEvent3D::PointerMove { x, y }, true)
+        }
+
+        pub fn pointer_up(&mut self, x: f32, y: f32, button: i16) -> Result<(), JsValue> {
+            self.browser.apply(
+                InputEvent3D::PointerUp {
+                    x,
+                    y,
+                    button: Browser3DSession::pointer_button(button)?,
+                },
+                true,
+            )
+        }
+
+        pub fn double_click(&mut self, x: f32, y: f32) -> Result<(), JsValue> {
+            self.browser.apply(
+                InputEvent3D::DoubleClick {
+                    x,
+                    y,
+                    button: PointerButton3D::Left,
+                },
+                true,
+            )
+        }
+
+        pub fn wheel(&mut self, delta_y: f32) -> Result<(), JsValue> {
+            self.browser
+                .apply(InputEvent3D::Wheel { delta_y: -delta_y }, true)
+        }
+
+        pub fn reset_view(&mut self) -> Result<(), JsValue> {
+            self.browser.apply(InputEvent3D::Escape, true)
+        }
+
+        pub fn selected_series(&self) -> i32 {
+            self.browser.selected_series()
+        }
+
+        pub fn selected_source(&self) -> i32 {
+            self.browser.selected_source()
+        }
+
+        pub fn render(&mut self) -> Result<(), JsValue> {
+            self.browser.render()
+        }
+
+        pub fn export_png(&mut self) -> Result<Vec<u8>, JsValue> {
+            self.browser
+                .session_mut()?
+                .render()
+                .and_then(|image| image.encode_png())
+                .map_err(js_err)
+        }
+
+        pub fn destroy(&mut self) {
+            self.browser.destroy();
+        }
+    }
+
+    /// Worker/OffscreenCanvas adapter with the same 3d event semantics.
+    #[cfg(feature = "3d")]
+    #[wasm_bindgen]
+    pub struct Offscreen3DCanvasSession {
+        browser: Browser3DSession,
+    }
+
+    #[cfg(feature = "3d")]
+    #[wasm_bindgen]
+    impl Offscreen3DCanvasSession {
+        #[wasm_bindgen(constructor)]
+        pub fn new(canvas: OffscreenCanvas) -> Result<Self, JsValue> {
+            ensure_default_browser_fonts()?;
+            Ok(Self {
+                browser: Browser3DSession::new(CanvasSurface::from_offscreen(canvas)?),
+            })
+        }
+
+        pub fn set_plot(&mut self, plot: &JsPlot3D) -> Result<(), JsValue> {
+            self.browser.set_plot(plot)
+        }
+
+        pub fn resize(
+            &mut self,
+            width: u32,
+            height: u32,
+            scale_factor: f32,
+        ) -> Result<(), JsValue> {
+            self.browser.resize(width, height, scale_factor)
+        }
+
+        pub fn pointer_down(&mut self, x: f32, y: f32, button: i16) -> Result<(), JsValue> {
+            self.browser.apply(
+                InputEvent3D::PointerDown {
+                    x,
+                    y,
+                    button: Browser3DSession::pointer_button(button)?,
+                },
+                false,
+            )
+        }
+
+        pub fn pointer_move(&mut self, x: f32, y: f32) -> Result<(), JsValue> {
+            self.browser.apply(InputEvent3D::PointerMove { x, y }, true)
+        }
+
+        pub fn pointer_up(&mut self, x: f32, y: f32, button: i16) -> Result<(), JsValue> {
+            self.browser.apply(
+                InputEvent3D::PointerUp {
+                    x,
+                    y,
+                    button: Browser3DSession::pointer_button(button)?,
+                },
+                true,
+            )
+        }
+
+        pub fn double_click(&mut self, x: f32, y: f32) -> Result<(), JsValue> {
+            self.browser.apply(
+                InputEvent3D::DoubleClick {
+                    x,
+                    y,
+                    button: PointerButton3D::Left,
+                },
+                true,
+            )
+        }
+
+        pub fn wheel(&mut self, delta_y: f32) -> Result<(), JsValue> {
+            self.browser
+                .apply(InputEvent3D::Wheel { delta_y: -delta_y }, true)
+        }
+
+        pub fn reset_view(&mut self) -> Result<(), JsValue> {
+            self.browser.apply(InputEvent3D::Escape, true)
+        }
+
+        pub fn selected_series(&self) -> i32 {
+            self.browser.selected_series()
+        }
+
+        pub fn selected_source(&self) -> i32 {
+            self.browser.selected_source()
+        }
+
+        pub fn render(&mut self) -> Result<(), JsValue> {
+            self.browser.render()
+        }
+
+        pub fn export_png(&mut self) -> Result<Vec<u8>, JsValue> {
+            self.browser
+                .session_mut()?
+                .render()
+                .and_then(|image| image.encode_png())
+                .map_err(js_err)
+        }
+
+        pub fn destroy(&mut self) {
+            self.browser.destroy();
+        }
+    }
+
+    #[cfg(feature = "3d-gpu")]
+    struct BrowserWebGpu3DSession {
+        surface: Option<wgpu::Surface<'static>>,
+        gpu: Option<GpuSurfaceSession3D>,
+        selected: Option<PickHit3D>,
+        last_diagnostics: Option<RenderDiagnostics3D>,
+        totals: RenderDiagnostics3D,
+        render_pending: bool,
+        needs_recreate: bool,
+        scale_factor: f32,
+    }
+
+    #[cfg(feature = "3d-gpu")]
+    impl BrowserWebGpu3DSession {
+        async fn new(
+            instance: wgpu::Instance,
+            surface: wgpu::Surface<'static>,
+            session: InteractivePlot3DSession,
+        ) -> Result<Self, JsValue> {
+            let gpu = GpuSurfaceSession3D::new(session, instance, &surface)
+                .await
+                .map_err(js_err)?;
+            Ok(Self {
+                surface: Some(surface),
+                gpu: Some(gpu),
+                selected: None,
+                last_diagnostics: None,
+                totals: RenderDiagnostics3D::default(),
+                render_pending: true,
+                needs_recreate: false,
+                scale_factor: 1.0,
+            })
+        }
+
+        fn apply(&mut self, event: InputEvent3D) -> Result<(), JsValue> {
+            let result = self
+                .gpu
+                .as_mut()
+                .ok_or_else(|| JsValue::from_str("the WebGPU 3d session was destroyed"))?
+                .handle_input(event)
+                .map_err(js_err)?;
+            if let Some(hit) = result.picked {
+                self.selected = Some(hit);
+            }
+            self.render_pending |= result.request_redraw;
+            Ok(())
+        }
+
+        fn resize(&mut self, width: u32, height: u32, scale_factor: f32) -> Result<(), JsValue> {
+            self.scale_factor = if scale_factor.is_finite() && scale_factor > 0.0 {
+                scale_factor
+            } else {
+                1.0
+            };
+            let surface = self
+                .surface
+                .as_ref()
+                .ok_or_else(|| JsValue::from_str("the WebGPU 3d surface was destroyed"))?;
+            self.gpu
+                .as_mut()
+                .ok_or_else(|| JsValue::from_str("the WebGPU 3d session was destroyed"))?
+                .resize(surface, width.max(1), height.max(1), self.scale_factor)
+                .map_err(js_err)?;
+            self.render_pending = true;
+            Ok(())
+        }
+
+        fn render(&mut self) -> Result<bool, JsValue> {
+            if !self.render_pending {
+                return Ok(false);
+            }
+            let surface = self
+                .surface
+                .as_ref()
+                .ok_or_else(|| JsValue::from_str("the WebGPU 3d surface was destroyed"))?;
+            let status = self
+                .gpu
+                .as_mut()
+                .ok_or_else(|| JsValue::from_str("the WebGPU 3d session was destroyed"))?
+                .present(surface)
+                .map_err(js_err)?;
+            match status {
+                GpuSurfacePresentStatus3D::Presented(diagnostics) => {
+                    debug_assert_eq!(diagnostics.readback_bytes, 0);
+                    self.totals.readback_bytes = self
+                        .totals
+                        .readback_bytes
+                        .saturating_add(diagnostics.readback_bytes);
+                    self.totals.vertex_upload_bytes = self
+                        .totals
+                        .vertex_upload_bytes
+                        .saturating_add(diagnostics.vertex_upload_bytes);
+                    self.totals.index_upload_bytes = self
+                        .totals
+                        .index_upload_bytes
+                        .saturating_add(diagnostics.index_upload_bytes);
+                    self.totals.texture_upload_bytes = self
+                        .totals
+                        .texture_upload_bytes
+                        .saturating_add(diagnostics.texture_upload_bytes);
+                    self.totals.presentation_vertex_upload_bytes = self
+                        .totals
+                        .presentation_vertex_upload_bytes
+                        .saturating_add(diagnostics.presentation_vertex_upload_bytes);
+                    self.totals.presentation_texture_upload_bytes = self
+                        .totals
+                        .presentation_texture_upload_bytes
+                        .saturating_add(diagnostics.presentation_texture_upload_bytes);
+                    self.totals.surface_presents = self
+                        .totals
+                        .surface_presents
+                        .saturating_add(diagnostics.surface_presents);
+                    self.last_diagnostics = Some(diagnostics);
+                    self.render_pending = false;
+                    Ok(true)
+                }
+                GpuSurfacePresentStatus3D::Skipped => Ok(false),
+                GpuSurfacePresentStatus3D::RecreateSurface => {
+                    self.needs_recreate = true;
+                    Err(JsValue::from_str(
+                        "the WebGPU 3d surface or device was lost; recreate the session",
+                    ))
+                }
+            }
+        }
+
+        fn selected_series(&self) -> i32 {
+            self.selected.map_or(-1, |hit| hit.series_index as i32)
+        }
+
+        fn selected_source(&self) -> i32 {
+            self.selected
+                .and_then(|hit| hit.sources().first().copied())
+                .map_or(-1, |index| index as i32)
+        }
+
+        fn export_png(&self) -> Result<Vec<u8>, JsValue> {
+            self.gpu
+                .as_ref()
+                .ok_or_else(|| JsValue::from_str("the WebGPU 3d session was destroyed"))?
+                .render_png_bytes()
+                .map_err(js_err)
+        }
+
+        fn destroy(&mut self) {
+            self.gpu = None;
+            self.surface = None;
+            self.selected = None;
+            self.last_diagnostics = None;
+            self.totals = RenderDiagnostics3D::default();
+            self.render_pending = false;
+        }
+    }
+
+    #[cfg(feature = "3d-gpu")]
+    fn webgpu_instance() -> wgpu::Instance {
+        wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::BROWSER_WEBGPU,
+            flags: if cfg!(debug_assertions) {
+                wgpu::InstanceFlags::DEBUG | wgpu::InstanceFlags::VALIDATION
+            } else {
+                wgpu::InstanceFlags::default()
+            },
+            memory_budget_thresholds: Default::default(),
+            backend_options: Default::default(),
+            display: None,
+        })
+    }
+
+    /// Main-thread direct WebGPU adapter for retained 3d plots.
+    ///
+    /// Input methods only mark the retained frame dirty. Hosts call `render`
+    /// once per animation frame, so pointer bursts coalesce into one submit.
+    #[cfg(feature = "3d-gpu")]
+    #[wasm_bindgen(js_name = WebGPU3DCanvasSession)]
+    pub struct WebGpu3DCanvasSession {
+        canvas: HtmlCanvasElement,
+        browser: BrowserWebGpu3DSession,
+    }
+
+    #[cfg(feature = "3d-gpu")]
+    #[wasm_bindgen]
+    impl WebGpu3DCanvasSession {
+        pub async fn create(
+            canvas: HtmlCanvasElement,
+            plot: &JsPlot3D,
+        ) -> Result<WebGpu3DCanvasSession, JsValue> {
+            ensure_default_browser_fonts()?;
+            let mut session = plot.build_session()?;
+            session
+                .resize(canvas.width().max(1), canvas.height().max(1), 1.0)
+                .map_err(js_err)?;
+            let instance = webgpu_instance();
+            let surface: wgpu::Surface<'static> = instance
+                .create_surface(wgpu::SurfaceTarget::Canvas(canvas.clone()))
+                .map_err(js_err)?;
+            let browser = BrowserWebGpu3DSession::new(instance, surface, session).await?;
+            let mut adapter = Self { canvas, browser };
+            let _ = adapter.browser.render()?;
+            Ok(adapter)
+        }
+
+        pub fn resize(
+            &mut self,
+            width: u32,
+            height: u32,
+            scale_factor: f32,
+        ) -> Result<(), JsValue> {
+            self.canvas.set_width(width.max(1));
+            self.canvas.set_height(height.max(1));
+            self.browser.resize(width, height, scale_factor)
+        }
+
+        pub fn pointer_down(&mut self, x: f32, y: f32, button: i16) -> Result<(), JsValue> {
+            self.browser.apply(InputEvent3D::PointerDown {
+                x,
+                y,
+                button: Browser3DSession::pointer_button(button)?,
+            })
+        }
+
+        pub fn pointer_move(&mut self, x: f32, y: f32) -> Result<(), JsValue> {
+            self.browser.apply(InputEvent3D::PointerMove { x, y })
+        }
+
+        pub fn pointer_up(&mut self, x: f32, y: f32, button: i16) -> Result<(), JsValue> {
+            self.browser.apply(InputEvent3D::PointerUp {
+                x,
+                y,
+                button: Browser3DSession::pointer_button(button)?,
+            })
+        }
+
+        pub fn double_click(&mut self, x: f32, y: f32) -> Result<(), JsValue> {
+            self.browser.apply(InputEvent3D::DoubleClick {
+                x,
+                y,
+                button: PointerButton3D::Left,
+            })
+        }
+
+        pub fn wheel(&mut self, delta_y: f32) -> Result<(), JsValue> {
+            self.browser
+                .apply(InputEvent3D::Wheel { delta_y: -delta_y })
+        }
+
+        pub fn reset_view(&mut self) -> Result<(), JsValue> {
+            self.browser.apply(InputEvent3D::Escape)
+        }
+
+        /// Submit at most one dirty frame.
+        pub fn render(&mut self) -> Result<bool, JsValue> {
+            self.browser.render()
+        }
+
+        pub fn selected_series(&self) -> i32 {
+            self.browser.selected_series()
+        }
+
+        pub fn selected_source(&self) -> i32 {
+            self.browser.selected_source()
+        }
+
+        pub fn backend(&self) -> String {
+            self.browser.last_diagnostics.as_ref().map_or_else(
+                || "webgpu".to_string(),
+                |value| value.actual_backend.clone(),
+            )
+        }
+
+        pub fn readback_bytes(&self) -> u64 {
+            self.browser.totals.readback_bytes
+        }
+
+        pub fn cpu_frame_upload_bytes(&self) -> u64 {
+            0
+        }
+
+        pub fn texture_upload_bytes(&self) -> u64 {
+            self.browser
+                .totals
+                .texture_upload_bytes
+                .saturating_add(self.browser.totals.presentation_texture_upload_bytes)
+        }
+
+        pub fn vertex_upload_bytes(&self) -> u64 {
+            self.browser.totals.vertex_upload_bytes
+        }
+
+        pub fn index_upload_bytes(&self) -> u64 {
+            self.browser.totals.index_upload_bytes
+        }
+
+        pub fn surface_presents(&self) -> u64 {
+            self.browser.totals.surface_presents
+        }
+
+        pub fn needs_recreate(&self) -> bool {
+            self.browser.needs_recreate
+        }
+
+        pub fn export_png(&self) -> Result<Vec<u8>, JsValue> {
+            self.browser.export_png()
+        }
+
+        pub fn destroy(&mut self) {
+            self.browser.destroy();
+        }
+    }
+
+    /// Worker-owned OffscreenCanvas direct WebGPU adapter.
+    #[cfg(feature = "3d-gpu")]
+    #[wasm_bindgen(js_name = OffscreenWebGPU3DCanvasSession)]
+    pub struct OffscreenWebGpu3DCanvasSession {
+        canvas: OffscreenCanvas,
+        browser: BrowserWebGpu3DSession,
+    }
+
+    #[cfg(feature = "3d-gpu")]
+    #[wasm_bindgen]
+    impl OffscreenWebGpu3DCanvasSession {
+        pub async fn create(
+            canvas: OffscreenCanvas,
+            plot: &JsPlot3D,
+        ) -> Result<OffscreenWebGpu3DCanvasSession, JsValue> {
+            ensure_default_browser_fonts()?;
+            let mut session = plot.build_session()?;
+            session
+                .resize(canvas.width().max(1), canvas.height().max(1), 1.0)
+                .map_err(js_err)?;
+            let instance = webgpu_instance();
+            let surface: wgpu::Surface<'static> = instance
+                .create_surface(wgpu::SurfaceTarget::OffscreenCanvas(canvas.clone()))
+                .map_err(js_err)?;
+            let browser = BrowserWebGpu3DSession::new(instance, surface, session).await?;
+            let mut adapter = Self { canvas, browser };
+            let _ = adapter.browser.render()?;
+            Ok(adapter)
+        }
+
+        pub fn resize(
+            &mut self,
+            width: u32,
+            height: u32,
+            scale_factor: f32,
+        ) -> Result<(), JsValue> {
+            self.canvas.set_width(width.max(1));
+            self.canvas.set_height(height.max(1));
+            self.browser.resize(width, height, scale_factor)
+        }
+
+        pub fn pointer_down(&mut self, x: f32, y: f32, button: i16) -> Result<(), JsValue> {
+            self.browser.apply(InputEvent3D::PointerDown {
+                x,
+                y,
+                button: Browser3DSession::pointer_button(button)?,
+            })
+        }
+
+        pub fn pointer_move(&mut self, x: f32, y: f32) -> Result<(), JsValue> {
+            self.browser.apply(InputEvent3D::PointerMove { x, y })
+        }
+
+        pub fn pointer_up(&mut self, x: f32, y: f32, button: i16) -> Result<(), JsValue> {
+            self.browser.apply(InputEvent3D::PointerUp {
+                x,
+                y,
+                button: Browser3DSession::pointer_button(button)?,
+            })
+        }
+
+        pub fn double_click(&mut self, x: f32, y: f32) -> Result<(), JsValue> {
+            self.browser.apply(InputEvent3D::DoubleClick {
+                x,
+                y,
+                button: PointerButton3D::Left,
+            })
+        }
+
+        pub fn wheel(&mut self, delta_y: f32) -> Result<(), JsValue> {
+            self.browser
+                .apply(InputEvent3D::Wheel { delta_y: -delta_y })
+        }
+
+        pub fn reset_view(&mut self) -> Result<(), JsValue> {
+            self.browser.apply(InputEvent3D::Escape)
+        }
+
+        /// Submit at most one dirty frame.
+        pub fn render(&mut self) -> Result<bool, JsValue> {
+            self.browser.render()
+        }
+
+        pub fn selected_series(&self) -> i32 {
+            self.browser.selected_series()
+        }
+
+        pub fn selected_source(&self) -> i32 {
+            self.browser.selected_source()
+        }
+
+        pub fn backend(&self) -> String {
+            self.browser.last_diagnostics.as_ref().map_or_else(
+                || "webgpu".to_string(),
+                |value| value.actual_backend.clone(),
+            )
+        }
+
+        pub fn readback_bytes(&self) -> u64 {
+            self.browser.totals.readback_bytes
+        }
+
+        pub fn cpu_frame_upload_bytes(&self) -> u64 {
+            0
+        }
+
+        pub fn texture_upload_bytes(&self) -> u64 {
+            self.browser
+                .totals
+                .texture_upload_bytes
+                .saturating_add(self.browser.totals.presentation_texture_upload_bytes)
+        }
+
+        pub fn vertex_upload_bytes(&self) -> u64 {
+            self.browser.totals.vertex_upload_bytes
+        }
+
+        pub fn index_upload_bytes(&self) -> u64 {
+            self.browser.totals.index_upload_bytes
+        }
+
+        pub fn surface_presents(&self) -> u64 {
+            self.browser.totals.surface_presents
+        }
+
+        pub fn needs_recreate(&self) -> bool {
+            self.browser.needs_recreate
+        }
+
+        pub fn export_png(&self) -> Result<Vec<u8>, JsValue> {
+            self.browser.export_png()
+        }
+
+        pub fn destroy(&mut self) {
+            self.browser.destroy();
         }
     }
 

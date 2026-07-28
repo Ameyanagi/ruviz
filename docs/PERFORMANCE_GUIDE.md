@@ -17,7 +17,6 @@ For raster PNG export, `ruviz` now applies a few automatic fast paths when the o
 - Large monotonic solid line series without markers or error bars are reduced to a per-column envelope before stroking.
 - Static histograms cache prepared `HistogramData` and reuse those bins for repeated exports.
 - Nearest, non-annotated heatmaps render the final output surface directly and blit that image instead of drawing one rectangle per source cell.
-- The parallel line backend now draws one polyline instead of thousands of two-point segments.
 
 That changes the cost model:
 
@@ -117,7 +116,7 @@ When diagnosing a configured backend, print both `get_backend_name()` and
 ```rust
 // Good - histogram with automatic binning
 Plot::new()
-    .histogram(&data, None)  // 87ms for 1M points ✅
+    .histogram(&data)  // 87ms for 1M points ✅
     .save("distribution.png")?;
 
 // Slower - scatter plot for same purpose
@@ -236,7 +235,7 @@ To benchmark ruviz in your application:
 use std::time::Instant;
 use ruviz::prelude::*;
 
-fn main() -> Result<()> {
+fn main() -> PlotResult<()> {
     let x: Vec<f64> = (0..100_000).map(|i| i as f64).collect();
     let y: Vec<f64> = x.iter().map(|v| v.sin()).collect();
 
@@ -392,7 +391,7 @@ Plot::new()
 use ruviz::{core::plot::Image, prelude::*};
 
 // Async endpoint example
-async fn generate_plot(data: Vec<(f64, f64)>) -> Result<Image> {
+async fn generate_plot(data: Vec<(f64, f64)>) -> PlotResult<Image> {
     let (x, y): (Vec<_>, Vec<_>) = data.into_iter().unzip();
 
     Plot::new()

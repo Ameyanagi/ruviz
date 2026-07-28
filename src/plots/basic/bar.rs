@@ -2,8 +2,9 @@
 //!
 //! Provides [`BarConfig`] for configuring bar chart appearance.
 
+use crate::core::style_utils::StyleResolver;
 use crate::plots::traits::PlotConfig;
-use crate::render::Color;
+use crate::render::{Color, Theme};
 
 /// Bar orientation
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -156,6 +157,20 @@ impl BarConfig {
     pub fn horizontal() -> Self {
         Self::default().orientation(BarOrientation::Horizontal)
     }
+
+    /// Resolve the bar edge against `theme` and the resolved fill colour.
+    ///
+    /// Returns `(colour, width_in_points)`, or `None` when the edge is disabled
+    /// by [`edge_width(0.0)`](BarConfig::edge_width). The width stays in points
+    /// so the renderer can scale it to device pixels — a bar edge is the same
+    /// physical thickness at every DPI.
+    ///
+    /// [`edge_color`](BarConfig::edge_color) of `None` means "derive from the
+    /// fill": the fill darkened through the shared
+    /// [`StyleResolver::edge_color`] rule, the same convention histograms use.
+    pub fn resolved_edge(&self, theme: &Theme, fill: Color) -> Option<(Color, f32)> {
+        StyleResolver::new(theme).patch_edge(fill, self.edge_color, self.edge_width)
+    }
 }
 
 #[cfg(test)]
@@ -205,5 +220,52 @@ mod tests {
     fn test_horizontal_constructor() {
         let config = BarConfig::horizontal();
         assert!(matches!(config.orientation, BarOrientation::Horizontal));
+    }
+
+    #[test]
+    fn test_resolved_edge_defaults_to_a_darker_stroke() {
+        let theme = Theme::default();
+        let fill = Color::from_rgb(31, 119, 180);
+
+        let (color, width) = BarConfig::default()
+            .resolved_edge(&theme, fill)
+            .expect("a default bar must carry an edge");
+
+        assert_eq!(
+            color,
+            fill.darken(0.3),
+            "edge_color: None must derive from the fill, not invent a colour"
+        );
+        assert!(
+            (width - 0.8).abs() < f32::EPSILON,
+            "default edge width is 0.8 points, got {width}"
+        );
+    }
+
+    #[test]
+    fn test_resolved_edge_honours_explicit_config() {
+        let theme = Theme::default();
+        let fill = Color::from_rgb(31, 119, 180);
+
+        assert_eq!(
+            BarConfig::new()
+                .edge_color(Color::BLACK)
+                .edge_width(2.5)
+                .resolved_edge(&theme, fill),
+            Some((Color::BLACK, 2.5)),
+            "an explicit edge colour and width must reach the renderer verbatim"
+        );
+    }
+
+    #[test]
+    fn test_resolved_edge_is_disabled_by_zero_width() {
+        let theme = Theme::default();
+        let fill = Color::from_rgb(31, 119, 180);
+
+        assert_eq!(
+            BarConfig::new().edge_width(0.0).resolved_edge(&theme, fill),
+            None,
+            "edge_width(0.0) must switch the edge off, not floor it to a hairline"
+        );
     }
 }

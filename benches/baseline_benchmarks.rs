@@ -1,150 +1,127 @@
-// Baseline performance benchmarks - TDD approach
-// These benchmarks define expected performance targets before optimization
+//! Baseline performance benchmarks.
+//!
+//! Every workload is declared exactly once, in [`workloads`], and each group
+//! below iterates that one list. Adding a workload adds it to every group, so
+//! the groups cannot drift out of sync with each other.
+//!
+//! The groups deliberately separate the two costs that used to be measured as
+//! one number:
+//!
+//! - `render` — rasterization only, via `Plot::render()`.
+//! - `encode_png` — PNG encoding of an already-rendered image.
+//!
+//! Neither writes to disk. Until 2026-07 every benchmark here called
+//! `.save(path)` inside `b.iter`, so each reported "render time" was
+//! rasterization + deflate + a filesystem write, and a rasterizer regression
+//! could hide inside PNG/IO noise.
+//!
+//! For cross-runtime and feature-flag comparisons see `docs/benchmarks/`.
 
 use std::hint::black_box;
 
-use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
+use criterion::{Criterion, criterion_group, criterion_main};
 use ruviz::prelude::*;
 
-/// Benchmark: Line plot with 1K points
-/// Target: < 10ms
-fn bench_line_plot_1k(c: &mut Criterion) {
-    let x: Vec<f64> = (0..1000).map(|i| i as f64).collect();
-    let y: Vec<f64> = x.iter().map(|v| v * 2.0).collect();
+/// Builds one plot to measure. Kept as a plain `fn` pointer so the workload
+/// table stays a value, not a macro.
+type BuildPlot = fn() -> Plot;
 
-    c.bench_function("line_plot_1k", |b| {
-        b.iter(|| {
-            Plot::new()
-                .line(black_box(&x), black_box(&y))
-                .save("generated/bench/bench_line_1k.png")
-                .expect("Failed to save plot");
-        });
-    });
+/// The single source of truth for what gets benchmarked.
+fn workloads() -> Vec<(&'static str, BuildPlot)> {
+    vec![
+        ("line_1k", line_1k as BuildPlot),
+        ("line_100k", line_100k as BuildPlot),
+        ("scatter_10k", scatter_10k as BuildPlot),
+        ("histogram_1m", histogram_1m as BuildPlot),
+        ("boxplot_100k", boxplot_100k as BuildPlot),
+        ("multi_series_50k", multi_series_50k as BuildPlot),
+    ]
 }
 
-/// Benchmark: Line plot with 100K points
-/// Target: < 100ms
-fn bench_line_plot_100k(c: &mut Criterion) {
-    let x: Vec<f64> = (0..100_000).map(|i| i as f64).collect();
+fn ramp(count: usize) -> (Vec<f64>, Vec<f64>) {
+    let x: Vec<f64> = (0..count).map(|i| i as f64).collect();
     let y: Vec<f64> = x.iter().map(|v| v * 2.0).collect();
-
-    c.bench_function("line_plot_100k", |b| {
-        b.iter(|| {
-            Plot::new()
-                .line(black_box(&x), black_box(&y))
-                .auto_optimize()
-                .save("generated/bench/bench_line_100k.png")
-                .expect("Failed to save plot");
-        });
-    });
+    (x, y)
 }
 
-/// Benchmark: Scatter plot with 10K points
-/// Target: < 50ms
-fn bench_scatter_plot_10k(c: &mut Criterion) {
+fn wave(count: usize) -> Vec<f64> {
+    (0..count).map(|i| (i as f64).sin() * 100.0).collect()
+}
+
+fn line_1k() -> Plot {
+    let (x, y) = ramp(1_000);
+    Plot::new().line(&x, &y).into()
+}
+
+fn line_100k() -> Plot {
+    let (x, y) = ramp(100_000);
+    Plot::new().line(&x, &y).auto_optimize().into()
+}
+
+fn scatter_10k() -> Plot {
     let x: Vec<f64> = (0..10_000).map(|i| i as f64).collect();
     let y: Vec<f64> = x.iter().map(|v| v * 2.0 + 10.0).collect();
-
-    c.bench_function("scatter_plot_10k", |b| {
-        b.iter(|| {
-            Plot::new()
-                .scatter(black_box(&x), black_box(&y))
-                .save("generated/bench/bench_scatter_10k.png")
-                .expect("Failed to save plot");
-        });
-    });
+    Plot::new().scatter(&x, &y).into()
 }
 
-/// Benchmark: Histogram with 1M points
-/// Target: < 500ms
-fn bench_histogram_1m(c: &mut Criterion) {
-    let data: Vec<f64> = (0..1_000_000).map(|i| (i as f64).sin() * 100.0).collect();
-
-    c.bench_function("histogram_1m", |b| {
-        b.iter(|| {
-            Plot::new()
-                .histogram(black_box(&data), None)
-                .auto_optimize()
-                .save("generated/bench/bench_histogram_1m.png")
-                .expect("Failed to save plot");
-        });
-    });
+fn histogram_1m() -> Plot {
+    let data = wave(1_000_000);
+    Plot::new().histogram(&data).auto_optimize().into()
 }
 
-/// Benchmark: Box plot with 100K points
-/// Target: < 200ms
-fn bench_boxplot_100k(c: &mut Criterion) {
-    let data: Vec<f64> = (0..100_000).map(|i| (i as f64).sin() * 100.0).collect();
-
-    c.bench_function("boxplot_100k", |b| {
-        b.iter(|| {
-            Plot::new()
-                .boxplot(black_box(&data), None)
-                .save("generated/bench/bench_boxplot_100k.png")
-                .expect("Failed to save plot");
-        });
-    });
+fn boxplot_100k() -> Plot {
+    let data = wave(100_000);
+    Plot::new().boxplot(&data).into()
 }
 
-/// Benchmark: Multi-series plot (5 series, 10K points each)
-/// Target: < 150ms
-fn bench_multi_series_50k(c: &mut Criterion) {
+fn multi_series_50k() -> Plot {
     let x: Vec<f64> = (0..10_000).map(|i| i as f64).collect();
     let series: Vec<Vec<f64>> = (0..5)
         .map(|s| x.iter().map(|v| v * (s as f64 + 1.0)).collect())
         .collect();
 
-    c.bench_function("multi_series_50k", |b| {
-        b.iter(|| {
-            let mut builder = Plot::new().line(black_box(&x), black_box(&series[0]));
-            for y in series[1..].iter() {
-                builder = builder.line(black_box(&x), black_box(y));
-            }
-            builder
-                .auto_optimize()
-                .save("generated/bench/bench_multi_series.png")
-                .expect("Failed to save plot");
-        });
-    });
+    let mut builder = Plot::new().line(&x, &series[0]);
+    for y in series[1..].iter() {
+        builder = builder.line(&x, y);
+    }
+    builder.auto_optimize().into()
 }
 
-/// Benchmark: Auto-optimization decision speed
-/// Target: < 1ms for decision logic
-fn bench_auto_optimize_speed(c: &mut Criterion) {
-    let mut group = c.benchmark_group("auto_optimize_decision");
-
-    for size in [100, 1_000, 10_000, 100_000].iter() {
-        let x: Vec<f64> = (0..*size).map(|i| i as f64).collect();
-        let y: Vec<f64> = x.iter().map(|v| v * 2.0).collect();
-
-        group.bench_with_input(BenchmarkId::from_parameter(size), size, |b, _| {
-            b.iter(|| {
-                let plot = Plot::new()
-                    .line(black_box(&x), black_box(&y))
-                    .auto_optimize();
-                black_box(plot.get_backend_name());
-            });
+/// Rasterization only: no PNG encode, no disk.
+fn bench_render(c: &mut Criterion) {
+    let mut group = c.benchmark_group("render");
+    for (name, build) in workloads() {
+        let plot = build();
+        group.bench_function(name, |b| {
+            b.iter(|| black_box(plot.render().expect("render failed")));
         });
     }
     group.finish();
 }
 
-/// Benchmark: Throughput measurement (points/second)
-fn bench_throughput_measurement(c: &mut Criterion) {
-    let mut group = c.benchmark_group("throughput");
-    group.throughput(criterion::Throughput::Elements(100_000));
-
-    let x: Vec<f64> = (0..100_000).map(|i| i as f64).collect();
-    let y: Vec<f64> = x.iter().map(|v| v * 2.0).collect();
-
-    group.bench_function("line_plot_throughput", |b| {
-        b.iter(|| {
-            Plot::new()
-                .line(black_box(&x), black_box(&y))
-                .auto_optimize()
-                .save("generated/bench/bench_throughput.png")
-                .expect("Failed to save plot");
+/// PNG encoding only, on an image that was rasterized once up front.
+fn bench_encode_png(c: &mut Criterion) {
+    let mut group = c.benchmark_group("encode_png");
+    for (name, build) in workloads() {
+        let image = build().render().expect("render failed");
+        group.bench_function(name, |b| {
+            b.iter(|| black_box(image.encode_png().expect("PNG encode failed")));
         });
+    }
+    group.finish();
+}
+
+/// Points per second through the rasterizer, so the number can be compared
+/// against other libraries without a PNG encoder in the denominator.
+fn bench_render_throughput(c: &mut Criterion) {
+    const POINTS: u64 = 100_000;
+
+    let mut group = c.benchmark_group("render_throughput");
+    group.throughput(criterion::Throughput::Elements(POINTS));
+
+    let plot = line_100k();
+    group.bench_function("line_100k", |b| {
+        b.iter(|| black_box(plot.render().expect("render failed")));
     });
 
     group.finish();
@@ -152,13 +129,8 @@ fn bench_throughput_measurement(c: &mut Criterion) {
 
 criterion_group!(
     benches,
-    bench_line_plot_1k,
-    bench_line_plot_100k,
-    bench_scatter_plot_10k,
-    bench_histogram_1m,
-    bench_boxplot_100k,
-    bench_multi_series_50k,
-    bench_auto_optimize_speed,
-    bench_throughput_measurement
+    bench_render,
+    bench_encode_png,
+    bench_render_throughput
 );
 criterion_main!(benches);

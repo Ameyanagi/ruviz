@@ -489,16 +489,15 @@ impl<T> BufferPool<T> {
 
     fn get_buffer(&mut self, min_capacity: usize) -> (Vec<T>, bool) {
         // Try to find a suitable buffer in the pool
-        if min_capacity >= self.min_capacity {
-            if let Some(pos) = self
+        if min_capacity >= self.min_capacity
+            && let Some(pos) = self
                 .available
                 .iter()
                 .position(|buf| buf.capacity() >= min_capacity)
-            {
-                let mut buffer = self.available.swap_remove(pos);
-                buffer.clear();
-                return (buffer, true);
-            }
+        {
+            let mut buffer = self.available.swap_remove(pos);
+            buffer.clear();
+            return (buffer, true);
         }
 
         // No suitable buffer found, allocate new one
@@ -722,21 +721,55 @@ impl<T> ManagedBuffer<T> {
     }
 
     /// Take ownership of the buffer (consumes the managed buffer)
+    ///
+    /// The storage escapes the pool — the caller owns it now, so it cannot be
+    /// recycled — but the allocation still stops being *managed*, so it is
+    /// accounted for exactly as a drop is.
     pub fn into_inner(mut self) -> Vec<T> {
-        self.buffer.take().unwrap()
+        self.release(Recycle::No).unwrap_or_default()
     }
+
+    /// Release the managed buffer, optionally handing the storage back to the
+    /// pool, and balance `active_allocations` once.
+    ///
+    /// Both exits from a `ManagedBuffer` — `into_inner` and `Drop` — funnel
+    /// through here so the accounting cannot diverge between them. It used to:
+    /// `into_inner` took the `Option` itself, which left `Drop` with nothing to
+    /// do, so every buffer handed out through `into_inner` was counted as live
+    /// forever and `MemoryStats::active_allocations` grew without bound.
+    ///
+    /// Returns the buffer when it was not recycled.
+    fn release(&mut self, recycle: Recycle) -> Option<Vec<T>> {
+        let buffer = self.buffer.take()?;
+
+        // Take the pool lock (inside `recycler`) before the stats lock, matching
+        // the order used when the buffer was handed out.
+        let escaped = match (recycle, &self.recycler) {
+            (Recycle::Yes, Some(recycler)) => {
+                recycler(buffer);
+                None
+            }
+            _ => Some(buffer),
+        };
+
+        if let Ok(mut stats) = self.stats.lock() {
+            stats.active_allocations = stats.active_allocations.saturating_sub(1);
+        }
+
+        escaped
+    }
+}
+
+/// Whether a released [`ManagedBuffer`] hands its storage back to the pool.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Recycle {
+    Yes,
+    No,
 }
 
 impl<T> Drop for ManagedBuffer<T> {
     fn drop(&mut self) {
-        if let Some(buffer) = self.buffer.take() {
-            if let Some(recycler) = &self.recycler {
-                recycler(buffer);
-            }
-
-            let mut stats = self.stats.lock().unwrap();
-            stats.active_allocations = stats.active_allocations.saturating_sub(1);
-        }
+        let _ = self.release(Recycle::Yes);
     }
 }
 
@@ -846,9 +879,75 @@ mod tests {
         // Buffer should be returned to pool
         let stats = manager.get_stats();
         assert_eq!(stats.active_allocations, 0);
-        // Note: Buffer return-to-pool is not currently implemented
-        // TODO: Implement buffer recycling for better memory efficiency
-        // assert!(stats.pool_stats.f32_pool_size > 0 || stats.pool_hit_rate > 0.0);
+        assert_eq!(
+            stats.pool_stats.f32_pool_size, 1,
+            "dropping a managed buffer must hand its storage back to the pool"
+        );
+    }
+
+    #[test]
+    fn dropped_buffer_is_reused_on_the_next_request() {
+        let manager = MemoryManager::new();
+        drop(manager.get_f32_buffer(4096));
+
+        let reused = manager.get_f32_buffer(4096);
+        let stats = manager.get_stats();
+        assert!(
+            stats.pool_hit_rate > 0.0,
+            "second request of the same size did not hit the pool"
+        );
+        assert_eq!(stats.pool_stats.f32_pool_size, 0);
+        assert_eq!(stats.active_allocations, 1);
+        drop(reused);
+    }
+
+    /// Regression: `into_inner` used to take the buffer out of the `Option`
+    /// itself, so `Drop` found nothing to do and never decremented
+    /// `active_allocations`. `MemoryStats` then reported a leak that grew by one
+    /// for every buffer that was ever handed out.
+    #[test]
+    fn into_inner_balances_active_allocations() {
+        let manager = MemoryManager::new();
+
+        for _ in 0..3 {
+            let buffer = manager.get_f32_buffer(1024);
+            assert_eq!(manager.get_stats().active_allocations, 1);
+            let raw = buffer.into_inner();
+            assert!(raw.capacity() >= 1024);
+            assert_eq!(
+                manager.get_stats().active_allocations,
+                0,
+                "into_inner left a phantom allocation behind"
+            );
+        }
+    }
+
+    #[test]
+    fn into_inner_keeps_the_storage_out_of_the_pool() {
+        let manager = MemoryManager::new();
+        let escaped = manager.get_f32_buffer(4096).into_inner();
+
+        let stats = manager.get_stats();
+        assert_eq!(
+            stats.pool_stats.f32_pool_size, 0,
+            "storage handed to the caller must not also sit in the pool"
+        );
+        assert_eq!(stats.active_allocations, 0);
+        drop(escaped);
+    }
+
+    #[test]
+    fn unmanaged_buffer_release_does_not_underflow_stats() {
+        let manager = MemoryManager::with_config(MemoryConfig {
+            enable_pooling: false,
+            ..Default::default()
+        });
+
+        let buffer = manager.get_f32_buffer(256);
+        assert_eq!(buffer.get().capacity(), 256);
+        drop(buffer.into_inner());
+
+        assert_eq!(manager.get_stats().active_allocations, 0);
     }
 
     #[test]

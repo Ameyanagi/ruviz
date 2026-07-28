@@ -214,30 +214,6 @@ mod memory_pool_tests {
     }
 
     #[test]
-    fn test_pool_with_plot_integration() {
-        use ruviz::prelude::*;
-
-        // This test verifies pool integration with actual plotting
-        let x_data = vec![0.0, 1.0, 2.0, 3.0, 4.0];
-        let y_data = vec![0.0, 1.0, 0.0, 1.0, 0.0];
-
-        // Create plot with pooled memory enabled using actual API
-        let result = Plot::new()
-            .with_memory_pooling(true)
-            .line(&x_data, &y_data)
-            .title("Pool Integration Test")
-            .xlabel("X Values")
-            .ylabel("Y Values")
-            .save("generated/tests/render/pool_integration_test.png");
-
-        assert!(
-            result.is_ok(),
-            "expected operation to succeed: {:?}",
-            result
-        );
-    }
-
-    #[test]
     fn test_managed_buffer_drop_cleans_in_use_via_shared_pool() {
         let shared = SharedMemoryPool::<u8>::new(32);
         let managed = shared.acquire(32);

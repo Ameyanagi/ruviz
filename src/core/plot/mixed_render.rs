@@ -1,11 +1,78 @@
 use super::*;
 
-fn adjust_boxen_saturation_svg(color: Color, factor: f32) -> Color {
-    let gray = ((color.r as f32 + color.g as f32 + color.b as f32) / 3.0) as u8;
-    let blend = |channel: u8| -> u8 {
-        (channel as f32 * factor + gray as f32 * (1.0 - factor)).clamp(0.0, 255.0) as u8
-    };
-    Color::new_rgba(blend(color.r), blend(color.g), blend(color.b), color.a)
+use super::error_bars::{
+    AttachedErrorBarStyle, ErrorBarFrame, draw_error_bars, error_bar_pixels_for_series,
+    stroke_error_bar_series,
+};
+use crate::plots::traits::ComputedSeries;
+
+/// Pad one axis range by `margin` (a fraction of the span) on each side.
+///
+/// The padding is applied in the axis' own transform space so a log axis gets a
+/// constant *visual* margin and can never produce a non-positive lower bound.
+/// Scales whose transform is not reachable from here (`SymLog`) and log ranges
+/// that are not strictly positive are left untouched: skipping the margin is far
+/// safer than applying a linear one to a non-linear axis.
+///
+/// `pad_low` / `pad_high` implement matplotlib's `sticky_edges`: a bar or
+/// histogram baseline must keep sitting exactly on zero.
+fn padded_axis_range(
+    min: f64,
+    max: f64,
+    margin: f64,
+    scale: &crate::axes::AxisScale,
+    pad_low: bool,
+    pad_high: bool,
+) -> (f64, f64) {
+    if !margin.is_finite()
+        || margin <= 0.0
+        || !min.is_finite()
+        || !max.is_finite()
+        || max <= min
+        || (!pad_low && !pad_high)
+    {
+        return (min, max);
+    }
+
+    match scale {
+        crate::axes::AxisScale::Linear => {
+            let pad = (max - min) * margin;
+            if !pad.is_finite() || pad <= 0.0 {
+                return (min, max);
+            }
+            let low = if pad_low { min - pad } else { min };
+            let high = if pad_high { max + pad } else { max };
+            if low.is_finite() && high.is_finite() && high > low {
+                (low, high)
+            } else {
+                (min, max)
+            }
+        }
+        crate::axes::AxisScale::Log if min > 0.0 && max > 0.0 => {
+            let log_min = min.log10();
+            let log_max = max.log10();
+            let pad = (log_max - log_min) * margin;
+            if !pad.is_finite() || pad <= 0.0 {
+                return (min, max);
+            }
+            let low = if pad_low {
+                10.0_f64.powf(log_min - pad)
+            } else {
+                min
+            };
+            let high = if pad_high {
+                10.0_f64.powf(log_max + pad)
+            } else {
+                max
+            };
+            if low.is_finite() && low > 0.0 && high.is_finite() && high > low {
+                (low, high)
+            } else {
+                (min, max)
+            }
+        }
+        _ => (min, max),
+    }
 }
 
 impl Plot {
@@ -34,6 +101,7 @@ impl Plot {
                 SeriesType::Radar { data } => data.series.iter().map(|s| s.values.len()).sum(),
                 SeriesType::Polar { data } => data.points.len(),
                 SeriesType::Quiver { data } => data.arrows.len(),
+                SeriesType::Computed { data } => data.point_count(),
             })
             .sum()
     }
@@ -64,6 +132,7 @@ impl Plot {
                     }
                     SeriesType::Polar { data } => data.points.len(),
                     SeriesType::Quiver { data } => data.arrows.len(),
+                    SeriesType::Computed { data } => data.point_count(),
                     _ => unreachable!("PlotData-backed series resolve to dedicated variants"),
                 },
             })
@@ -89,8 +158,20 @@ impl Plot {
     }
 
     pub(super) fn is_non_cartesian_series(series: &PlotSeries) -> bool {
+        Self::is_non_cartesian_series_type(&series.series_type)
+    }
+
+    /// Whether a series type is drawn in its own polar frame rather than on the
+    /// plot's Cartesian axes.
+    ///
+    /// Asked of the type alone because [`series_from_style`] has to answer it
+    /// before there is a `PlotSeries` to ask — a non-Cartesian series always
+    /// carries an inset placement, and that is where it is given one.
+    ///
+    /// [`series_from_style`]: super::series_api::series_from_style
+    pub(super) fn is_non_cartesian_series_type(series_type: &SeriesType) -> bool {
         matches!(
-            series.series_type,
+            series_type,
             SeriesType::Pie { .. } | SeriesType::Radar { .. } | SeriesType::Polar { .. }
         )
     }
@@ -147,10 +228,7 @@ impl Plot {
 
         for (idx, (series, resolved)) in series_list.iter().zip(resolved_series).enumerate() {
             let (series_area, series_bounds) = if let Some(inset_rect) = inset_rects[idx] {
-                (
-                    inset_rect,
-                    self.calculate_data_bounds_from_resolved(std::slice::from_ref(resolved))?,
-                )
+                (inset_rect, self.inset_bounds_from_resolved(resolved)?)
             } else {
                 (plot_area, (x_min, x_max, y_min, y_max))
             };
@@ -203,7 +281,9 @@ impl Plot {
         } else {
             (0.0, 1.0)
         };
-        self.apply_manual_axis_limits((x.0, x.1, y.0, y.1))
+        // The placeholder range is already a clean 0..1 (or 1..10 on log); an
+        // autoscale margin on synthetic bounds would only make the ticks ugly.
+        self.apply_axis_limits_without_margin((x.0, x.1, y.0, y.1))
     }
 
     pub(super) fn effective_main_panel_bounds_for_series(
@@ -236,24 +316,20 @@ impl Plot {
         }
 
         if Self::has_mixed_coordinate_series(series_list) {
-            let bounds = self.calculate_data_bounds_from_resolved(
+            // Pair each resolved entry with its originating series: a resolved
+            // entry alone cannot see the error bars attached with
+            // `with_yerr`/`with_xerr`, so their whiskers would fall outside the
+            // range and be clipped against the spine.
+            let bounds = self.calculate_data_bounds_for_pairs(
                 series_list
                     .iter()
                     .zip(resolved_series)
-                    .filter(|(series, _)| Self::is_cartesian_series(series))
-                    .map(|(_, resolved)| resolved),
+                    .filter(|(series, _)| Self::is_cartesian_series(series)),
             )?;
-            Ok(self.apply_manual_axis_limits(self.expand_bounds_with_annotations(bounds)))
+            Ok(self.apply_manual_axis_limits(bounds))
         } else {
             self.effective_data_bounds_from_resolved(resolved_series)
         }
-    }
-
-    pub(super) fn raw_bounds_for_single_series(
-        &self,
-        series: &PlotSeries,
-    ) -> Result<(f64, f64, f64, f64)> {
-        self.calculate_data_bounds_for_series(std::slice::from_ref(series))
     }
 
     pub(super) fn clamp_inset_rect(
@@ -388,6 +464,28 @@ impl Plot {
         Ok(rects)
     }
 
+    /// Draw every colorbar the plot's series ask for.
+    ///
+    /// A colorbar lives beside the plot area, not inside it, so it must be drawn
+    /// after the data clip group closes — inside it, the SVG clipped the whole
+    /// colorbar away and the export silently lost its value scale.
+    pub(super) fn render_svg_colorbars(
+        &self,
+        svg: &mut crate::export::SvgRenderer,
+        plot_area: tiny_skia::Rect,
+    ) -> Result<()> {
+        for series in &self.series_mgr.series {
+            if let Some(request) = self.series_colorbar_request(&series.series_type) {
+                let (x, y, width, height) = self.colorbar_rect(plot_area);
+                crate::render::colorbar::draw_colorbar(
+                    svg,
+                    &request.spec_at(x, y, width, height, self.display.theme.foreground),
+                )?;
+            }
+        }
+        Ok(())
+    }
+
     pub(super) fn radar_plot_area(
         plot_area: tiny_skia::Rect,
         x_min: f64,
@@ -395,18 +493,20 @@ impl Plot {
         y_min: f64,
         y_max: f64,
     ) -> crate::plots::PlotArea {
-        let size = plot_area.width().min(plot_area.height());
+        // The radar bounds already reserve room for the axis labels (they run to
+        // `RADAR_BOUNDS_RADIUS`, outside the `RADAR_LABEL_RADIUS` label ring), so
+        // the square just has to be the largest one that fits, centered on both
+        // axes. Shrinking it further and pushing it down for "title clearance"
+        // double-counts that reservation and leaves the chart small and low.
+        let size = plot_area.width().min(plot_area.height()).max(1.0);
         let x_offset = (plot_area.width() - size) * 0.5;
         let y_offset = (plot_area.height() - size) * 0.5;
-        // Leave headroom for the top axis label while keeping portrait insets centered.
-        let title_clearance = size * 0.20;
-        let adjusted_size = (size - title_clearance).max(1.0);
 
         crate::plots::PlotArea::new(
             plot_area.x() + x_offset,
-            plot_area.y() + y_offset + title_clearance,
-            adjusted_size,
-            adjusted_size,
+            plot_area.y() + y_offset,
+            size,
+            size,
             x_min,
             x_max,
             y_min,
@@ -431,10 +531,7 @@ impl Plot {
 
         for (idx, (series, resolved)) in series_list.iter().zip(resolved_series).enumerate() {
             let (series_area, series_bounds) = if let Some(inset_rect) = inset_rects[idx] {
-                (
-                    inset_rect,
-                    self.calculate_data_bounds_from_resolved(std::slice::from_ref(resolved))?,
-                )
+                (inset_rect, self.inset_bounds_from_resolved(resolved)?)
             } else {
                 (plot_area, (x_min, x_max, y_min, y_max))
             };
@@ -469,43 +566,72 @@ impl Plot {
     ) -> Result<()> {
         let color = series.color_with_alpha(default_color);
         let render_scale = self.render_scale();
-        let line_width = render_scale.points_to_pixels(series.line_width.unwrap_or(2.0));
-        let line_style = series.line_style.clone().unwrap_or(LineStyle::Solid);
+        let line_width = render_scale.points_to_pixels(series.props.line_width.value_or(2.0));
+        let line_style = series.props.line_style.value_or(LineStyle::Solid);
 
         match (&series.series_type, resolved) {
             (SeriesType::Line { .. }, ResolvedSeries::Line { x, y }) => {
-                let points: Vec<(f32, f32)> = x
-                    .iter()
-                    .zip(y.iter())
-                    .map(|(&x, &y)| {
-                        crate::render::skia::map_data_to_pixels_scaled(
-                            x,
-                            y,
-                            x_min,
-                            x_max,
-                            y_min,
-                            y_max,
-                            plot_area,
-                            &self.layout.x_scale,
-                            &self.layout.y_scale,
-                        )
-                    })
-                    .collect();
+                // Break the line at every sample the axes cannot represent,
+                // using the same run splitter as the raster and parallel
+                // backends so all three agree on where a line breaks.
+                let marker_size =
+                    render_scale.points_to_pixels(series.props.marker_size.value_or(8.0));
+                // Same rim the raster path strokes; `draw_marker_styled` scales
+                // the point width itself.
+                let marker_edge = self.resolved_marker_edge(series, color);
 
-                svg.draw_polyline(&points, color, line_width, line_style);
-                if let Some(marker_style) = series.marker_style {
-                    let marker_size =
-                        render_scale.points_to_pixels(series.marker_size.unwrap_or(8.0));
-                    for &(px, py) in &points {
-                        svg.draw_marker(px, py, marker_size, marker_style, color);
+                for run in crate::core::plot::raster_batches::representable_sample_runs(
+                    x,
+                    y,
+                    &self.layout.x_scale,
+                    &self.layout.y_scale,
+                ) {
+                    let points: Vec<(f32, f32)> = x[run.clone()]
+                        .iter()
+                        .zip(y[run].iter())
+                        .map(|(&x, &y)| {
+                            crate::render::skia::map_data_to_pixels_scaled(
+                                x,
+                                y,
+                                x_min,
+                                x_max,
+                                y_min,
+                                y_max,
+                                plot_area,
+                                &self.layout.x_scale,
+                                &self.layout.y_scale,
+                            )
+                        })
+                        .collect();
+
+                    svg.draw_polyline(&points, color, line_width, line_style.clone());
+                    if let Some(marker_style) = series.props.marker_style.cloned() {
+                        for &(px, py) in &points {
+                            svg.draw_marker_styled(
+                                px,
+                                py,
+                                marker_size,
+                                marker_style,
+                                color,
+                                marker_edge,
+                            );
+                        }
                     }
                 }
+
+                self.render_attached_error_bars_svg(
+                    svg, series, x, y, color, line_width, plot_area, x_min, x_max, y_min, y_max,
+                )?;
             }
             (SeriesType::Scatter { .. }, ResolvedSeries::Scatter { x, y }) => {
-                let marker_style = series.marker_style.unwrap_or(MarkerStyle::Circle);
-                let marker_size = render_scale.points_to_pixels(series.marker_size.unwrap_or(10.0));
+                let marker_style = series.props.marker_style.value_or(MarkerStyle::Circle);
+                let marker_size =
+                    render_scale.points_to_pixels(series.props.marker_size.value_or(10.0));
+                let marker_edge = self.resolved_marker_edge(series, color);
                 for (&x, &y) in x.iter().zip(y.iter()) {
-                    let (px, py) = crate::render::skia::map_data_to_pixels_scaled(
+                    // A sample the axes cannot place is dropped, not drawn at a
+                    // NaN pixel (which lands on the spine and reads as data).
+                    let Some((px, py)) = crate::render::skia::try_map_data_to_pixels_scaled(
                         x,
                         y,
                         x_min,
@@ -515,42 +641,61 @@ impl Plot {
                         plot_area,
                         &self.layout.x_scale,
                         &self.layout.y_scale,
-                    );
-                    svg.draw_marker(px, py, marker_size, marker_style, color);
+                    ) else {
+                        continue;
+                    };
+                    svg.draw_marker_styled(px, py, marker_size, marker_style, color, marker_edge);
                 }
+
+                self.render_attached_error_bars_svg(
+                    svg, series, x, y, color, line_width, plot_area, x_min, x_max, y_min, y_max,
+                )?;
             }
-            (SeriesType::Bar { categories, .. }, ResolvedSeries::Bar { values, .. }) => {
-                let num_bars = categories.len();
-                let bar_width = plot_area.width() / num_bars as f32 * 0.7;
+            (SeriesType::Bar { config, .. }, ResolvedSeries::Bar { values, .. }) => {
+                // Same resolution the raster path uses, so PNG and SVG bars
+                // carry the identical edge. The width is in points and
+                // `draw_rectangle_styled` scales it, so it is DPI-invariant.
+                let edge = config.resolved_edge(&self.display.theme, color);
 
                 for (i, &value) in values.iter().enumerate() {
-                    let bar_x = plot_area.x()
-                        + (i as f32 + 0.5) * (plot_area.width() / num_bars as f32)
-                        - bar_width / 2.0;
-                    let (_, py) = crate::render::skia::map_data_to_pixels(
-                        0.0, value, x_min, x_max, y_min, y_max, plot_area,
-                    );
-                    let (_, py_zero) = crate::render::skia::map_data_to_pixels(
-                        0.0, 0.0, x_min, x_max, y_min, y_max, plot_area,
-                    );
-                    let bar_height = (py - py_zero).abs();
-                    let bar_y = py.min(py_zero);
+                    // Shared with the raster backend: SVG used to lay bars out
+                    // positionally (ignoring the real x-scale) at a different
+                    // width fraction, so a PNG and an SVG of the same chart put
+                    // their bars in different places.
+                    let (bar_x, bar_y, bar_width, bar_height) =
+                        super::series_internal::bar_pixel_rect(
+                            i,
+                            value,
+                            config.width,
+                            plot_area,
+                            x_min,
+                            x_max,
+                            y_min,
+                            y_max,
+                            &self.layout.y_scale,
+                        );
 
-                    svg.draw_rectangle(bar_x, bar_y, bar_width, bar_height, color, true);
+                    svg.draw_rectangle_styled(
+                        bar_x,
+                        bar_y,
+                        bar_width,
+                        bar_height,
+                        Some(color),
+                        edge,
+                    );
                 }
             }
             (SeriesType::Heatmap { data }, ResolvedSeries::Other(_)) => {
-                let area = crate::plots::PlotArea::new(
-                    plot_area.x(),
-                    plot_area.y(),
-                    plot_area.width(),
-                    plot_area.height(),
+                let area = super::raster_batches::plot_area_from_rect(
+                    plot_area,
                     x_min,
                     x_max,
                     y_min,
                     y_max,
+                    &self.layout.x_scale,
+                    &self.layout.y_scale,
                 );
-                let alpha = data.config.alpha * series.alpha.unwrap_or(1.0);
+                let alpha = data.config.alpha * series.props.alpha.value_or(1.0);
                 for (row, values) in data.values.iter().enumerate() {
                     for (col, &value) in values.iter().enumerate() {
                         if data.should_mask_value(value) {
@@ -561,49 +706,64 @@ impl Plot {
                         svg.draw_rectangle(x, y, width, height, cell_color, true);
                     }
                 }
+                // The colorbar sits outside the plot area, so it is drawn by
+                // `render_svg_colorbars` after the clip group closes.
+            }
+            (SeriesType::Computed { data }, ResolvedSeries::Other(_)) => {
+                // The exact primitives the raster backend draws. A plot type
+                // wired through `SeriesType::Computed` therefore cannot render
+                // in PNG and not in SVG — there is no per-type SVG code to
+                // forget to write.
+                let area = super::raster_batches::plot_area_from_rect(
+                    plot_area,
+                    x_min,
+                    x_max,
+                    y_min,
+                    y_max,
+                    &self.layout.x_scale,
+                    &self.layout.y_scale,
+                );
+                // The series alpha is handed over separately rather than baked
+                // into `color`, because that is how the raster arm hands it to
+                // `primitives` — and the two must agree.
+                let style = crate::plots::traits::ComputedStyle {
+                    scale: svg.render_scale(),
+                    color: series.props.color.value_or(default_color),
+                    alpha: series.props.alpha.value_or(1.0),
+                    line_width: series.props.line_width.cloned(),
+                };
+                let primitives = data.primitives(&area, &style);
+                crate::plots::traits::draw_primitives_svg(svg, &primitives);
             }
             (SeriesType::Kde { data }, ResolvedSeries::Other(_)) => {
-                let points: Vec<(f32, f32)> = data
-                    .x
-                    .iter()
-                    .zip(&data.y)
-                    .map(|(&x, &y)| {
-                        crate::render::skia::map_data_to_pixels_scaled(
-                            x,
-                            y,
-                            x_min,
-                            x_max,
-                            y_min,
-                            y_max,
-                            plot_area,
-                            &self.layout.x_scale,
-                            &self.layout.y_scale,
-                        )
-                    })
-                    .collect();
-                if data.config.fill && !points.is_empty() {
-                    let (_, baseline) = crate::render::skia::map_data_to_pixels_scaled(
-                        x_min,
-                        0.0,
-                        x_min,
-                        x_max,
-                        y_min,
-                        y_max,
-                        plot_area,
-                        &self.layout.x_scale,
-                        &self.layout.y_scale,
-                    );
-                    let mut polygon = Vec::with_capacity(points.len() + 2);
-                    polygon.push((points[0].0, baseline));
-                    polygon.extend_from_slice(&points);
-                    polygon.push((points[points.len() - 1].0, baseline));
+                // Same geometry the raster path draws, from the same helpers, so
+                // the two backends cannot break the curve in different places.
+                let area = super::raster_batches::plot_area_from_rect(
+                    plot_area,
+                    x_min,
+                    x_max,
+                    y_min,
+                    y_max,
+                    &self.layout.x_scale,
+                    &self.layout.y_scale,
+                );
+                let runs = data.projected_runs(&area);
+                if data.config.fill {
+                    let baseline = area.fill_baseline_y();
                     let fill_color =
                         color.with_alpha((f32::from(color.a) / 255.0) * data.config.fill_alpha);
-                    svg.draw_filled_polygon(&polygon, fill_color);
+                    for run in &runs {
+                        svg.draw_filled_polygon(
+                            &crate::plots::KdeData::fill_polygon(run, baseline),
+                            fill_color,
+                        );
+                    }
                 }
                 let width = render_scale
-                    .points_to_pixels(series.line_width.unwrap_or(data.config.line_width));
-                svg.draw_polyline(&points, color, width, line_style);
+                    .points_to_pixels(series.props.line_width.value_or(data.config.line_width));
+                for run in &runs {
+                    svg.draw_polyline(run, color, width, line_style.clone());
+                }
             }
             (SeriesType::Ecdf { data }, ResolvedSeries::Other(_)) => {
                 let points: Vec<(f32, f32)> = data
@@ -624,11 +784,12 @@ impl Plot {
                     })
                     .collect();
                 let width = render_scale
-                    .points_to_pixels(series.line_width.unwrap_or(data.config.line_width));
+                    .points_to_pixels(series.props.line_width.value_or(data.config.line_width));
                 svg.draw_polyline(&points, color, width, line_style);
                 if data.config.show_markers {
-                    let marker_size = render_scale
-                        .points_to_pixels(series.marker_size.unwrap_or(data.config.marker_size));
+                    let marker_size = render_scale.points_to_pixels(
+                        series.props.marker_size.value_or(data.config.marker_size),
+                    );
                     for (&x, &y) in data.x.iter().zip(&data.y) {
                         let (px, py) = crate::render::skia::map_data_to_pixels_scaled(
                             x,
@@ -647,56 +808,89 @@ impl Plot {
             }
             (SeriesType::Violin { data }, ResolvedSeries::Other(_)) => {
                 let half_width = data.config.width / 2.0;
-                let (left, right) =
-                    crate::plots::distribution::violin_polygon(data, 0.5, half_width, &data.config);
+                let (left, right) = crate::plots::distribution::violin_polygon(
+                    data,
+                    data.config.x_center(),
+                    half_width,
+                    &data.config,
+                );
                 let polygon = crate::plots::distribution::close_violin_polygon(&left, &right);
-                let points: Vec<(f32, f32)> = polygon
-                    .iter()
-                    .map(|&(x, y)| {
-                        crate::render::skia::map_data_to_pixels_scaled(
-                            x,
-                            y,
-                            x_min,
-                            x_max,
-                            y_min,
-                            y_max,
-                            plot_area,
-                            &self.layout.x_scale,
-                            &self.layout.y_scale,
-                        )
-                    })
-                    .collect();
-                let alpha = series.alpha.unwrap_or(1.0);
+                // Same vertex-rejection rule as the raster path.
+                let points: Vec<(f32, f32)> = super::raster_batches::plot_area_from_rect(
+                    plot_area,
+                    x_min,
+                    x_max,
+                    y_min,
+                    y_max,
+                    &self.layout.x_scale,
+                    &self.layout.y_scale,
+                )
+                .project_points(polygon.iter().copied());
+                let alpha = series.props.alpha.value_or(1.0);
                 let fill_base = data
                     .config
                     .fill_color
-                    .unwrap_or(series.color.unwrap_or(default_color));
+                    .unwrap_or(series.props.color.value_or(default_color));
                 let fill_color = fill_base
                     .with_alpha((f32::from(fill_base.a) / 255.0) * data.config.fill_alpha * alpha);
                 svg.draw_filled_polygon(&points, fill_color);
                 let edge_color = data
                     .config
                     .line_color
-                    .unwrap_or(series.color.unwrap_or(default_color));
+                    .unwrap_or(series.props.color.value_or(default_color));
                 let edge_color = edge_color.with_alpha((f32::from(edge_color.a) / 255.0) * alpha);
                 let width = render_scale
-                    .points_to_pixels(series.line_width.unwrap_or(data.config.line_width));
+                    .points_to_pixels(series.props.line_width.value_or(data.config.line_width));
                 svg.draw_polygon_outline(&points, edge_color, width);
             }
             (SeriesType::Contour { data }, ResolvedSeries::Other(_)) => {
-                let alpha = data.config.alpha * series.alpha.unwrap_or(1.0);
+                let alpha = data.config.alpha * series.props.alpha.value_or(1.0);
                 let cmap = crate::render::ColorMap::by_name(&data.config.cmap)
                     .unwrap_or_else(crate::render::ColorMap::viridis);
-                let width = render_scale
-                    .points_to_pixels(series.line_width.unwrap_or(data.config.line_width));
-                for (index, level) in data.lines.iter().enumerate() {
-                    let line_color = data.config.line_color.unwrap_or_else(|| {
-                        if data.lines.len() > 1 {
-                            cmap.sample(index as f64 / (data.lines.len() - 1) as f64)
-                        } else {
-                            series.color.unwrap_or(default_color)
+
+                // Filled bands, from the same source the raster path fills from.
+                // The SVG backend used to draw the lines only, so a filled
+                // contour exported to SVG lost every band it was made of.
+                let area = super::raster_batches::plot_area_from_rect(
+                    plot_area,
+                    x_min,
+                    x_max,
+                    y_min,
+                    y_max,
+                    &self.layout.x_scale,
+                    &self.layout.y_scale,
+                );
+                for (t, polygons) in data.filled_bands() {
+                    let fill_color = cmap.sample(t).with_alpha(alpha);
+                    for polygon in &polygons {
+                        match crate::plots::ContourPlotData::band_shape(&area, polygon) {
+                            crate::plots::continuous::contour::BandShape::Rect {
+                                x,
+                                y,
+                                width,
+                                height,
+                            } => svg.draw_seamless_rectangle(x, y, width, height, fill_color),
+                            crate::plots::continuous::contour::BandShape::Polygon(points) => {
+                                svg.draw_filled_polygon(&points, fill_color)
+                            }
                         }
-                    });
+                    }
+                }
+
+                let width = render_scale
+                    .points_to_pixels(series.props.line_width.value_or(data.config.line_width));
+                let n_levels = data.levels.len();
+                for (index, level) in data.lines.iter().enumerate() {
+                    // Same decision as the raster path (`contour_line_color`) so PNG,
+                    // SVG and PDF agree on contour line colour.
+                    let line_color = crate::plots::continuous::contour::contour_line_color(
+                        &data.config,
+                        &self.display.theme,
+                        &cmap,
+                        series.props.color.value_or(default_color),
+                        index,
+                        n_levels,
+                    );
                     let line_color =
                         line_color.with_alpha((f32::from(line_color.a) / 255.0) * alpha);
                     for &(x1, y1, x2, y2) in &level.segments {
@@ -748,25 +942,35 @@ impl Plot {
                 );
             }
             (SeriesType::Histogram { .. }, ResolvedSeries::Histogram { data }) => {
+                // Same edge resolution as the raster path, so bin boundaries stay
+                // visible and PNG/SVG do not diverge.
+                let edge = data.resolved_edge(&self.display.theme, color);
                 for (index, &count) in data.counts.iter().enumerate() {
                     if count <= 0.0 {
                         continue;
                     }
-                    let x_left = data.bin_edges[index];
-                    let x_right = data.bin_edges[index + 1];
-                    let (px_left, py) = crate::render::skia::map_data_to_pixels(
-                        x_left, count, x_min, x_max, y_min, y_max, plot_area,
-                    );
-                    let (px_right, py_zero) = crate::render::skia::map_data_to_pixels(
-                        x_right, 0.0, x_min, x_max, y_min, y_max, plot_area,
-                    );
-                    svg.draw_rectangle(
-                        px_left.min(px_right),
-                        py.min(py_zero),
-                        (px_right - px_left).abs(),
-                        (py_zero - py).abs(),
-                        color,
-                        true,
+                    // Shared with the raster backend, and scale-aware on both
+                    // axes so the bars agree with the ticks drawn beside them.
+                    let (bar_x, bar_y, bar_width, bar_height) =
+                        super::series_internal::histogram_bar_pixel_rect(
+                            data.bin_edges[index],
+                            data.bin_edges[index + 1],
+                            count,
+                            plot_area,
+                            x_min,
+                            x_max,
+                            y_min,
+                            y_max,
+                            &self.layout.x_scale,
+                            &self.layout.y_scale,
+                        );
+                    svg.draw_rectangle_styled(
+                        bar_x,
+                        bar_y,
+                        bar_width,
+                        bar_height,
+                        Some(color),
+                        edge,
                     );
                 }
             }
@@ -785,7 +989,7 @@ impl Plot {
                     x_max,
                     y_min,
                     y_max,
-                ),
+                )?,
             (
                 SeriesType::ErrorBarsXY { .. },
                 ResolvedSeries::ErrorBarsXY {
@@ -808,7 +1012,7 @@ impl Plot {
                 x_max,
                 y_min,
                 y_max,
-            ),
+            )?,
             (SeriesType::BoxPlot { .. }, ResolvedSeries::BoxPlot { data, config }) => {
                 self.render_box_plot_series_svg(
                     svg, data, config, color, line_width, line_style, plot_area, x_min, x_max,
@@ -820,6 +1024,56 @@ impl Plot {
         }
 
         Ok(())
+    }
+
+    /// Draw the error bars attached to a line or scatter series with
+    /// `with_yerr` / `with_xerr`.
+    ///
+    /// The SVG backend used to skip these entirely while the axis bounds still
+    /// reserved room for them, so an SVG of a plot with error bars showed a
+    /// stretched, empty axis and no whiskers. It now goes through the same
+    /// geometry and the same stroking routine as the raster backend.
+    #[allow(clippy::too_many_arguments)]
+    fn render_attached_error_bars_svg(
+        &self,
+        svg: &mut crate::export::SvgRenderer,
+        series: &PlotSeries,
+        x: &[f64],
+        y: &[f64],
+        color: Color,
+        default_line_width: f32,
+        plot_area: tiny_skia::Rect,
+        x_min: f64,
+        x_max: f64,
+        y_min: f64,
+        y_max: f64,
+    ) -> Result<()> {
+        if series.y_errors.is_none() && series.x_errors.is_none() {
+            return Ok(());
+        }
+        let style = AttachedErrorBarStyle::resolve(
+            series.error_config.as_ref(),
+            color,
+            default_line_width,
+            self.render_scale(),
+        );
+        stroke_error_bar_series(
+            svg,
+            x,
+            y,
+            series.y_errors.as_ref().map(ErrorValuesRef::from),
+            series.x_errors.as_ref().map(ErrorValuesRef::from),
+            ErrorBarFrame {
+                plot_area,
+                x_min,
+                x_max,
+                y_min,
+                y_max,
+                x_scale: &self.layout.x_scale,
+                y_scale: &self.layout.y_scale,
+            },
+            style,
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -838,115 +1092,49 @@ impl Plot {
         x_max: f64,
         y_min: f64,
         y_max: f64,
-    ) {
-        let config = series.error_config.clone().unwrap_or_default();
-        let bar_color = config.color.unwrap_or(color);
-        let bar_color = bar_color.with_alpha((f32::from(bar_color.a) / 255.0) * config.alpha);
+    ) -> Result<()> {
         let render_scale = self.render_scale();
-        let line_width = render_scale
-            .logical_pixels_to_pixels(config.line_width)
-            .max(default_line_width * 0.75);
-        let half_cap = render_scale.logical_pixels_to_pixels(config.cap_size) * 0.5;
-        let marker_style = series.marker_style.unwrap_or(MarkerStyle::Circle);
-        let marker_size = render_scale.points_to_pixels(series.marker_size.unwrap_or(8.0));
+        let style = AttachedErrorBarStyle::resolve(
+            series.error_config.as_ref(),
+            color,
+            default_line_width,
+            render_scale,
+        );
+        let marker_style = series.props.marker_style.value_or(MarkerStyle::Circle);
+        let marker_size = render_scale.points_to_pixels(series.props.marker_size.value_or(8.0));
+        let marker_edge = self.resolved_marker_edge(series, color);
+        let frame = ErrorBarFrame {
+            plot_area,
+            x_min,
+            x_max,
+            y_min,
+            y_max,
+            x_scale: &self.layout.x_scale,
+            y_scale: &self.layout.y_scale,
+        };
 
-        for (index, (&x_value, &y_value)) in x.iter().zip(y).enumerate() {
-            if !x_value.is_finite() || !y_value.is_finite() {
-                continue;
-            }
-            let (px, py) = crate::render::skia::map_data_to_pixels(
-                x_value, y_value, x_min, x_max, y_min, y_max, plot_area,
+        // The whiskers come from the same projection the raster backend uses,
+        // so an `error_bars` series cannot land in two different places
+        // depending on the output format.
+        for bars in error_bar_pixels_for_series(x, y, y_errors, x_errors, frame) {
+            svg.draw_marker_styled(
+                bars.x,
+                bars.y,
+                marker_size,
+                marker_style,
+                color,
+                marker_edge,
             );
-            svg.draw_marker(px, py, marker_size, marker_style, color);
-
-            if let Some((lower, upper)) = y_errors.and_then(|errors| errors.bounds_at(index)) {
-                let lower = lower.abs();
-                let upper = upper.abs();
-                if lower.is_finite() && upper.is_finite() && (lower > 0.0 || upper > 0.0) {
-                    let (_, top) = crate::render::skia::map_data_to_pixels(
-                        x_value,
-                        y_value + upper,
-                        x_min,
-                        x_max,
-                        y_min,
-                        y_max,
-                        plot_area,
-                    );
-                    let (_, bottom) = crate::render::skia::map_data_to_pixels(
-                        x_value,
-                        y_value - lower,
-                        x_min,
-                        x_max,
-                        y_min,
-                        y_max,
-                        plot_area,
-                    );
-                    svg.draw_line(px, top, px, bottom, bar_color, line_width, LineStyle::Solid);
-                    svg.draw_line(
-                        px - half_cap,
-                        top,
-                        px + half_cap,
-                        top,
-                        bar_color,
-                        line_width,
-                        LineStyle::Solid,
-                    );
-                    svg.draw_line(
-                        px - half_cap,
-                        bottom,
-                        px + half_cap,
-                        bottom,
-                        bar_color,
-                        line_width,
-                        LineStyle::Solid,
-                    );
-                }
-            }
-
-            if let Some((lower, upper)) = x_errors.and_then(|errors| errors.bounds_at(index)) {
-                let lower = lower.abs();
-                let upper = upper.abs();
-                if lower.is_finite() && upper.is_finite() && (lower > 0.0 || upper > 0.0) {
-                    let (left, _) = crate::render::skia::map_data_to_pixels(
-                        x_value - lower,
-                        y_value,
-                        x_min,
-                        x_max,
-                        y_min,
-                        y_max,
-                        plot_area,
-                    );
-                    let (right, _) = crate::render::skia::map_data_to_pixels(
-                        x_value + upper,
-                        y_value,
-                        x_min,
-                        x_max,
-                        y_min,
-                        y_max,
-                        plot_area,
-                    );
-                    svg.draw_line(left, py, right, py, bar_color, line_width, LineStyle::Solid);
-                    svg.draw_line(
-                        left,
-                        py - half_cap,
-                        left,
-                        py + half_cap,
-                        bar_color,
-                        line_width,
-                        LineStyle::Solid,
-                    );
-                    svg.draw_line(
-                        right,
-                        py - half_cap,
-                        right,
-                        py + half_cap,
-                        bar_color,
-                        line_width,
-                        LineStyle::Solid,
-                    );
-                }
-            }
+            draw_error_bars(
+                svg,
+                &bars,
+                plot_area,
+                style.color,
+                style.line_width,
+                style.half_cap,
+            )?;
         }
+        Ok(())
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -968,40 +1156,53 @@ impl Plot {
             crate::plots::boxplot::calculate_box_plot(&data, config).map_err(|error| {
                 PlottingError::RenderError(format!("Box plot calculation failed: {error}"))
             })?;
-        let (x_center, _) = crate::render::skia::map_data_to_pixels(
-            0.5, 0.0, x_min, x_max, y_min, y_max, plot_area,
+        // One shared projection with the raster and parallel backends: the SVG
+        // path used to re-derive these five quantiles linearly, so
+        // `.boxplot(&d).yscale(Log)` drew the box somewhere the ticks did not
+        // agree with.
+        let px = super::series_internal::BoxPlotPixels::new(
+            &box_data,
+            plot_area,
+            x_min,
+            x_max,
+            y_min,
+            y_max,
+            &self.layout.y_scale,
         );
-        let map_y = |value| {
-            crate::render::skia::map_data_to_pixels(
-                0.0, value, x_min, x_max, y_min, y_max, plot_area,
-            )
-            .1
-        };
-        let q1 = map_y(box_data.q1);
-        let median = map_y(box_data.median);
-        let q3 = map_y(box_data.q3);
-        let lower_whisker = map_y(box_data.min);
-        let upper_whisker = map_y(box_data.max);
-        let half_width = plot_area.width() * 0.15;
-        let left = x_center - half_width;
-        let right = x_center + half_width;
-        let cap_width = half_width * 0.6;
+        let x_center = px.x_center;
+        let q1 = px.q1_y;
+        let median = px.median_y;
+        let q3 = px.q3_y;
+        let lower_whisker = px.lower_whisker_y;
+        let upper_whisker = px.upper_whisker_y;
+        let left = px.box_left;
+        let right = px.box_right;
+        let cap_width = px.cap_half_width;
+        let edge_color = box_data.edge_color.unwrap_or(color);
+        let whisker_width = box_data
+            .whisker_width
+            .map(|w| self.render_scale().points_to_pixels(w))
+            .unwrap_or(line_width);
+        let median_width = box_data
+            .median_width
+            .map(|w| self.render_scale().points_to_pixels(w))
+            .unwrap_or(line_width * 1.5);
 
-        svg.draw_rectangle(
+        svg.draw_rectangle_styled(
             left,
             q1.min(q3),
             right - left,
             (q1 - q3).abs(),
-            color,
-            false,
+            Some(color.with_alpha(box_data.fill_alpha)),
+            Some((edge_color, box_data.edge_width)),
         );
         svg.draw_line(
             left,
             median,
             right,
             median,
-            color,
-            line_width * 1.5,
+            edge_color,
+            median_width,
             line_style.clone(),
         );
         svg.draw_line(
@@ -1009,8 +1210,8 @@ impl Plot {
             q1,
             x_center,
             lower_whisker,
-            color,
-            line_width,
+            edge_color,
+            whisker_width,
             line_style.clone(),
         );
         svg.draw_line(
@@ -1018,8 +1219,8 @@ impl Plot {
             q3,
             x_center,
             upper_whisker,
-            color,
-            line_width,
+            edge_color,
+            whisker_width,
             line_style.clone(),
         );
         svg.draw_line(
@@ -1027,8 +1228,8 @@ impl Plot {
             lower_whisker,
             x_center + cap_width,
             lower_whisker,
-            color,
-            line_width,
+            edge_color,
+            whisker_width,
             line_style.clone(),
         );
         svg.draw_line(
@@ -1036,19 +1237,27 @@ impl Plot {
             upper_whisker,
             x_center + cap_width,
             upper_whisker,
-            color,
-            line_width,
+            edge_color,
+            whisker_width,
             line_style,
         );
-        let outlier_size = self.render_scale().points_to_pixels(4.0);
-        for &outlier in &box_data.outliers {
-            svg.draw_marker(
-                x_center,
-                map_y(outlier),
-                outlier_size,
-                MarkerStyle::Circle,
-                color,
-            );
+        if box_data.show_outliers {
+            let outlier_size = self.render_scale().points_to_pixels(box_data.flier_size);
+            for &outlier in &box_data.outliers {
+                svg.draw_marker(
+                    x_center,
+                    super::series_internal::box_plot_value_y(
+                        outlier,
+                        plot_area,
+                        y_min,
+                        y_max,
+                        &self.layout.y_scale,
+                    ),
+                    outlier_size,
+                    MarkerStyle::Circle,
+                    color,
+                );
+            }
         }
         Ok(())
     }
@@ -1069,19 +1278,23 @@ impl Plot {
             return;
         }
 
-        let center = 0.5;
-        let alpha = series.alpha.unwrap_or(1.0);
+        let center = data.config.x_center();
+        let alpha = series.props.alpha.value_or(1.0);
         let base_color = data.config.color.map_or(default_color, |color| {
             color.with_alpha((f32::from(color.a) / 255.0) * alpha)
         });
         let edge_width = self
             .render_scale()
-            .points_to_pixels(series.line_width.unwrap_or(data.config.line_width));
+            .points_to_pixels(series.props.line_width.value_or(data.config.line_width));
 
         for (index, boxen_box) in data.boxes.iter().enumerate() {
-            let saturation_factor =
-                1.0 - (index as f32 / data.boxes.len() as f32) * data.config.saturation;
-            let fill_color = adjust_boxen_saturation_svg(base_color, saturation_factor);
+            let saturation_factor = crate::plots::distribution::boxen::boxen_saturation_factor(
+                index,
+                data.boxes.len(),
+                data.config.saturation,
+            );
+            let fill_color =
+                crate::plots::distribution::boxen::adjust_saturation(base_color, saturation_factor);
             let points: Vec<(f32, f32)> =
                 crate::plots::distribution::boxen_rect(boxen_box, center, data.config.orient)
                     .iter()
@@ -1106,7 +1319,7 @@ impl Plot {
             }
         }
 
-        let median_half = data.config.width / 4.0;
+        let median_half = data.median_half_width();
         let median_width = self.render_scale().points_to_pixels(2.0);
         match data.config.orient {
             crate::plots::distribution::BoxenOrientation::Vertical => {
@@ -1137,7 +1350,7 @@ impl Plot {
                     y,
                     x2,
                     y,
-                    Color::new(255, 255, 255),
+                    Color::from_rgb(255, 255, 255),
                     median_width,
                     LineStyle::Solid,
                 );
@@ -1170,7 +1383,7 @@ impl Plot {
                     y1,
                     x,
                     y2,
-                    Color::new(255, 255, 255),
+                    Color::from_rgb(255, 255, 255),
                     median_width,
                     LineStyle::Solid,
                 );
@@ -1180,7 +1393,7 @@ impl Plot {
         if data.config.show_outliers {
             let marker_size = self
                 .render_scale()
-                .points_to_pixels(series.marker_size.unwrap_or(data.config.outlier_size));
+                .points_to_pixels(series.props.marker_size.value_or(data.config.outlier_size));
             for &outlier in &data.outliers {
                 let (px, py) = match data.config.orient {
                     crate::plots::distribution::BoxenOrientation::Vertical => {
@@ -1231,7 +1444,7 @@ impl Plot {
             return;
         }
 
-        let alpha = series.alpha.unwrap_or(1.0);
+        let alpha = series.props.alpha.value_or(1.0);
         let base_color = data.config.color.map_or(default_color, |color| {
             color.with_alpha((f32::from(color.a) / 255.0) * alpha)
         });
@@ -1247,7 +1460,7 @@ impl Plot {
         };
         let arrow_width = self
             .render_scale()
-            .points_to_pixels(series.line_width.unwrap_or(data.config.width));
+            .points_to_pixels(series.props.line_width.value_or(data.config.width));
 
         for arrow in &data.arrows {
             let arrow_color = cmap
@@ -1333,7 +1546,7 @@ impl Plot {
             radius as f64,
             &data.config,
         );
-        let alpha = series.alpha.unwrap_or(1.0);
+        let alpha = series.props.alpha.value_or(1.0);
         let colors = if let Some(ref colors) = data.config.colors {
             colors.clone()
         } else {
@@ -1351,7 +1564,7 @@ impl Plot {
         let label_font_size = render_scale.points_to_pixels(data.config.label_font_size);
 
         if data.config.shadow > 0.0 {
-            let shadow_color = Color::new(100, 100, 100).with_alpha(0.3 * alpha);
+            let shadow_color = Color::from_rgb(100, 100, 100).with_alpha(0.3 * alpha);
             for wedge in &screen_data.wedges {
                 let polygon: Vec<(f32, f32)> = wedge
                     .as_polygon(segments)
@@ -1373,7 +1586,7 @@ impl Plot {
                 let edge_color = edge_color.with_alpha((f32::from(edge_color.a) / 255.0) * alpha);
                 let scaled_edge_width = svg
                     .render_scale()
-                    .points_to_pixels(series.line_width.unwrap_or(data.config.edge_width));
+                    .points_to_pixels(series.props.line_width.value_or(data.config.edge_width));
                 svg.draw_polygon_outline(&polygon, edge_color, scaled_edge_width);
             }
         }
@@ -1437,7 +1650,10 @@ impl Plot {
             return Ok(());
         }
 
-        let area = Self::radar_plot_area(plot_area, -1.25, 1.25, -1.25, 1.25);
+        // Keep the SVG backend on the same bounds the raster bounds arm derives
+        // from the radar label radius.
+        let radius = crate::plots::polar::radar::RADAR_BOUNDS_RADIUS;
+        let area = Self::radar_plot_area(plot_area, -radius, radius, -radius, radius);
         let render_scale = svg.render_scale();
         let label_font_size = render_scale.points_to_pixels(data.config.label_font_size);
 
@@ -1447,7 +1663,9 @@ impl Plot {
                 .grid_style
                 .color
                 .with_alpha(self.layout.grid_style.alpha);
-            let grid_line_width = render_scale.points_to_pixels(self.layout.grid_style.line_width);
+            let grid_line_width = render_scale
+                .points_to_pixels(self.layout.grid_style.line_width)
+                .max(crate::core::style_utils::defaults::MIN_GRID_LINE_WIDTH_PX);
             for ring in &data.grid_rings {
                 if ring.len() < 2 {
                     continue;
@@ -1497,11 +1715,18 @@ impl Plot {
             }
         }
 
-        let scaled_line_width =
-            render_scale.points_to_pixels(plot_series.line_width.unwrap_or(data.config.line_width));
-        let marker_size = plot_series.marker_size.unwrap_or(data.config.marker_size);
+        // Plot-level fallback; a per-series override wins over it (see
+        // `RadarConfig::series_line_width_or`), matching the raster path.
+        let base_line_width = plot_series
+            .props
+            .line_width
+            .value_or(data.config.line_width);
+        let marker_size = plot_series
+            .props
+            .marker_size
+            .value_or(data.config.marker_size);
         let scaled_marker_size = render_scale.points_to_pixels(marker_size);
-        let alpha = plot_series.alpha.unwrap_or(1.0);
+        let alpha = plot_series.props.alpha.value_or(1.0);
         for (series_idx, series_data) in data.series.iter().enumerate() {
             let series_color = plot_series
                 .resolved_radar_colors
@@ -1517,6 +1742,10 @@ impl Plot {
                 .unwrap_or_else(|| self.display.theme.get_color(series_idx));
             let series_alpha = (f32::from(series_color.a) / 255.0) * alpha;
             let stroke_color = series_color.with_alpha(series_alpha);
+            let scaled_line_width = render_scale.points_to_pixels(
+                data.config
+                    .series_line_width_or(series_idx, base_line_width),
+            );
 
             if data.config.fill && !series_data.polygon.is_empty() {
                 let polygon: Vec<(f32, f32)> = series_data
@@ -1526,7 +1755,8 @@ impl Plot {
                     .collect();
                 svg.draw_filled_polygon(
                     &polygon,
-                    series_color.with_alpha(data.config.fill_alpha * series_alpha),
+                    series_color
+                        .with_alpha(data.config.series_fill_alpha(series_idx) * series_alpha),
                 );
             }
 
@@ -1585,12 +1815,51 @@ impl Plot {
             y_min,
             y_max,
         );
-        let alpha = series.alpha.unwrap_or(1.0);
+        let alpha = series.props.alpha.value_or(1.0);
         let line_color = data.config.color.map_or(default_color, |color| {
             color.with_alpha((f32::from(color.a) / 255.0) * alpha)
         });
         let render_scale = svg.render_scale();
         let label_font_size = render_scale.points_to_pixels(data.config.label_font_size);
+
+        // The grid the raster backend draws in `PolarPlotData::render_styled_with_grid`,
+        // from the same precomputed rings and spokes and the same `GridStyle`.
+        // Without this the two backends disagreed about whether a polar plot has
+        // a grid at all.
+        if self.layout.grid_style.visible {
+            let grid_style = &self.layout.grid_style;
+            let grid_color = grid_style.color.with_alpha(grid_style.alpha);
+            let grid_line_width = render_scale.points_to_pixels(grid_style.line_width);
+            for ring in &data.grid_rings {
+                if ring.len() < 2 {
+                    continue;
+                }
+                let screen_ring: Vec<(f32, f32)> = ring
+                    .iter()
+                    .map(|(x, y)| area.data_to_screen(*x, *y))
+                    .collect();
+                svg.draw_polyline(
+                    &screen_ring,
+                    grid_color,
+                    grid_line_width,
+                    grid_style.line_style.clone(),
+                );
+            }
+
+            for &((x1, y1), (x2, y2)) in &data.grid_spokes {
+                let (sx1, sy1) = area.data_to_screen(x1, y1);
+                let (sx2, sy2) = area.data_to_screen(x2, y2);
+                svg.draw_line(
+                    sx1,
+                    sy1,
+                    sx2,
+                    sy2,
+                    grid_color,
+                    grid_line_width,
+                    grid_style.line_style.clone(),
+                );
+            }
+        }
 
         if data.config.fill && !data.fill_polygon.is_empty() {
             let polygon: Vec<(f32, f32)> = data
@@ -1605,17 +1874,22 @@ impl Plot {
         }
 
         if data.points.len() > 1 {
-            let points: Vec<(f32, f32)> = data
+            let mut points: Vec<(f32, f32)> = data
                 .points
                 .iter()
                 .map(|point| area.data_to_screen(point.x, point.y))
                 .collect();
-            let scaled_line_width =
-                render_scale.points_to_pixels(series.line_width.unwrap_or(data.config.line_width));
+            // Endpoint-exclusive sampling of a full turn stops one step short of
+            // the start; without this segment the outline gapes at the seam.
+            if let Some((_, (x, y))) = data.closing_segment() {
+                points.push(area.data_to_screen(x, y));
+            }
+            let scaled_line_width = render_scale
+                .points_to_pixels(series.props.line_width.value_or(data.config.line_width));
             svg.draw_polyline(&points, line_color, scaled_line_width, LineStyle::Solid);
         }
 
-        let marker_size = series.marker_size.unwrap_or(data.config.marker_size);
+        let marker_size = series.props.marker_size.value_or(data.config.marker_size);
         if marker_size > 0.0 {
             let scaled_marker_size = render_scale.points_to_pixels(marker_size);
             for point in &data.points {
@@ -1657,7 +1931,63 @@ impl Plot {
         Self::needs_cartesian_axes_for_series(&self.series_mgr.series)
     }
 
-    pub(super) fn apply_manual_axis_limits(
+    /// Apply the matplotlib-style autoscale margin to auto-scaled axes.
+    ///
+    /// Without this, data sits exactly on the spines. The margin is skipped for
+    /// axes with explicit limits, for plots whose bounds are set by construction
+    /// (polar/radar/pie already reserve their own label room), for image-like
+    /// series that fill their axes, and on the sticky zero baseline of
+    /// bar/histogram charts.
+    pub(super) fn apply_autoscale_margins(
+        &self,
+        bounds: (f64, f64, f64, f64),
+    ) -> (f64, f64, f64, f64) {
+        // What each plot type pins is declared once, in `sticky_edges_of`.
+        // Radar/polar/pie bounds are deliberately padded already and heatmaps
+        // are sticky on all four edges (matplotlib `imshow`); neither takes a
+        // margin band.
+        let sticky = self.sticky_edges();
+        if sticky.by_construction || sticky.all_edges {
+            return bounds;
+        }
+
+        let (x_min, x_max, y_min, y_max) = bounds;
+        let config = &self.display.config;
+
+        let (x_min, x_max) = if self.layout.x_limits.is_some() {
+            (x_min, x_max)
+        } else {
+            padded_axis_range(
+                x_min,
+                x_max,
+                config.x_margin,
+                &self.layout.x_scale,
+                true,
+                true,
+            )
+        };
+
+        let (y_min, y_max) = if self.layout.y_limits.is_some() {
+            (y_min, y_max)
+        } else {
+            let sticky_zero = sticky.y_zero_baseline;
+            padded_axis_range(
+                y_min,
+                y_max,
+                config.y_margin,
+                &self.layout.y_scale,
+                !(sticky_zero && y_min == 0.0),
+                !(sticky_zero && y_max == 0.0),
+            )
+        };
+
+        (x_min, x_max, y_min, y_max)
+    }
+
+    /// Override auto-computed bounds with any explicit axis limits.
+    ///
+    /// Explicit limits are used verbatim — no autoscale margin is added on top.
+    pub(super) fn apply_axis_limits_without_margin(
         &self,
         bounds: (f64, f64, f64, f64),
     ) -> (f64, f64, f64, f64) {
@@ -1681,6 +2011,24 @@ impl Plot {
         (x_min, x_max, y_min, y_max)
     }
 
+    /// Finalize scanned data bounds into an axis range.
+    ///
+    /// Order is deliberate: degenerate (`min == max`) ranges are expanded first
+    /// so the autoscale margin has a real span to work from, then the margin is
+    /// applied, then explicit limits replace whatever was computed.
+    pub(super) fn apply_manual_axis_limits(
+        &self,
+        bounds: (f64, f64, f64, f64),
+    ) -> (f64, f64, f64, f64) {
+        let (x_min, x_max) =
+            crate::axes::scale::expand_degenerate_range(bounds.0, bounds.1, &self.layout.x_scale);
+        let (y_min, y_max) =
+            crate::axes::scale::expand_degenerate_range(bounds.2, bounds.3, &self.layout.y_scale);
+
+        let margined = self.apply_autoscale_margins((x_min, x_max, y_min, y_max));
+        self.apply_axis_limits_without_margin(margined)
+    }
+
     pub(super) fn effective_data_bounds(&self) -> Result<(f64, f64, f64, f64)> {
         if self.series_mgr.series.is_empty() {
             return Ok(self.empty_cartesian_bounds());
@@ -1698,24 +2046,24 @@ impl Plot {
             return Ok(self.empty_cartesian_bounds());
         }
 
+        // No second annotation pass: `calculate_data_bounds_for_series` ends in
+        // `finish_bounds`, which is the one place annotations are folded in.
         self.calculate_data_bounds_for_series(series_list)
-            .map(|bounds| {
-                self.apply_manual_axis_limits(self.expand_bounds_with_annotations(bounds))
-            })
+            .map(|bounds| self.apply_manual_axis_limits(bounds))
     }
 
+    /// The axis range a resolved frame renders into.
+    ///
+    /// Delegates to [`Plot::effective_frame_bounds`], the single bounds routine,
+    /// which also sees the error bars attached with `with_yerr`/`with_xerr` —
+    /// without it those whiskers are clipped against the spine. Annotations are
+    /// already folded in by `finish_bounds`, so there is no second expansion
+    /// pass here.
     pub(super) fn effective_data_bounds_from_resolved(
         &self,
         resolved_series: &[ResolvedSeries<'_>],
     ) -> Result<(f64, f64, f64, f64)> {
-        if resolved_series.is_empty() {
-            return Ok(self.empty_cartesian_bounds());
-        }
-
-        self.calculate_data_bounds_from_resolved(resolved_series)
-            .map(|bounds| {
-                self.apply_manual_axis_limits(self.expand_bounds_with_annotations(bounds))
-            })
+        self.effective_frame_bounds(resolved_series)
     }
 
     pub(super) fn apply_auto_padding_to_bounds(
@@ -1737,7 +2085,8 @@ impl Plot {
             y_max += y_range * fraction;
         }
 
-        self.apply_manual_axis_limits((x_min, x_max, y_min, y_max))
+        // Already padded by `fraction`; skip the generic autoscale margin.
+        self.apply_axis_limits_without_margin((x_min, x_max, y_min, y_max))
     }
 
     /// Helper to render attached error bars on Line/Scatter series
@@ -1757,212 +2106,223 @@ impl Plot {
         plot_area: tiny_skia::Rect,
         default_line_width: f32,
         render_scale: RenderScale,
+        x_scale: &crate::axes::AxisScale,
+        y_scale: &crate::axes::AxisScale,
     ) -> Result<()> {
-        let config = error_config.cloned().unwrap_or_default();
-        let bar_color = config.color.unwrap_or(series_color);
-        let bar_color = bar_color.with_alpha((f32::from(bar_color.a) / 255.0) * config.alpha);
-        // Error-bar configuration is still authored in legacy logical pixels.
-        let scaled_config_width = render_scale.logical_pixels_to_pixels(config.line_width);
-        let line_width = scaled_config_width.max(default_line_width * 0.75); // Slightly thinner than data line
+        let style = AttachedErrorBarStyle::resolve(
+            error_config,
+            series_color,
+            default_line_width,
+            render_scale,
+        );
+        let frame = ErrorBarFrame {
+            plot_area,
+            x_min,
+            x_max,
+            y_min,
+            y_max,
+            x_scale,
+            y_scale,
+        };
+        stroke_error_bar_series(renderer, x_data, y_data, y_errors, x_errors, frame, style)
+    }
+}
 
-        let cap_size_px = render_scale.logical_pixels_to_pixels(config.cap_size);
-        let half_cap = cap_size_px / 2.0;
+#[cfg(test)]
+#[allow(deprecated)]
+mod autoscale_margin_tests {
+    use super::*;
 
-        let n = x_data.len().min(y_data.len());
+    fn line_plot() -> Plot {
+        Plot::new().line(&[0.0, 10.0], &[0.0, 100.0]).end_series()
+    }
 
-        for i in 0..n {
-            let x_val = x_data[i];
-            let y_val = y_data[i];
+    #[test]
+    fn autoscale_margin_pads_five_percent_per_side() {
+        let plot = line_plot();
+        let (x_min, x_max, y_min, y_max) = plot
+            .effective_data_bounds()
+            .expect("bounds should resolve for a simple line plot");
 
-            if !x_val.is_finite() || !y_val.is_finite() {
-                continue;
-            }
+        // matplotlib default: 5% of the raw span added to each side.
+        assert!((x_min + 0.5).abs() < 1e-9, "x_min = {x_min}");
+        assert!((x_max - 10.5).abs() < 1e-9, "x_max = {x_max}");
+        assert!((y_min + 5.0).abs() < 1e-9, "y_min = {y_min}");
+        assert!((y_max - 105.0).abs() < 1e-9, "y_max = {y_max}");
+    }
 
-            // Get Y error bounds (skip NaN/Infinity values)
-            let (y_lower, y_upper) = if let Some(yerr) = y_errors {
-                if let Some((lo, hi)) = yerr.bounds_at(i) {
-                    let lo_abs = lo.abs();
-                    let hi_abs = hi.abs();
-                    if lo_abs.is_finite() && hi_abs.is_finite() {
-                        (lo_abs, hi_abs)
-                    } else {
-                        (0.0, 0.0) // Skip invalid error values
-                    }
-                } else {
-                    (0.0, 0.0)
-                }
-            } else {
-                (0.0, 0.0)
-            };
+    #[test]
+    fn zero_margin_reproduces_edge_to_edge_bounds() {
+        let config = PlotConfig::builder().data_margins(0.0, 0.0).build();
+        let plot = Plot::new()
+            .plot_config(config)
+            .line(&[0.0, 10.0], &[0.0, 100.0])
+            .end_series();
 
-            // Get X error bounds (skip NaN/Infinity values)
-            let (x_lower, x_upper) = if let Some(xerr) = x_errors {
-                if let Some((lo, hi)) = xerr.bounds_at(i) {
-                    let lo_abs = lo.abs();
-                    let hi_abs = hi.abs();
-                    if lo_abs.is_finite() && hi_abs.is_finite() {
-                        (lo_abs, hi_abs)
-                    } else {
-                        (0.0, 0.0) // Skip invalid error values
-                    }
-                } else {
-                    (0.0, 0.0)
-                }
-            } else {
-                (0.0, 0.0)
-            };
+        let bounds = plot
+            .effective_data_bounds()
+            .expect("bounds should resolve with margins disabled");
 
-            // Draw Y error bar (vertical line + caps) with clipping
-            if y_lower > 0.0 || y_upper > 0.0 {
-                let (px, py_top_raw) = map_data_to_pixels(
-                    x_val,
-                    y_val + y_upper,
-                    x_min,
-                    x_max,
-                    y_min,
-                    y_max,
-                    plot_area,
-                );
-                let (_, py_bottom_raw) = map_data_to_pixels(
-                    x_val,
-                    y_val - y_lower,
-                    x_min,
-                    x_max,
-                    y_min,
-                    y_max,
-                    plot_area,
-                );
+        assert!((bounds.0 - 0.0).abs() < 1e-9);
+        assert!((bounds.1 - 10.0).abs() < 1e-9);
+        assert!((bounds.2 - 0.0).abs() < 1e-9);
+        assert!((bounds.3 - 100.0).abs() < 1e-9);
+    }
 
-                // Clip to plot area bounds
-                let plot_top = plot_area.y();
-                let plot_bottom = plot_area.y() + plot_area.height();
-                let plot_left = plot_area.x();
-                let plot_right = plot_area.x() + plot_area.width();
+    #[test]
+    fn explicit_limits_are_never_padded() {
+        let plot = Plot::new()
+            .xlim(0.0, 10.0)
+            .ylim(0.0, 100.0)
+            .line(&[0.0, 10.0], &[0.0, 100.0])
+            .end_series();
 
-                let py_top = py_top_raw.max(plot_top).min(plot_bottom);
-                let py_bottom = py_bottom_raw.max(plot_top).min(plot_bottom);
+        let bounds = plot
+            .effective_data_bounds()
+            .expect("bounds should resolve with explicit limits");
 
-                // Only draw if there's visible area
-                if (py_bottom - py_top).abs() > 0.5 {
-                    // Vertical error line (clipped)
-                    renderer.draw_line(
-                        px,
-                        py_top,
-                        px,
-                        py_bottom,
-                        bar_color,
-                        line_width,
-                        LineStyle::Solid,
-                    )?;
+        assert!((bounds.0 - 0.0).abs() < 1e-9);
+        assert!((bounds.1 - 10.0).abs() < 1e-9);
+        assert!((bounds.2 - 0.0).abs() < 1e-9);
+        assert!((bounds.3 - 100.0).abs() < 1e-9);
+    }
 
-                    // Draw caps (horizontal lines) - use pixel offsets directly
-                    let cap_left_x = (px - half_cap).max(plot_left);
-                    let cap_right_x = (px + half_cap).min(plot_right);
+    #[test]
+    fn explicit_limits_on_one_axis_still_pad_the_other() {
+        let plot = Plot::new()
+            .ylim(0.0, 100.0)
+            .line(&[0.0, 10.0], &[0.0, 100.0])
+            .end_series();
 
-                    // Top cap (only if within plot area)
-                    if py_top_raw >= plot_top && py_top_raw <= plot_bottom {
-                        renderer.draw_line(
-                            cap_left_x,
-                            py_top,
-                            cap_right_x,
-                            py_top,
-                            bar_color,
-                            line_width,
-                            LineStyle::Solid,
-                        )?;
-                    }
-                    // Bottom cap (only if within plot area)
-                    if py_bottom_raw >= plot_top && py_bottom_raw <= plot_bottom {
-                        renderer.draw_line(
-                            cap_left_x,
-                            py_bottom,
-                            cap_right_x,
-                            py_bottom,
-                            bar_color,
-                            line_width,
-                            LineStyle::Solid,
-                        )?;
-                    }
-                }
-            }
+        let (x_min, x_max, y_min, y_max) = plot
+            .effective_data_bounds()
+            .expect("bounds should resolve with one explicit axis");
 
-            // Draw X error bar (horizontal line + caps) with clipping
-            if x_lower > 0.0 || x_upper > 0.0 {
-                let (_, py) =
-                    map_data_to_pixels(x_val, y_val, x_min, x_max, y_min, y_max, plot_area);
-                let (px_left_raw, _) = map_data_to_pixels(
-                    x_val - x_lower,
-                    y_val,
-                    x_min,
-                    x_max,
-                    y_min,
-                    y_max,
-                    plot_area,
-                );
-                let (px_right_raw, _) = map_data_to_pixels(
-                    x_val + x_upper,
-                    y_val,
-                    x_min,
-                    x_max,
-                    y_min,
-                    y_max,
-                    plot_area,
-                );
+        assert!((x_min + 0.5).abs() < 1e-9);
+        assert!((x_max - 10.5).abs() < 1e-9);
+        assert!((y_min - 0.0).abs() < 1e-9);
+        assert!((y_max - 100.0).abs() < 1e-9);
+    }
 
-                // Clip to plot area bounds
-                let plot_top = plot_area.y();
-                let plot_bottom = plot_area.y() + plot_area.height();
-                let plot_left = plot_area.x();
-                let plot_right = plot_area.x() + plot_area.width();
+    #[test]
+    fn bar_chart_keeps_its_zero_baseline_sticky() {
+        let plot = Plot::new()
+            .bar(&["a", "b", "c"], &[1.0, 2.0, 3.0])
+            .end_series();
 
-                let px_left = px_left_raw.max(plot_left).min(plot_right);
-                let px_right = px_right_raw.max(plot_left).min(plot_right);
+        let (_, _, y_min, y_max) = plot
+            .effective_data_bounds()
+            .expect("bar bounds should resolve");
 
-                // Only draw if there's visible area
-                if (px_right - px_left).abs() > 0.5 {
-                    // Horizontal error line (clipped)
-                    renderer.draw_line(
-                        px_left,
-                        py,
-                        px_right,
-                        py,
-                        bar_color,
-                        line_width,
-                        LineStyle::Solid,
-                    )?;
+        // Bars must still sit exactly on y = 0 (matplotlib sticky_edges)...
+        assert!((y_min - 0.0).abs() < 1e-9, "y_min = {y_min}");
+        // ...while the far side still gets the usual headroom.
+        assert!((y_max - 3.15).abs() < 1e-9, "y_max = {y_max}");
+    }
 
-                    // Draw caps (vertical lines) - use pixel offsets directly
-                    let cap_top_y = (py - half_cap).max(plot_top);
-                    let cap_bottom_y = (py + half_cap).min(plot_bottom);
+    #[test]
+    fn histogram_keeps_its_zero_baseline_sticky() {
+        let plot = Plot::new()
+            .histogram(&[1.0, 2.0, 2.0, 3.0, 3.0, 3.0, 4.0])
+            .end_series();
 
-                    // Left cap (only if within plot area)
-                    if px_left_raw >= plot_left && px_left_raw <= plot_right {
-                        renderer.draw_line(
-                            px_left,
-                            cap_top_y,
-                            px_left,
-                            cap_bottom_y,
-                            bar_color,
-                            line_width,
-                            LineStyle::Solid,
-                        )?;
-                    }
-                    // Right cap (only if within plot area)
-                    if px_right_raw >= plot_left && px_right_raw <= plot_right {
-                        renderer.draw_line(
-                            px_right,
-                            cap_top_y,
-                            px_right,
-                            cap_bottom_y,
-                            bar_color,
-                            line_width,
-                            LineStyle::Solid,
-                        )?;
-                    }
-                }
-            }
-        }
+        let (_, _, y_min, y_max) = plot
+            .effective_data_bounds()
+            .expect("histogram bounds should resolve");
 
-        Ok(())
+        assert!((y_min - 0.0).abs() < 1e-9, "y_min = {y_min}");
+        assert!(y_max > 0.0);
+    }
+
+    #[test]
+    fn log_axis_margin_is_applied_in_log_space() {
+        let plot = Plot::new()
+            .yscale(crate::axes::AxisScale::Log)
+            .line(&[0.0, 1.0], &[1.0, 100.0])
+            .end_series();
+
+        let (_, _, y_min, y_max) = plot
+            .effective_data_bounds()
+            .expect("log bounds should resolve");
+
+        // Two decades padded by 5% of the log span on each side.
+        assert!(y_min > 0.0, "log lower bound must stay positive: {y_min}");
+        assert!((y_min.log10() + 0.1).abs() < 1e-9, "y_min = {y_min}");
+        assert!((y_max.log10() - 2.1).abs() < 1e-9, "y_max = {y_max}");
+    }
+
+    #[test]
+    fn heatmap_fills_its_axes_without_a_margin_band() {
+        let values = vec![vec![0.0, 1.0], vec![1.0, 0.0]];
+        let plot = Plot::new().heatmap(&values).end_series();
+
+        let raw = plot
+            .calculate_data_bounds()
+            .expect("heatmap bounds should resolve");
+        let effective = plot
+            .effective_data_bounds()
+            .expect("heatmap bounds should resolve");
+
+        // Image-like series are sticky on all four edges (matplotlib `imshow`),
+        // so the cells reach the spines with no background band around them.
+        assert_eq!(raw, effective);
+    }
+
+    #[test]
+    fn contour_fills_its_axes_without_a_margin_band() {
+        let x = vec![0.0, 1.0, 2.0];
+        let y = vec![0.0, 1.0, 2.0];
+        let z = vec![0.0, 1.0, 2.0, 1.0, 2.0, 3.0, 2.0, 3.0, 4.0];
+        let plot: Plot = Plot::new().contour(&x, &y, &z).filled(true).into();
+
+        let raw = plot
+            .calculate_data_bounds()
+            .expect("contour bounds should resolve");
+        let effective = plot
+            .effective_data_bounds()
+            .expect("contour bounds should resolve");
+
+        // matplotlib's `ContourSet` calls `autoscale_view(tight=True)`, so the
+        // fill reaches the spines instead of floating in a white gutter.
+        assert_eq!(raw, effective);
+        assert!((effective.0 - 0.0).abs() < 1e-9, "x_min = {}", effective.0);
+        assert!((effective.1 - 2.0).abs() < 1e-9, "x_max = {}", effective.1);
+        assert!((effective.2 - 0.0).abs() < 1e-9, "y_min = {}", effective.2);
+        assert!((effective.3 - 2.0).abs() < 1e-9, "y_max = {}", effective.3);
+    }
+
+    #[test]
+    fn radar_bounds_reserve_room_for_axis_labels() {
+        let plot: Plot = Plot::new()
+            .radar(&["a", "b", "c", "d", "e"])
+            .add_series("s1", &[1.0, 2.0, 3.0, 4.0, 5.0])
+            .into();
+
+        let radius = crate::plots::polar::radar::RADAR_BOUNDS_RADIUS;
+        let (x_min, x_max, y_min, y_max) = plot
+            .effective_data_bounds()
+            .expect("radar bounds should resolve");
+
+        // Set by construction, and NOT additionally padded by the 5% margin.
+        assert!((x_min + radius).abs() < 1e-9, "x_min = {x_min}");
+        assert!((x_max - radius).abs() < 1e-9, "x_max = {x_max}");
+        assert!((y_min + radius).abs() < 1e-9, "y_min = {y_min}");
+        assert!((y_max - radius).abs() < 1e-9, "y_max = {y_max}");
+    }
+
+    #[test]
+    fn padded_axis_range_skips_symlog() {
+        let scale = crate::axes::AxisScale::SymLog { linthresh: 1.0 };
+        let (min, max) = padded_axis_range(-10.0, 10.0, 0.05, &scale, true, true);
+        assert!((min + 10.0).abs() < 1e-9);
+        assert!((max - 10.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn padded_axis_range_skips_non_positive_log_bounds() {
+        let scale = crate::axes::AxisScale::Log;
+        let (min, max) = padded_axis_range(0.0, 10.0, 0.05, &scale, true, true);
+        assert!((min - 0.0).abs() < 1e-9);
+        assert!((max - 10.0).abs() < 1e-9);
     }
 }

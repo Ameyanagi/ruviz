@@ -244,11 +244,11 @@ impl<T> DerefMut for PooledBuffer<T> {
 
 impl<T> Drop for PooledBuffer<T> {
     fn drop(&mut self) {
-        if let Some(pool) = &self.pool {
-            if let Some(vec) = self.vec.take() {
-                let mut p = pool.lock().unwrap_or_else(|e| e.into_inner());
-                p.release_vec(vec);
-            }
+        if let Some(pool) = &self.pool
+            && let Some(vec) = self.vec.take()
+        {
+            let mut p = pool.lock().unwrap_or_else(|e| e.into_inner());
+            p.release_vec(vec);
         }
     }
 }

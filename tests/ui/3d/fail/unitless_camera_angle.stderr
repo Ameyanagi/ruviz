@@ -1,0 +1,10 @@
+error[E0599]: no method named `azimuth` found for struct `Camera3D` in the current scope
+ --> tests/ui/3d/fail/unitless_camera_angle.rs:4:33
+  |
+4 |     let _ = Camera3D::default().azimuth(45.0);
+  |                                 ^^^^^^^
+  |
+help: there is a method `azimuth_deg` with a similar name
+  |
+4 |     let _ = Camera3D::default().azimuth_deg(45.0);
+  |                                        ++++

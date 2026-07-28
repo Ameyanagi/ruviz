@@ -702,8 +702,8 @@ fn build_plot_with_options(
     let plot = match dataset {
         Dataset::Line { x, y, .. } => base.line(x, y).into_plot(),
         Dataset::Scatter { x, y, .. } => base.scatter(x, y).into_plot(),
-        Dataset::Histogram { values, .. } => base.histogram(values, None).into_plot(),
-        Dataset::Heatmap { matrix, .. } => base.heatmap(matrix, None).into_plot(),
+        Dataset::Histogram { values, .. } => base.histogram(values).into_plot(),
+        Dataset::Heatmap { matrix, .. } => base.heatmap(matrix).into_plot(),
     };
 
     if auto_optimize {

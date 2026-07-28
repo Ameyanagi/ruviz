@@ -1,4 +1,5 @@
 use super::*;
+use crate::core::legend::LegendPosition;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -179,6 +180,7 @@ fn test_marker_sprite_key(index: usize) -> MarkerSpriteKey {
         style: MarkerStyle::Circle,
         size_bits: index as u32,
         rgba_bits: 0,
+        edge_bits: None,
         phase_x: 0,
         phase_y: 0,
     }
@@ -496,7 +498,7 @@ fn test_draw_pixel_aligned_solid_rectangle_blends_transparent_fill() {
     let mut renderer = SkiaRenderer::new(6, 6, theme).unwrap();
     renderer
         .pixmap
-        .fill(crate::render::Color::new(0, 0, 255).to_tiny_skia_color());
+        .fill(crate::render::Color::from_rgb(0, 0, 255).to_tiny_skia_color());
 
     renderer
         .draw_pixel_aligned_solid_rectangle(
@@ -504,7 +506,7 @@ fn test_draw_pixel_aligned_solid_rectangle_blends_transparent_fill() {
             1.0,
             4.0,
             4.0,
-            crate::render::Color::new_rgba(255, 0, 0, 128),
+            crate::render::Color::from_rgba(255, 0, 0, 128),
         )
         .expect("transparent pixel-aligned fill should composite successfully");
 
@@ -530,14 +532,14 @@ fn test_draw_circle_cached_path_matches_legacy_circle_pixels() {
     reference.pixmap.fill(tiny_skia::Color::TRANSPARENT);
 
     candidate
-        .draw_circle(22.5, 19.25, 6.0, Color::new(30, 120, 220), true)
+        .draw_circle(22.5, 19.25, 6.0, Color::from_rgb(30, 120, 220), true)
         .expect("cached circle should render");
     legacy_draw_circle(
         &mut reference,
         22.5,
         19.25,
         6.0,
-        Color::new(30, 120, 220),
+        Color::from_rgb(30, 120, 220),
         true,
     );
 
@@ -553,7 +555,7 @@ fn test_draw_markers_clipped_sprite_compositor_stays_in_parity_for_supported_mar
     let theme = Theme::default();
     let points = marker_parity_points();
     let clip_rect = (6.25, 5.5, 46.5, 44.25);
-    let color = Color::new_rgba(35, 140, 220, 216);
+    let color = Color::from_rgba(35, 140, 220, 216);
 
     for style in [
         MarkerStyle::Circle,
@@ -590,7 +592,7 @@ fn test_draw_markers_clipped_uses_scanline_blit_for_supported_filled_markers() {
     let theme = Theme::default();
     let points = marker_parity_points();
     let clip_rect = (0.0, 0.0, 64.0, 56.0);
-    let color = Color::new_rgba(35, 140, 220, 216);
+    let color = Color::from_rgba(35, 140, 220, 216);
 
     for style in [
         MarkerStyle::Circle,
@@ -626,7 +628,7 @@ fn test_draw_markers_clipped_uses_vector_fallback_for_line_based_markers() {
     let theme = Theme::default();
     let points = marker_parity_points();
     let clip_rect = (6.25, 5.5, 46.5, 44.25);
-    let color = Color::new_rgba(180, 60, 220, 216);
+    let color = Color::from_rgba(180, 60, 220, 216);
 
     for style in [
         MarkerStyle::Plus,
@@ -674,7 +676,7 @@ fn test_draw_pixel_aligned_solid_rectangle_fallback_matches_legacy_rect_fill() {
             4.5,
             5.75,
             6.25,
-            Color::new_rgba(200, 80, 20, 180),
+            Color::from_rgba(200, 80, 20, 180),
         )
         .expect("fallback rectangle should render");
     legacy_draw_composited_rect(
@@ -683,7 +685,7 @@ fn test_draw_pixel_aligned_solid_rectangle_fallback_matches_legacy_rect_fill() {
         4.5,
         5.75,
         6.25,
-        Color::new_rgba(200, 80, 20, 180),
+        Color::from_rgba(200, 80, 20, 180),
     );
 
     assert_exact_rgba_pixels(
@@ -702,7 +704,7 @@ fn test_draw_solid_rectangle_matches_legacy_fill_pixels() {
     reference.pixmap.fill(tiny_skia::Color::TRANSPARENT);
 
     candidate
-        .draw_solid_rectangle(3.25, 4.5, 5.75, 6.25, Color::new(40, 150, 210))
+        .draw_solid_rectangle(3.25, 4.5, 5.75, 6.25, Color::from_rgb(40, 150, 210))
         .expect("solid rectangle should render");
     legacy_draw_solid_rect(
         &mut reference,
@@ -710,7 +712,7 @@ fn test_draw_solid_rectangle_matches_legacy_fill_pixels() {
         4.5,
         5.75,
         6.25,
-        Color::new(40, 150, 210),
+        Color::from_rgb(40, 150, 210),
     );
 
     assert_exact_rgba_pixels(
@@ -824,6 +826,87 @@ fn test_draw_axis_labels_at_handles_collapsed_ranges() {
         .expect("collapsed ranges should use centered label placement");
 }
 
+/// Every tick-label path in the crate must resolve to the one canonical
+/// formatter. `render::skia` used to carry its own copies, so a log axis was
+/// labelled "1000" here and "10³" in the layout/SVG paths.
+#[test]
+fn test_skia_tick_helpers_are_the_canonical_axes_implementations() {
+    let values = [1.0, 10.0, 1000.0];
+
+    assert_eq!(
+        super::format_tick_labels(&values),
+        crate::axes::format_tick_labels(&values)
+    );
+    assert_eq!(
+        super::format_tick_labels_for_scale(&values, &crate::axes::AxisScale::Log),
+        crate::axes::format_tick_labels_for_scale(&values, &crate::axes::AxisScale::Log)
+    );
+    assert_eq!(
+        super::format_tick_labels_for_scale(&values, &crate::axes::AxisScale::Log),
+        vec!["10⁰", "10¹", "10³"]
+    );
+    assert_eq!(
+        super::generate_ticks(0.0, 10.0, 6),
+        crate::axes::generate_ticks(0.0, 10.0, 6)
+    );
+    assert_eq!(
+        super::generate_minor_ticks(&[0.0, 1.0], 3),
+        crate::axes::generate_minor_ticks(&[0.0, 1.0], 3)
+    );
+}
+
+/// The categorical axis-label paths used to format and position y ticks with
+/// their own linear-only copy, so a bar chart with `.yscale(Log)` got decimal
+/// labels at linear positions while the numeric path got superscript decades.
+/// Both now take the scale, so they cannot disagree.
+#[test]
+fn test_categorical_axis_labels_honour_the_y_scale() {
+    let theme = Theme::default();
+    let mut renderer = SkiaRenderer::new(200, 160, theme).unwrap();
+    let plot_area = LayoutRect {
+        left: 30.0,
+        top: 10.0,
+        right: 190.0,
+        bottom: 140.0,
+    };
+    let y_ticks = [1.0, 10.0, 100.0];
+
+    renderer
+        .draw_axis_labels_at_categorical(
+            &plot_area,
+            &["a".to_string(), "b".to_string()],
+            &[0.0, 1.0],
+            -0.5,
+            1.5,
+            1.0,
+            100.0,
+            &y_ticks,
+            150.0,
+            28.0,
+            10.0,
+            Color::BLACK,
+            100.0,
+            true,
+            false,
+            &crate::axes::AxisScale::Log,
+        )
+        .expect("categorical labels should draw on a log y axis");
+
+    // A log y axis puts 10 at the midpoint of [1, 100]; a linear one would put
+    // it a tenth of the way up.
+    let midpoint = SkiaRenderer::y_label_center_scaled(
+        &plot_area,
+        10.0,
+        1.0,
+        100.0,
+        &crate::axes::AxisScale::Log,
+    );
+    assert!(
+        (midpoint - plot_area.center_y()).abs() < 0.5,
+        "log y tick 10 should land at the vertical centre, got {midpoint}"
+    );
+}
+
 #[test]
 fn test_draw_polyline_clipped_keeps_pixels_inside_clip_rect() {
     let theme = Theme::default();
@@ -833,7 +916,7 @@ fn test_draw_polyline_clipped_keeps_pixels_inside_clip_rect() {
     renderer
         .draw_polyline_clipped(
             &[(20.0, 20.0), (100.0, 100.0)],
-            Color::new(220, 20, 20),
+            Color::from_rgb(220, 20, 20),
             18.0,
             LineStyle::Solid,
             (
@@ -866,6 +949,27 @@ fn test_draw_datashader_image_scales_into_plot_area() {
     assert!(pixel_is_bright_rgba(&rendered, 35, 30));
     assert!(!pixel_is_bright_rgba(&rendered, 5, 5));
     assert!(!pixel_is_bright_rgba(&rendered, 50, 45));
+}
+
+/// The density mask is tinted with the theme foreground, red channel included.
+///
+/// tiny-skia's pixmap buffer is premultiplied RGBA; writing B, G, R, A into it
+/// swapped red and blue. Every stock theme's foreground is black, white or
+/// grey, so the two existing datashader tests could not see it — this one uses
+/// a colour where R, G and B all differ.
+#[test]
+fn test_draw_datashader_image_tints_with_the_foreground_channels_in_order() {
+    let mut theme = Theme::light();
+    theme.foreground = Color::from_rgb(200, 120, 40);
+    let mut renderer = SkiaRenderer::new(4, 4, theme).unwrap();
+    renderer.clear();
+
+    let image = crate::data::DataShaderImage::new(1, 1, vec![255, 255, 255, 255]);
+    let plot_area = Rect::from_xywh(0.0, 0.0, 4.0, 4.0).unwrap();
+    renderer.draw_datashader_image(&image, plot_area).unwrap();
+
+    let rendered = renderer.into_image_demultiplied();
+    assert_eq!(image_pixel_rgba(&rendered, 2, 2), [200, 120, 40, 255]);
 }
 
 #[test]
@@ -1342,7 +1446,7 @@ fn translucent_text_annotation_background_uses_source_over_compositing() {
     let style = crate::core::TextStyle::default()
         .font_size(12.0)
         .color(Color::TRANSPARENT)
-        .background(Color::new_rgba(255, 0, 0, 128))
+        .background(Color::from_rgba(255, 0, 0, 128))
         .padding(4.0);
     let image = render_text_annotation("MMMMMMMM", style, 72.0);
     let pixel = image_pixel_rgba(&image, 160, 160);
@@ -1360,6 +1464,100 @@ fn test_renderer_dimensions() {
 
     assert_eq!(renderer.width(), 800);
     assert_eq!(renderer.height(), 600);
+}
+
+/// `draw_image_layer` must compose exactly like the PNG round-trip it replaced.
+///
+/// The old `draw_subplot` encoded the whole layer to PNG and immediately
+/// decoded it, paying a full deflate + inflate per composited frame purely to
+/// convert straight alpha to premultiplied. This is that conversion, done
+/// directly, so the pixels have to match.
+#[test]
+fn draw_image_layer_matches_the_png_round_trip_it_replaced() {
+    use crate::core::plot::Image;
+
+    // Straight-alpha RGBA, deliberately including partial coverage: with a
+    // fully opaque layer a double premultiply or a channel swap is invisible.
+    let layer = Image {
+        width: 4,
+        height: 2,
+        pixels: (0..8_u8)
+            .flat_map(|index| [index * 31, 255 - index * 31, index * 17, index * 36])
+            .collect(),
+    };
+
+    let mut direct = SkiaRenderer::new(6, 4, Theme::light()).unwrap();
+    direct.clear();
+    direct.draw_image_layer(&layer, 1, 1).unwrap();
+
+    let mut via_png = SkiaRenderer::new(6, 4, Theme::light()).unwrap();
+    via_png.clear();
+    let decoded = tiny_skia::Pixmap::decode_png(&layer.encode_png().unwrap()).unwrap();
+    via_png.pixmap.draw_pixmap(
+        1,
+        1,
+        decoded.as_ref(),
+        &tiny_skia::PixmapPaint::default(),
+        tiny_skia::Transform::identity(),
+        None,
+    );
+
+    let direct = direct.into_image_demultiplied();
+    let expected = via_png.into_image_demultiplied();
+    assert_eq!(direct.pixels.len(), expected.pixels.len());
+    for (index, (actual, expected)) in direct.pixels.iter().zip(&expected.pixels).enumerate() {
+        assert!(
+            actual.abs_diff(*expected) <= 1,
+            "byte {index}: {actual} vs {expected} from the PNG round-trip"
+        );
+    }
+}
+
+/// Half-covered red over white is pink, not half-dark red.
+///
+/// Straight alpha in, correctly premultiplied composite out. A layer handed to
+/// the compositor already premultiplied would darken to (255, 64, 64).
+#[test]
+fn draw_image_layer_treats_its_input_as_straight_alpha() {
+    use crate::core::plot::Image;
+
+    let mut renderer = SkiaRenderer::new(2, 1, Theme::light()).unwrap();
+    renderer.clear();
+    renderer
+        .draw_image_layer(
+            &Image {
+                width: 2,
+                height: 1,
+                pixels: vec![255, 0, 0, 128, 0, 255, 0, 255],
+            },
+            0,
+            0,
+        )
+        .unwrap();
+
+    let composed = renderer.into_image_demultiplied();
+    let half = image_pixel_rgba(&composed, 0, 0);
+    assert_eq!(half[0], 255);
+    assert!(half[1].abs_diff(127) <= 2, "{half:?}");
+    assert!(half[2].abs_diff(127) <= 2, "{half:?}");
+    assert_eq!(image_pixel_rgba(&composed, 1, 0), [0, 255, 0, 255]);
+}
+
+#[test]
+fn draw_image_layer_rejects_a_buffer_that_does_not_match_its_dimensions() {
+    use crate::core::plot::Image;
+
+    let mut renderer = SkiaRenderer::new(4, 4, Theme::light()).unwrap();
+    let result = renderer.draw_image_layer(
+        &Image {
+            width: 2,
+            height: 2,
+            pixels: vec![0; 4 * 4 * 3],
+        },
+        0,
+        0,
+    );
+    assert!(result.is_err());
 }
 
 #[test]

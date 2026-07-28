@@ -36,12 +36,28 @@ pub struct QuiverConfig {
     pub color_by_magnitude: bool,
     /// Colormap for magnitude coloring
     pub cmap: String,
+    /// Draw a colorbar explaining the colour scale (default `true`).
+    ///
+    /// Only reaches a figure when the arrows are actually coloured by
+    /// magnitude: without [`color_by_magnitude`](Self::color_by_magnitude)
+    /// there is no colour scale to explain.
+    pub colorbar: bool,
+    /// Caption printed alongside the colorbar.
+    pub colorbar_label: Option<String>,
+    /// Colorbar tick label size in points; `None` follows the theme.
+    pub colorbar_tick_font_size: Option<f32>,
+    /// Colorbar caption size in points; `None` follows the theme.
+    pub colorbar_label_font_size: Option<f32>,
 }
 
 /// Pivot point for arrows
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// `QuiverPivot::default()` is [`QuiverPivot::Tail`], the same value
+/// [`QuiverConfig`]`::default()` uses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum QuiverPivot {
-    /// Arrow starts at (x, y)
+    /// Arrow starts at (x, y) (default)
+    #[default]
     Tail,
     /// Arrow centered at (x, y)
     Middle,
@@ -61,6 +77,12 @@ impl Default for QuiverConfig {
             pivot: QuiverPivot::Tail,
             color_by_magnitude: false,
             cmap: "viridis".to_string(),
+            // Anything carrying a colour scale gets a key by default, the same
+            // way heatmap, contour and hexbin do.
+            colorbar: true,
+            colorbar_label: None,
+            colorbar_tick_font_size: None,
+            colorbar_label_font_size: None,
         }
     }
 }
@@ -99,6 +121,42 @@ impl QuiverConfig {
     pub fn color_by_magnitude(mut self, enable: bool) -> Self {
         self.color_by_magnitude = enable;
         self
+    }
+
+    /// Show or hide the colorbar.
+    pub fn colorbar(mut self, show: bool) -> Self {
+        self.colorbar = show;
+        self
+    }
+
+    /// Caption for the colorbar — what the arrow colours are measuring.
+    pub fn colorbar_label(mut self, label: impl Into<String>) -> Self {
+        self.colorbar_label = Some(label.into());
+        self
+    }
+
+    /// Colorbar tick label size, in points.
+    pub fn colorbar_tick_font_size(mut self, size: f32) -> Self {
+        self.colorbar_tick_font_size = Some(size.max(1.0));
+        self
+    }
+
+    /// Colorbar caption size, in points.
+    pub fn colorbar_label_font_size(mut self, size: f32) -> Self {
+        self.colorbar_label_font_size = Some(size.max(1.0));
+        self
+    }
+
+    /// Colorbar font sizes, resolved against the theme.
+    ///
+    /// The same resolver heatmap, contour and hexbin use, so an unconfigured
+    /// colorbar looks identical whichever plot type asked for it.
+    pub fn colorbar_font_sizes(&self, theme: &Theme) -> crate::plots::heatmap::ColorbarFontSizes {
+        crate::plots::heatmap::ColorbarFontSizes::resolve(
+            self.colorbar_tick_font_size,
+            self.colorbar_label_font_size,
+            theme,
+        )
     }
 }
 
@@ -151,6 +209,39 @@ pub struct QuiverPlotData {
     pub magnitude_range: (f64, f64),
     /// Configuration used
     pub(crate) config: QuiverConfig,
+}
+
+impl QuiverPlotData {
+    /// The colour key this field asks for, or `None` when it has none to give.
+    ///
+    /// Arrows coloured by magnitude carry a value scale exactly as a heatmap or
+    /// a contour does, and without this the reader can see that one arrow is
+    /// teal and another yellow with no way to find out what either means. The
+    /// range is the magnitude range already computed for the colouring itself,
+    /// so the key cannot describe a scale different from the one drawn.
+    ///
+    /// Returns the same [`ColorbarRequest`] heatmap and contour return, so the
+    /// margin reservation, the raster draw and the SVG draw all pick it up
+    /// together.
+    ///
+    /// [`ColorbarRequest`]: crate::render::colorbar::ColorbarRequest
+    pub fn colorbar(&self, theme: &Theme) -> Option<crate::render::colorbar::ColorbarRequest> {
+        if !self.config.colorbar || !self.config.color_by_magnitude || self.arrows.is_empty() {
+            return None;
+        }
+        let fonts = self.config.colorbar_font_sizes(theme);
+        let (vmin, vmax) = self.magnitude_range;
+        Some(crate::render::colorbar::ColorbarRequest {
+            colormap: ColorMap::by_name(&self.config.cmap).unwrap_or_else(ColorMap::viridis),
+            vmin,
+            vmax,
+            value_scale: crate::axes::AxisScale::Linear,
+            label: self.config.colorbar_label.clone(),
+            tick_font_size: fonts.tick,
+            label_font_size: fonts.label,
+            show_log_subticks: false,
+        })
+    }
 }
 
 /// Compute quiver plot data
@@ -405,6 +496,14 @@ pub fn quiver_range(data: &QuiverPlotData) -> ((f64, f64), (f64, f64)) {
 mod tests {
     use super::*;
 
+    /// `QuiverPivot` is constructible the same way its sibling config enums
+    /// are, and `default()` agrees with the config that owns it.
+    #[test]
+    fn pivot_default_matches_config_default() {
+        assert_eq!(QuiverPivot::default(), QuiverConfig::default().pivot);
+        assert_eq!(QuiverPivot::default(), QuiverPivot::Tail);
+    }
+
     #[test]
     fn test_quiver_basic() {
         let x = vec![0.0, 1.0, 2.0];
@@ -519,5 +618,69 @@ mod tests {
 
         // Test is_empty
         assert!(!quiver_data.is_empty());
+    }
+
+    fn field(config: QuiverConfig) -> QuiverPlotData {
+        let x = vec![0.0, 1.0, 2.0];
+        let y = vec![0.0, 0.0, 0.0];
+        let u = vec![1.0, 2.0, 3.0];
+        let v = vec![0.0, 0.0, 0.0];
+        compute_quiver(&x, &y, &u, &v, &config)
+    }
+
+    /// A colour channel nobody can decode is not a visualisation: arrows
+    /// coloured by magnitude carry a value scale, so they ask for the same key
+    /// a heatmap or a contour asks for, over the range they were coloured with.
+    #[test]
+    fn magnitude_colouring_asks_for_a_key_over_the_range_it_used() {
+        let data = field(
+            QuiverConfig::default()
+                .color_by_magnitude(true)
+                .colorbar_label("wind speed (m/s)"),
+        );
+        let theme = Theme::default();
+
+        let request = data.colorbar(&theme).expect("a colour key");
+        assert_eq!((request.vmin, request.vmax), data.magnitude_range);
+        assert_eq!(request.label.as_deref(), Some("wind speed (m/s)"));
+        assert_eq!(request.value_scale, crate::axes::AxisScale::Linear);
+    }
+
+    /// Arrows in one flat colour have no scale to explain, so they must not
+    /// grow a colorbar just because the default says yes.
+    #[test]
+    fn a_single_colour_field_asks_for_no_key() {
+        let theme = Theme::default();
+
+        assert!(field(QuiverConfig::default()).colorbar(&theme).is_none());
+        assert!(
+            field(
+                QuiverConfig::default()
+                    .color_by_magnitude(true)
+                    .colorbar(false)
+            )
+            .colorbar(&theme)
+            .is_none(),
+            "an explicit `colorbar(false)` is honoured"
+        );
+    }
+
+    /// The same font resolution the other colorbars use, so one theme cannot
+    /// produce a quiver colorbar in one size and a heatmap colorbar in another.
+    #[test]
+    fn colorbar_fonts_follow_the_theme_exactly_as_the_other_colorbars_do() {
+        for theme in [Theme::default(), Theme::ieee()] {
+            assert_eq!(
+                QuiverConfig::default().colorbar_font_sizes(&theme),
+                crate::plots::heatmap::HeatmapConfig::default().colorbar_font_sizes(&theme),
+                "one colorbar look, not four"
+            );
+        }
+
+        let sized = QuiverConfig::default()
+            .colorbar_tick_font_size(7.5)
+            .colorbar_label_font_size(9.5);
+        let fonts = sized.colorbar_font_sizes(&Theme::default());
+        assert_eq!((fonts.tick, fonts.label), (7.5, 9.5));
     }
 }

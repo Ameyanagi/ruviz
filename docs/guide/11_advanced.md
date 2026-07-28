@@ -22,11 +22,11 @@ use ruviz::prelude::*;
 struct CustomPalette;
 
 impl CustomPalette {
-    fn oceanblue() -> Color { Color::new(0, 119, 182) }
-    fn deepcyan() -> Color { Color::new(0, 180, 216) }
-    fn skyblue() -> Color { Color::new(144, 224, 239) }
-    fn coral() -> Color { Color::new(240, 128, 128) }
-    fn sunset() -> Color { Color::new(255, 99, 71) }
+    fn oceanblue() -> Color { Color::from_rgb(0, 119, 182) }
+    fn deepcyan() -> Color { Color::from_rgb(0, 180, 216) }
+    fn skyblue() -> Color { Color::from_rgb(144, 224, 239) }
+    fn coral() -> Color { Color::from_rgb(240, 128, 128) }
+    fn sunset() -> Color { Color::from_rgb(255, 99, 71) }
 }
 
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
@@ -51,7 +51,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
             .into_plot();
     }
 
-    plot.legend(Position::TopLeft)
+    plot.legend(LegendPosition::UpperLeft)
         .save("custom_palette.png")?;
 
     Ok(())
@@ -72,12 +72,12 @@ fn interpolate_color(color1: Color, color2: Color, t: f64) -> Color {
     let g = (g1 as f64 * (1.0 - t) + g2 as f64 * t) as u8;
     let b = (b1 as f64 * (1.0 - t) + b2 as f64 * t) as u8;
 
-    Color::new(r, g, b)
+    Color::from_rgb(r, g, b)
 }
 
 fn create_gradient_palette(n: usize) -> Vec<Color> {
-    let start = Color::new(0, 0, 255);    // Blue
-    let end = Color::new(255, 0, 0);      // Red
+    let start = Color::from_rgb(0, 0, 255);    // Blue
+    let end = Color::from_rgb(255, 0, 0);      // Red
 
     (0..n).map(|i| {
         let t = i as f64 / (n - 1) as f64;
@@ -150,7 +150,7 @@ let timeseries = Plot::new()
     .into_plot();
 
 let distribution = Plot::new()
-    .histogram(&data, None)
+    .histogram(&data)
     .title("Distribution (Tall)")
     .into_plot();
 
@@ -327,7 +327,7 @@ impl PlotTemplate {
             .dpi(300)
             .theme(Theme::publication())
             .line(time, signal)
-            .color(Color::new(76, 114, 176))
+            .color(Color::from_rgb(76, 114, 176))
             .line_width(2.0)
             .title(title)
             .xlabel("Time (s)")
@@ -344,8 +344,8 @@ impl PlotTemplate {
         Plot::new()
             .size_px(600, 400) // Exact dashboard pixels; do not change DPI afterward
             .theme(Theme::light())
-            .histogram(data, None)
-            .color(Color::new(70, 130, 180))
+            .histogram(data)
+            .color(Color::from_rgb(70, 130, 180))
             .title(label)
             .xlabel("Value")
             .ylabel("Count")

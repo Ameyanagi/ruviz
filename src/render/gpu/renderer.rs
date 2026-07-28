@@ -41,6 +41,44 @@ pub struct GpuVertex {
     size: f32,
 }
 
+/// Plot viewport in device pixels.
+///
+/// The public entry points still take the historical `(left, top, right, bottom)`
+/// tuple, but every internal consumer goes through these named fields. Inline
+/// tuple destructuring is exactly how the y-axis transform ended up being handed
+/// `(bottom, left)` where `(top, bottom)` was expected.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Viewport {
+    left: f32,
+    top: f32,
+    right: f32,
+    bottom: f32,
+}
+
+impl From<(f32, f32, f32, f32)> for Viewport {
+    /// Interprets the tuple as `(left, top, right, bottom)`.
+    fn from((left, top, right, bottom): (f32, f32, f32, f32)) -> Self {
+        Self {
+            left,
+            top,
+            right,
+            bottom,
+        }
+    }
+}
+
+impl Viewport {
+    #[inline]
+    fn width(&self) -> f32 {
+        self.right - self.left
+    }
+
+    #[inline]
+    fn height(&self) -> f32 {
+        self.bottom - self.top
+    }
+}
+
 /// GPU renderer statistics
 #[derive(Debug, Clone, Default)]
 pub struct GpuRendererStats {
@@ -146,6 +184,7 @@ impl GpuRenderer {
         T: Data1D<f64>,
     {
         let point_count = x_data.len().min(y_data.len());
+        let viewport = Viewport::from(viewport);
 
         // Intelligent backend selection
         if point_count >= self.gpu_threshold && self.gpu_backend.is_available() {
@@ -170,7 +209,7 @@ impl GpuRenderer {
         y_data: &T,
         x_range: (f64, f64),
         y_range: (f64, f64),
-        viewport: (f32, f32, f32, f32),
+        viewport: Viewport,
     ) -> Result<(PooledVec<f32>, PooledVec<f32>)>
     where
         T: Data1D<f64>,
@@ -197,15 +236,22 @@ impl GpuRenderer {
             wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
         )?;
 
-        // Setup transformation parameters
-        let (left, top, right, bottom) = viewport;
+        // Setup transformation parameters.
+        //
+        // The shader evaluates `pixel = value * scale + offset`, the same affine
+        // form as `PooledRenderer`, so both backends derive their coefficients
+        // the same way: x_min -> left, x_max -> right, and y flipped so
+        // y_min -> bottom, y_max -> top. (The GPU path used to leave y unflipped
+        // and disagreed with the CPU fallback about which way was up.)
+        let (scale_x, offset_x) = affine_axis_mapping(x_range, viewport.left, viewport.right);
+        let (scale_y, offset_y) = affine_axis_mapping(y_range, viewport.bottom, viewport.top);
         let params = TransformParams {
-            scale_x: (right - left) / (x_range.1 - x_range.0) as f32,
-            scale_y: (bottom - top) / (y_range.1 - y_range.0) as f32,
-            offset_x: left - (x_range.0 as f32 * (right - left) / (x_range.1 - x_range.0) as f32),
-            offset_y: top - (y_range.0 as f32 * (bottom - top) / (y_range.1 - y_range.0) as f32),
-            width: (right - left) as u32,
-            height: (bottom - top) as u32,
+            scale_x,
+            scale_y,
+            offset_x,
+            offset_y,
+            width: viewport.width() as u32,
+            height: viewport.height() as u32,
             _padding: [0, 0],
         };
 
@@ -251,7 +297,7 @@ impl GpuRenderer {
         y_data: &T,
         x_range: (f64, f64),
         y_range: (f64, f64),
-        viewport: (f32, f32, f32, f32),
+        viewport: Viewport,
     ) -> Result<(PooledVec<f32>, PooledVec<f32>)>
     where
         T: Data1D<f64>,
@@ -259,13 +305,13 @@ impl GpuRenderer {
         let start_time = std::time::Instant::now();
         let point_count = x_data.len().min(y_data.len());
 
-        // Use pooled renderer for CPU processing
-        let (left, _top, right, bottom) = viewport;
-        let x_result = self
-            .cpu_fallback
-            .transform_x_coordinates_pooled(x_data, x_range.0, x_range.1, left, right)?;
-        let y_result = self.cpu_fallback.transform_y_coordinates_pooled(
-            y_data, y_range.0, y_range.1, bottom, left, // Y is flipped
+        let (x_result, y_result) = transform_coordinates_pooled(
+            &self.cpu_fallback,
+            x_data,
+            y_data,
+            x_range,
+            y_range,
+            viewport,
         )?;
 
         // Update statistics
@@ -313,6 +359,54 @@ impl GpuRenderer {
     pub fn is_gpu_available(&self) -> bool {
         self.gpu_backend.is_available()
     }
+}
+
+/// Coefficients of `pixel = value * scale + offset` mapping `range.0` onto
+/// `pixel_at_min` and `range.1` onto `pixel_at_max`.
+///
+/// Mirrors `PooledRenderer`'s degenerate-range handling: a zero-width data range
+/// collapses to the midpoint of the pixel span instead of dividing by zero.
+fn affine_axis_mapping(range: (f64, f64), pixel_at_min: f32, pixel_at_max: f32) -> (f32, f32) {
+    let span = range.1 - range.0;
+    if span == 0.0 || !span.is_finite() {
+        return (0.0, pixel_at_min + (pixel_at_max - pixel_at_min) / 2.0);
+    }
+    let scale = (f64::from(pixel_at_max) - f64::from(pixel_at_min)) / span;
+    let offset = f64::from(pixel_at_min) - range.0 * scale;
+    (scale as f32, offset as f32)
+}
+
+/// CPU coordinate transform used by the GPU renderer's fallback path.
+///
+/// Kept as a free function so the data → pixel mapping can be pinned by a test
+/// on machines without a GPU adapter.
+fn transform_coordinates_pooled<T>(
+    cpu_fallback: &PooledRenderer,
+    x_data: &T,
+    y_data: &T,
+    x_range: (f64, f64),
+    y_range: (f64, f64),
+    viewport: Viewport,
+) -> Result<(PooledVec<f32>, PooledVec<f32>)>
+where
+    T: Data1D<f64>,
+{
+    let x_result = cpu_fallback.transform_x_coordinates_pooled(
+        x_data,
+        x_range.0,
+        x_range.1,
+        viewport.left,
+        viewport.right,
+    )?;
+    // Y is flipped: y_range.0 lands on `bottom`, y_range.1 on `top`.
+    let y_result = cpu_fallback.transform_y_coordinates_pooled(
+        y_data,
+        y_range.0,
+        y_range.1,
+        viewport.top,
+        viewport.bottom,
+    )?;
+    Ok((x_result, y_result))
 }
 
 impl Renderer for GpuRenderer {
@@ -364,5 +458,96 @@ mod tests {
             assert_eq!(x_transformed.len(), 5);
             assert_eq!(y_transformed.len(), 5);
         }
+    }
+
+    /// Regression: the CPU fallback passed `(bottom, left)` into a
+    /// `(top, bottom)` parameter pair, so every y pixel was mirrored and offset
+    /// by the plot area's left edge.
+    #[test]
+    fn test_cpu_fallback_maps_y_range_bottom_up() {
+        let cpu_fallback = PooledRenderer::new();
+        let x_data = vec![0.0, 5.0, 10.0];
+        let y_data = vec![0.0, 5.0, 10.0];
+        // Deliberately asymmetric so a swapped `left`/`top` cannot pass.
+        let viewport = Viewport::from((40.0, 10.0, 840.0, 610.0));
+
+        let (x_px, y_px) = transform_coordinates_pooled(
+            &cpu_fallback,
+            &x_data,
+            &y_data,
+            (0.0, 10.0),
+            (0.0, 10.0),
+            viewport,
+        )
+        .expect("CPU fallback transform should succeed");
+
+        assert!((x_px[0] - 40.0).abs() < 1e-3, "x_min -> left: {}", x_px[0]);
+        assert!(
+            (x_px[2] - 840.0).abs() < 1e-3,
+            "x_max -> right: {}",
+            x_px[2]
+        );
+
+        // y_min sits on the bottom edge, y_max on the top edge, midpoint between.
+        assert!(
+            (y_px[0] - 610.0).abs() < 1e-3,
+            "y_min -> bottom: {}",
+            y_px[0]
+        );
+        assert!(
+            (y_px[1] - 310.0).abs() < 1e-3,
+            "y_mid -> centre: {}",
+            y_px[1]
+        );
+        assert!((y_px[2] - 10.0).abs() < 1e-3, "y_max -> top: {}", y_px[2]);
+    }
+
+    /// The compute shader and the CPU fallback must agree on which way is up.
+    #[test]
+    fn test_gpu_transform_params_match_the_cpu_fallback_mapping() {
+        let viewport = Viewport::from((40.0, 10.0, 840.0, 610.0));
+        let y_range = (0.0, 10.0);
+
+        let (scale_y, offset_y) = affine_axis_mapping(y_range, viewport.bottom, viewport.top);
+        let shader_y = |value: f64| value as f32 * scale_y + offset_y;
+
+        let cpu_fallback = PooledRenderer::new();
+        let samples = vec![0.0, 2.5, 5.0, 10.0];
+        let (_, cpu_y) = transform_coordinates_pooled(
+            &cpu_fallback,
+            &samples,
+            &samples,
+            (0.0, 10.0),
+            y_range,
+            viewport,
+        )
+        .expect("CPU fallback transform should succeed");
+
+        for (index, value) in samples.iter().enumerate() {
+            assert!(
+                (shader_y(*value) - cpu_y[index]).abs() < 1e-3,
+                "gpu {} vs cpu {} for y={value}",
+                shader_y(*value),
+                cpu_y[index]
+            );
+        }
+    }
+
+    #[test]
+    fn test_affine_axis_mapping_collapses_degenerate_range_to_midpoint() {
+        let (scale, offset) = affine_axis_mapping((5.0, 5.0), 100.0, 300.0);
+        assert_eq!(scale, 0.0);
+        assert_eq!(offset, 200.0);
+    }
+
+    #[test]
+    fn test_viewport_from_tuple_uses_left_top_right_bottom_order() {
+        let viewport = Viewport::from((1.0, 2.0, 11.0, 22.0));
+        assert_eq!(viewport.left, 1.0);
+        assert_eq!(viewport.top, 2.0);
+        assert_eq!(viewport.right, 11.0);
+        assert_eq!(viewport.bottom, 22.0);
+        assert_eq!(viewport.width(), 10.0);
+        assert_eq!(viewport.height(), 20.0);
     }
 }

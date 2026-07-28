@@ -1,7 +1,18 @@
-/// Subplot functionality for multiple plots in one figure
-///
-/// Provides grid-based layout system for arranging multiple plots
-/// within a single figure, similar to matplotlib's subplot functionality.
+//! Figure-level composition: several plots in one image.
+//!
+//! There is one figure type, [`SubplotFigure`], and two ways to place a panel
+//! in it:
+//!
+//! - [`subplots`] lays out a regular grid and [`SubplotFigure::subplot`] /
+//!   [`SubplotFigure::subplot_at`] fill its cells;
+//! - [`figure`] starts an empty canvas and [`SubplotFigure::add_axes`] puts a
+//!   panel at an arbitrary rectangle, in figure-relative coordinates.
+//!
+//! They are the same figure, so they mix freely and share one set of
+//! figure-level knobs — [`suptitle`](SubplotFigure::suptitle),
+//! [`theme`](SubplotFigure::theme), [`save`](SubplotFigure::save),
+//! [`save_with_dpi`](SubplotFigure::save_with_dpi). Learning one teaches the
+//! other.
 use crate::core::{Plot, PlottingError, REFERENCE_DPI, RenderScale, Result};
 use crate::render::{Theme, skia::SkiaRenderer};
 use tiny_skia::Rect;
@@ -168,9 +179,163 @@ impl GridSpec {
     }
 }
 
+/// A rectangle in figure-relative coordinates, as taken by
+/// [`SubplotFigure::add_axes`].
+///
+/// `x` and `y` are the **lower-left** corner of the rectangle, measured from
+/// the **lower-left corner of the figure**, and all four values are fractions
+/// of the figure in `0.0..=1.0`. `FigureRect::new(0.0, 0.0, 1.0, 1.0)` is the
+/// whole figure; `(0.0, 0.0, 0.5, 0.5)` is its bottom-left quarter.
+///
+/// This is matplotlib's `fig.add_axes([left, bottom, width, height])`
+/// convention, and it is also the convention the layout functions in the
+/// `plots::composite` module already return — so their rectangles can be
+/// handed to [`SubplotFigure::add_axes`] unchanged.
+///
+/// Y grows *upwards* here. The pixel rectangles [`GridSpec::subplot_rect`]
+/// returns grow downwards from the top-left canvas corner, because that is
+/// what the renderer consumes. Figure coordinates are what a user writes;
+/// [`SubplotFigure::add_axes`] is the only place the two meet.
+///
+/// # Example
+///
+/// ```rust
+/// use ruviz::core::subplot::FigureRect;
+///
+/// // All three spell the same rectangle.
+/// let named = FigureRect::new(0.1, 0.2, 0.5, 0.6);
+/// assert_eq!(FigureRect::from([0.1, 0.2, 0.5, 0.6]), named);
+/// assert_eq!(FigureRect::from((0.1, 0.2, 0.5, 0.6)), named);
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FigureRect {
+    /// Distance from the figure's left edge to the rectangle's left edge, as a
+    /// fraction of figure width.
+    pub x: f64,
+    /// Distance from the figure's **bottom** edge to the rectangle's bottom
+    /// edge, as a fraction of figure height.
+    pub y: f64,
+    /// Rectangle width as a fraction of figure width.
+    pub width: f64,
+    /// Rectangle height as a fraction of figure height.
+    pub height: f64,
+}
+
+impl FigureRect {
+    /// The whole figure.
+    pub const FULL: Self = Self {
+        x: 0.0,
+        y: 0.0,
+        width: 1.0,
+        height: 1.0,
+    };
+
+    /// Create a rectangle from its lower-left corner and size.
+    pub const fn new(x: f64, y: f64, width: f64, height: f64) -> Self {
+        Self {
+            x,
+            y,
+            width,
+            height,
+        }
+    }
+
+    /// Reject anything that cannot be drawn: non-finite values, a
+    /// non-positive extent, or a rectangle that leaves the figure.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use ruviz::core::subplot::FigureRect;
+    ///
+    /// assert!(FigureRect::new(0.1, 0.1, 0.8, 0.8).validate().is_ok());
+    /// assert!(FigureRect::new(0.6, 0.1, 0.8, 0.8).validate().is_err()); // runs off the right edge
+    /// assert!(FigureRect::new(0.1, 0.1, 0.0, 0.8).validate().is_err()); // zero width
+    /// ```
+    pub fn validate(&self) -> Result<()> {
+        const TOLERANCE: f64 = 1e-9;
+        let Self {
+            x,
+            y,
+            width,
+            height,
+        } = *self;
+
+        if ![x, y, width, height].iter().all(|v| v.is_finite()) {
+            return Err(PlottingError::InvalidInput(format!(
+                "Axes rectangle must be finite (got {self:?})"
+            )));
+        }
+        if width <= 0.0 || height <= 0.0 {
+            return Err(PlottingError::InvalidInput(format!(
+                "Axes rectangle must have a positive width and height (got {self:?})"
+            )));
+        }
+        if x < -TOLERANCE
+            || y < -TOLERANCE
+            || x + width > 1.0 + TOLERANCE
+            || y + height > 1.0 + TOLERANCE
+        {
+            return Err(PlottingError::InvalidInput(format!(
+                "Axes rectangle must lie inside the figure: x, y, x+width and \
+                 y+height are fractions in 0.0..=1.0 measured from the \
+                 lower-left corner (got {self:?})"
+            )));
+        }
+        Ok(())
+    }
+
+    /// Convert to a top-left-origin pixel rectangle inside the figure area
+    /// left over below the suptitle.
+    fn to_pixels(self, figure_width: u32, figure_height: u32, top_offset: f32) -> Result<Rect> {
+        let content_height = figure_height as f32 - top_offset;
+        if content_height <= 0.0 {
+            return Err(PlottingError::InvalidInput(format!(
+                "Figure title leaves no room for axes (height={figure_height}, \
+                 reserved={top_offset})"
+            )));
+        }
+
+        // `validate` deliberately accepts sub-nanometre arithmetic drift at a
+        // figure edge. Derive pixels from clamped edges so an expression such
+        // as `1.0 - ratio` paired with `ratio` cannot turn an exact top edge
+        // into a tiny negative pixel coordinate after floating-point rounding.
+        let left_fraction = self.x.clamp(0.0, 1.0);
+        let right_fraction = (self.x + self.width).clamp(0.0, 1.0);
+        let top_fraction = (1.0 - self.y - self.height).clamp(0.0, 1.0);
+        let bottom_fraction = (1.0 - self.y).clamp(0.0, 1.0);
+
+        let left = left_fraction as f32 * figure_width as f32;
+        let top = top_offset + top_fraction as f32 * content_height;
+        let width = (right_fraction - left_fraction) as f32 * figure_width as f32;
+        let height = (bottom_fraction - top_fraction) as f32 * content_height;
+
+        Rect::from_xywh(left, top, width, height).ok_or_else(|| {
+            PlottingError::InvalidInput(format!(
+                "Axes rectangle {self:?} does not map to a valid pixel \
+                 rectangle in a {figure_width}x{figure_height} figure"
+            ))
+        })
+    }
+}
+
+impl From<[f64; 4]> for FigureRect {
+    fn from([x, y, width, height]: [f64; 4]) -> Self {
+        Self::new(x, y, width, height)
+    }
+}
+
+impl From<(f64, f64, f64, f64)> for FigureRect {
+    fn from((x, y, width, height): (f64, f64, f64, f64)) -> Self {
+        Self::new(x, y, width, height)
+    }
+}
+
 /// Subplot figure containing multiple plots arranged in a grid
 ///
-/// Create subplot figures using [`subplots()`] or [`subplots_default()`].
+/// Create subplot figures using [`subplots()`] or [`subplots_default()`], or
+/// [`figure()`] when there is no grid and every panel is placed by
+/// [`add_axes`](Self::add_axes).
 ///
 /// # Example
 ///
@@ -194,10 +359,12 @@ impl GridSpec {
 /// ![Subplot example](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/subplots.png)
 #[derive(Debug, Clone)]
 pub struct SubplotFigure {
-    /// Grid specification for layout
+    /// Grid specification for layout (0x0 when the figure has no grid)
     grid: GridSpec,
     /// Individual plots in the figure
     plots: Vec<Option<Plot>>,
+    /// Plots placed at an explicit figure-relative rectangle
+    axes: Vec<(FigureRect, Plot)>,
     /// Figure dimensions
     width: u32,
     height: u32,
@@ -282,18 +449,43 @@ impl SubplotFigure {
         grid.validate()?;
 
         let total_plots = grid.total_subplots();
-        let plots = vec![None; total_plots];
+        Ok(Self::empty(grid, vec![None; total_plots], width, height))
+    }
 
-        Ok(Self {
+    /// Create a figure with no grid, to be filled by [`add_axes`](Self::add_axes).
+    ///
+    /// The returned figure has zero grid cells, so [`subplot`](Self::subplot)
+    /// and [`subplot_at`](Self::subplot_at) have nowhere to put anything and
+    /// say so. Everything else is the figure [`subplots`] returns — same type,
+    /// same [`suptitle`](Self::suptitle), same [`theme`](Self::theme), same
+    /// [`save`](Self::save) — so a composite assembled from free rectangles and
+    /// one assembled from a grid are the same kind of object, and can be mixed.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use ruviz::core::subplot::SubplotFigure;
+    ///
+    /// let fig = SubplotFigure::figure(800, 800)?;
+    /// assert_eq!(fig.grid_spec().total_subplots(), 0);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn figure(width: u32, height: u32) -> Result<Self> {
+        Ok(Self::empty(GridSpec::new(0, 0), Vec::new(), width, height))
+    }
+
+    fn empty(grid: GridSpec, plots: Vec<Option<Plot>>, width: u32, height: u32) -> Self {
+        Self {
             grid,
             plots,
+            axes: Vec::new(),
             width,
             height,
             suptitle: None,
             suptitle_font_size: None,
             theme: Theme::default(),
             margin: 0.05, // 5% margin by default - tighter layout
-        })
+        }
     }
 
     /// Set vertical spacing between rows
@@ -407,14 +599,70 @@ impl SubplotFigure {
         Ok(self)
     }
 
+    /// Place a plot at an arbitrary rectangle of the figure.
+    ///
+    /// This is the free-form counterpart to [`subplot`](Self::subplot): the
+    /// grid decides where a panel goes, `add_axes` puts it exactly where you
+    /// say. Both draw into the same figure and are terminated by the same
+    /// [`save`](Self::save), so they can be mixed in one chain.
+    ///
+    /// `rect` is in **figure-relative coordinates with the origin at the
+    /// lower-left corner** — see [`FigureRect`] — and may be written as
+    /// `[left, bottom, width, height]`, as the equivalent tuple, or as a
+    /// `FigureRect`. It is matplotlib's `fig.add_axes` convention.
+    ///
+    /// Two rules, both deliberate:
+    ///
+    /// - Unlike the grid, `add_axes` does **not** inset by
+    ///   [`margin`](Self::margin). The rectangle you name is the rectangle you
+    ///   get; leave room for the panel's own axis labels yourself.
+    /// - Like the grid, it lays out inside the figure area left over below the
+    ///   [`suptitle`](Self::suptitle), so adding a figure title never draws
+    ///   over a panel.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use ruviz::prelude::*;
+    /// use ruviz::core::subplot::SubplotFigure;
+    ///
+    /// let x = vec![0.0, 1.0, 2.0];
+    /// let y = vec![0.0, 1.0, 4.0];
+    ///
+    /// SubplotFigure::figure(800, 800)?
+    ///     .add_axes([0.10, 0.10, 0.62, 0.62], Plot::new().scatter(&x, &y).into())?
+    ///     .add_axes([0.10, 0.76, 0.62, 0.18], Plot::new().histogram(&x).into())?
+    ///     .add_axes([0.76, 0.10, 0.18, 0.62], Plot::new().histogram(&y).into())?
+    ///     .save("joint.png")?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn add_axes(mut self, rect: impl Into<FigureRect>, plot: Plot) -> Result<Self> {
+        let rect = rect.into();
+        rect.validate()?;
+        self.axes.push((rect, plot));
+        Ok(self)
+    }
+
     /// Get grid specification
+    ///
+    /// A `0x0` grid means the figure has no grid at all — it was created by
+    /// [`figure`](Self::figure) and every panel is placed by
+    /// [`add_axes`](Self::add_axes).
     pub fn grid_spec(&self) -> GridSpec {
         self.grid
     }
 
     /// Get subplot count
+    ///
+    /// Counts filled *grid cells* only. Panels placed by
+    /// [`add_axes`](Self::add_axes) are counted by [`axes_count`](Self::axes_count).
     pub fn subplot_count(&self) -> usize {
         self.plots.iter().filter(|p| p.is_some()).count()
+    }
+
+    /// Number of panels placed by [`add_axes`](Self::add_axes).
+    pub fn axes_count(&self) -> usize {
+        self.axes.len()
     }
 
     /// Render all subplots to a single image and save
@@ -485,46 +733,63 @@ impl SubplotFigure {
             )?;
         }
 
-        // Render each subplot
+        // Render each grid cell, then each free-placed axes. Both go through
+        // `draw_panel`, so the two placement mechanisms cannot drift apart in
+        // typography scaling, theming, or compositing.
         for (index, plot_opt) in self.plots.iter().enumerate() {
             if let Some(plot) = plot_opt {
-                // Calculate subplot area with suptitle offset
-                let subplot_rect =
+                let rect =
                     self.grid
                         .subplot_rect(index, width, height, self.margin, suptitle_height)?;
-
-                // Calculate typography scale factor based on subplot size and DPI
-                // Use reference-DPI dimensions so small subplots get the same
-                // typography adjustment at every requested output DPI.
-                let reference_dim = 300.0_f32;
-                let subplot_min_dim = subplot_rect.width().min(subplot_rect.height()) / dpi_scale;
-                let size_scale = (subplot_min_dim / reference_dim).clamp(0.35, 1.0);
-
-                // Clone plot and scale typography for small subplots
-                let scaled_plot = plot.clone().scale_typography(size_scale);
-
-                // Create a temporary renderer for this subplot
-                let subplot_theme = scaled_plot.get_theme();
-                let subplot_width = Self::rect_pixel(subplot_rect.width(), "width")?;
-                let subplot_height = Self::rect_pixel(subplot_rect.height(), "height")?;
-                PlottingError::validate_subplot_dimensions(subplot_width, subplot_height)?;
-                let mut subplot_renderer =
-                    SkiaRenderer::new(subplot_width, subplot_height, subplot_theme)?;
-
-                scaled_plot.render_to_renderer(&mut subplot_renderer, dpi)?;
-
-                // Copy subplot renderer to main renderer at correct position
-                renderer.draw_subplot(
-                    subplot_renderer.into_image(),
-                    Self::rect_pixel(subplot_rect.left(), "x position")?,
-                    Self::rect_pixel(subplot_rect.top(), "y position")?,
-                )?;
+                Self::draw_panel(&mut renderer, rect, plot, dpi, dpi_scale)?;
             }
+        }
+        for (rect, plot) in &self.axes {
+            let rect = rect.to_pixels(width, height, suptitle_height)?;
+            Self::draw_panel(&mut renderer, rect, plot, dpi, dpi_scale)?;
         }
 
         // Save the final figure
         renderer.save_png(path)?;
         Ok(())
+    }
+
+    /// Render one panel into its own canvas and composite it at `rect`.
+    ///
+    /// The single place a child `Plot` becomes pixels in a figure — shared by
+    /// the grid and by [`add_axes`](Self::add_axes).
+    fn draw_panel(
+        renderer: &mut SkiaRenderer,
+        rect: Rect,
+        plot: &Plot,
+        dpi: f32,
+        dpi_scale: f32,
+    ) -> Result<()> {
+        // Calculate typography scale factor based on panel size and DPI.
+        // Use reference-DPI dimensions so small panels get the same
+        // typography adjustment at every requested output DPI.
+        let reference_dim = 300.0_f32;
+        let panel_min_dim = rect.width().min(rect.height()) / dpi_scale;
+        let size_scale = (panel_min_dim / reference_dim).clamp(0.35, 1.0);
+
+        // Clone plot and scale typography for small panels
+        let scaled_plot = plot.clone().scale_typography(size_scale);
+
+        // Create a temporary renderer for this panel
+        let panel_theme = scaled_plot.get_theme();
+        let panel_width = Self::rect_pixel(rect.width(), "width")?;
+        let panel_height = Self::rect_pixel(rect.height(), "height")?;
+        PlottingError::validate_subplot_dimensions(panel_width, panel_height)?;
+        let mut panel_renderer = SkiaRenderer::new(panel_width, panel_height, panel_theme)?;
+
+        scaled_plot.render_to_renderer(&mut panel_renderer, dpi)?;
+
+        // Copy the panel renderer onto the figure at the correct position
+        renderer.draw_image_layer(
+            &panel_renderer.into_image_demultiplied(),
+            Self::rect_pixel(rect.left(), "x position")?,
+            Self::rect_pixel(rect.top(), "y position")?,
+        )
     }
 }
 
@@ -554,6 +819,33 @@ impl SubplotFigure {
 /// ```
 pub fn subplots(rows: usize, cols: usize, width: u32, height: u32) -> Result<SubplotFigure> {
     SubplotFigure::new(rows, cols, width, height)
+}
+
+/// Convenience function to create a gridless figure for
+/// [`SubplotFigure::add_axes`]
+///
+/// The `add_axes` counterpart to [`subplots`], returning the same
+/// [`SubplotFigure`]: `subplots` when the panels form a grid, `figure` when
+/// they do not.
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use ruviz::prelude::*;
+/// use ruviz::core::subplot::figure;
+///
+/// let x = vec![0.0, 1.0, 2.0, 3.0];
+/// let y = vec![0.5, 1.5, 1.0, 2.5];
+///
+/// figure(800, 600)?
+///     .suptitle("Detail inset")
+///     .add_axes([0.08, 0.10, 0.88, 0.80], Plot::new().line(&x, &y).into())?
+///     .add_axes([0.60, 0.55, 0.30, 0.30], Plot::new().line(&x[..2], &y[..2]).into())?
+///     .save("inset.png")?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+pub fn figure(width: u32, height: u32) -> Result<SubplotFigure> {
+    SubplotFigure::figure(width, height)
 }
 
 /// Convenience function to create a subplot figure with default size
@@ -842,6 +1134,202 @@ mod tests {
         ] {
             assert_proportional(at_100, at_200, name);
         }
+    }
+
+    #[test]
+    fn figure_rect_measures_y_upwards_from_the_bottom_left_corner() {
+        // The bottom-left quarter of a 400x200 figure is the *lower* half of
+        // the pixel canvas, whose origin is top-left.
+        assert_rect(
+            FigureRect::new(0.0, 0.0, 0.5, 0.5)
+                .to_pixels(400, 200, 0.0)
+                .unwrap(),
+            (0.0, 100.0, 200.0, 100.0),
+        );
+        // ...and the top-left quarter is the upper half.
+        assert_rect(
+            FigureRect::new(0.0, 0.5, 0.5, 0.5)
+                .to_pixels(400, 200, 0.0)
+                .unwrap(),
+            (0.0, 0.0, 200.0, 100.0),
+        );
+        assert_rect(
+            FigureRect::FULL.to_pixels(400, 200, 0.0).unwrap(),
+            (0.0, 0.0, 400.0, 200.0),
+        );
+    }
+
+    #[test]
+    fn figure_rect_clamps_tolerated_edge_rounding_before_pixel_conversion() {
+        let ratio = 0.2;
+        let rect = FigureRect::new(0.0, 1.0 - ratio, 0.8, ratio);
+
+        rect.validate().unwrap();
+        assert_rect(
+            rect.to_pixels(600, 600, 0.0).unwrap(),
+            (0.0, 0.0, 480.0, 120.0),
+        );
+    }
+
+    #[test]
+    fn figure_rect_lays_out_below_the_suptitle_exactly_as_the_grid_does() {
+        let reserved = 40.0;
+        let full = FigureRect::FULL.to_pixels(400, 200, reserved).unwrap();
+        let grid = GridSpec::new(1, 1)
+            .subplot_rect(0, 400, 200, 0.0, reserved)
+            .unwrap();
+
+        assert_rect(full, (0.0, reserved, 400.0, 160.0));
+        assert_eq!(
+            (full.top(), full.height()),
+            (grid.top(), grid.height()),
+            "add_axes and the grid must reserve the same suptitle band"
+        );
+
+        // A half-height rect is half of what is left, not half of the canvas.
+        assert_rect(
+            FigureRect::new(0.0, 0.0, 1.0, 0.5)
+                .to_pixels(400, 200, reserved)
+                .unwrap(),
+            (0.0, reserved + 80.0, 400.0, 80.0),
+        );
+    }
+
+    #[test]
+    fn figure_rect_accepts_every_spelling_of_the_same_rectangle() {
+        let expected = FigureRect::new(0.1, 0.2, 0.5, 0.6);
+        assert_eq!(FigureRect::from([0.1, 0.2, 0.5, 0.6]), expected);
+        assert_eq!(FigureRect::from((0.1, 0.2, 0.5, 0.6)), expected);
+    }
+
+    #[test]
+    fn add_axes_rejects_a_rectangle_it_cannot_draw() {
+        let figure = SubplotFigure::figure(400, 300).unwrap();
+        for rect in [
+            // off the right edge, top edge, left edge, bottom edge
+            [0.6, 0.1, 0.8, 0.8],
+            [0.1, 0.6, 0.8, 0.8],
+            [-0.1, 0.1, 0.5, 0.5],
+            [0.1, -0.1, 0.5, 0.5],
+            // zero width, negative height, not a number, not finite
+            [0.1, 0.1, 0.0, 0.5],
+            [0.1, 0.1, 0.5, -0.5],
+            [f64::NAN, 0.1, 0.5, 0.5],
+            [0.1, 0.1, f64::INFINITY, 0.5],
+        ] {
+            let err = figure
+                .clone()
+                .add_axes(rect, Plot::new())
+                .err()
+                .unwrap_or_else(|| panic!("{rect:?} should be rejected"));
+            assert!(matches!(err, PlottingError::InvalidInput(_)));
+        }
+
+        assert_eq!(
+            figure
+                .add_axes(FigureRect::FULL, Plot::new())
+                .unwrap()
+                .axes_count(),
+            1
+        );
+    }
+
+    #[test]
+    fn a_gridless_figure_has_no_grid_cells_but_takes_free_axes() {
+        let figure = SubplotFigure::figure(400, 300).unwrap();
+        assert_eq!(figure.grid_spec().total_subplots(), 0);
+        assert_eq!(figure.subplot_count(), 0);
+        assert_eq!(figure.axes_count(), 0);
+
+        // There is no cell 0 to fill, and the error says so.
+        assert!(figure.clone().subplot(0, 0, Plot::new()).is_err());
+        assert!(figure.clone().subplot_at(0, Plot::new()).is_err());
+
+        let figure = figure
+            .add_axes([0.0, 0.0, 0.5, 1.0], Plot::new())
+            .unwrap()
+            .add_axes([0.5, 0.0, 0.5, 1.0], Plot::new())
+            .unwrap();
+        assert_eq!(figure.axes_count(), 2);
+        assert_eq!(figure.subplot_count(), 0);
+    }
+
+    #[test]
+    fn add_axes_draws_only_inside_the_rectangle_it_was_given() {
+        fn quadrant_ink(image: &image::RgbaImage) -> [usize; 4] {
+            let mut counts = [0_usize; 4];
+            let (half_w, half_h) = (image.width() / 2, image.height() / 2);
+            for (x, y, pixel) in image.enumerate_pixels() {
+                if pixel.0[..3].iter().all(|channel| *channel > 245) {
+                    continue;
+                }
+                let index = usize::from(x >= half_w) + 2 * usize::from(y >= half_h);
+                counts[index] += 1;
+            }
+            counts
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bottom-left.png");
+        let plot: Plot = Plot::new().line(&[0.0, 1.0, 2.0], &[0.0, 1.0, 0.25]).into();
+
+        // Bottom-left quarter in figure coordinates == lower-left quarter of
+        // the image, because y grows upwards.
+        SubplotFigure::figure(400, 400)
+            .unwrap()
+            .add_axes([0.0, 0.0, 0.5, 0.5], plot)
+            .unwrap()
+            .save(&path)
+            .unwrap();
+
+        let image = image::open(&path).unwrap().to_rgba8();
+        assert_eq!(image.dimensions(), (400, 400));
+        let [top_left, top_right, bottom_left, bottom_right] = quadrant_ink(&image);
+        assert!(
+            bottom_left > 500,
+            "the panel should be drawn in the lower-left quadrant, ink={bottom_left}"
+        );
+        assert_eq!(
+            (top_left, top_right, bottom_right),
+            (0, 0, 0),
+            "nothing may be drawn outside the requested rectangle"
+        );
+    }
+
+    #[test]
+    fn a_figure_may_mix_grid_cells_and_free_axes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mixed.png");
+        let plot: Plot = Plot::new().line(&[0.0, 1.0], &[0.0, 1.0]).into();
+
+        let figure = subplots(1, 2, 600, 300)
+            .unwrap()
+            .subplot_at(0, plot.clone())
+            .unwrap()
+            .add_axes((0.55, 0.10, 0.40, 0.80), plot)
+            .unwrap();
+
+        assert_eq!((figure.subplot_count(), figure.axes_count()), (1, 1));
+        figure.save(&path).unwrap();
+        assert_eq!(image::image_dimensions(path).unwrap(), (600, 300));
+    }
+
+    #[test]
+    fn add_axes_scales_with_dpi_like_the_grid() {
+        let dir = tempfile::tempdir().unwrap();
+        let at_100 = dir.path().join("axes-100.png");
+        let at_200 = dir.path().join("axes-200.png");
+        let plot: Plot = Plot::new().line(&[0.0, 1.0], &[0.0, 1.0]).into();
+        let figure = SubplotFigure::figure(400, 300)
+            .unwrap()
+            .add_axes([0.25, 0.25, 0.5, 0.5], plot)
+            .unwrap();
+
+        figure.clone().save(&at_100).unwrap();
+        figure.save_with_dpi(&at_200, 200.0).unwrap();
+
+        assert_eq!(image::image_dimensions(at_100).unwrap(), (400, 300));
+        assert_eq!(image::image_dimensions(at_200).unwrap(), (800, 600));
     }
 
     #[test]

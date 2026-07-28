@@ -2,14 +2,12 @@
 // too_many_arguments: Many rendering functions require multiple parameters for
 // flexibility. Consider config structs for future additions, but current API is ergonomic.
 #![allow(clippy::too_many_arguments)]
-#![allow(unconditional_recursion)]
 // Allow unused code during development
 #![allow(dead_code)]
 #![allow(unused_variables)]
 #![allow(unused_imports)]
 #![allow(unused_mut)]
 #![allow(unreachable_code)]
-#![allow(unreachable_patterns)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 //! # Ruviz - High-Performance Rust Plotting Library
@@ -23,7 +21,8 @@
 //! - **Performance-Oriented**: Built for release-mode plotting workloads
 //!   with benchmarkable output paths
 //! - **Zero Unsafe Public API**: Memory safety without compromising performance
-//! - **30+ Plotting Primitives and Layouts**: Distribution, categorical, polar, regression, and layout helpers
+//! - **29 Plot Types (33 with the `3d` feature)**: basic, distribution, continuous,
+//!   composition, polar, vector and hierarchical families, plus subplot layout helpers
 //! - **Publication Quality**: PNG/SVG export with custom themes
 //! - **Large Dataset Support**: Streaming-friendly data structures and
 //!   practical downsampling workflows
@@ -32,25 +31,30 @@
 //!
 //! ## Quick Start
 //!
-//! Create plots with minimal boilerplate using top-level convenience functions:
+//! Every plot is built the same way: `Plot::new()`, one series method, setters,
+//! then `save`. There is no second entry point to learn.
 //!
 //! ```rust,no_run
 //! use ruviz::prelude::*;
 //!
-//! // Line plot - one line of code!
+//! // Line plot
 //! let x: Vec<f64> = (0..100).map(|i| i as f64 * 0.1).collect();
 //! let y: Vec<f64> = x.iter().map(|&v| v.sin()).collect();
-//! line(&x, &y).title("Sine Wave").save("sine.png")?;
+//! Plot::new().line(&x, &y).title("Sine Wave").save("sine.png")?;
 //!
 //! // Scatter plot
-//! scatter(&x, &y).title("Points").marker(MarkerStyle::Circle).save("scatter.png")?;
+//! Plot::new().scatter(&x, &y).title("Points").marker(MarkerStyle::Circle).save("scatter.png")?;
 //!
 //! // Bar chart
 //! let cats = ["A", "B", "C", "D"];
 //! let vals = [10.0, 25.0, 15.0, 30.0];
-//! bar(&cats, &vals).title("Sales").save("bar.png")?;
+//! Plot::new().bar(&cats, &vals).title("Sales").save("bar.png")?;
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
+//!
+//! `save` finishes the pending series for you, so `.end_series()` is only needed
+//! when you want the [`Plot`] value itself — for example to hand it to
+//! [`subplots`](crate::core::subplots).
 //!
 //! ## Typst Text Mode
 //!
@@ -125,19 +129,19 @@
 //!     let phase = t.time * 2.0 * std::f64::consts::PI;
 //!     let x: Vec<f64> = (0..100).map(|i| i as f64 * 0.1).collect();
 //!     let y: Vec<f64> = x.iter().map(|&xi| (xi + phase).sin()).collect();
-//!     line(&x, &y).title(format!("t = {:.2}s", t.time))
+//!     Plot::new().line(&x, &y).title(format!("t = {:.2}s", t.time))
 //! })?;
 //!
 //! // Duration-based animation (2 seconds at 30fps)
 //! record!("bounce.gif", 2 secs, |t| {
 //!     let y = t.ease_over(easing::ease_out_bounce, 100.0, 0.0, 2.0);
-//!     scatter(&[0.0], &[y]).title("Bouncing Ball")
+//!     Plot::new().scatter(&[0.0], &[y]).title("Bouncing Ball")
 //! })?;
 //!
 //! // Custom framerate
 //! record!("smooth.gif", 3 secs @ 60 fps, |t| {
 //!     let x = t.lerp_over(0.0, 10.0, 3.0);
-//!     line(&[0.0, x], &[0.0, x]).title("Growing Line")
+//!     Plot::new().line(&[0.0, x], &[0.0, x]).title("Growing Line")
 //! })?;
 //! ```
 //!
@@ -262,15 +266,36 @@
 //! | Category | Plot Types |
 //! |----------|------------|
 //! | **Basic** | Line, Scatter, Bar |
-//! | **Distribution** | Histogram, Box Plot, Violin, KDE, ECDF |
-//! | **Continuous** | Heatmap, Contour, Fill Between |
+//! | **Distribution** | Histogram, Box Plot, Violin, Boxen, KDE, ECDF, Rug, Strip, Swarm |
+//! | **Categorical (multi-series)** | Grouped Bar, Stacked Bar |
+//! | **Continuous** | Heatmap, Contour, Hexbin, Fill Between, Area, Stacked Area |
+//! | **Discrete** | Step, Stem |
 //! | **Error** | Error Bars |
-//! | **Composition** | Pie |
+//! | **Composition** | Pie, Donut |
 //! | **Polar** | Polar Plot, Radar/Spider Chart |
+//! | **Vector** | Quiver |
+//! | **Hierarchical** | Dendrogram |
+//! | **3D** (`3d` feature) | Scatter3D, Line3D, Surface3D, Wireframe3D |
 //!
-//! Lower-level utilities in [`plots`] expose additional configs and computation
-//! helpers for specialized workflows. See the [Plot Types Guide](https://github.com/Ameyanagi/ruviz/blob/main/docs/guide/04_plot_types.md)
-//! for current coverage details.
+//! That is the complete list: 29 types from [`Plot`], 4 more from `Plot3D`.
+//! `src/plots/mod.rs::catalog_is_true` reads the builder's own source and fails
+//! if this table drifts from the API.
+//!
+//! All of them except `fill_between` are *series* methods returning
+//! [`PlotBuilder<C>`](core::PlotBuilder), so one chain works across every one:
+//! `.<series>(..).label(..).color(..).legend_best().save(..)`. `fill_between`
+//! is an annotation rather than a series — it returns the plot itself, so it
+//! takes plot-level setters instead of series-level ones.
+//!
+//! Joint plots and pair plots are *figures* rather than series:
+//! [`plots::composite::jointplot()`] and [`plots::composite::pairplot()`] return a
+//! [`SubplotFigure`](core::SubplotFigure), like [`core::subplots`] does, so they
+//! are not counted above.
+//!
+//! [`plots`] also exposes compute helpers (2D KDE, regression) that have **no**
+//! builder method and cannot be drawn — see the [`plots`] module docs. See the
+//! [Plot Types Guide](https://github.com/Ameyanagi/ruviz/blob/main/docs/guide/04_plot_types.md)
+//! for details.
 //!
 //! <details>
 //! <summary>Plot Types Code Examples</summary>
@@ -287,7 +312,6 @@
 //!     .xlabel("x")
 //!     .ylabel("sin(x)")
 //!     .line(&x, &y)
-//!     .end_series()
 //!     .save("line_plot.png")?;
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
@@ -306,7 +330,6 @@
 //!     .xlabel("x")
 //!     .ylabel("y")
 //!     .scatter(&x, &y)
-//!     .end_series()
 //!     .save("scatter_plot.png")?;
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
@@ -323,7 +346,6 @@
 //!     .xlabel("Category")
 //!     .ylabel("Value")
 //!     .bar(&categories, &values)
-//!     .end_series()
 //!     .save("bar_chart.png")?;
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
@@ -343,8 +365,7 @@
 //!     .title("Histogram")
 //!     .xlabel("Value")
 //!     .ylabel("Frequency")
-//!     .histogram(&data, None)
-//!     .end_series()
+//!     .histogram(&data)
 //!     .save("histogram.png")?;
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
@@ -352,7 +373,6 @@
 //! **Box Plot**
 //! ```rust,no_run
 //! use ruviz::prelude::*;
-//! use ruviz::plots::boxplot::BoxPlotConfig;
 //!
 //! let data = vec![
 //!     1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0,
@@ -364,8 +384,8 @@
 //!     .title("Box Plot")
 //!     .xlabel("Distribution")
 //!     .ylabel("Values")
-//!     .boxplot(&data, Some(BoxPlotConfig::new()))
-//!     .end_series()
+//!     .boxplot(&data)
+//!     .show_mean(true)
 //!     .save("boxplot.png")?;
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
@@ -381,16 +401,13 @@
 //!     }).collect()
 //! }).collect();
 //!
-//! let config = HeatmapConfig::new()
-//!     .value_scale(AxisScale::Log)
-//!     .colorbar_label("Distance");
-//!
 //! Plot::new()
 //!     .title("Log-Scaled Heatmap")
 //!     .xlabel("X")
 //!     .ylabel("Y")
-//!     .heatmap(&data, Some(config))
-//!     .end_series()
+//!     .heatmap(&data)
+//!     .value_scale(AxisScale::Log)
+//!     .colorbar_label("Distance")
 //!     .save("heatmap.png")?;
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
@@ -417,14 +434,13 @@
 //!     .title("Line Styles")
 //!     .legend_position(LegendPosition::Best)
 //!     .line(&x, &x.iter().map(|&v| v.sin() + 4.0).collect::<Vec<_>>())
-//!     .label("Solid").style(LineStyle::Solid)
+//!     .label("Solid").line_style(LineStyle::Solid)
 //!     .line(&x, &x.iter().map(|&v| v.sin() + 3.0).collect::<Vec<_>>())
-//!     .label("Dashed").style(LineStyle::Dashed)
+//!     .label("Dashed").line_style(LineStyle::Dashed)
 //!     .line(&x, &x.iter().map(|&v| v.sin() + 2.0).collect::<Vec<_>>())
-//!     .label("Dotted").style(LineStyle::Dotted)
+//!     .label("Dotted").line_style(LineStyle::Dotted)
 //!     .line(&x, &x.iter().map(|&v| v.sin() + 1.0).collect::<Vec<_>>())
-//!     .label("DashDot").style(LineStyle::DashDot)
-//!     .end_series()
+//!     .label("DashDot").line_style(LineStyle::DashDot)
 //!     .save("line_styles.png")?;
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
@@ -443,7 +459,6 @@
 //!     .scatter(&x, &vec![3.0; 5]).label("Triangle").marker(MarkerStyle::Triangle)
 //!     .scatter(&x, &vec![2.0; 5]).label("Diamond").marker(MarkerStyle::Diamond)
 //!     .scatter(&x, &vec![1.0; 5]).label("Star").marker(MarkerStyle::Star)
-//!     .end_series()
 //!     .save("marker_styles.png")?;
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
@@ -466,7 +481,6 @@
 //!     .label("Color 3").color(palette[2])
 //!     .line(&x, &x.iter().map(|&v| v.sin()).collect::<Vec<_>>())
 //!     .label("Color 4").color(palette[3])
-//!     .end_series()
 //!     .save("colors.png")?;
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
@@ -493,7 +507,6 @@
 //! Plot::new()
 //!     .title("Default Theme")
 //!     .line(&x, &y)
-//!     .end_series()
 //!     .save("theme_default.png")?;
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
@@ -509,7 +522,6 @@
 //!     .title("Dark Theme")
 //!     .theme(Theme::dark())
 //!     .line(&x, &y)
-//!     .end_series()
 //!     .save("theme_dark.png")?;
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
@@ -525,7 +537,6 @@
 //!     .title("Seaborn Theme")
 //!     .theme(Theme::seaborn())
 //!     .line(&x, &y)
-//!     .end_series()
 //!     .save("theme_seaborn.png")?;
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
@@ -541,7 +552,6 @@
 //!     .title("Publication Theme")
 //!     .theme(Theme::publication())
 //!     .line(&x, &y)
-//!     .end_series()
 //!     .save("theme_publication.png")?;
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
@@ -707,7 +717,12 @@
 //!
 //! See [Animation Gallery](https://github.com/Ameyanagi/ruviz/blob/main/docs/gallery/animation/README.md) for more examples.
 //!
-//! ## Quick Start
+//! ## Common Tasks
+//!
+//! Each of these is the same chain from [Quick Start](#quick-start) with one
+//! extra setter.
+//!
+//! ### Axis Labels
 //!
 //! ```rust,no_run
 //! use ruviz::prelude::*;
@@ -726,6 +741,9 @@
 //!
 //! ### With Legend (matplotlib-style)
 //!
+//! Label each series, then enable the legend with `legend_best()` (the
+//! equivalent of `plt.legend()`) or `legend_position(..)` to place it yourself.
+//!
 //! ```rust,no_run
 //! use ruviz::prelude::*;
 //!
@@ -737,8 +755,7 @@
 //!     .title("Trigonometric Functions")
 //!     .line(&x, &sin_y).label("sin(x)")
 //!     .line(&x, &cos_y).label("cos(x)")
-//!     .end_series()     // Finish series chain
-//!     .legend_best()    // Enable legend (like plt.legend())
+//!     .legend_best()
 //!     .save("trig.png")?;
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
@@ -820,35 +837,74 @@ pub mod interactive;
 pub mod animation;
 
 /// Convenience re-exports for common usage
+///
+/// # What is deliberately *not* here
+///
+/// - [`crate::core::Result`] — a one-parameter alias. Glob-importing it shadows
+///   [`std::result::Result`], so every ordinary `Result<T, E>` in the importing
+///   scope fails with `E0107`. Use [`PlotResult`](crate::core::PlotResult), which
+///   is exported here, or import `ruviz::core::Result` explicitly.
+/// - `PlotInput` / `SeriesStyle` — internal representations of a half-built
+///   series. They are crate-internal so that refactoring them is not a breaking
+///   change.
 pub mod prelude {
     pub use crate::axes::AxisScale;
+    // `Position` is deprecated in favour of `LegendPosition` but stays in the
+    // prelude so existing `use ruviz::prelude::*` code keeps resolving it.
+    #[allow(deprecated)]
     pub use crate::core::{
-        Annotation, AnnotationId, ArrowHead, ArrowStyle, BackendType, BuilderWhen, FillStyle,
-        FramePacing, FrameStats, GridSpec, HatchPattern, HitResult, Image, ImageTarget,
+        Annotation, AnnotationId, ArrowHead, ArrowStyle, BackendType, BuilderWhen, FigureRect,
+        FillStyle, FramePacing, FrameStats, GridSpec, HatchPattern, HitResult, Image, ImageTarget,
         InsetAnchor, InsetLayout, InteractiveFrame, InteractivePlotSession,
         InteractiveViewportSnapshot, IntoPlot, LayerRenderState, Legend, LegendAnchor, LegendItem,
-        LegendItemType, LegendPosition, Plot, PlotBuilder, PlotInput, PlotInputEvent, PlotSource,
-        Position, PreparedPlot, QualityPolicy, ReactiveSubscription, ReactiveValue,
-        RenderTargetKind, Result, SeriesStyle, ShapeStyle, SubplotFigure, SurfaceCapability,
-        SurfaceTarget, TextAlign, TextStyle, TextVAlign, TickDirection, TickSides, ViewportPoint,
-        ViewportRect, subplots, subplots_default,
+        LegendItemType, LegendPosition, Plot, PlotBuilder, PlotInputEvent, PlotResult, PlotSource,
+        PlottingError, Position, PreparedPlot, QualityPolicy, ReactiveSubscription, ReactiveValue,
+        RenderTargetKind, ShapeStyle, SubplotFigure, SurfaceCapability, SurfaceTarget, TextAlign,
+        TextStyle, TextVAlign, TickDirection, TickSides, ViewportPoint, ViewportRect, figure,
+        subplots, subplots_default,
+    };
+    #[cfg(feature = "3d")]
+    pub use crate::core::{
+        AxisAspect3D, Bounds3D, Camera3D, CameraSnapshot3D, InputEvent3D, InteractionResult3D,
+        InteractivePlot3DSession, Line3DBuilder, PickHit3D, PickPrimitive3D, Point3D,
+        PointerButton3D, ProjectedPoint3D, Projection3D, RenderDiagnostics3D, Scatter3DBuilder,
+        ScreenRay3D, Surface3DBuilder, Wireframe3DBuilder, release_3d_gpu_resources,
     };
     pub use crate::data::{
         Data1D, DataShader, DataShaderCanvas, NullPolicy, NumericData1D, NumericData2D,
     };
+    #[allow(deprecated)]
     pub use crate::plots::{
-        BoxenConfig, BoxenOrientation, ContourConfig, HeatmapConfig, HeatmapOrigin, Interpolation,
-        PieConfig, PlotArea, PlotCompute, PlotConfig, PlotData, PlotRender, PolarPlotConfig,
-        QuiverConfig, QuiverPivot, RadarConfig, StemMarker, StemOrientation, StepWhere,
-        ViolinConfig,
+        BandwidthMethod, BinMethod, BoxPlotConfig, BoxenConfig, BoxenOrientation, ContourConfig,
+        ContourInterpolation, EcdfConfig, EcdfStat, HeatmapConfig, HeatmapOrigin, HistogramConfig,
+        Interpolation, KdeConfig, OutlierMethod, PieConfig, PlotArea, PlotCompute, PlotConfig,
+        PlotData, PlotRender, PolarPlotConfig, QuiverConfig, QuiverPivot, RadarConfig, StemMarker,
+        StemOrientation, StepWhere, ViolinConfig, WhiskerMethod,
+    };
+    // Enum arguments to prelude-exported setters must themselves be nameable from the
+    // prelude, or `.orientation(BoxOrientation::Vertical)` is E0433 and rustc suggests
+    // the wrong sibling type. These two are not re-exported from `crate::plots`.
+    pub use crate::plots::boxplot::BoxOrientation;
+    pub use crate::plots::distribution::ViolinScale;
+    #[cfg(feature = "3d")]
+    pub use crate::plots::{
+        Line3DConfig, Scatter3DConfig, Surface3DConfig, SurfaceSampling, SurfaceShading,
+        Wireframe3DConfig,
     };
     pub use crate::render::{
-        Color, ColorMap, FontConfig, FontFamily, FontStyle, FontWeight, LineStyle, MarkerStyle,
-        Theme,
+        Color, ColorMap, ColorMapSpec, FontConfig, FontFamily, FontStyle, FontWeight, LineStyle,
+        MarkerStyle, Theme, XTickRotation,
     };
 
-    // Top-level convenience functions
+    // Deprecated 2D shortcuts, kept re-exported so existing `use
+    // ruviz::prelude::*` code still resolves them and gets the migration note.
+    // Use `Plot::new().line(..)` / `.scatter(..)` / `.bar(..)` instead.
+    #[allow(deprecated)]
     pub use crate::{bar, line, scatter};
+    // 3D entry points are *not* deprecated: there is no `Plot3D` builder, so
+    // these free functions are the one obvious way to start a 3D plot.
+    #[cfg(feature = "3d")]
+    pub use crate::{line3d, scatter3d, surface, wireframe};
 
     #[cfg(all(feature = "interactive", not(target_arch = "wasm32")))]
     pub use crate::interactive::{
@@ -877,34 +933,90 @@ use core::{Plot, PlotBuilder};
 use data::NumericData1D;
 use plots::{BarConfig, LineConfig, ScatterConfig};
 
+#[cfg(feature = "3d")]
+use core::{Line3DBuilder, Scatter3DBuilder, Surface3DBuilder, Wireframe3DBuilder};
+#[cfg(feature = "3d")]
+use data::NumericData2D;
+
+/// Create a 3D scatter plot from x, y, and z coordinates.
+///
+/// Enable it with `ruviz = { version = "...", features = ["3d"] }`.
+#[cfg(feature = "3d")]
+pub fn scatter3d<X, Y, Z>(x: &X, y: &Y, z: &Z) -> Scatter3DBuilder
+where
+    X: NumericData1D + ?Sized,
+    Y: NumericData1D + ?Sized,
+    Z: NumericData1D + ?Sized,
+{
+    Scatter3DBuilder::from_data(x, y, z)
+}
+
+/// Create a 3D line plot from x, y, and z coordinates.
+///
+/// Enable it with `ruviz = { version = "...", features = ["3d"] }`.
+#[cfg(feature = "3d")]
+pub fn line3d<X, Y, Z>(x: &X, y: &Y, z: &Z) -> Line3DBuilder
+where
+    X: NumericData1D + ?Sized,
+    Y: NumericData1D + ?Sized,
+    Z: NumericData1D + ?Sized,
+{
+    Line3DBuilder::from_data(x, y, z)
+}
+
+/// Create a regular-grid surface where `z.shape() == (y.len(), x.len())`.
+///
+/// Enable it with `ruviz = { version = "...", features = ["3d"] }`.
+#[cfg(feature = "3d")]
+pub fn surface<X, Y, Z>(x: &X, y: &Y, z: &Z) -> Surface3DBuilder
+where
+    X: NumericData1D + ?Sized,
+    Y: NumericData1D + ?Sized,
+    Z: NumericData2D + ?Sized,
+{
+    Surface3DBuilder::from_data(x, y, z)
+}
+
+/// Create a regular-grid wireframe where `z.shape() == (y.len(), x.len())`.
+///
+/// Enable it with `ruviz = { version = "...", features = ["3d"] }`.
+#[cfg(feature = "3d")]
+pub fn wireframe<X, Y, Z>(x: &X, y: &Y, z: &Z) -> Wireframe3DBuilder
+where
+    X: NumericData1D + ?Sized,
+    Y: NumericData1D + ?Sized,
+    Z: NumericData2D + ?Sized,
+{
+    Wireframe3DBuilder::from_data(x, y, z)
+}
+
 /// Create a line plot with the given data.
 ///
-/// This is a convenience function equivalent to `Plot::new().line(x, y)`.
+/// # Deprecated
 ///
-/// # Arguments
-///
-/// * `x` - X-axis data (any type implementing `NumericData1D`)
-/// * `y` - Y-axis data (any type implementing `NumericData1D`)
-///
-/// # Returns
-///
-/// A `PlotBuilder` that can be further configured.
-///
-/// # Example
+/// This is a second spelling of `Plot::new().line(x, y)` that returns the exact
+/// same [`PlotBuilder`]. Write the builder chain instead — it is the one entry
+/// point that works for all 29 plot types, whereas only three of them ever had
+/// a free function:
 ///
 /// ```rust,no_run
-/// use ruviz::{line, prelude::*};
+/// use ruviz::prelude::*;
 ///
 /// let x: Vec<f64> = (0..100).map(|i| i as f64 * 0.1).collect();
 /// let y: Vec<f64> = x.iter().map(|&v| v.sin()).collect();
 ///
-/// line(&x, &y)
+/// Plot::new()
+///     .line(&x, &y)
 ///     .title("Sine Wave")
 ///     .xlabel("x")
 ///     .ylabel("sin(x)")
 ///     .save("sine.png")?;
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
+#[deprecated(
+    since = "0.6.0",
+    note = "use the Plot builder: Plot::new().line(x, y) — identical return type, and the same entry point every other plot type uses"
+)]
 pub fn line<X, Y>(x: &X, y: &Y) -> PlotBuilder<LineConfig>
 where
     X: NumericData1D,
@@ -915,31 +1027,28 @@ where
 
 /// Create a scatter plot with the given data.
 ///
-/// This is a convenience function equivalent to `Plot::new().scatter(x, y)`.
+/// # Deprecated
 ///
-/// # Arguments
-///
-/// * `x` - X-axis data (any type implementing `NumericData1D`)
-/// * `y` - Y-axis data (any type implementing `NumericData1D`)
-///
-/// # Returns
-///
-/// A `PlotBuilder` that can be further configured.
-///
-/// # Example
+/// This is a second spelling of `Plot::new().scatter(x, y)` that returns the
+/// exact same [`PlotBuilder`]. Write the builder chain instead:
 ///
 /// ```rust,no_run
-/// use ruviz::{scatter, prelude::*};
+/// use ruviz::prelude::*;
 ///
 /// let x = vec![1.0, 2.0, 3.0, 4.0, 5.0];
 /// let y = vec![2.0, 4.0, 1.0, 5.0, 3.0];
 ///
-/// scatter(&x, &y)
+/// Plot::new()
+///     .scatter(&x, &y)
 ///     .title("Scatter Plot")
 ///     .marker(MarkerStyle::Circle)
 ///     .save("scatter.png")?;
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
+#[deprecated(
+    since = "0.6.0",
+    note = "use the Plot builder: Plot::new().scatter(x, y) — identical return type, and the same entry point every other plot type uses"
+)]
 pub fn scatter<X, Y>(x: &X, y: &Y) -> PlotBuilder<ScatterConfig>
 where
     X: NumericData1D,
@@ -950,35 +1059,158 @@ where
 
 /// Create a bar plot with the given categories and values.
 ///
-/// This is a convenience function equivalent to `Plot::new().bar(categories, values)`.
+/// # Deprecated
 ///
-/// # Arguments
-///
-/// * `categories` - Category labels for the bars
-/// * `values` - Values for each bar (any type implementing `NumericData1D`)
-///
-/// # Returns
-///
-/// A `PlotBuilder` that can be further configured.
-///
-/// # Example
+/// This is a second spelling of `Plot::new().bar(categories, values)` that
+/// returns the exact same [`PlotBuilder`]. Write the builder chain instead:
 ///
 /// ```rust,no_run
-/// use ruviz::{bar, prelude::*};
+/// use ruviz::prelude::*;
 ///
 /// let categories = vec!["A", "B", "C", "D"];
 /// let values = vec![10.0, 25.0, 15.0, 30.0];
 ///
-/// bar(&categories, &values)
+/// Plot::new()
+///     .bar(&categories, &values)
 ///     .title("Bar Chart")
 ///     .ylabel("Count")
 ///     .save("bar.png")?;
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
+#[deprecated(
+    since = "0.6.0",
+    note = "use the Plot builder: Plot::new().bar(categories, values) — identical return type, and the same entry point every other plot type uses"
+)]
 pub fn bar<S, V>(categories: &[S], values: &V) -> PlotBuilder<BarConfig>
 where
     S: ToString,
     V: NumericData1D,
 {
     Plot::new().bar(categories, values)
+}
+
+#[cfg(test)]
+mod prelude_contract_tests {
+    //! Pins the two properties the prelude has to keep: it must not shadow
+    //! `std::result::Result`, and every config type named in a public signature
+    //! must be reachable from it.
+    use crate::prelude::*;
+
+    /// If `crate::core::Result` (one generic parameter) ever re-enters the
+    /// prelude glob, this fails to compile with `E0107`.
+    fn two_parameter_result_still_resolves() -> Result<u32, std::num::ParseIntError> {
+        "42".parse()
+    }
+
+    /// The non-colliding alias the prelude offers instead.
+    fn plot_result_is_exported() -> PlotResult<()> {
+        Ok(())
+    }
+
+    /// Every family config reachable from the prelude alone. The builder's own
+    /// setters (`.histogram(&d).bins(30)`) are the primary way to configure a
+    /// series, but `histogram_with`/`boxplot_with`/`heatmap_with` take a config
+    /// by value, so a user whose only import is the prelude must be able to
+    /// name them.
+    fn family_configs_resolve(
+        _histogram: HistogramConfig,
+        _bin: BinMethod,
+        _boxplot: BoxPlotConfig,
+        _outlier: OutlierMethod,
+        _whisker: WhiskerMethod,
+        _kde: KdeConfig,
+        _ecdf: EcdfConfig,
+        _ecdf_stat: EcdfStat,
+        _bandwidth: BandwidthMethod,
+    ) {
+    }
+
+    /// The error type itself, not just its alias, has to be nameable so callers
+    /// can `match` on what `PlotResult` returns.
+    fn error_type_is_exported(err: PlottingError) -> &'static str {
+        match err {
+            PlottingError::EmptyDataSet => "empty",
+            _ => "other",
+        }
+    }
+
+    #[test]
+    fn prelude_contract_holds() {
+        assert_eq!(two_parameter_result_still_resolves().unwrap(), 42);
+        assert!(plot_result_is_exported().is_ok());
+        assert_eq!(error_type_is_exported(PlottingError::EmptyDataSet), "empty");
+        family_configs_resolve(
+            HistogramConfig::default(),
+            BinMethod::Uniform,
+            BoxPlotConfig::default(),
+            OutlierMethod::IQR,
+            WhiskerMethod::Tukey,
+            KdeConfig::default(),
+            EcdfConfig::default(),
+            EcdfStat::Proportion,
+            BandwidthMethod::Scott,
+        );
+    }
+}
+
+#[cfg(test)]
+mod one_obvious_way_tests {
+    //! Pins the "one obvious way" property: the deprecated 2D free functions are
+    //! literally the builder chain, so the migration named in their
+    //! `#[deprecated]` notes is a textual change with no type churn.
+    use crate::plots::{BarConfig, LineConfig, ScatterConfig};
+    use crate::prelude::*;
+
+    #[test]
+    #[allow(deprecated)]
+    fn free_functions_return_the_same_builder_as_the_canonical_chain() {
+        let x = vec![0.0, 1.0, 2.0];
+        let y = vec![0.0, 1.0, 4.0];
+        let categories = ["A", "B", "C"];
+        let values = vec![1.0, 2.0, 3.0];
+
+        let _deprecated: PlotBuilder<LineConfig> = crate::line(&x, &y);
+        let _canonical: PlotBuilder<LineConfig> = Plot::new().line(&x, &y);
+
+        let _deprecated: PlotBuilder<ScatterConfig> = crate::scatter(&x, &y);
+        let _canonical: PlotBuilder<ScatterConfig> = Plot::new().scatter(&x, &y);
+
+        let _deprecated: PlotBuilder<BarConfig> = crate::bar(&categories, &values);
+        let _canonical: PlotBuilder<BarConfig> = Plot::new().bar(&categories, &values);
+    }
+
+    /// `save`/`render` finalize the pending series, so the `.end_series()` the
+    /// crate docs used to show before every `.save()` was pure noise. Both
+    /// spellings have to keep producing the same image; the short one is the
+    /// documented one.
+    #[test]
+    // `end_series` is itself the deprecated item under test here: the point of
+    // the test is that the deprecated spelling stays pixel-identical to the
+    // documented one, so it cannot be written without calling it.
+    #[allow(deprecated)]
+    fn render_does_not_need_an_explicit_end_series() {
+        let x = vec![0.0, 1.0, 2.0];
+        let y = vec![0.0, 1.0, 4.0];
+
+        let with_end_series = Plot::new()
+            .size_px(200, 150)
+            .line(&x, &y)
+            .end_series()
+            .render()
+            .expect("explicit end_series should render");
+        let without_end_series = Plot::new()
+            .size_px(200, 150)
+            .line(&x, &y)
+            .render()
+            .expect("implicit finalize should render");
+
+        assert_eq!(
+            (with_end_series.width, with_end_series.height),
+            (without_end_series.width, without_end_series.height)
+        );
+        assert_eq!(
+            with_end_series.pixels, without_end_series.pixels,
+            "`.end_series()` before a terminal call must be a no-op"
+        );
+    }
 }

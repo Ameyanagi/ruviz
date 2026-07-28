@@ -7,7 +7,7 @@
 use ruviz::prelude::*;
 use std::f64::consts::PI;
 
-fn main() -> Result<()> {
+fn main() -> PlotResult<()> {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -15,7 +15,7 @@ fn main() -> Result<()> {
         .block_on(async_main())
 }
 
-async fn async_main() -> Result<()> {
+async fn async_main() -> PlotResult<()> {
     println!("Starting interactive multi-series example...");
     println!("Controls:");
     println!("  - Mouse wheel: Zoom in/out");
@@ -43,7 +43,7 @@ async fn async_main() -> Result<()> {
         .title("Interactive Multi-Signal Explorer")
         .xlabel("Time (s)")
         .ylabel("Amplitude")
-        .legend(Position::TopRight)
+        .legend(LegendPosition::UpperRight)
         .line(&x, &primary)
         .label("Primary oscillation")
         .line(&x, &harmonic)

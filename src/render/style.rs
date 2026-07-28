@@ -13,7 +13,7 @@
 ///
 /// Plot::new()
 ///     .line(&x, &y)
-///     .style(LineStyle::Dashed)
+///     .line_style(LineStyle::Dashed)
 ///     .end_series()
 ///     .save("dashed_line.png")?;
 /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -74,7 +74,7 @@ impl LineStyle {
     ///
     /// Plot::new()
     ///     .line(&[1.0, 2.0, 3.0], &[1.0, 4.0, 9.0])
-    ///     .style(custom_style)
+    ///     .line_style(custom_style)
     ///     .end_series()
     ///     .save("custom_line.png")?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -222,7 +222,11 @@ pub enum MarkerStyle {
     Plus,
     /// X mark
     Cross,
-    /// Filled star
+    /// Eight-pointed asterisk star (`+` and `x` overlaid)
+    ///
+    /// Drawn as four strokes, so it has no interior: it is not
+    /// [`is_filled`](MarkerStyle::is_filled) and it
+    /// [takes no edge](MarkerStyle::takes_edge).
     Star,
     /// Hollow circle
     CircleOpen,
@@ -254,6 +258,10 @@ impl MarkerStyle {
     }
 
     /// Check if this is a filled marker
+    ///
+    /// True only for the closed shapes every backend paints as a filled area.
+    /// [`MarkerStyle::Star`] is excluded: it is an asterisk built from four
+    /// strokes, with no interior to fill.
     pub fn is_filled(&self) -> bool {
         matches!(
             self,
@@ -262,8 +270,20 @@ impl MarkerStyle {
                 | MarkerStyle::Triangle
                 | MarkerStyle::TriangleDown
                 | MarkerStyle::Diamond
-                | MarkerStyle::Star
         )
+    }
+
+    /// Check whether an edge (rim) can be stroked around this marker
+    ///
+    /// Only a closed filled shape has an interior for an edge to bound, so this
+    /// is exactly [`is_filled`](Self::is_filled): the open styles already *are*
+    /// an outline, and the line-drawn styles (plus, cross, star) have no
+    /// interior at all.
+    ///
+    /// Every backend asks this same question, so it lives here rather than
+    /// being re-derived per renderer.
+    pub fn takes_edge(&self) -> bool {
+        self.is_filled()
     }
 
     /// Check if this is a hollow/open marker
@@ -369,6 +389,40 @@ mod tests {
         assert!(!MarkerStyle::Circle.is_hollow());
         assert!(MarkerStyle::Plus.is_line_based());
         assert!(!MarkerStyle::Circle.is_line_based());
+    }
+
+    #[test]
+    fn test_marker_takes_edge_only_for_closed_filled_shapes() {
+        for style in [
+            MarkerStyle::Circle,
+            MarkerStyle::Square,
+            MarkerStyle::Triangle,
+            MarkerStyle::TriangleDown,
+            MarkerStyle::Diamond,
+        ] {
+            assert!(style.takes_edge(), "{} encloses an area", style.name());
+        }
+        for style in [
+            MarkerStyle::CircleOpen,
+            MarkerStyle::SquareOpen,
+            MarkerStyle::TriangleOpen,
+            MarkerStyle::DiamondOpen,
+            MarkerStyle::Plus,
+            MarkerStyle::Cross,
+            // Star is an asterisk of four strokes, so it has no interior.
+            MarkerStyle::Star,
+        ] {
+            assert!(
+                !style.takes_edge(),
+                "{} has no interior for an edge to bound",
+                style.name()
+            );
+            assert!(
+                !style.is_filled(),
+                "{} must not claim to be filled",
+                style.name()
+            );
+        }
     }
 
     #[test]

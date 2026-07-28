@@ -5,7 +5,7 @@
 use ruviz::prelude::*;
 use ruviz::render::MarkerStyle;
 
-fn main() -> Result<()> {
+fn main() -> PlotResult<()> {
     // X values for each row of markers
     let x: Vec<f64> = (0..5).map(|j| j as f64 * 2.0).collect();
 

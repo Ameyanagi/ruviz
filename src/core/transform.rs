@@ -186,6 +186,50 @@ impl CoordinateTransform {
         self.normalized_to_screen(normalized_x, normalized_y)
     }
 
+    /// Transform data coordinates to screen coordinates, rejecting samples the
+    /// axis scales cannot represent.
+    ///
+    /// Returns `None` when either coordinate fails [`AxisScale::is_valid_value`]
+    /// — a non-finite sample on any scale, or a zero/negative sample on a log
+    /// scale. [`Self::data_to_screen_scaled`] maps those to `NaN` pixels, which
+    /// is only safe for a caller that is about to drop the point anyway.
+    ///
+    /// **Renderers must use this one.** A line series has to *break* its
+    /// polyline at a rejected sample rather than joining across the gap, and a
+    /// marker series has to drop it; both need to know a sample was rejected,
+    /// which a `NaN` pixel pair only communicates by accident.
+    ///
+    /// ```
+    /// use ruviz::axes::AxisScale;
+    /// use ruviz::core::CoordinateTransform;
+    ///
+    /// let transform = CoordinateTransform::new(1.0..10.0, 1.0..10.0, 0.0..100.0, 0.0..100.0);
+    /// assert!(
+    ///     transform
+    ///         .try_data_to_screen_scaled(5.0, 5.0, &AxisScale::Linear, &AxisScale::Log)
+    ///         .is_some()
+    /// );
+    /// // Zero has no position on a log axis.
+    /// assert!(
+    ///     transform
+    ///         .try_data_to_screen_scaled(5.0, 0.0, &AxisScale::Linear, &AxisScale::Log)
+    ///         .is_none()
+    /// );
+    /// ```
+    #[inline]
+    pub fn try_data_to_screen_scaled(
+        &self,
+        data_x: f64,
+        data_y: f64,
+        x_scale: &AxisScale,
+        y_scale: &AxisScale,
+    ) -> Option<(f32, f32)> {
+        if !x_scale.is_valid_value(data_x) || !y_scale.is_valid_value(data_y) {
+            return None;
+        }
+        Some(self.data_to_screen_scaled(data_x, data_y, x_scale, y_scale))
+    }
+
     /// Transform screen coordinates to data coordinates.
     ///
     /// # Arguments

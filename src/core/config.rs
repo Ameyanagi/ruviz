@@ -30,6 +30,12 @@ use crate::core::units::{REFERENCE_DPI, RenderScale, in_to_px, pt_to_px, px_to_i
 use crate::core::{PlottingError, Result};
 use crate::render::{FontFamily, FontWeight};
 
+/// Default autoscale margin added to each side of an auto-scaled axis.
+///
+/// Expressed as a fraction of the data span, matching matplotlib's
+/// `rcParams["axes.xmargin"]` / `rcParams["axes.ymargin"]` default of 0.05.
+pub const DEFAULT_AUTOSCALE_MARGIN: f64 = 0.05;
+
 // =============================================================================
 // Figure Configuration
 // =============================================================================
@@ -220,7 +226,7 @@ pub struct LineConfig {
     pub data_width: f32,
     /// Axis border width in points (default: 0.8)
     pub axis_width: f32,
-    /// Grid line width in points (default: 0.5)
+    /// Grid line width in points (default: 0.8, matches `GridStyle::default()`)
     pub grid_width: f32,
     /// Tick mark width in points (default: 0.6)
     pub tick_width: f32,
@@ -278,7 +284,7 @@ impl Default for LineConfig {
         Self {
             data_width: 1.5, // matplotlib default
             axis_width: 0.8,
-            grid_width: 0.5,
+            grid_width: 0.8, // matches GridStyle::default().line_width
             tick_width: 0.6,
             tick_length: 4.0,
         }
@@ -839,7 +845,7 @@ impl Default for SpineConfig {
 ///
 /// This struct aggregates all configuration options for a plot,
 /// using physical units for DPI-independent layout.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct PlotConfig {
     /// Figure dimensions and DPI
     pub figure: FigureConfig,
@@ -853,6 +859,31 @@ pub struct PlotConfig {
     pub margins: MarginConfig,
     /// Spine (axis border) visibility
     pub spines: SpineConfig,
+    /// Autoscale margin on the x axis, as a fraction of the data span applied to
+    /// each side (default: 0.05, matching matplotlib's `axes.xmargin`).
+    ///
+    /// Set to `0.0` for edge-to-edge data. Ignored when explicit x limits are set.
+    pub x_margin: f64,
+    /// Autoscale margin on the y axis, as a fraction of the data span applied to
+    /// each side (default: 0.05, matching matplotlib's `axes.ymargin`).
+    ///
+    /// Set to `0.0` for edge-to-edge data. Ignored when explicit y limits are set.
+    pub y_margin: f64,
+}
+
+impl Default for PlotConfig {
+    fn default() -> Self {
+        Self {
+            figure: FigureConfig::default(),
+            typography: TypographyConfig::default(),
+            lines: LineConfig::default(),
+            spacing: SpacingConfig::default(),
+            margins: MarginConfig::default(),
+            spines: SpineConfig::default(),
+            x_margin: DEFAULT_AUTOSCALE_MARGIN,
+            y_margin: DEFAULT_AUTOSCALE_MARGIN,
+        }
+    }
 }
 
 impl PlotConfig {
@@ -1091,6 +1122,29 @@ impl PlotConfigBuilder {
         self
     }
 
+    /// Set the x-axis autoscale margin as a fraction of the data span per side
+    ///
+    /// Pass `0.0` for edge-to-edge data. Ignored when explicit x limits are set.
+    pub fn x_margin(mut self, margin: f64) -> Self {
+        self.config.x_margin = margin;
+        self
+    }
+
+    /// Set the y-axis autoscale margin as a fraction of the data span per side
+    ///
+    /// Pass `0.0` for edge-to-edge data. Ignored when explicit y limits are set.
+    pub fn y_margin(mut self, margin: f64) -> Self {
+        self.config.y_margin = margin;
+        self
+    }
+
+    /// Set both autoscale margins at once (matplotlib's `Axes.margins`)
+    pub fn data_margins(mut self, x_margin: f64, y_margin: f64) -> Self {
+        self.config.x_margin = x_margin;
+        self.config.y_margin = y_margin;
+        self
+    }
+
     /// Build the final configuration
     pub fn build(self) -> PlotConfig {
         self.config
@@ -1194,6 +1248,25 @@ mod tests {
         let (w, h) = config.canvas_size();
         assert_eq!(w, 640);
         assert_eq!(h, 480);
+    }
+
+    #[test]
+    fn test_plot_config_default_autoscale_margins_match_matplotlib() {
+        let config = PlotConfig::default();
+        assert!((config.x_margin - 0.05).abs() < f64::EPSILON);
+        assert!((config.y_margin - 0.05).abs() < f64::EPSILON);
+        assert!((DEFAULT_AUTOSCALE_MARGIN - 0.05).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_plot_config_builder_autoscale_margins() {
+        let config = PlotConfig::builder().x_margin(0.0).y_margin(0.2).build();
+        assert!((config.x_margin - 0.0).abs() < f64::EPSILON);
+        assert!((config.y_margin - 0.2).abs() < f64::EPSILON);
+
+        let both = PlotConfig::builder().data_margins(0.1, 0.0).build();
+        assert!((both.x_margin - 0.1).abs() < f64::EPSILON);
+        assert!((both.y_margin - 0.0).abs() < f64::EPSILON);
     }
 
     #[test]

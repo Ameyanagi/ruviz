@@ -29,6 +29,8 @@ if [[ "${RUVIZ_WASM_PACK_NO_OPT:-0}" == "1" ]]; then
   WASM_PACK_ARGS+=(--no-opt)
 fi
 
+WASM_PACK_ARGS+=(--features 3d-gpu)
+
 "${WASM_PACK_BIN}" "${WASM_PACK_ARGS[@]}"
 
 cat >"${PACKAGE_DIR}/generated/raw/.npmignore" <<'EOF'

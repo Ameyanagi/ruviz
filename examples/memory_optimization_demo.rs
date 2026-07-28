@@ -1,9 +1,8 @@
-use ruviz::core::Result;
 use ruviz::prelude::*;
 use std::time::Instant;
 
 /// Memory optimization demonstration showing buffer pooling and efficient rendering
-fn main() -> Result<()> {
+fn main() -> PlotResult<()> {
     println!("Memory Optimization Demo");
     println!("========================");
     std::fs::create_dir_all("generated/examples").ok();

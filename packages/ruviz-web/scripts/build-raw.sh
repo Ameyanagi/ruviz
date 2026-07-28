@@ -23,6 +23,7 @@ cargo build \
   --locked \
   --manifest-path "${REPO_ROOT}/crates/ruviz-web/Cargo.toml" \
   --target wasm32-unknown-unknown \
+  --features 3d-gpu \
   --release
 
 wasm-bindgen \

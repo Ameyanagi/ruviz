@@ -10,6 +10,7 @@ export default defineConfig({
     rollupOptions: {
       input: {
         main: resolve(rootDir, "index.html"),
+        "3d": resolve(rootDir, "3d.html"),
         "bench-interactive": resolve(rootDir, "bench-interactive.html"),
         "bench-plotting": resolve(rootDir, "bench-plotting.html"),
       },

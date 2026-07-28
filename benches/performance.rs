@@ -102,7 +102,7 @@ fn bench_multi_series(c: &mut Criterion) {
                             .into_plot();
                     }
 
-                    plot = plot.legend(Position::TopRight);
+                    plot = plot.legend(LegendPosition::UpperRight);
 
                     black_box(plot.render()).expect("Render should succeed")
                 })
@@ -258,7 +258,7 @@ fn bench_styling(c: &mut Criterion) {
                 .xlabel("X Axis Label")
                 .ylabel("Y Axis Label")
                 .grid(true)
-                .legend(Position::TopRight);
+                .legend(LegendPosition::UpperRight);
             black_box(plot.render()).expect("Render should succeed")
         })
     });

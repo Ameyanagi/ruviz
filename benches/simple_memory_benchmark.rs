@@ -1,7 +1,6 @@
 use std::hint::black_box;
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use ruviz::core::Plot;
 use ruviz::data::Data1D;
 use ruviz::render::pooled::PooledRenderer;
 
@@ -92,43 +91,9 @@ fn benchmark_pool_reuse(c: &mut Criterion) {
     group.finish();
 }
 
-// Benchmark plotting pipeline with memory pooling
-fn benchmark_plot_pipeline(c: &mut Criterion) {
-    let mut group = c.benchmark_group("plot_pipeline");
-
-    for size in [1000, 5000, 10000].iter() {
-        let x_data = generate_test_data(*size);
-        let y_data = generate_test_data(*size);
-
-        group.bench_with_input(BenchmarkId::new("with_pooling", size), size, |b, &_size| {
-            b.iter(|| {
-                let plot = Plot::new()
-                    .with_memory_pooling(true)
-                    .line(black_box(&x_data), black_box(&y_data));
-                black_box(plot);
-            })
-        });
-
-        group.bench_with_input(
-            BenchmarkId::new("without_pooling", size),
-            size,
-            |b, &_size| {
-                b.iter(|| {
-                    let plot = Plot::new()
-                        .with_memory_pooling(false)
-                        .line(black_box(&x_data), black_box(&y_data));
-                    black_box(plot);
-                })
-            },
-        );
-    }
-    group.finish();
-}
-
 criterion_group!(
     benches,
     benchmark_coordinate_transformation,
-    benchmark_pool_reuse,
-    benchmark_plot_pipeline
+    benchmark_pool_reuse
 );
 criterion_main!(benches);

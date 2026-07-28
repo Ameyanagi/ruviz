@@ -162,19 +162,19 @@ fn build_dashboard_plot(
     let plot: Plot = plot
         .line_source(x.to_vec(), baseline_signal)
         .label("baseline")
-        .color(Color::new(38, 70, 83))
+        .color(Color::from_rgb(38, 70, 83))
         .line_width(1.6)
         .into();
 
     plot.scatter_source(event_x, event_y)
         .label("anomalies")
-        .color(Color::new(231, 111, 81))
+        .color(Color::from_rgb(231, 111, 81))
         .marker(MarkerStyle::Diamond)
         .marker_size(9.0)
         .title("Fixed-Bounds Reactive GPUI Dashboard")
         .xlabel("window time (s)")
         .ylabel("amplitude")
-        .legend(Position::TopRight)
+        .legend(LegendPosition::UpperRight)
         .grid(true)
         .xlim(0.0, WINDOW_SECONDS)
         .ylim(-2.0, 2.0)
@@ -228,10 +228,10 @@ fn detect_events(x: &[f64], primary_signal: &[f64]) -> (Vec<f64>, Vec<f64>) {
 
 fn accent_palette(index: usize) -> Color {
     match index % 5 {
-        0 => Color::new(42, 157, 143),
-        1 => Color::new(33, 158, 188),
-        2 => Color::new(244, 162, 97),
-        3 => Color::new(231, 111, 81),
-        _ => Color::new(94, 96, 206),
+        0 => Color::from_rgb(42, 157, 143),
+        1 => Color::from_rgb(33, 158, 188),
+        2 => Color::from_rgb(244, 162, 97),
+        3 => Color::from_rgb(231, 111, 81),
+        _ => Color::from_rgb(94, 96, 206),
     }
 }

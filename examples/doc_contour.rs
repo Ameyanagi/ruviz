@@ -9,7 +9,7 @@
 use ruviz::plots::ContourInterpolation;
 use ruviz::prelude::*;
 
-fn main() -> Result<()> {
+fn main() -> PlotResult<()> {
     // Generate 2D data (Gaussian surface) - use smaller grid to show smoothing effect
     let size = 20;
     let x: Vec<f64> = (0..size).map(|i| (i as f64 - 10.0) / 2.0).collect();
@@ -37,7 +37,7 @@ fn main() -> Result<()> {
         .smooth(ContourInterpolation::Cubic, 4) // 4x upsampling with cubic interpolation
         .colorbar(true)
         .colorbar_label("Density")
-        .colormap_name("viridis")
+        .cmap("viridis")
         .save("docs/assets/rustdoc/contour_plot.png")?;
 
     println!("Generated docs/assets/rustdoc/contour_plot.png (high-level API)");
@@ -53,7 +53,7 @@ fn main() -> Result<()> {
         .level_values(levels)
         .filled(true)
         .smooth(ContourInterpolation::Linear, 4)
-        .colormap_name("plasma")
+        .cmap("plasma")
         .save("docs/assets/rustdoc/contour_custom_levels.png")?;
 
     println!("Generated docs/assets/rustdoc/contour_custom_levels.png");

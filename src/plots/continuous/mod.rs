@@ -18,8 +18,8 @@ pub mod hexbin;
 
 pub use area::{
     Area, AreaConfig, AreaData, AreaInput, AreaInterpolation, StackBaseline, StackPlotConfig,
-    StackedArea, StackedAreaData, StackedAreaInput, area_polygon, compute_stack,
-    fill_between_polygon, fill_between_where,
+    StackedArea, StackedAreaBand, StackedAreaData, StackedAreaInput, area_polygon, compute_stack,
+    fill_between_polygon, fill_between_where, stacked_area_bands,
 };
 pub use contour::{
     Contour, ContourConfig, ContourInput, ContourInterpolation, ContourPlotData,

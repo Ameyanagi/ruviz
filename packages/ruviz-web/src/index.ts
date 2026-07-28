@@ -41,6 +41,19 @@ import {
 } from "./shared.js";
 import { normalizeBackendPreference, toRawBackendPreference } from "./plot-runtime.js";
 
+export {
+  createPlot3d,
+  line3d,
+  Plot3dBuilder,
+  scatter3d,
+  surface,
+  wireframe,
+  type GridValues3d,
+  type Plot3dMountOptions,
+  type Plot3dSession,
+  type Plot3dSessionMode,
+} from "./3d.js";
+
 export type {
   BackendPreference,
   BarSeriesSnapshot,

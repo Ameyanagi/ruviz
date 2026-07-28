@@ -17,7 +17,7 @@ fn main() -> ruviz::core::Result<()> {
         .ylabel("Values")
         .size_px(800, 600)
         .theme(Theme::seaborn())
-        .boxplot(&data, Some(BoxPlotConfig::new()))
+        .boxplot_with(&data, BoxPlotConfig::new())
         .save("generated/examples/seaborn_boxplot_example.png")?;
 
     println!("Seaborn-style boxplot saved");
@@ -35,7 +35,7 @@ fn main() -> ruviz::core::Result<()> {
         .ylabel("Frequency")
         .size_px(800, 600)
         .theme(Theme::seaborn())
-        .histogram(&hist_data, None)
+        .histogram(&hist_data)
         .save("generated/examples/seaborn_histogram_example.png")?;
 
     println!("Seaborn-style histogram saved");

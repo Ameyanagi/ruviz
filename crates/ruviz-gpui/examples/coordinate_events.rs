@@ -22,7 +22,7 @@ impl CoordinateEventsDemo {
             vec![0.5, 1.0, 0.4, 0.1],
         ];
         let plot: Plot = Plot::new()
-            .heatmap(&values, Some(HeatmapConfig::new().colorbar(false)))
+            .heatmap_with(&values, HeatmapConfig::new().colorbar(false))
             .title("GPUI Coordinate Events")
             .into();
 

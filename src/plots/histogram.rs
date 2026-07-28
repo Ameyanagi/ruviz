@@ -1,4 +1,5 @@
 /// Histogram plot implementation with automatic binning and statistical analysis
+use crate::core::plot::PlotBuilder;
 use crate::core::style_utils::{StyleResolver, defaults};
 use crate::core::{PlottingError, Result};
 use crate::data::Data1D;
@@ -29,11 +30,12 @@ pub struct HistogramConfig {
 }
 
 /// Methods for calculating histogram bin edges
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum BinMethod {
-    /// Equal-width bins (default)
+    /// Equal-width bins
     Uniform,
-    /// Sturges' rule: ceil(log2(n) + 1)
+    /// Sturges' rule: ceil(log2(n) + 1) (default)
+    #[default]
     Sturges,
     /// Scott's rule: 3.5 * std / n^(1/3)
     Scott,
@@ -60,6 +62,35 @@ pub struct HistogramData {
     pub edge_width: f32,
     /// Bar width as fraction of bin width
     pub bar_width: f32,
+}
+
+impl HistogramData {
+    /// Resolve the bar edge for this histogram against `theme` and the fill colour.
+    ///
+    /// Histogram bars are drawn edge-to-edge, so without a stroke two neighbouring
+    /// bins of similar height merge into a single silhouette and the binning stops
+    /// being readable. This is the single source of truth for that stroke — every
+    /// backend (raster, SVG, parallel) resolves it here so they cannot drift apart.
+    ///
+    /// Returns `(colour, width_in_points)`, or `None` when the edge is disabled by
+    /// [`HistogramConfig::edge_width(0.0)`](HistogramConfig::edge_width).
+    pub fn resolved_edge(&self, theme: &Theme, fill: Color) -> Option<(Color, f32)> {
+        self.resolved_edge_with_width(theme, fill, Some(self.edge_width))
+    }
+
+    /// [`Self::resolved_edge`] with an explicit width override in points.
+    ///
+    /// `None` falls back to the shared patch line width.
+    pub(crate) fn resolved_edge_with_width(
+        &self,
+        theme: &Theme,
+        fill: Color,
+        width: Option<f32>,
+    ) -> Option<(Color, f32)> {
+        let resolver = StyleResolver::new(theme);
+        let width = resolver.patch_line_width(width);
+        resolver.patch_edge(fill, self.edge_color, width)
+    }
 }
 
 // Implement PlotData trait for HistogramData
@@ -114,13 +145,10 @@ impl PlotRender for HistogramData {
             return Ok(());
         }
 
-        let resolver = StyleResolver::new(theme);
-
         // Resolve styling
         let fill_alpha = alpha.clamp(0.0, 1.0);
         let fill_color = color.with_alpha(fill_alpha);
-        let edge_color = resolver.edge_color(color, self.edge_color);
-        let edge_width = resolver.patch_line_width(line_width);
+        let edge = self.resolved_edge_with_width(theme, color, line_width);
 
         // Draw bars
         for (i, &count) in self.counts.iter().enumerate() {
@@ -148,27 +176,16 @@ impl PlotRender for HistogramData {
             let rect_width = (x2 - x1).abs();
             let rect_height = (y2 - y1).abs();
 
-            // Draw filled rectangle
-            renderer.draw_rectangle(
+            // Fill and edge in one pass; the edge width is in points and is
+            // scaled to device pixels by the renderer, so it is DPI-invariant.
+            renderer.draw_rectangle_styled(
                 rect_x,
                 rect_y,
                 rect_width,
                 rect_height,
-                fill_color,
-                true, // filled
+                Some(fill_color),
+                edge,
             )?;
-
-            // Draw edge (if width > 0)
-            if edge_width > 0.0 {
-                // Use polygon outline for customizable stroke width
-                let vertices = [
-                    (rect_x, rect_y),
-                    (rect_x + rect_width, rect_y),
-                    (rect_x + rect_width, rect_y + rect_height),
-                    (rect_x, rect_y + rect_height),
-                ];
-                renderer.draw_polygon_outline(&vertices, edge_color, edge_width)?;
-            }
         }
 
         Ok(())
@@ -197,6 +214,18 @@ impl PlotConfig for HistogramConfig {}
 impl HistogramConfig {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Resolve the bar edge straight from the configuration, before binning.
+    ///
+    /// [`HistogramData::resolved_edge`] is the render-time twin. Both go
+    /// through [`StyleResolver::patch_edge`], and `compute_histogram` copies
+    /// `edge_color`/`edge_width` verbatim into the data, so a legend key built
+    /// from the config always matches the bars built from the data.
+    pub fn resolved_edge(&self, theme: &Theme, fill: Color) -> Option<(Color, f32)> {
+        let resolver = StyleResolver::new(theme);
+        let width = resolver.patch_line_width(self.edge_width);
+        resolver.patch_edge(fill, self.edge_color, width)
     }
 
     pub fn bins(mut self, bins: usize) -> Self {
@@ -245,6 +274,84 @@ impl HistogramConfig {
     /// Set bar width as fraction of bin width (0.0-1.0)
     pub fn bar_width(mut self, width: f32) -> Self {
         self.bar_width = Some(width.clamp(0.0, 1.0));
+        self
+    }
+}
+
+/// Histogram configuration reachable straight from [`Plot::histogram`].
+///
+/// [`Plot::histogram`] returns `PlotBuilder<HistogramConfig>`, exactly like the
+/// other series methods return their own `PlotBuilder<C>`, so these mirror
+/// [`HistogramConfig`]'s own setters one for one and can be interleaved freely
+/// with the shared styling and plot-level methods on the builder.
+///
+/// ```rust,no_run
+/// use ruviz::prelude::*;
+///
+/// let data: Vec<f64> = (0..500).map(|i| (i as f64 / 50.0).sin()).collect();
+///
+/// Plot::new()
+///     .histogram(&data)
+///     .bins(25)
+///     .density(true)
+///     .fill_alpha(0.7)
+///     .save("histogram.png")?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
+/// [`Plot::histogram`]: crate::core::Plot::histogram
+impl PlotBuilder<HistogramConfig> {
+    /// Set the number of bins explicitly (overrides [`Self::bin_method`]).
+    pub fn bins(mut self, bins: usize) -> Self {
+        self.config = std::mem::take(&mut self.config).bins(bins);
+        self
+    }
+
+    /// Restrict binning to `[min, max]` instead of the data's own range.
+    pub fn range(mut self, min: f64, max: f64) -> Self {
+        self.config = std::mem::take(&mut self.config).range(min, max);
+        self
+    }
+
+    /// Normalize the bars to a probability density instead of raw counts.
+    pub fn density(mut self, density: bool) -> Self {
+        self.config = std::mem::take(&mut self.config).density(density);
+        self
+    }
+
+    /// Accumulate counts across bins to show a cumulative distribution.
+    pub fn cumulative(mut self, cumulative: bool) -> Self {
+        self.config = std::mem::take(&mut self.config).cumulative(cumulative);
+        self
+    }
+
+    /// Choose the automatic bin-count rule used when [`Self::bins`] is unset.
+    pub fn bin_method(mut self, method: BinMethod) -> Self {
+        self.config = std::mem::take(&mut self.config).bin_method(method);
+        self
+    }
+
+    /// Set the bar fill opacity (0.0-1.0).
+    pub fn fill_alpha(mut self, alpha: f32) -> Self {
+        self.config = std::mem::take(&mut self.config).fill_alpha(alpha);
+        self
+    }
+
+    /// Set the bar edge colour explicitly.
+    pub fn edge_color(mut self, color: Color) -> Self {
+        self.config = std::mem::take(&mut self.config).edge_color(color);
+        self
+    }
+
+    /// Set the bar edge width in points; `0.0` turns the edge off.
+    pub fn edge_width(mut self, width: f32) -> Self {
+        self.config = std::mem::take(&mut self.config).edge_width(width);
+        self
+    }
+
+    /// Set bar width as a fraction of the bin width (0.0-1.0).
+    pub fn bar_width(mut self, width: f32) -> Self {
+        self.config = std::mem::take(&mut self.config).bar_width(width);
         self
     }
 }
@@ -395,6 +502,49 @@ use super::statistics::{iqr as calculate_iqr, std_dev as calculate_std_dev};
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_resolved_edge_defaults_to_a_darker_stroke() {
+        let data = vec![1.0, 2.0, 3.0, 4.0, 5.0];
+        let histogram = calculate_histogram(&data, &HistogramConfig::new().bins(5)).unwrap();
+        let theme = Theme::default();
+        let fill = Color::from_rgb(31, 119, 180);
+
+        let (edge_color, edge_width) = histogram
+            .resolved_edge(&theme, fill)
+            .expect("the default histogram must carry an edge so bins stay separable");
+        assert_eq!(edge_width, defaults::PATCH_LINE_WIDTH);
+        assert_eq!(edge_color, fill.darken(0.3));
+        assert!(
+            i32::from(edge_color.r) + i32::from(edge_color.g) + i32::from(edge_color.b)
+                < i32::from(fill.r) + i32::from(fill.g) + i32::from(fill.b),
+            "the default edge must be darker than the fill"
+        );
+    }
+
+    #[test]
+    fn test_resolved_edge_honours_explicit_config() {
+        let data = vec![1.0, 2.0, 3.0, 4.0, 5.0];
+        let theme = Theme::default();
+        let fill = Color::from_rgb(31, 119, 180);
+
+        let explicit = calculate_histogram(
+            &data,
+            &HistogramConfig::new()
+                .bins(5)
+                .edge_color(Color::from_rgb(255, 255, 255))
+                .edge_width(2.0),
+        )
+        .unwrap();
+        assert_eq!(
+            explicit.resolved_edge(&theme, fill),
+            Some((Color::from_rgb(255, 255, 255), 2.0))
+        );
+
+        let disabled =
+            calculate_histogram(&data, &HistogramConfig::new().bins(5).edge_width(0.0)).unwrap();
+        assert_eq!(disabled.resolved_edge(&theme, fill), None);
+    }
 
     #[test]
     fn test_histogram_basic_functionality() {

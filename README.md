@@ -34,7 +34,7 @@ Create and save a PNG:
 ```rust,check
 use ruviz::prelude::*;
 
-fn main() -> Result<()> {
+fn main() -> PlotResult<()> {
     let x: Vec<f64> = (0..100).map(|i| i as f64 * 0.1).collect();
     let y: Vec<f64> = x.iter().map(|&v| v.sin()).collect();
 
@@ -65,7 +65,7 @@ you render, save, or start another series.
 ```rust,check
 use ruviz::prelude::*;
 
-fn main() -> Result<()> {
+fn main() -> PlotResult<()> {
     let x = vec![0.0, 1.0, 2.0, 3.0, 4.0];
     let linear = x.clone();
     let quadratic: Vec<f64> = x.iter().map(|&v| v * v).collect();
@@ -75,7 +75,7 @@ fn main() -> Result<()> {
         .label("Linear")
         .line(&x, &quadratic)
         .label("Quadratic")
-        .legend(Position::TopLeft)
+        .legend(LegendPosition::UpperLeft)
         .theme(Theme::publication())
         .save("series.png")?;
 
@@ -83,16 +83,18 @@ fn main() -> Result<()> {
 }
 ```
 
-Top-level helpers are available for line, scatter, and bar plots:
+Every plot is built the same way — `Plot::new()`, a series method, setters,
+`save`. There is no second entry point to learn:
 
 ```rust,check
 use ruviz::prelude::*;
 
-fn main() -> Result<()> {
+fn main() -> PlotResult<()> {
     let x = vec![0.0, 1.0, 2.0];
     let y = vec![0.0, 1.0, 4.0];
 
-    line(&x, &y)
+    Plot::new()
+        .line(&x, &y)
         .title("Line")
         .save("line.png")?;
 
@@ -100,22 +102,48 @@ fn main() -> Result<()> {
 }
 ```
 
-The `ruviz::simple` module also provides file-oriented helper functions such as
-`line_plot`, `scatter_plot`, `bar_chart`, and `histogram`.
+The top-level `line`/`scatter`/`bar` functions and the `ruviz::simple` module are
+deprecated in favour of that chain; see
+[docs/migration/0.6-builder-api.md](docs/migration/0.6-builder-api.md).
 
 ## Plot Types
 
-The root `Plot` builder currently exposes:
+The root `Plot` builder exposes 29 plot types, and that list is complete:
 
 - Basic: line, scatter, bar, histogram, box plot, heatmap
-- Distribution: KDE, ECDF, violin, boxen
+- Distribution: KDE, ECDF, violin, boxen, rug
+- Categorical: strip, swarm, grouped bar, stacked bar
 - Composition and polar: pie, donut styling, radar, polar line
-- Continuous, discrete, and error plots: contour, area, step, stem, symmetric/asymmetric error bars
+- Continuous, discrete, and error plots: contour, area, stacked area, fill between, hexbin, step, stem, symmetric/asymmetric error bars
+- Hierarchical: dendrogram
 - Vector: quiver
 - Layout helpers: subplots, legends, grid/tick controls, annotations, insets
 
-Some lower-level modules contain additional experimental plot implementations
-that do not yet have a high-level `Plot::new().type(...)` builder method.
+With the `3d` feature, `Plot3D` adds four more: 3D scatter, 3D line, surface
+and wireframe.
+
+All of them except `fill_between` are *series* methods that take the same shape —
+`Plot::new()`, a series method, setters, a terminal call — so
+`.<series>(..).label(..).color(..).legend_best().save(..)` compiles for every one
+of them. `fill_between` is an annotation rather than a series: it returns the
+plot itself, so it takes plot-level setters (`.title(..)`, `.xlabel(..)`) rather
+than series-level ones.
+
+Grouped bar, stacked bar and stacked area take N named value columns over one
+shared axis — `.grouped_bar(&categories, &[("Q1", &q1), ("Q2", &q2)])` — and
+push one ordinary series per column, so each column gets its own palette colour,
+its own legend entry, and the same `.color()`/`.label()` rules as a line.
+
+Joint plots and pair plots are *figures*, not series: `plots::composite::{jointplot,
+pairplot}` return a `SubplotFigure`, the same type `subplots` returns, so they are
+composed with `.suptitle(..).save(..)` rather than with the series chain.
+
+Anything not in that list has no builder method and cannot be drawn with that
+chain, even though the source tree contains implementations of it. Specifically,
+**2D KDE, regression plot and residual plot have no `Plot` builder**, and Sankey
+diagrams and streamplots are not implemented at all.
+The [ruviz::plots module docs](https://docs.rs/ruviz/latest/ruviz/plots/) list
+which is which, and a test keeps that list in step with the builder.
 
 ## Export
 
@@ -136,24 +164,36 @@ Default features are `ndarray_support` and `parallel`.
 
 | Feature | Description |
 |---------|-------------|
+| `3d` | `Plot3D`: 3D scatter, line, surface and wireframe |
 | `ndarray_support` | ndarray data support (canonical) |
 | `ndarray` | compatibility alias for `ndarray_support` |
-| `polars_support` | polars data support |
-| `nalgebra_support` | nalgebra data support |
-| `parallel` | enables the internal parallel renderer and backend metadata |
+| `polars_support` | polars data support (canonical) |
+| `polars` | compatibility alias for `polars_support` |
+| `nalgebra_support` | nalgebra data support (canonical) |
+| `nalgebra` | compatibility alias for `nalgebra_support` |
+| `parallel` | multi-threaded tile rasterization for the software 3D backend |
 | `simd` | SIMD support used by performance-oriented paths |
 | `performance` | shorthand for `parallel` + `simd` |
 | `gpu` | enables GPU types and `.gpu(true)` metadata |
-| `window` | desktop window dependencies |
-| `interactive` | standalone interactive window support |
+| `interactive` | standalone interactive window support (canonical) |
+| `window` | compatibility alias for `interactive` |
 | `interactive-gpu` | `interactive` + `gpu` |
 | `serde` | serialize themes/configuration types |
 | `pdf` | PDF export via SVG-to-PDF |
 | `typst-math` | Typst-backed text rendering |
 | `animation` | GIF recording support |
+| `animation-video` | `animation` + AV1 video encoding |
+| `svg` | no-op, retained for compatibility (see below) |
 | `full` | broad feature set for native builds |
 
-SVG export is available without enabling the legacy `svg` feature.
+SVG export is always compiled in: `render_to_svg()` and `export_svg()` need no
+feature flag, and the `svg` feature gates nothing.
+
+`parallel` is enabled by default because the software 3D rasterizer renders its
+tiles across a rayon pool. It does **not** currently affect the 2D raster path,
+and the crate's own measurements put it between 0.94x and 1.05x on 2D workloads
+— see [docs/benchmarks/rust-feature-impact.md](docs/benchmarks/rust-feature-impact.md).
+Measure your own workload before turning on `performance`.
 
 ## Backend Notes
 
@@ -175,7 +215,7 @@ Enable Typst-backed text rendering with:
 
 ```toml
 [dependencies]
-ruviz = { version = "0.5.0", features = ["typst-math"] }
+ruviz = { version = "0.6.0", features = ["typst-math"] }
 ```
 
 Then call `.typst(true)`. The configured family is passed to plain raster,
@@ -188,7 +228,7 @@ selector, those two values use its selected sans-serif fallback:
 ```rust,check,features=typst-math
 use ruviz::prelude::*;
 
-fn main() -> Result<()> {
+fn main() -> PlotResult<()> {
     let x: Vec<f64> = (0..50).map(|i| i as f64 * 0.1).collect();
     let y: Vec<f64> = x.iter().map(|&v| (-v).exp()).collect();
 
@@ -210,7 +250,7 @@ compiled. If Typst is optional in your crate, forward and guard your own feature
 
 ```toml
 [dependencies]
-ruviz = { version = "0.5.0", default-features = false }
+ruviz = { version = "0.6.0", default-features = false }
 
 [features]
 default = []
@@ -220,7 +260,7 @@ typst-math = ["ruviz/typst-math"]
 ```rust,check
 use ruviz::prelude::*;
 
-fn main() -> Result<()> {
+fn main() -> PlotResult<()> {
     let x: Vec<f64> = (0..50).map(|i| i as f64 * 0.1).collect();
     let y: Vec<f64> = x.iter().map(|&v| (-v).exp()).collect();
 

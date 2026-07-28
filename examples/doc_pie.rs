@@ -7,7 +7,7 @@
 
 use ruviz::prelude::*;
 
-fn main() -> Result<()> {
+fn main() -> PlotResult<()> {
     // High-level API example
     let values = vec![35.0, 25.0, 20.0, 15.0, 5.0];
 

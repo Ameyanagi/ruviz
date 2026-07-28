@@ -5,7 +5,7 @@
 use ruviz::core::BackendOperation;
 use ruviz::prelude::*;
 
-fn main() -> Result<()> {
+fn main() -> PlotResult<()> {
     for point_count in [1_000, 10_000, 100_000] {
         let x: Vec<f64> = (0..point_count).map(|i| i as f64 * 0.001).collect();
         let y: Vec<f64> = x.iter().map(|value| value.sin()).collect();

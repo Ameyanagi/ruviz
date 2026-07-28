@@ -11,6 +11,7 @@ Run a single example:
 ```sh
 cd python
 uv run python examples/line.py
+uv run python examples/surface3d.py
 ```
 
 Run the example-backed docs smoke tests:

@@ -1,9 +1,8 @@
-use ruviz::core::Result;
 use ruviz::prelude::*;
 use std::time::Instant;
 
 /// Scientific plotting showcase demonstrating publication-quality multi-panel figures
-fn main() -> Result<()> {
+fn main() -> PlotResult<()> {
     println!("Scientific Plotting Showcase");
     std::fs::create_dir_all("generated/examples").ok();
 
@@ -86,7 +85,7 @@ fn main() -> Result<()> {
         .ylabel("Frequency")
         .theme(Theme::seaborn())
         .ylim(0.0, 550.0)
-        .histogram(&distribution, None)
+        .histogram(&distribution)
         .into();
 
     let plot_d: Plot = Plot::new()
@@ -95,7 +94,7 @@ fn main() -> Result<()> {
         .ylabel("Measured Value")
         .theme(Theme::seaborn())
         .ylim(4.5, 11.5)
-        .boxplot(&group1, None)
+        .boxplot(&group1)
         .into();
 
     let figure = SubplotFigure::new(2, 2, 1600, 1200)?
@@ -140,7 +139,7 @@ fn main() -> Result<()> {
         .ylabel("Frequency Count")
         .size_px(1200, 800)
         .theme(Theme::seaborn())
-        .histogram(&distribution, None)
+        .histogram(&distribution)
         .save("generated/examples/detailed_distribution.png")?;
 
     let total_time = start_time.elapsed();

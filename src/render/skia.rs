@@ -1,8 +1,13 @@
 use crate::{
     core::{
         ComputedMargins, CoordinateTransform, LayoutRect, Legend, LegendItem, LegendItemType,
-        LegendPosition, LegendSpacingPixels, LegendStyle, PlottingError, RenderScale, Result,
-        SpacingConfig, SpineConfig, TextPosition, TickFormatter, find_best_position,
+        LegendSpacingPixels, LegendStyle, PlottingError, RenderScale, Result, SpacingConfig,
+        SpineConfig, TextPosition,
+        legend::{
+            LEGACY_LEGEND_SWATCH_EDGE_DARK, LEGACY_LEGEND_SWATCH_EDGE_LIGHT,
+            LEGACY_LEGEND_SWATCH_EDGE_WIDTH_PT, LegendLayout, LegendOccupancy, LegendPlacement,
+            layout_legend, legacy_legend_swatch_edge, measure_legend_size,
+        },
         plot::{Image, RenderDiagnostics, TextEngineMode, TickDirection, TickSides},
         pt_to_px,
     },
@@ -24,7 +29,7 @@ pub use self::utils::{
     ColorbarTicks, calculate_plot_area, calculate_plot_area_config, calculate_plot_area_dpi,
     compute_colorbar_ticks, format_log_tick_label, format_tick_label, format_tick_labels,
     format_tick_labels_for_scale, generate_minor_ticks, generate_ticks, map_data_to_pixels,
-    map_data_to_pixels_scaled,
+    map_data_to_pixels_scaled, try_map_data_to_pixels_scaled,
 };
 pub(crate) use self::utils::{
     colorbar_major_label_anchor_center_from_top, colorbar_major_label_top,
@@ -70,11 +75,37 @@ struct MarkerSpriteKey {
     style: MarkerStyle,
     size_bits: u32,
     rgba_bits: u32,
+    /// `(edge rgba, edge width in device pixels)`, `None` for a bare marker.
+    ///
+    /// The rim is baked into the sprite, so it has to be part of the identity of
+    /// the sprite. Without it an edged batch would have to fall off the sprite
+    /// compositor entirely, which is what used to make a marker rim expensive
+    /// enough to be worth disabling by default.
+    edge_bits: Option<(u32, u32)>,
     phase_x: u8,
     phase_y: u8,
 }
 
-const GLOBAL_MARKER_SPRITE_CACHE_LIMIT: usize = 4096;
+/// Entries the process-wide marker sprite cache holds before it starts evicting.
+///
+/// Sized from [`SkiaRenderer::marker_subpixel_phases`]: one hot marker — a
+/// single (style, size, colour, edge) tuple — occupies at most `phases²`
+/// entries once a dense scatter has visited every sub-pixel phase, so the limit
+/// has to be a multiple of that or a single series would evict the whole cache
+/// on every frame. Two hot markers fit.
+const GLOBAL_MARKER_SPRITE_CACHE_LIMIT: usize =
+    2 * (SkiaRenderer::marker_subpixel_phases() as usize).pow(2);
+
+/// Frame colour for the legacy `draw_legend*` panels (matplotlib `legend.edgecolor`).
+const LEGACY_LEGEND_EDGE_COLOR: Color = Color {
+    r: 204,
+    g: 204,
+    b: 204,
+    a: 200,
+};
+/// Frame width for the legacy `draw_legend*` panels, in points.
+const LEGACY_LEGEND_EDGE_WIDTH_PT: f32 = 0.8;
+
 static GLOBAL_MARKER_SPRITE_CACHE: OnceLock<Mutex<HashMap<MarkerSpriteKey, Arc<MarkerSprite>>>> =
     OnceLock::new();
 
@@ -102,11 +133,24 @@ fn insert_global_marker_sprite(
 }
 
 impl MarkerSpriteKey {
-    fn new(style: MarkerStyle, size: f32, color: Color, phase_x: u8, phase_y: u8) -> Self {
+    fn new(
+        style: MarkerStyle,
+        size: f32,
+        color: Color,
+        edge: Option<(Color, f32)>,
+        phase_x: u8,
+        phase_y: u8,
+    ) -> Self {
         Self {
             style,
             size_bits: size.to_bits(),
             rgba_bits: u32::from_be_bytes([color.r, color.g, color.b, color.a]),
+            edge_bits: edge.map(|(color, width_px)| {
+                (
+                    u32::from_be_bytes([color.r, color.g, color.b, color.a]),
+                    width_px.to_bits(),
+                )
+            }),
             phase_x,
             phase_y,
         }
@@ -140,6 +184,8 @@ pub struct SkiaRenderer {
     theme: Theme,
     text_renderer: TextRenderer,
     font_config: FontConfig,
+    /// How the x tick label row is drawn; see [`XTickLabelPlan`].
+    x_tick_label_plan: XTickLabelPlan,
     /// Shared render scale for unit conversion.
     render_scale: RenderScale,
     /// Active text rendering engine.
@@ -184,6 +230,7 @@ impl SkiaRenderer {
             theme,
             text_renderer,
             font_config,
+            x_tick_label_plan: XTickLabelPlan::default(),
             render_scale: RenderScale::from_canvas_size(width, height, crate::core::REFERENCE_DPI),
             text_engine_mode: TextEngineMode::Plain,
             clip_mask_cache: HashMap::new(),
@@ -201,6 +248,21 @@ impl SkiaRenderer {
     /// Get the render scale context used for unit conversion.
     pub fn render_scale(&self) -> RenderScale {
         self.render_scale
+    }
+
+    /// Set how the x tick label row is drawn.
+    ///
+    /// The plan is resolved once, against the margin the layout actually
+    /// granted, and then held here — so the row that was measured is the row
+    /// that is drawn. Left at its default a row is horizontal and complete,
+    /// which is what every caller that never measured one wants.
+    pub fn set_x_tick_label_plan(&mut self, plan: XTickLabelPlan) {
+        self.x_tick_label_plan = plan;
+    }
+
+    /// How the x tick label row is drawn.
+    pub fn x_tick_label_plan(&self) -> XTickLabelPlan {
+        self.x_tick_label_plan
     }
 
     /// Legacy compatibility shim for callers that still pass `dpi / 100.0`.
@@ -260,10 +322,6 @@ impl SkiaRenderer {
 
     pub(crate) fn set_render_mode_diagnostics(&mut self, mode: &'static str) {
         self.render_diagnostics.render_mode = mode;
-    }
-
-    pub(crate) fn note_parallel_render(&mut self) {
-        self.render_diagnostics.used_parallel = true;
     }
 
     pub(crate) fn note_auto_datashader(&mut self) {
@@ -371,15 +429,21 @@ impl SkiaRenderer {
         Ok(Some(path))
     }
 
+    /// Fetch (or build) the cached raster for one marker.
+    ///
+    /// `edge` is `(colour, width in **device pixels**)` — already scaled by the
+    /// caller, exactly like the vector painter takes it — and is baked into the
+    /// sprite, so an edged batch keeps the sprite fast path.
     pub(crate) fn marker_sprite(
         &mut self,
         style: MarkerStyle,
         size: f32,
         color: Color,
+        edge: Option<(Color, f32)>,
         phase_x: u8,
         phase_y: u8,
     ) -> Result<Arc<MarkerSprite>> {
-        let key = MarkerSpriteKey::new(style, size, color, phase_x, phase_y);
+        let key = MarkerSpriteKey::new(style, size, color, edge, phase_x, phase_y);
         if let Some(sprite) = self.marker_sprite_cache.get(&key) {
             let sprite = Arc::clone(sprite);
             self.note_marker_sprite_cache();
@@ -395,14 +459,16 @@ impl SkiaRenderer {
 
             // Hold the global lock across creation to avoid duplicate same-key sprite work.
             // If parallel PNG workloads make unrelated misses contend here, switch to per-key slots.
-            let sprite = Arc::new(self.create_marker_sprite(style, size, color, phase_x, phase_y)?);
+            let sprite =
+                Arc::new(self.create_marker_sprite(style, size, color, edge, phase_x, phase_y)?);
             let sprite = insert_global_marker_sprite(&mut global_cache, key, sprite);
             self.marker_sprite_cache.insert(key, Arc::clone(&sprite));
             self.note_marker_sprite_cache();
             return Ok(sprite);
         }
 
-        let sprite = Arc::new(self.create_marker_sprite(style, size, color, phase_x, phase_y)?);
+        let sprite =
+            Arc::new(self.create_marker_sprite(style, size, color, edge, phase_x, phase_y)?);
         self.marker_sprite_cache.insert(key, Arc::clone(&sprite));
         self.note_marker_sprite_cache();
         Ok(sprite)
@@ -413,10 +479,11 @@ impl SkiaRenderer {
         style: MarkerStyle,
         size: f32,
         color: Color,
+        edge: Option<(Color, f32)>,
         phase_x: u8,
         phase_y: u8,
     ) -> Result<MarkerSprite> {
-        let (origin, side) = Self::marker_sprite_geometry(style, size);
+        let (origin, side) = Self::marker_sprite_geometry(style, size, edge);
         let mut sprite_renderer = SkiaRenderer::new(side, side, self.theme.clone())?;
         sprite_renderer.set_render_scale(self.render_scale);
         sprite_renderer.set_text_engine_mode(self.text_engine_mode);
@@ -426,8 +493,9 @@ impl SkiaRenderer {
         let center_x = origin as f32 + phase_x as f32 * phase_step;
         let center_y = origin as f32 + phase_y as f32 * phase_step;
 
-        sprite_renderer
-            .draw_marker_with_mask_vector(center_x, center_y, size, style, color, None)?;
+        sprite_renderer.draw_marker_styled_with_mask_vector(
+            center_x, center_y, size, style, color, edge, None,
+        )?;
 
         Ok(MarkerSprite {
             width: side,
@@ -497,19 +565,47 @@ impl SkiaRenderer {
         Some(scanlines.into())
     }
 
+    /// Sub-pixel positions a cached marker sprite is rasterised at, per axis.
+    ///
+    /// The sprite compositor snaps every marker centre to the nearest phase, so
+    /// this is the only place the fast path disagrees with the vector painter:
+    /// a marker lands up to `1 / (2 * PHASES)` device pixels off its exact
+    /// position, and the anti-aliased boundary pixels shift with it.
+    ///
+    /// 64 (not 32) because a marker *rim* is a thin high-contrast feature and
+    /// therefore samples that error far more harshly than a bare fill does: at
+    /// 32 phases an edged batch showed ~10x the boundary noise of the same
+    /// batch drawn one marker at a time, with per-channel deltas past 32. At 64
+    /// the worst edged delta is the same as the worst edgeless one, i.e. the
+    /// rim no longer costs accuracy. Squaring this bounds the per-batch sprite
+    /// table and the cache limit below, so it cannot grow without thought.
     pub(crate) const fn marker_subpixel_phases() -> u8 {
-        32
+        64
     }
 
-    pub(crate) fn marker_sprite_geometry(style: MarkerStyle, size: f32) -> (i32, u32) {
+    /// Sprite origin and side length for one marker.
+    ///
+    /// `edge` is `(colour, width in device pixels)`; a rim straddles the shape's
+    /// boundary, so half of it lies outside the fill and the sprite has to be
+    /// padded for it or the rim would be clipped off at the sprite border.
+    pub(crate) fn marker_sprite_geometry(
+        style: MarkerStyle,
+        size: f32,
+        edge: Option<(Color, f32)>,
+    ) -> (i32, u32) {
         let radius = size * 0.5;
+        let edge_half = edge
+            .filter(|_| style.takes_edge())
+            .map(|(_, width_px)| width_px * 0.5)
+            .unwrap_or(0.0);
         let stroke_half = match style {
             MarkerStyle::SquareOpen => (size * 0.15).max(1.0) * 0.5,
             MarkerStyle::TriangleOpen | MarkerStyle::DiamondOpen => (size * 0.15).max(1.0) * 0.5,
             MarkerStyle::Plus | MarkerStyle::Cross => (size * 0.25).max(1.0) * 0.5,
             MarkerStyle::Star => (size * 0.22).max(1.0) * 0.5,
             _ => 0.5,
-        };
+        }
+        .max(edge_half);
         let padding = (radius + stroke_half + 3.0).ceil() as i32;
         let origin = padding + 1;
         let side = (origin * 2 + 2).max(4) as u32;
@@ -590,15 +686,6 @@ impl SkiaRenderer {
         } else {
             let normalized = scale.normalized_position(x_value, x_min, x_max);
             plot_area.left + normalized as f32 * plot_area.width()
-        }
-    }
-
-    fn y_label_center(plot_area: &LayoutRect, y_value: f64, y_min: f64, y_max: f64) -> f32 {
-        let y_range = y_max - y_min;
-        if y_range.abs() < f64::EPSILON {
-            plot_area.center_y()
-        } else {
-            plot_area.bottom - ((y_value - y_min) as f32 / y_range as f32) * plot_area.height()
         }
     }
 
@@ -1211,21 +1298,23 @@ impl SkiaRenderer {
 
         let tint = self.theme.foreground;
 
-        // Convert the density mask to tiny-skia's native tinted premultiplied format.
+        // Convert the density mask to tiny-skia's native tinted premultiplied
+        // format. `Pixmap::data_mut` is premultiplied **RGBA**, not BGRA: this
+        // used to write B, G, R, A and so swapped red and blue. It went
+        // unnoticed because every theme's `foreground` is black, white or grey,
+        // where the swap is invisible.
         let pixmap_data = datashader_pixmap.data_mut();
         for (i, chunk) in image.pixels.chunks_exact(4).enumerate() {
             let a = chunk[3];
 
-            // tiny-skia uses premultiplied alpha BGRA format
             let alpha_f = a as f32 / 255.0;
             let premult_r = (tint.r as f32 * alpha_f).round() as u8;
             let premult_g = (tint.g as f32 * alpha_f).round() as u8;
             let premult_b = (tint.b as f32 * alpha_f).round() as u8;
 
-            // BGRA order for tiny-skia
-            pixmap_data[i * 4] = premult_b;
+            pixmap_data[i * 4] = premult_r;
             pixmap_data[i * 4 + 1] = premult_g;
-            pixmap_data[i * 4 + 2] = premult_r;
+            pixmap_data[i * 4 + 2] = premult_b;
             pixmap_data[i * 4 + 3] = a;
         }
 
@@ -1251,6 +1340,14 @@ impl SkiaRenderer {
     /// Draw text at the specified position using cosmic-text (professional quality).
     /// `y` is interpreted as the top of the text rendering area.
     pub fn draw_text(&mut self, text: &str, x: f32, y: f32, size: f32, color: Color) -> Result<()> {
+        // Bucket 1 of the geometry policy in `primitives.rs`, and the exact
+        // twin of `SvgRenderer::draw_text`: a label the axes cannot place is
+        // skipped, not raised. Without this the glyph run is laid out at `NaN`
+        // and every glyph quantises to 0 on the way to the pixmap, blitting the
+        // label into the top-left corner where it reads as real content.
+        if !Self::all_finite(&[x, y, size]) {
+            return Ok(());
+        }
         match self.text_engine_mode {
             TextEngineMode::Plain => {
                 let config = FontConfig::new(self.font_config.family.clone(), size);
@@ -1290,6 +1387,10 @@ impl SkiaRenderer {
         size: f32,
         color: Color,
     ) -> Result<()> {
+        // See `draw_text`: an unplaceable label is skipped, not raised.
+        if !Self::all_finite(&[x, y, size]) {
+            return Ok(());
+        }
         match self.text_engine_mode {
             TextEngineMode::Plain => {
                 let config = FontConfig::new(self.font_config.family.clone(), size);
@@ -1342,6 +1443,10 @@ impl SkiaRenderer {
         color: Color,
         weight: FontWeight,
     ) -> Result<()> {
+        // See `draw_text`: an unplaceable label is skipped, not raised.
+        if !Self::all_finite(&[center_x, y, size]) {
+            return Ok(());
+        }
         match self.text_engine_mode {
             TextEngineMode::Plain => {
                 let config = FontConfig::new(self.font_config.family.clone(), size).weight(weight);
@@ -1448,341 +1553,6 @@ impl SkiaRenderer {
         Cow::Borrowed(text)
     }
 
-    /// Draw axis labels and tick values using spacing configuration
-    ///
-    /// Positions tick labels and axis labels using `spacing.tick_pad` and `spacing.label_pad`
-    /// for consistent, DPI-independent spacing.
-    pub fn draw_axis_labels(
-        &mut self,
-        plot_area: Rect,
-        x_min: f64,
-        x_max: f64,
-        y_min: f64,
-        y_max: f64,
-        x_label: &str,
-        y_label: &str,
-        color: Color,
-        label_size: f32,
-        dpi: f32,
-        spacing: &SpacingConfig,
-    ) -> Result<()> {
-        let tick_size = label_size * 0.7; // Tick labels slightly smaller than axis labels
-        let render_scale = RenderScale::new(dpi);
-
-        // Convert spacing config values from points to pixels
-        let tick_pad_px = pt_to_px(spacing.tick_pad, dpi);
-        let label_pad_px = pt_to_px(spacing.label_pad, dpi);
-        let char_width_estimate = render_scale.logical_pixels_to_pixels(4.0);
-
-        // Generate ticks and format all labels with consistent precision
-        let x_ticks = generate_ticks(x_min, x_max, 5);
-        let y_ticks = generate_ticks(y_min, y_max, 5);
-        let x_labels = format_tick_labels(&x_ticks);
-        let y_labels = format_tick_labels(&y_ticks);
-
-        // Draw X-axis tick labels
-        for (tick_value, label_text) in x_ticks.iter().zip(x_labels.iter()) {
-            let x_pixel = plot_area.left()
-                + (*tick_value - x_min) as f32 / (x_max - x_min) as f32 * plot_area.width();
-
-            let text_width_estimate = label_text.len() as f32 * char_width_estimate / 2.0;
-            let label_x = (x_pixel - text_width_estimate)
-                .max(0.0)
-                .min(self.width() as f32 - text_width_estimate * 2.0);
-            // Position tick labels with tick_pad below the axis
-            let label_y = (plot_area.bottom() + tick_pad_px + tick_size)
-                .min(self.height() as f32 - tick_size - 5.0);
-            let label_snippet = self.generated_label(label_text);
-            self.draw_text(&label_snippet, label_x, label_y, tick_size, color)?;
-        }
-
-        // Draw Y-axis tick labels
-        for (tick_value, label_text) in y_ticks.iter().zip(y_labels.iter()) {
-            let y_pixel = plot_area.bottom()
-                - (*tick_value - y_min) as f32 / (y_max - y_min) as f32 * plot_area.height();
-
-            let text_width_estimate = label_text.len() as f32 * char_width_estimate;
-            // Position tick labels with tick_pad left of the axis
-            let label_x = (plot_area.left() - text_width_estimate - tick_pad_px).max(5.0);
-            let label_snippet = self.generated_label(label_text);
-            self.draw_text(
-                &label_snippet,
-                label_x,
-                y_pixel - tick_size / 3.0,
-                tick_size,
-                color,
-            )?;
-        }
-
-        // Draw X-axis label: positioned label_pad below the tick labels
-        let x_label_x =
-            plot_area.left() + plot_area.width() / 2.0 - x_label.len() as f32 * char_width_estimate;
-        // X-label goes below tick labels: bottom + tick_pad + tick_size + label_pad
-        let x_label_y = plot_area.bottom() + tick_pad_px + tick_size + label_pad_px + label_size;
-        self.draw_text(x_label, x_label_x, x_label_y, label_size, color)?;
-
-        // Draw Y-axis label (rotated 90 degrees counterclockwise)
-        // Position label_pad left of the tick labels
-        // Estimate tick label width (assume ~4 characters average)
-        let estimated_tick_width = 4.0 * char_width_estimate;
-        let y_label_x = plot_area.left() - tick_pad_px - estimated_tick_width - label_pad_px;
-        let y_label_y = plot_area.top() + plot_area.height() / 2.0;
-        self.draw_text_rotated(y_label, y_label_x, y_label_y, label_size, color)?;
-
-        // Draw border around plot area
-        self.draw_plot_border(plot_area, color, render_scale.reference_scale())?;
-
-        Ok(())
-    }
-
-    /// Draw axis labels with DPI scale (legacy compatibility)
-    pub fn draw_axis_labels_legacy(
-        &mut self,
-        plot_area: Rect,
-        x_min: f64,
-        x_max: f64,
-        y_min: f64,
-        y_max: f64,
-        x_label: &str,
-        y_label: &str,
-        color: Color,
-        label_size: f32,
-        dpi_scale: f32,
-    ) -> Result<()> {
-        let tick_size = label_size * 0.7;
-        let render_scale = RenderScale::from_reference_scale(dpi_scale);
-        let tick_offset_y = render_scale.logical_pixels_to_pixels(20.0);
-        let x_label_offset = render_scale.logical_pixels_to_pixels(50.0);
-        let y_label_offset = render_scale.logical_pixels_to_pixels(25.0);
-        let char_width_estimate = render_scale.logical_pixels_to_pixels(4.0);
-
-        // Generate ticks and format all labels with consistent precision
-        let x_ticks = generate_ticks(x_min, x_max, 5);
-        let y_ticks = generate_ticks(y_min, y_max, 5);
-        let x_labels = format_tick_labels(&x_ticks);
-        let y_labels = format_tick_labels(&y_ticks);
-
-        for (tick_value, label_text) in x_ticks.iter().zip(x_labels.iter()) {
-            let x_pixel = plot_area.left()
-                + (*tick_value - x_min) as f32 / (x_max - x_min) as f32 * plot_area.width();
-            let text_width_estimate = label_text.len() as f32 * char_width_estimate / 2.0;
-            let label_x = (x_pixel - text_width_estimate)
-                .max(0.0)
-                .min(self.width() as f32 - text_width_estimate * 2.0);
-            let label_y =
-                (plot_area.bottom() + tick_offset_y).min(self.height() as f32 - tick_size - 5.0);
-            let label_snippet = self.generated_label(label_text);
-            self.draw_text(&label_snippet, label_x, label_y, tick_size, color)?;
-        }
-
-        for (tick_value, label_text) in y_ticks.iter().zip(y_labels.iter()) {
-            let y_pixel = plot_area.bottom()
-                - (*tick_value - y_min) as f32 / (y_max - y_min) as f32 * plot_area.height();
-            let text_width_estimate = label_text.len() as f32 * char_width_estimate;
-            let label_x = (plot_area.left()
-                - text_width_estimate
-                - render_scale.logical_pixels_to_pixels(15.0))
-            .max(5.0);
-            let label_snippet = self.generated_label(label_text);
-            self.draw_text(
-                &label_snippet,
-                label_x,
-                y_pixel - tick_size / 3.0,
-                tick_size,
-                color,
-            )?;
-        }
-
-        let x_label_x =
-            plot_area.left() + plot_area.width() / 2.0 - x_label.len() as f32 * char_width_estimate;
-        let x_label_y = plot_area.bottom() + x_label_offset;
-        self.draw_text(x_label, x_label_x, x_label_y, label_size, color)?;
-
-        let y_label_x = plot_area.left() - y_label_offset;
-        let y_label_y = plot_area.top() + plot_area.height() / 2.0;
-        self.draw_text_rotated(y_label, y_label_x, y_label_y, label_size, color)?;
-
-        self.draw_plot_border(plot_area, color, dpi_scale)?;
-
-        Ok(())
-    }
-
-    /// Draw axis labels and tick values with provided major ticks
-    pub fn draw_axis_labels_with_ticks(
-        &mut self,
-        plot_area: Rect,
-        x_min: f64,
-        x_max: f64,
-        y_min: f64,
-        y_max: f64,
-        x_major_ticks: &[f64],
-        y_major_ticks: &[f64],
-        x_label: &str,
-        y_label: &str,
-        color: Color,
-        label_size: f32,
-        dpi_scale: f32,
-    ) -> Result<()> {
-        let tick_size = label_size * 0.7; // Tick labels slightly smaller than axis labels
-        let render_scale = RenderScale::from_reference_scale(dpi_scale);
-
-        // Spacing constants are authored in logical pixels and resolved via RenderScale.
-        let tick_offset_y = render_scale.logical_pixels_to_pixels(25.0);
-        let x_label_offset = render_scale.logical_pixels_to_pixels(55.0);
-        let y_label_offset = render_scale.logical_pixels_to_pixels(50.0);
-        let y_tick_offset = render_scale.logical_pixels_to_pixels(15.0);
-        let char_width_estimate = render_scale.logical_pixels_to_pixels(4.0);
-
-        // Format all tick labels with consistent precision
-        let x_labels = format_tick_labels(x_major_ticks);
-        let y_labels = format_tick_labels(y_major_ticks);
-
-        // Draw X-axis tick labels using provided major ticks
-        for (tick_value, label_text) in x_major_ticks.iter().zip(x_labels.iter()) {
-            let x_pixel = plot_area.left()
-                + (*tick_value - x_min) as f32 / (x_max - x_min) as f32 * plot_area.width();
-
-            // Center X-axis tick labels horizontally under the tick mark, with proper offset
-            // Ensure labels don't overflow canvas bounds
-            let text_width_estimate = label_text.len() as f32 * char_width_estimate / 2.0;
-            let label_x = (x_pixel - text_width_estimate)
-                .max(0.0)
-                .min(self.width() as f32 - text_width_estimate * 2.0);
-            let label_y =
-                (plot_area.bottom() + tick_offset_y).min(self.height() as f32 - tick_size - 5.0); // Ensure within canvas
-            let label_snippet = self.generated_label(label_text);
-            self.draw_text(&label_snippet, label_x, label_y, tick_size, color)?;
-        }
-
-        // Draw Y-axis tick labels using provided major ticks
-        for (tick_value, label_text) in y_major_ticks.iter().zip(y_labels.iter()) {
-            let y_pixel = plot_area.bottom()
-                - (*tick_value - y_min) as f32 / (y_max - y_min) as f32 * plot_area.height();
-
-            // Right-align Y-axis tick labels next to the tick mark with proper offset
-            // Ensure labels fit within the left margin space
-            let text_width_estimate = label_text.len() as f32 * char_width_estimate;
-            let label_x = (plot_area.left() - text_width_estimate - y_tick_offset).max(5.0); // Ensure minimum 5px from canvas edge
-            let label_snippet = self.generated_label(label_text);
-            self.draw_text(
-                &label_snippet,
-                label_x,
-                y_pixel + tick_size * 0.3,
-                tick_size,
-                color,
-            )?;
-        }
-
-        // Draw X-axis label
-        let x_label_x =
-            plot_area.left() + plot_area.width() / 2.0 - x_label.len() as f32 * char_width_estimate;
-        let x_label_y = plot_area.bottom() + x_label_offset;
-        self.draw_text(x_label, x_label_x, x_label_y, label_size, color)?;
-
-        // Draw Y-axis label (rotated 90 degrees counterclockwise)
-        // Calculate required margin based on rotated text dimensions
-        let estimated_text_width = y_label.len() as f32 * label_size * 0.8;
-        let improved_y_label_offset = (estimated_text_width * 0.6).max(y_label_offset);
-        let y_label_x = plot_area.left() - improved_y_label_offset;
-        let y_label_y = plot_area.top() + plot_area.height() / 2.0;
-        self.draw_text_rotated(y_label, y_label_x, y_label_y, label_size, color)?;
-
-        // Draw border around plot area
-        self.draw_plot_border(plot_area, color, dpi_scale)?;
-
-        Ok(())
-    }
-
-    /// Draw axis labels with categorical x-axis labels for bar charts (legacy style)
-    ///
-    /// Similar to `draw_axis_labels_with_ticks` but uses category names on x-axis
-    /// instead of numeric tick values.
-    ///
-    /// Uses the same data-to-pixel mapping as bar rendering to ensure precise alignment.
-    pub fn draw_axis_labels_with_categories(
-        &mut self,
-        plot_area: Rect,
-        categories: &[String],
-        y_min: f64,
-        y_max: f64,
-        y_major_ticks: &[f64],
-        x_label: &str,
-        y_label: &str,
-        color: Color,
-        label_size: f32,
-        dpi_scale: f32,
-    ) -> Result<()> {
-        let tick_size = label_size * 0.7;
-        let render_scale = RenderScale::from_reference_scale(dpi_scale);
-        let tick_offset_y = render_scale.logical_pixels_to_pixels(25.0);
-        let x_label_offset = render_scale.logical_pixels_to_pixels(55.0);
-        let y_label_offset = render_scale.logical_pixels_to_pixels(50.0);
-        let y_tick_offset = render_scale.logical_pixels_to_pixels(15.0);
-        let char_width_estimate = render_scale.logical_pixels_to_pixels(4.0);
-
-        // Draw X-axis category labels using same data-to-pixel mapping as bars
-        let n_categories = categories.len();
-        if n_categories > 0 {
-            // X-axis range with matplotlib-compatible padding: [-0.5, n-0.5]
-            let x_min = -0.5_f64;
-            let x_max = n_categories as f64 - 0.5;
-            let x_range = x_max - x_min;
-
-            for (i, category) in categories.iter().enumerate() {
-                // Position label at category index (same as bar center in data space)
-                let x_data = i as f64;
-                let x_center =
-                    plot_area.left() + ((x_data - x_min) / x_range) as f32 * plot_area.width();
-
-                // Estimate text width for centering
-                let text_width_estimate = category.len() as f32 * char_width_estimate / 2.0;
-                let label_x = (x_center - text_width_estimate)
-                    .max(0.0)
-                    .min(self.width() as f32 - text_width_estimate * 2.0);
-                let label_y = (plot_area.bottom() + tick_offset_y)
-                    .min(self.height() as f32 - tick_size - 5.0);
-
-                self.draw_text(category, label_x, label_y, tick_size, color)?;
-            }
-        }
-
-        // Draw Y-axis tick labels with consistent precision
-        let y_labels = format_tick_labels(y_major_ticks);
-        for (tick_value, label_text) in y_major_ticks.iter().zip(y_labels.iter()) {
-            let y_pixel = plot_area.bottom()
-                - (*tick_value - y_min) as f32 / (y_max - y_min) as f32 * plot_area.height();
-
-            let text_width_estimate = label_text.len() as f32 * char_width_estimate;
-            let label_x = (plot_area.left() - text_width_estimate - y_tick_offset).max(5.0);
-            let label_snippet = self.generated_label(label_text);
-            self.draw_text(
-                &label_snippet,
-                label_x,
-                y_pixel + tick_size * 0.3,
-                tick_size,
-                color,
-            )?;
-        }
-
-        // Draw X-axis label
-        let x_label_x =
-            plot_area.left() + plot_area.width() / 2.0 - x_label.len() as f32 * char_width_estimate;
-        let x_label_y = plot_area.bottom() + x_label_offset;
-        self.draw_text(x_label, x_label_x, x_label_y, label_size, color)?;
-
-        // Draw Y-axis label (rotated)
-        let estimated_text_width = y_label.len() as f32 * label_size * 0.8;
-        let improved_y_label_offset = (estimated_text_width * 0.6).max(y_label_offset);
-        let y_label_x = plot_area.left() - improved_y_label_offset;
-        let y_label_y = plot_area.top() + plot_area.height() / 2.0;
-        self.draw_text_rotated(y_label, y_label_x, y_label_y, label_size, color)?;
-
-        // Draw border around plot area
-        self.draw_plot_border(plot_area, color, dpi_scale)?;
-
-        Ok(())
-    }
-
     /// Draw border around plot area
     pub fn draw_plot_border(
         &mut self,
@@ -1875,6 +1645,12 @@ impl SkiaRenderer {
     /// Draw axis tick labels and border using layout positions
     ///
     /// Uses the computed positions from LayoutCalculator for precise placement.
+    /// Draw axis tick labels and border on a linear axis pair.
+    ///
+    /// Thin wrapper over `draw_axis_labels_at_scaled` with linear
+    /// scales — it exists only so callers that genuinely have no scale to hand
+    /// keep working. It is deliberately not a second implementation.
+    #[allow(clippy::too_many_arguments)]
     pub fn draw_axis_labels_at(
         &mut self,
         plot_area: &LayoutRect,
@@ -1892,51 +1668,56 @@ impl SkiaRenderer {
         show_tick_labels: bool,
         draw_border: bool,
     ) -> Result<()> {
-        let render_scale = RenderScale::new(dpi);
-
-        // Convert LayoutRect to tiny_skia Rect for border drawing
-        let skia_plot_area = Rect::from_ltrb(
-            plot_area.left,
-            plot_area.top,
-            plot_area.right,
-            plot_area.bottom,
+        self.draw_axis_labels_at_scaled(
+            plot_area,
+            x_min,
+            x_max,
+            y_min,
+            y_max,
+            x_ticks,
+            y_ticks,
+            xtick_baseline_y,
+            ytick_right_x,
+            tick_size,
+            color,
+            dpi,
+            show_tick_labels,
+            draw_border,
+            &crate::axes::AxisScale::Linear,
+            &crate::axes::AxisScale::Linear,
         )
-        .ok_or(PlottingError::InvalidData {
-            message: "Invalid plot area dimensions".to_string(),
-            position: None,
-        })?;
+    }
 
-        // Format all tick labels with consistent precision
-        let x_labels = format_tick_labels(x_ticks);
-        let y_labels = format_tick_labels(y_ticks);
+    /// Draw the y-axis tick labels.
+    ///
+    /// This is the single implementation shared by the numeric and both
+    /// categorical axis-label paths. It takes the scale by value rather than
+    /// defaulting to linear so that a caller physically cannot draw y ticks
+    /// without saying which scale they belong to — that omission is exactly how
+    /// the categorical paths ended up labelling a log axis "1000" while the
+    /// numeric path drew "10³".
+    fn draw_y_tick_labels(
+        &mut self,
+        plot_area: &LayoutRect,
+        y_ticks: &[f64],
+        y_min: f64,
+        y_max: f64,
+        y_scale: &crate::axes::AxisScale,
+        ytick_right_x: f32,
+        tick_size: f32,
+        color: Color,
+    ) -> Result<()> {
+        let y_labels = format_tick_labels_for_scale(y_ticks, y_scale);
 
-        if show_tick_labels {
-            // Draw X-axis tick labels using provided ticks
-            for (tick_value, label_text) in x_ticks.iter().zip(x_labels.iter()) {
-                let x_pixel = Self::x_label_center(plot_area, *tick_value, x_min, x_max);
+        for (tick_value, label_text) in y_ticks.iter().zip(y_labels.iter()) {
+            let y_pixel =
+                Self::y_label_center_scaled(plot_area, *tick_value, y_min, y_max, y_scale);
 
-                let label_snippet = self.generated_label(label_text);
-                let (text_width, _) = self.measure_text(&label_snippet, tick_size)?;
-                let label_x = (x_pixel - text_width / 2.0)
-                    .max(0.0)
-                    .min(self.width() as f32 - text_width);
-                self.draw_text(&label_snippet, label_x, xtick_baseline_y, tick_size, color)?;
-            }
-
-            // Draw Y-axis tick labels using provided ticks
-            for (tick_value, label_text) in y_ticks.iter().zip(y_labels.iter()) {
-                let y_pixel = Self::y_label_center(plot_area, *tick_value, y_min, y_max);
-
-                let label_snippet = self.generated_label(label_text);
-                let (text_width, text_height) = self.measure_text(&label_snippet, tick_size)?;
-                let label_x = (ytick_right_x - text_width).max(0.0);
-                let centered_y = y_pixel - text_height / 2.0;
-                self.draw_text(&label_snippet, label_x, centered_y, tick_size, color)?;
-            }
-        }
-
-        if draw_border {
-            self.draw_plot_border(skia_plot_area, color, render_scale.reference_scale())?;
+            let label_snippet = self.generated_label(label_text);
+            let (text_width, text_height) = self.measure_text(&label_snippet, tick_size)?;
+            let label_x = (ytick_right_x - text_width).max(0.0);
+            let centered_y = y_pixel - text_height / 2.0;
+            self.draw_text(&label_snippet, label_x, centered_y, tick_size, color)?;
         }
 
         Ok(())
@@ -1975,10 +1756,8 @@ impl SkiaRenderer {
             position: None,
         })?;
 
-        let x_labels = format_tick_labels_for_scale(x_ticks, x_scale);
-        let y_labels = format_tick_labels_for_scale(y_ticks, y_scale);
-
         if show_tick_labels {
+            let x_labels = format_tick_labels_for_scale(x_ticks, x_scale);
             for (tick_value, label_text) in x_ticks.iter().zip(x_labels.iter()) {
                 let x_pixel =
                     Self::x_label_center_scaled(plot_area, *tick_value, x_min, x_max, x_scale);
@@ -1991,16 +1770,16 @@ impl SkiaRenderer {
                 self.draw_text(&label_snippet, label_x, xtick_baseline_y, tick_size, color)?;
             }
 
-            for (tick_value, label_text) in y_ticks.iter().zip(y_labels.iter()) {
-                let y_pixel =
-                    Self::y_label_center_scaled(plot_area, *tick_value, y_min, y_max, y_scale);
-
-                let label_snippet = self.generated_label(label_text);
-                let (text_width, text_height) = self.measure_text(&label_snippet, tick_size)?;
-                let label_x = (ytick_right_x - text_width).max(0.0);
-                let centered_y = y_pixel - text_height / 2.0;
-                self.draw_text(&label_snippet, label_x, centered_y, tick_size, color)?;
-            }
+            self.draw_y_tick_labels(
+                plot_area,
+                y_ticks,
+                y_min,
+                y_max,
+                y_scale,
+                ytick_right_x,
+                tick_size,
+                color,
+            )?;
         }
 
         if draw_border {
@@ -2010,96 +1789,94 @@ impl SkiaRenderer {
         Ok(())
     }
 
-    /// Draw axis tick labels with categorical x-axis labels for bar charts
+    /// Pixel centre of every categorical slot, in axis order.
     ///
-    /// Similar to `draw_axis_labels_at` but uses category names instead of numeric ticks
-    /// on the x-axis. Categories are positioned at the center of each bar.
-    ///
-    /// Uses the same data-to-pixel mapping as bar rendering to ensure precise alignment.
-    /// With bar chart x-range [-0.5, n-0.5], category i maps to position i in data space.
-    pub fn draw_axis_labels_at_categorical(
-        &mut self,
+    /// One formula for the measurement, the raster row and the SVG row: a label
+    /// measured at one x and drawn at another is the collision this row exists
+    /// to avoid, dressed up as a rounding difference.
+    pub fn categorical_label_centers(
         plot_area: &LayoutRect,
-        categories: &[String],
+        x_positions: &[f64],
         x_min: f64,
         x_max: f64,
-        y_min: f64,
-        y_max: f64,
-        y_ticks: &[f64],
-        xtick_baseline_y: f32,
-        ytick_right_x: f32,
-        tick_size: f32,
-        color: Color,
-        dpi: f32,
-        show_tick_labels: bool,
-        draw_border: bool,
-    ) -> Result<()> {
-        let render_scale = RenderScale::new(dpi);
-
-        // Convert LayoutRect to tiny_skia Rect for border drawing
-        let skia_plot_area = Rect::from_ltrb(
-            plot_area.left,
-            plot_area.top,
-            plot_area.right,
-            plot_area.bottom,
-        )
-        .ok_or(PlottingError::InvalidData {
-            message: "Invalid plot area dimensions".to_string(),
-            position: None,
-        })?;
-
-        if show_tick_labels {
-            let n_categories = categories.len();
-            if n_categories > 0 {
-                for (i, category) in categories.iter().enumerate() {
-                    let x_center = Self::x_label_center(plot_area, i as f64, x_min, x_max);
-
-                    let label_snippet = self.generated_label(category);
-                    let (text_width, _) = self.measure_text(&label_snippet, tick_size)?;
-                    let label_x = (x_center - text_width / 2.0)
-                        .max(0.0)
-                        .min(self.width() as f32 - text_width);
-
-                    self.draw_text(&label_snippet, label_x, xtick_baseline_y, tick_size, color)?;
-                }
-            }
-
-            let y_labels = format_tick_labels(y_ticks);
-            for (tick_value, label_text) in y_ticks.iter().zip(y_labels.iter()) {
-                let y_pixel = Self::y_label_center(plot_area, *tick_value, y_min, y_max);
-
-                let label_snippet = self.generated_label(label_text);
-                let (text_width, text_height) = self.measure_text(&label_snippet, tick_size)?;
-                let label_x = (ytick_right_x - text_width).max(0.0);
-                let centered_y = y_pixel - text_height / 2.0;
-                self.draw_text(&label_snippet, label_x, centered_y, tick_size, color)?;
-            }
-        }
-
-        if draw_border {
-            self.draw_plot_border(skia_plot_area, color, render_scale.reference_scale())?;
-        }
-
-        Ok(())
+    ) -> Vec<f32> {
+        x_positions
+            .iter()
+            .map(|&x_position| Self::x_label_center(plot_area, x_position, x_min, x_max))
+            .collect()
     }
 
-    /// Draw axis labels for violin/distribution plots with categorical x-axis
+    /// Measure an x tick label row: how much room it needs, and how far apart
+    /// its labels have to be spaced to stop overlapping.
     ///
-    /// Unlike bar charts which use integer positions (0, 1, 2, ...), violin plots
-    /// use arbitrary x-positions (e.g., 0.5 for a single violin). This method
-    /// draws category labels at the actual x-positions within the data range.
+    /// Labels are measured as the text engine will lay them out, and an empty
+    /// label measures nothing — an unnamed slot holds its place on the axis
+    /// without writing under it.
+    pub fn measure_x_tick_row(
+        &self,
+        labels: &[String],
+        centers: &[f32],
+        size: f32,
+        bounds: XTickRowBounds,
+    ) -> Result<XTickRowMetrics> {
+        let mut widths = Vec::with_capacity(labels.len());
+        let mut heights = Vec::with_capacity(labels.len());
+        let mut horizontal_extent = 0.0_f32;
+        let mut max_label_width = 0.0_f32;
+
+        for label in labels {
+            if label.is_empty() {
+                widths.push(0.0);
+                heights.push(0.0);
+                continue;
+            }
+            let (width, height) = self.measure_label_text(label, size)?;
+            widths.push(width);
+            heights.push(height);
+            horizontal_extent = horizontal_extent.max(height);
+            max_label_width = max_label_width.max(width);
+        }
+
+        let gap = size * X_TICK_LABEL_GAP_EM;
+        // One gutter for the whole row: the same clearance a label keeps from
+        // its neighbour it also keeps from the figure edge.
+        let bounds = bounds.inset(gap);
+        Ok(XTickRowMetrics {
+            horizontal_extent,
+            max_label_width,
+            horizontal_stride: clearing_stride(centers, &widths, gap, bounds),
+            // Turned a quarter turn, a label is only as wide as it is tall, so
+            // its neighbours are cleared by its height rather than its width.
+            rotated_stride: clearing_stride(centers, &heights, gap, bounds),
+            bounds,
+        })
+    }
+
+    /// Draw axis tick labels with a categorical x axis.
+    ///
+    /// Every categorical plot type — bar, box plot, violin, boxen — reaches this
+    /// one drawer, with the slot centres from `CategoryAxis::harvest`. A
+    /// bar chart's slots happen to be `0..n-1`; there used to be a second copy of
+    /// this function that assumed that and could not express anything else, which
+    /// is why a violin needed its own.
+    ///
+    /// A slot whose series carries no category name has an empty label and draws
+    /// nothing — it still holds its place on the axis.
+    ///
+    /// The label row follows [`SkiaRenderer::x_tick_label_plan`], so ten region
+    /// names turn a quarter turn instead of overlapping into one illegible run.
     ///
     /// # Arguments
     /// * `plot_area` - The computed plot area
-    /// * `categories` - Category labels to draw
-    /// * `x_positions` - X positions for each category in data space
+    /// * `categories` - Category labels to draw, in axis order
+    /// * `x_positions` - Slot centre for each category, in data space
     /// * `x_min` - Minimum x value (data space)
     /// * `x_max` - Maximum x value (data space)
     /// * `y_min`, `y_max` - Y data range
     /// * `y_ticks` - Y-axis tick values
     /// * Other arguments for positioning and styling
     #[allow(clippy::too_many_arguments)]
-    pub fn draw_axis_labels_at_categorical_violin(
+    pub fn draw_axis_labels_at_categorical(
         &mut self,
         plot_area: &LayoutRect,
         categories: &[String],
@@ -2116,6 +1893,7 @@ impl SkiaRenderer {
         dpi: f32,
         show_tick_labels: bool,
         draw_border: bool,
+        y_scale: &crate::axes::AxisScale,
     ) -> Result<()> {
         let render_scale = RenderScale::new(dpi);
 
@@ -2132,28 +1910,28 @@ impl SkiaRenderer {
         })?;
 
         if show_tick_labels {
-            for (category, &x_pos) in categories.iter().zip(x_positions.iter()) {
-                let x_center = Self::x_label_center(plot_area, x_pos, x_min, x_max);
+            let centers = Self::categorical_label_centers(plot_area, x_positions, x_min, x_max);
+            let plan = self.x_tick_label_plan;
+            draw_x_tick_label_row(
+                self,
+                categories,
+                &centers,
+                xtick_baseline_y,
+                tick_size,
+                color,
+                plan,
+            )?;
 
-                let label_snippet = self.generated_label(category);
-                let (text_width, _) = self.measure_text(&label_snippet, tick_size)?;
-                let label_x = (x_center - text_width / 2.0)
-                    .max(0.0)
-                    .min(self.width() as f32 - text_width);
-
-                self.draw_text(&label_snippet, label_x, xtick_baseline_y, tick_size, color)?;
-            }
-
-            let y_labels = format_tick_labels(y_ticks);
-            for (tick_value, label_text) in y_ticks.iter().zip(y_labels.iter()) {
-                let y_pixel = Self::y_label_center(plot_area, *tick_value, y_min, y_max);
-
-                let label_snippet = self.generated_label(label_text);
-                let (text_width, text_height) = self.measure_text(&label_snippet, tick_size)?;
-                let label_x = (ytick_right_x - text_width).max(0.0);
-                let centered_y = y_pixel - text_height / 2.0;
-                self.draw_text(&label_snippet, label_x, centered_y, tick_size, color)?;
-            }
+            self.draw_y_tick_labels(
+                plot_area,
+                y_ticks,
+                y_min,
+                y_max,
+                y_scale,
+                ytick_right_x,
+                tick_size,
+                color,
+            )?;
         }
 
         if draw_border {
@@ -2205,13 +1983,14 @@ impl SkiaRenderer {
             position: None,
         })?;
 
-        self.draw_rectangle(
+        // Frame the panel explicitly: the fill primitive no longer adds a border.
+        self.draw_rectangle_styled(
             legend_bg.left(),
             legend_bg.top(),
             legend_bg.width(),
             legend_bg.height(),
-            Color::new_rgba(255, 255, 255, 200),
-            true,
+            Some(Color::from_rgba(255, 255, 255, 200)),
+            Some((LEGACY_LEGEND_EDGE_COLOR, LEGACY_LEGEND_EDGE_WIDTH_PT)),
         )?;
 
         // Draw legend items
@@ -2223,13 +2002,18 @@ impl SkiaRenderer {
                     position: None,
                 },
             )?;
-            self.draw_rectangle(
+            // Fill is exactly the series colour; the neutral edge is what keeps
+            // a white/near-white key visible on the near-white panel.
+            self.draw_rectangle_styled(
                 color_rect.left(),
                 color_rect.top(),
                 color_rect.width(),
                 color_rect.height(),
-                *color,
-                true,
+                Some(*color),
+                Some((
+                    legacy_legend_swatch_edge(*color),
+                    LEGACY_LEGEND_SWATCH_EDGE_WIDTH_PT,
+                )),
             )?;
 
             // Draw label text
@@ -2238,7 +2022,7 @@ impl SkiaRenderer {
                 legend_x + 20.0,
                 legend_y,
                 legend_size,
-                Color::new_rgba(0, 0, 0, 255),
+                Color::from_rgba(0, 0, 0, 255),
             )?;
 
             legend_y += legend_spacing;
@@ -2247,13 +2031,17 @@ impl SkiaRenderer {
         Ok(())
     }
 
-    /// Draw legend with configurable position
+    /// Draw legend with configurable position.
+    ///
+    /// Accepts a [`LegendPosition`](crate::core::LegendPosition) or the
+    /// deprecated [`Position`](crate::core::Position), which converts losslessly.
     pub fn draw_legend_positioned(
         &mut self,
         legend_items: &[(String, Color)],
         plot_area: Rect,
-        position: crate::core::Position,
+        position: impl Into<crate::core::LegendPosition>,
     ) -> Result<()> {
+        let position = position.into();
         if legend_items.is_empty() {
             return Ok(());
         }
@@ -2267,40 +2055,45 @@ impl SkiaRenderer {
         let center_x = plot_area.left() + plot_area.width() / 2.0;
         let center_y = plot_area.top() + plot_area.height() / 2.0;
 
+        use crate::core::LegendPosition as LP;
         let (legend_x, legend_y) = match position {
-            // Best defaults to TopRight in legacy method; full best positioning in draw_legend_full
-            crate::core::Position::Best | crate::core::Position::TopRight => (
+            // `Best` defaults to upper-right in this legacy helper; full best
+            // positioning lives in `draw_legend_full`. The `Outside*` variants
+            // have no margin to expand into here, so they fall back to the
+            // nearest inside placement.
+            LP::Best | LP::UpperRight | LP::Right | LP::OutsideRight | LP::OutsideUpper => (
                 plot_area.right() - legend_width - 10.0,
                 plot_area.top() + 10.0,
             ),
-            crate::core::Position::TopLeft => (plot_area.left() + 10.0, plot_area.top() + 10.0),
-            crate::core::Position::TopCenter => {
-                (center_x - legend_width / 2.0, plot_area.top() + 10.0)
-            }
-            crate::core::Position::CenterLeft => {
-                (plot_area.left() + 10.0, center_y - legend_height / 2.0)
-            }
-            crate::core::Position::Center => (
+            LP::UpperLeft | LP::OutsideLeft => (plot_area.left() + 10.0, plot_area.top() + 10.0),
+            LP::UpperCenter => (center_x - legend_width / 2.0, plot_area.top() + 10.0),
+            LP::CenterLeft => (plot_area.left() + 10.0, center_y - legend_height / 2.0),
+            LP::Center => (
                 center_x - legend_width / 2.0,
                 center_y - legend_height / 2.0,
             ),
-            crate::core::Position::CenterRight => (
+            LP::CenterRight => (
                 plot_area.right() - legend_width - 10.0,
                 center_y - legend_height / 2.0,
             ),
-            crate::core::Position::BottomLeft => (
+            LP::LowerLeft => (
                 plot_area.left() + 10.0,
                 plot_area.bottom() - legend_height - 10.0,
             ),
-            crate::core::Position::BottomCenter => (
+            LP::LowerCenter | LP::OutsideLower => (
                 center_x - legend_width / 2.0,
                 plot_area.bottom() - legend_height - 10.0,
             ),
-            crate::core::Position::BottomRight => (
+            LP::LowerRight => (
                 plot_area.right() - legend_width - 10.0,
                 plot_area.bottom() - legend_height - 10.0,
             ),
-            crate::core::Position::Custom { x, y } => (x, y),
+            // `Custom` is a fraction of the plot area with Y growing upward,
+            // matching `Legend::calculate_position`.
+            LP::Custom { x, y, .. } => (
+                plot_area.left() + x * plot_area.width(),
+                plot_area.top() + (1.0 - y) * plot_area.height(),
+            ),
         };
 
         // Draw legend background (simple rectangle)
@@ -2312,13 +2105,14 @@ impl SkiaRenderer {
                 },
             )?;
 
-        self.draw_rectangle(
+        // Frame the panel explicitly: the fill primitive no longer adds a border.
+        self.draw_rectangle_styled(
             legend_bg.left(),
             legend_bg.top(),
             legend_bg.width(),
             legend_bg.height(),
-            Color::new_rgba(255, 255, 255, 200),
-            true,
+            Some(Color::from_rgba(255, 255, 255, 200)),
+            Some((LEGACY_LEGEND_EDGE_COLOR, LEGACY_LEGEND_EDGE_WIDTH_PT)),
         )?;
 
         // Draw legend items
@@ -2331,13 +2125,18 @@ impl SkiaRenderer {
                     position: None,
                 },
             )?;
-            self.draw_rectangle(
+            // Fill is exactly the series colour; the neutral edge is what keeps
+            // a white/near-white key visible on the near-white panel.
+            self.draw_rectangle_styled(
                 color_rect.left(),
                 color_rect.top(),
                 color_rect.width(),
                 color_rect.height(),
-                *color,
-                true,
+                Some(*color),
+                Some((
+                    legacy_legend_swatch_edge(*color),
+                    LEGACY_LEGEND_SWATCH_EDGE_WIDTH_PT,
+                )),
             )?;
 
             // Draw label text
@@ -2346,7 +2145,7 @@ impl SkiaRenderer {
                 legend_x + 20.0,
                 item_y,
                 legend_size,
-                Color::new_rgba(0, 0, 0, 255),
+                Color::from_rgba(0, 0, 0, 255),
             )?;
 
             item_y += legend_spacing;
@@ -2378,6 +2177,11 @@ impl SkiaRenderer {
     /// Draw a scatter/marker handle in the legend
     ///
     /// Draws a single marker symbol centered in the handle area.
+    /// Draw a marker handle in the legend
+    ///
+    /// The fill is always exactly `color`. `edge` is the rim the plotted
+    /// markers carry, as `(colour, width_in_points)`; `draw_marker_styled`
+    /// scales the width, so the key matches the plot at any DPI.
     fn draw_legend_scatter_handle(
         &mut self,
         x: f32,
@@ -2386,15 +2190,21 @@ impl SkiaRenderer {
         color: Color,
         marker: &MarkerStyle,
         size: f32,
+        edge: Option<(Color, f32)>,
     ) -> Result<()> {
         // Draw marker at center of handle area
         let center_x = x + length / 2.0;
-        self.draw_marker(center_x, y, size, *marker, color)
+        self.draw_marker_styled(center_x, y, size, *marker, color, edge)
     }
 
     /// Draw a bar handle in the legend
     ///
     /// Draws a filled rectangle to represent bar/histogram series.
+    ///
+    /// The fill is always exactly `color` — a legend key has to reproduce the
+    /// series colour. `edge` is the stroke the corresponding patch is drawn
+    /// with, as `(colour, width_in_points)`; the width goes through the render
+    /// scale so the key matches the plot at any DPI. `None` draws a flat patch.
     fn draw_legend_bar_handle(
         &mut self,
         x: f32,
@@ -2402,10 +2212,11 @@ impl SkiaRenderer {
         length: f32,
         height: f32,
         color: Color,
+        edge: Option<(Color, f32)>,
     ) -> Result<()> {
         // Draw filled rectangle centered vertically
         let rect_y = y - height / 2.0;
-        self.draw_rectangle(x, rect_y, length, height, color, true)
+        self.draw_rectangle_styled(x, rect_y, length, height, Some(color), edge)
     }
 
     /// Draw a line+marker handle in the legend
@@ -2421,11 +2232,12 @@ impl SkiaRenderer {
         line_width: f32,
         marker: &MarkerStyle,
         marker_size: f32,
+        marker_edge: Option<(Color, f32)>,
     ) -> Result<()> {
         // Draw line first
         self.draw_legend_line_handle(x, y, length, color, line_style, line_width)?;
         // Draw marker on top at center
-        self.draw_legend_scatter_handle(x, y, length, color, marker, marker_size)
+        self.draw_legend_scatter_handle(x, y, length, color, marker, marker_size, marker_edge)
     }
 
     /// Draw a legend handle based on the item type
@@ -2444,7 +2256,7 @@ impl SkiaRenderer {
                 let scaled_width = self.points_to_pixels(*width);
                 self.draw_legend_line_handle(x, y, handle_length, item.color, style, scaled_width)?;
             }
-            LegendItemType::Scatter { marker, size } => {
+            LegendItemType::Scatter { marker, size, edge } => {
                 let scaled_size = self.points_to_pixels(*size);
                 self.draw_legend_scatter_handle(
                     x,
@@ -2453,6 +2265,7 @@ impl SkiaRenderer {
                     item.color,
                     marker,
                     scaled_size,
+                    *edge,
                 )?;
             }
             LegendItemType::LineMarker {
@@ -2460,6 +2273,7 @@ impl SkiaRenderer {
                 line_width,
                 marker,
                 marker_size,
+                marker_edge,
             } => {
                 let scaled_line_width = self.points_to_pixels(*line_width);
                 let scaled_marker_size = self.points_to_pixels(*marker_size);
@@ -2472,14 +2286,16 @@ impl SkiaRenderer {
                     scaled_line_width,
                     marker,
                     scaled_marker_size,
+                    *marker_edge,
                 )?;
             }
-            LegendItemType::Bar | LegendItemType::Histogram => {
-                self.draw_legend_bar_handle(x, y, handle_length, handle_height, item.color)?;
+            LegendItemType::Bar { edge } | LegendItemType::Histogram { edge } => {
+                let edge = *edge;
+                self.draw_legend_bar_handle(x, y, handle_length, handle_height, item.color, edge)?;
             }
             LegendItemType::Area { edge_color } => {
                 // Draw filled rectangle with optional edge
-                self.draw_legend_bar_handle(x, y, handle_length, handle_height, item.color)?;
+                self.draw_legend_bar_handle(x, y, handle_length, handle_height, item.color, None)?;
                 if let Some(edge) = edge_color {
                     // Draw edge around the rectangle
                     let rect_y = y - handle_height / 2.0;
@@ -2658,7 +2474,12 @@ impl SkiaRenderer {
     }
 
     /// Draw legend frame with background and optional border
-    fn draw_legend_frame(
+    /// Paint a legend frame: shadow, face and edge, from one [`LegendStyle`].
+    ///
+    /// `pub(crate)` so the 3D overlay paints its legend box with this exact
+    /// code rather than a themed look-alike of it. `style` must already be in
+    /// device pixels (see `Legend::scaled_for_render`).
+    pub(crate) fn draw_legend_frame(
         &mut self,
         x: f32,
         y: f32,
@@ -2686,6 +2507,7 @@ impl SkiaRenderer {
                     true,
                 )?;
             } else {
+                // Flat fill: a shadow must never gain an outline of its own.
                 self.draw_rectangle(
                     x + shadow_dx,
                     y + shadow_dy,
@@ -2697,7 +2519,9 @@ impl SkiaRenderer {
             }
         }
 
-        // Draw background with alpha applied
+        // Draw background with alpha applied. Flat fill in both branches: the
+        // frame border is drawn below from `style.edge_color`/`border_width`,
+        // which is also what the rounded branch has always done.
         let face_color = style.effective_face_color();
         if radius > 0.0 {
             self.draw_rounded_rectangle(x, y, width, height, radius, face_color, true)?;
@@ -2725,28 +2549,57 @@ impl SkiaRenderer {
         Ok(())
     }
 
-    /// Calculate legend dimensions from items
-    fn calculate_legend_dimensions(
+    /// Size and place the legend through the one shared layout.
+    ///
+    /// `legend` must already be scaled for this renderer. The measurement
+    /// callback is this backend's own, which is how a Typst-shaped label and a
+    /// cosmic-text one stay honestly different without duplicating the layout.
+    fn legend_layout(
         &self,
         items: &[LegendItem],
         legend: &Legend,
-        char_width: f32,
-    ) -> (f32, f32) {
-        legend.calculate_size(items, char_width)
+        plot_area: (f32, f32, f32, f32),
+        placement: LegendPlacement<'_>,
+    ) -> Result<LegendLayout> {
+        layout_legend(items, legend, plot_area, placement, |text| {
+            Ok(self.measure_label_text(text, legend.font_size)?.0)
+        })
+    }
+
+    /// The room this legend needs, measured exactly as it will be drawn.
+    ///
+    /// The figure-level margin reservation calls this; it shares
+    /// [`layout_legend`] with [`SkiaRenderer::draw_legend_full`], so an outside
+    /// legend can no longer be reserved at one width and drawn at another.
+    ///
+    /// `legend` is in points and is scaled for this renderer internally.
+    pub(crate) fn measure_legend(
+        &self,
+        items: &[LegendItem],
+        legend: &Legend,
+    ) -> Result<(f32, f32)> {
+        let legend = legend.scaled_for_render(self.render_scale);
+        measure_legend_size(items, &legend, |text| {
+            Ok(self.measure_label_text(text, legend.font_size)?.0)
+        })
     }
 
     /// Draw legend with full LegendItem support
     ///
     /// This is the new legend drawing method that properly renders different
     /// series types with their correct visual handles.
+    ///
+    /// `occupancy` is only consulted for
+    /// [`LegendPosition::Best`](crate::core::LegendPosition::Best); `None`
+    /// means "no idea where the data is", which degrades to `UpperRight`.
     pub fn draw_legend_full(
         &mut self,
         items: &[LegendItem],
         legend: &Legend,
         plot_area: Rect,
-        data_bboxes: Option<&[(f32, f32, f32, f32)]>,
+        occupancy: Option<&LegendOccupancy>,
     ) -> Result<()> {
-        self.draw_legend_full_resolved(items, legend, plot_area, data_bboxes, None)
+        self.draw_legend_full_resolved(items, legend, plot_area, occupancy, None)
     }
 
     pub(crate) fn draw_legend_full_resolved(
@@ -2754,7 +2607,7 @@ impl SkiaRenderer {
         items: &[LegendItem],
         legend: &Legend,
         plot_area: Rect,
-        data_bboxes: Option<&[(f32, f32, f32, f32)]>,
+        occupancy: Option<&LegendOccupancy>,
         resolved_rect: Option<(f32, f32, f32, f32)>,
     ) -> Result<()> {
         if items.is_empty() || !legend.enabled {
@@ -2762,130 +2615,46 @@ impl SkiaRenderer {
         }
 
         let legend = legend.scaled_for_render(self.render_scale);
-        let legend = &legend;
-        let spacing = legend.spacing.to_pixels(legend.font_size);
-
-        // Estimate character width for size calculation
-        let char_width = legend.font_size * 0.6;
-
-        // Calculate legend size
-        let (legend_width, legend_height) = resolved_rect
-            .map(|(left, top, right, bottom)| (right - left, bottom - top))
-            .unwrap_or_else(|| self.calculate_legend_dimensions(items, legend, char_width));
-
-        // Determine position
-        let plot_bounds = (
+        let bounds = (
             plot_area.left(),
             plot_area.top(),
             plot_area.right(),
             plot_area.bottom(),
         );
-
-        let position = if resolved_rect.is_none() && matches!(legend.position, LegendPosition::Best)
-        {
-            // Use best position algorithm
-            let bboxes = data_bboxes.unwrap_or(&[]);
-            if bboxes.iter().map(|b| 1).sum::<usize>() > 100000 {
-                // Performance guard: skip for very large datasets
-                LegendPosition::UpperRight
-            } else {
-                find_best_position(
-                    (legend_width, legend_height),
-                    plot_bounds,
-                    bboxes,
-                    &legend.spacing,
-                    legend.font_size,
-                )
-            }
-        } else {
-            legend.position
+        let placement = LegendPlacement {
+            reserved: resolved_rect,
+            occupancy,
         };
+        let layout = self.legend_layout(items, &legend, bounds, placement)?;
 
-        // Create a temporary legend with the resolved position to calculate coordinates
-        let resolved_legend = Legend {
-            position,
-            ..legend.clone()
-        };
-
-        let (legend_x, legend_y) = resolved_rect
-            .map(|(left, top, _, _)| (left, top))
-            .unwrap_or_else(|| {
-                resolved_legend.calculate_position((legend_width, legend_height), plot_bounds)
-            });
-
-        // Draw frame
         self.draw_legend_frame(
-            legend_x,
-            legend_y,
-            legend_width,
-            legend_height,
+            layout.x,
+            layout.y,
+            layout.width,
+            layout.height,
             &legend.style,
         )?;
 
-        // Starting position for items (inside padding)
-        let item_x = legend_x + spacing.border_pad;
-        let mut item_y = legend_y + spacing.border_pad + legend.font_size / 2.0;
-
-        // Draw title if present
-        if let Some(ref title) = legend.title {
-            let title_x = legend_x + legend_width / 2.0;
-            self.draw_text_centered(title, title_x, item_y, legend.font_size, legend.text_color)?;
-            item_y += legend.font_size + spacing.label_spacing;
+        if let (Some(title_layout), Some(title)) = (layout.title, legend.title.as_deref()) {
+            self.draw_text_centered(
+                title,
+                title_layout.center_x,
+                title_layout.top_y,
+                layout.font_size,
+                legend.text_color,
+            )?;
         }
 
-        // Calculate items per column
-        let items_per_col = items.len().div_ceil(legend.columns);
-
-        // Calculate column width
-        let col_width = if resolved_rect.is_some() {
-            (legend_width
-                - spacing.border_pad * 2.0
-                - legend.columns.saturating_sub(1) as f32 * spacing.column_spacing)
-                / legend.columns.max(1) as f32
-        } else {
-            let max_label_len = items.iter().map(|item| item.label.len()).max().unwrap_or(0);
-            spacing.handle_length + spacing.handle_text_pad + max_label_len as f32 * char_width
-        };
-
-        // When drawing into a resolved (possibly capped) rectangle, clip rows
-        // that would extend past the frame instead of overwriting the plot.
-        let max_row_y = resolved_rect
-            .map(|(_, _, _, bottom)| bottom - spacing.border_pad)
-            .unwrap_or(f32::INFINITY);
-
-        // Draw items column by column
-        for col in 0..legend.columns {
-            let col_x = item_x + col as f32 * (col_width + spacing.column_spacing);
-            let mut row_y = item_y;
-
-            for row in 0..items_per_col {
-                let idx = col * items_per_col + row;
-                if idx >= items.len() {
-                    break;
-                }
-                if row_y > max_row_y {
-                    break;
-                }
-
-                let item = &items[idx];
-
-                // Draw handle
-                self.draw_legend_handle(item, col_x, row_y, &spacing)?;
-
-                // Draw label - vertically centered with handle
-                let text_x = col_x + spacing.handle_length + spacing.handle_text_pad;
-                // Center text vertically on handle
-                let centered_y = row_y - legend.font_size * 0.65;
-                self.draw_text(
-                    &item.label,
-                    text_x,
-                    centered_y,
-                    legend.font_size,
-                    legend.text_color,
-                )?;
-
-                row_y += legend.font_size + spacing.label_spacing;
-            }
+        for entry in &layout.entries {
+            let item = &items[entry.item_index];
+            self.draw_legend_handle(item, entry.handle_x, entry.handle_center_y, &layout.spacing)?;
+            self.draw_text(
+                &item.label,
+                entry.label_x,
+                entry.label_top_y,
+                layout.font_size,
+                legend.text_color,
+            )?;
         }
 
         Ok(())
@@ -2927,130 +2696,24 @@ impl SkiaRenderer {
         label_font_size: Option<f32>,
         show_log_subticks: bool,
     ) -> Result<()> {
-        let tick_font_size_px = self.points_to_pixels(tick_font_size);
-        let label_font_size_px = label_font_size
-            .map(|size| self.points_to_pixels(size))
-            .unwrap_or(tick_font_size_px * 1.1);
-
-        // Draw the colorbar gradient (vertical, from vmax at top to vmin at bottom)
-        // Use one segment per pixel row to eliminate anti-aliasing artifacts
-        let num_segments = (height as usize).max(50);
-        let segment_height = height / num_segments as f32;
-
-        for i in 0..num_segments {
-            // Map segment to value (top = vmax, bottom = vmin)
-            let normalized = 1.0 - (i as f64 / (num_segments - 1).max(1) as f64);
-            let color = colormap.sample(normalized);
-            let segment_y = y + i as f32 * segment_height;
-
-            // Use solid rectangle with small overlap to ensure seamless gradient
-            // draw_solid_rectangle has 100% opacity and no anti-aliasing
-            self.draw_solid_rectangle(x, segment_y, width, segment_height + 0.5, color)?;
-        }
-
-        // Draw border around colorbar
-        let stroke_width = self.logical_pixels_to_pixels(1.0);
-        self.draw_rectangle_outline(x, y, width, height, foreground_color, stroke_width)?;
-
-        let ticks = compute_colorbar_ticks(vmin, vmax, value_scale, show_log_subticks);
-        let mut measured_major_labels = Vec::with_capacity(ticks.major_labels.len());
-        let mut max_label_width: f32 = 0.0;
-        for label_text in &ticks.major_labels {
-            let label_snippet = self.generated_label(label_text);
-            let (text_width, _) = self.measure_text(&label_snippet, tick_font_size_px)?;
-            let ink_center_from_top =
-                self.measure_text_ink_center_from_top(&label_snippet, tick_font_size_px)?;
-            max_label_width = max_label_width.max(text_width);
-            measured_major_labels.push((label_snippet, ink_center_from_top));
-        }
-
-        let rotated_label_width = if let Some(label_text) = label {
-            Some(self.measure_text(label_text, label_font_size_px)?.1)
-        } else {
-            None
-        };
-        let log_decade_base_center = matches!(value_scale, crate::axes::AxisScale::Log)
-            .then(|| self.measure_text_ink_center_from_top("10", tick_font_size_px))
-            .transpose()?;
-        let layout = compute_colorbar_layout_metrics(
-            width,
-            tick_font_size_px,
-            max_label_width,
-            rotated_label_width,
-        );
-
-        for minor_value in &ticks.minor_values {
-            let t = value_scale
-                .normalized_position(*minor_value, vmin, vmax)
-                .clamp(0.0, 1.0);
-            let tick_y = y + height * (1.0 - t as f32);
-
-            self.draw_line(
-                x + width,
-                tick_y,
-                x + width + layout.minor_tick_width,
-                tick_y,
-                foreground_color,
-                stroke_width * 0.8,
-                LineStyle::Solid,
-            )?;
-        }
-
-        for ((value, _), (label_text, ink_center_from_top)) in ticks
-            .major_values
-            .iter()
-            .zip(ticks.major_labels.iter())
-            .zip(measured_major_labels.iter())
-        {
-            // Map value to Y position (top = vmax, bottom = vmin)
-            let t = value_scale
-                .normalized_position(*value, vmin, vmax)
-                .clamp(0.0, 1.0);
-            let tick_y = y + height * (1.0 - t as f32);
-
-            // Draw tick mark
-            self.draw_line(
-                x + width,
-                tick_y,
-                x + width + layout.major_tick_width,
-                tick_y,
-                foreground_color,
-                stroke_width,
-                LineStyle::Solid,
-            )?;
-
-            let anchor_center = colorbar_major_label_anchor_center_from_top(
+        crate::render::colorbar::draw_colorbar(
+            self,
+            &crate::render::colorbar::ColorbarSpec {
+                colormap,
+                vmin,
+                vmax,
+                x,
+                y,
+                width,
+                height,
                 value_scale,
-                label_text,
-                *ink_center_from_top,
-                log_decade_base_center,
-            );
-            let label_y = colorbar_major_label_top(tick_y, anchor_center);
-            self.draw_text(
-                label_text,
-                x + layout.tick_label_x_offset,
-                label_y,
-                tick_font_size_px,
-                foreground_color,
-            )?;
-        }
-
-        // Draw colorbar label (rotated 90 degrees) if provided
-        if let Some((label, label_center_x_offset)) =
-            label.zip(layout.rotated_label_center_x_offset)
-        {
-            let label_x = x + label_center_x_offset;
-            let label_y = y + height / 2.0;
-            self.draw_text_rotated(
                 label,
-                label_x,
-                label_y,
-                label_font_size_px,
                 foreground_color,
-            )?;
-        }
-
-        Ok(())
+                tick_font_size,
+                label_font_size,
+                show_log_subticks,
+            },
+        )
     }
 
     /// Consume the renderer and convert to an `Image`.
@@ -3122,23 +2785,65 @@ impl SkiaRenderer {
         self.height
     }
 
-    /// Draw a subplot image at the specified position
+    /// Draw a subplot image at the specified position.
+    ///
+    /// Alias for [`Self::draw_image_layer`]; `subplot_image` must carry
+    /// straight (non-premultiplied) alpha, which is what the PNG round-trip
+    /// this used to perform already assumed. Prefer `draw_image_layer`, which
+    /// borrows instead of consuming.
     pub fn draw_subplot(
         &mut self,
         subplot_image: crate::core::plot::Image,
         x: u32,
         y: u32,
     ) -> Result<()> {
-        let subplot_png = subplot_image.encode_png()?;
-        let subplot_pixmap = tiny_skia::Pixmap::decode_png(&subplot_png).map_err(|error| {
-            PlottingError::RenderError(format!("Failed to decode subplot image: {error}"))
-        })?;
+        self.draw_image_layer(&subplot_image, x, y)
+    }
 
-        // Draw the subplot pixmap onto our main pixmap at the specified position
+    /// Compose a straight-alpha RGBA image onto the canvas.
+    ///
+    /// This is the only way an [`Image`] is put on
+    /// the canvas — [`Self::draw_subplot`] is a thin alias — so the 2D subplot
+    /// compositor and the 3D overlay compositor cannot drift apart.
+    ///
+    /// It used to go through `encode_png` + `decode_png`, which cost a full
+    /// deflate *and* inflate of the whole canvas for every composited frame
+    /// (~11 MB per 1920x1440 3D orbit frame) purely to change alpha
+    /// representation. The premultiply below is that conversion, done directly.
+    pub fn draw_image_layer(
+        &mut self,
+        image: &crate::core::plot::Image,
+        x: u32,
+        y: u32,
+    ) -> Result<()> {
+        let expected = (image.width as usize)
+            .saturating_mul(image.height as usize)
+            .saturating_mul(4);
+        if image.pixels.len() != expected {
+            return Err(PlottingError::RenderError(
+                "image layer pixel buffer does not match its dimensions".to_string(),
+            ));
+        }
+
+        let mut premultiplied = vec![0_u8; expected];
+        for (destination, source) in premultiplied
+            .chunks_exact_mut(4)
+            .zip(image.pixels.chunks_exact(4))
+        {
+            let alpha = u32::from(source[3]);
+            destination[0] = ((u32::from(source[0]) * alpha + 127) / 255) as u8;
+            destination[1] = ((u32::from(source[1]) * alpha + 127) / 255) as u8;
+            destination[2] = ((u32::from(source[2]) * alpha + 127) / 255) as u8;
+            destination[3] = source[3];
+        }
+
+        let size = tiny_skia::IntSize::from_wh(image.width, image.height)
+            .ok_or(PlottingError::OutOfMemory)?;
+        let layer = Pixmap::from_vec(premultiplied, size).ok_or(PlottingError::OutOfMemory)?;
         self.pixmap.draw_pixmap(
             x as i32,
             y as i32,
-            subplot_pixmap.as_ref(),
+            layer.as_ref(),
             &tiny_skia::PixmapPaint::default(),
             tiny_skia::Transform::identity(),
             None,
@@ -3148,5 +2853,847 @@ impl SkiaRenderer {
     }
 }
 
+/// Gutter kept between two neighbouring x tick labels, in ems of their size.
+const X_TICK_LABEL_GAP_EM: f32 = 0.35;
+
+/// How the x tick label row is oriented.
+///
+/// Ten region names under one axis run into each other at any font size a
+/// figure would actually use, so the row has to be able to turn — and it turns
+/// as a *row*: every label horizontal or every label rotated, never the mix a
+/// per-label rule would produce.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum XTickRotation {
+    /// Horizontal while the labels fit, a quarter turn when they stop fitting,
+    /// and every k-th label when even a rotated row does not fit the margin.
+    #[default]
+    Auto,
+    /// Always horizontal; colliding labels are thinned to every k-th.
+    Horizontal,
+    /// Always a quarter turn counter-clockwise.
+    Vertical,
+}
+
+/// The horizontal range one x tick label row's ink may occupy, in pixels.
+///
+/// The first and last labels of a categorical axis are centred on slots that
+/// sit close to the plot area's edges, so a label wider than the outer margin
+/// runs off the canvas — a 35-character category name under the first bar of a
+/// 400 px figure is not an edge case. A label that would fall outside is slid
+/// back inside instead of being cut off.
+///
+/// The same range is applied when the row is *measured*, which is the point of
+/// having a type for it: [`label_left`](Self::label_left) is the one formula
+/// `clearing_stride` and `draw_x_tick_label_row` both ask, so sliding an
+/// end label inwards can never create the overlap the stride was chosen to
+/// avoid.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct XTickRowBounds {
+    /// Leftmost pixel the row's ink may touch.
+    pub left: f32,
+    /// One past the rightmost pixel the row's ink may touch.
+    pub right: f32,
+}
+
+impl XTickRowBounds {
+    /// No clamping at all — what a row measured against no particular canvas
+    /// gets, and what [`XTickLabelPlan::default`] carries.
+    pub const UNBOUNDED: Self = Self {
+        left: f32::NEG_INFINITY,
+        right: f32::INFINITY,
+    };
+
+    /// The full width of a `width` pixel canvas.
+    pub fn canvas(width: f32) -> Self {
+        Self {
+            left: 0.0,
+            right: width,
+        }
+    }
+
+    /// The same range pulled `inset` pixels in from both edges.
+    ///
+    /// A label flush against the figure edge reads as clipped even when every
+    /// glyph is present, so the row keeps the same gutter from the canvas that
+    /// it keeps from its neighbours. An unbounded range stays unbounded.
+    pub fn inset(&self, inset: f32) -> Self {
+        if self.right - self.left <= inset * 2.0 {
+            return *self;
+        }
+        Self {
+            left: self.left + inset,
+            right: self.right - inset,
+        }
+    }
+
+    /// Where a label `extent` pixels wide and centred on `center` starts.
+    ///
+    /// Centred when it fits, slid inwards when it does not, and pinned to the
+    /// left edge when it is wider than the whole range — a label too wide for
+    /// the canvas has to lose one end, and losing the tail is the readable
+    /// choice.
+    pub fn label_left(&self, center: f32, extent: f32) -> f32 {
+        (center - extent / 2.0)
+            .min(self.right - extent)
+            .max(self.left)
+    }
+}
+
+impl Default for XTickRowBounds {
+    fn default() -> Self {
+        Self::UNBOUNDED
+    }
+}
+
+/// What one x tick label row measures, before it is decided how to draw it.
+///
+/// Produced by [`SkiaRenderer::measure_x_tick_row`]; turned into an
+/// [`XTickLabelPlan`] by [`XTickRowMetrics::plan`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct XTickRowMetrics {
+    /// Vertical pixels a horizontal row occupies.
+    pub horizontal_extent: f32,
+    /// The widest label, in pixels — and so the vertical pixels a rotated row
+    /// occupies, since a quarter turn trades a label's width for its height.
+    pub max_label_width: f32,
+    /// Smallest stride at which a horizontal row stops overlapping.
+    pub horizontal_stride: usize,
+    /// Smallest stride at which a rotated row stops overlapping.
+    pub rotated_stride: usize,
+    /// The range the strides above were measured against, carried into the
+    /// plan so the row that was measured is the row that is drawn.
+    pub bounds: XTickRowBounds,
+}
+
+impl XTickRowMetrics {
+    /// Whether the caller has to find out if a rotated row fits.
+    ///
+    /// Answering that costs a trial layout, so it is only worth asking when
+    /// rotation is on the table at all.
+    pub fn wants_rotation(&self, rotation: XTickRotation) -> bool {
+        match rotation {
+            XTickRotation::Horizontal => false,
+            XTickRotation::Vertical => true,
+            XTickRotation::Auto => self.horizontal_stride > 1,
+        }
+    }
+
+    /// The plan this row is drawn with.
+    ///
+    /// `rotated_fits` answers "does a row [`max_label_width`] pixels tall fit
+    /// the bottom margin the layout grants?" — the caller asks the layout,
+    /// because only the layout knows what the margin config allows. An explicit
+    /// [`XTickRotation::Vertical`] is honoured either way: a knob that silently
+    /// does nothing is worse than one that costs a little room.
+    ///
+    /// [`max_label_width`]: Self::max_label_width
+    pub fn plan(&self, rotation: XTickRotation, rotated_fits: bool) -> XTickLabelPlan {
+        let rotated = match rotation {
+            XTickRotation::Horizontal => false,
+            XTickRotation::Vertical => true,
+            XTickRotation::Auto => self.horizontal_stride > 1 && rotated_fits,
+        };
+        if rotated {
+            XTickLabelPlan {
+                rotated: true,
+                stride: self.rotated_stride,
+                extent: self.max_label_width,
+                bounds: self.bounds,
+            }
+        } else {
+            XTickLabelPlan {
+                rotated: false,
+                stride: self.horizontal_stride,
+                extent: self.horizontal_extent,
+                bounds: self.bounds,
+            }
+        }
+    }
+}
+
+/// The resolved orientation and thinning of one x tick label row.
+///
+/// [`extent`](Self::extent) is the vertical room the row needs, and it is what
+/// the bottom margin has to be reserved from *before* the plot area is
+/// computed. Reserve it afterwards and the labels are clipped instead of
+/// overlapping, which is not an improvement.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct XTickLabelPlan {
+    /// Whether the row is drawn a quarter turn counter-clockwise.
+    pub rotated: bool,
+    /// Only every `stride`-th label is drawn; `1` draws them all.
+    pub stride: usize,
+    /// Vertical pixels the row occupies.
+    pub extent: f32,
+    /// The horizontal range the row's ink is kept inside; see
+    /// [`XTickRowBounds`].
+    pub bounds: XTickRowBounds,
+}
+
+impl Default for XTickLabelPlan {
+    /// Every label, horizontal, reserving nothing, clamped to nothing — what a
+    /// row that was never measured is entitled to assume.
+    fn default() -> Self {
+        Self {
+            rotated: false,
+            stride: 1,
+            extent: 0.0,
+            bounds: XTickRowBounds::UNBOUNDED,
+        }
+    }
+}
+
+/// Smallest stride at which the drawn labels stop overlapping.
+///
+/// `extents` is each label's size along the axis: its width for a horizontal
+/// row, its height for a rotated one. A label with no extent draws nothing and
+/// so collides with nothing.
+///
+/// `bounds` is where the labels will actually be drawn, not where they would
+/// like to be: an end label slid off the canvas edge is measured where it lands.
+fn clearing_stride(centers: &[f32], extents: &[f32], gap: f32, bounds: XTickRowBounds) -> usize {
+    let count = centers.len().min(extents.len());
+    if count <= 1 {
+        return 1;
+    }
+    (1..=count)
+        .find(|&stride| stride_clears(centers, extents, gap, stride, bounds))
+        .unwrap_or(count)
+}
+
+fn stride_clears(
+    centers: &[f32],
+    extents: &[f32],
+    gap: f32,
+    stride: usize,
+    bounds: XTickRowBounds,
+) -> bool {
+    let mut previous_right: Option<f32> = None;
+    for (&center, &extent) in centers.iter().zip(extents.iter()).step_by(stride) {
+        if extent <= 0.0 || !center.is_finite() {
+            continue;
+        }
+        let left = bounds.label_left(center, extent);
+        let right = left + extent;
+        if let Some(previous) = previous_right {
+            if left < previous + gap {
+                return false;
+            }
+            previous_right = Some(previous.max(right));
+        } else {
+            previous_right = Some(right);
+        }
+    }
+    true
+}
+
+/// Draw one x tick label row onto any backend, following `plan`.
+///
+/// The raster and SVG backends share this body, so a figure cannot be labelled
+/// one way as a PNG and another way as an SVG — the SVG twin used not to
+/// measure its category labels at all. `top_y` is the top of the row in both
+/// orientations.
+///
+/// The canvas is [`ColorbarCanvas`](crate::render::colorbar::ColorbarCanvas),
+/// the crate's one backend-neutral text canvas, named for its first client.
+pub(crate) fn draw_x_tick_label_row<C>(
+    canvas: &mut C,
+    labels: &[String],
+    centers: &[f32],
+    top_y: f32,
+    size: f32,
+    color: Color,
+    plan: XTickLabelPlan,
+) -> Result<()>
+where
+    C: crate::render::colorbar::ColorbarCanvas + ?Sized,
+{
+    let stride = plan.stride.max(1);
+    // A thinned row writes only every stride-th name, and an unnamed slot holds
+    // its place on the axis without writing under it.
+    for (label, &center) in labels.iter().zip(centers.iter()).step_by(stride) {
+        if label.is_empty() {
+            continue;
+        }
+        let snippet = canvas.colorbar_label_snippet(label);
+        let (width, height) = canvas.colorbar_measure_text(&snippet, size)?;
+        if plan.rotated {
+            // A quarter turn trades the label's width for its height, so the
+            // row hangs from `top_y` and takes up only `height` sideways. The
+            // rotated primitive centres its block on the x it is given.
+            let left = plan.bounds.label_left(center, height);
+            canvas.colorbar_text_rotated(
+                &snippet,
+                left + height / 2.0,
+                top_y + width / 2.0,
+                size,
+                color,
+            )?;
+        } else {
+            canvas.colorbar_text(
+                &snippet,
+                plan.bounds.label_left(center, width),
+                top_y,
+                size,
+                color,
+            )?;
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests;
+
+/// The raster backend's colorbar primitives.
+///
+/// The geometry lives in [`crate::render::colorbar::draw_colorbar`]; this only
+/// says how each primitive is put on a pixmap.
+impl crate::render::colorbar::ColorbarCanvas for SkiaRenderer {
+    fn colorbar_points_to_pixels(&self, points: f32) -> f32 {
+        self.points_to_pixels(points)
+    }
+
+    fn colorbar_logical_pixels_to_pixels(&self, pixels: f32) -> f32 {
+        self.logical_pixels_to_pixels(pixels)
+    }
+
+    fn colorbar_label_snippet<'a>(&self, text: &'a str) -> std::borrow::Cow<'a, str> {
+        self.generated_label(text)
+    }
+
+    fn colorbar_measure_text(&self, text: &str, size: f32) -> Result<(f32, f32)> {
+        self.measure_text(text, size)
+    }
+
+    fn colorbar_measure_ink_center_from_top(&self, text: &str, size: f32) -> Result<f32> {
+        self.measure_text_ink_center_from_top(text, size)
+    }
+
+    fn colorbar_fill_rect(
+        &mut self,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        color: Color,
+    ) -> Result<()> {
+        self.draw_solid_rectangle(x, y, width, height, color)
+    }
+
+    fn colorbar_stroke_rect(
+        &mut self,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        color: Color,
+        stroke_width: f32,
+    ) -> Result<()> {
+        self.draw_rectangle_outline(x, y, width, height, color, stroke_width)
+    }
+
+    fn colorbar_line(
+        &mut self,
+        x1: f32,
+        y1: f32,
+        x2: f32,
+        y2: f32,
+        color: Color,
+        stroke_width: f32,
+    ) -> Result<()> {
+        self.draw_line(x1, y1, x2, y2, color, stroke_width, LineStyle::Solid)
+    }
+
+    fn colorbar_text(&mut self, text: &str, x: f32, y: f32, size: f32, color: Color) -> Result<()> {
+        self.draw_text(text, x, y, size, color)
+    }
+
+    fn colorbar_text_rotated(
+        &mut self,
+        text: &str,
+        x: f32,
+        y: f32,
+        size: f32,
+        color: Color,
+    ) -> Result<()> {
+        self.draw_text_rotated(text, x, y, size, color)
+    }
+}
+
+#[cfg(test)]
+mod legend_patch_tests {
+    use super::*;
+
+    fn pixel_rgba(image: &Image, x: u32, y: u32) -> [u8; 4] {
+        let idx = ((y * image.width + x) * 4) as usize;
+        [
+            image.pixels[idx],
+            image.pixels[idx + 1],
+            image.pixels[idx + 2],
+            image.pixels[idx + 3],
+        ]
+    }
+
+    /// Any pixel in the box that is clearly darker than the white panel/fill.
+    fn has_dark_pixel(image: &Image, x0: u32, y0: u32, x1: u32, y1: u32) -> bool {
+        (y0..y1).any(|y| {
+            (x0..x1).any(|x| {
+                let pixel = pixel_rgba(image, x, y);
+                pixel[3] > 0 && pixel[0] < 200 && pixel[1] < 200 && pixel[2] < 200
+            })
+        })
+    }
+
+    fn handle_spacing(length: f32, height: f32) -> LegendSpacingPixels {
+        LegendSpacingPixels {
+            handle_length: length,
+            handle_height: height,
+            handle_text_pad: 10.0,
+            label_spacing: 7.0,
+            border_pad: 6.0,
+            border_axes_pad: 10.0,
+            column_spacing: 20.0,
+        }
+    }
+
+    #[test]
+    fn legacy_swatch_edge_contrasts_with_the_fill() {
+        assert_eq!(
+            legacy_legend_swatch_edge(Color::WHITE),
+            LEGACY_LEGEND_SWATCH_EDGE_DARK
+        );
+        assert_eq!(
+            legacy_legend_swatch_edge(Color::from_gray(250)),
+            LEGACY_LEGEND_SWATCH_EDGE_DARK
+        );
+        assert_eq!(
+            legacy_legend_swatch_edge(Color::BLACK),
+            LEGACY_LEGEND_SWATCH_EDGE_LIGHT
+        );
+        // A transparent fill renders as the near-white panel, so it needs the
+        // dark neutral even though its own channels are dark.
+        assert_eq!(
+            legacy_legend_swatch_edge(Color::from_rgba(0, 0, 0, 0)),
+            LEGACY_LEGEND_SWATCH_EDGE_DARK
+        );
+    }
+
+    #[test]
+    fn legacy_legend_white_swatch_keeps_a_visible_contour() {
+        let mut renderer = SkiaRenderer::new(400, 200, Theme::default()).unwrap();
+        let plot_area = Rect::from_xywh(0.0, 0.0, 400.0, 200.0).unwrap();
+
+        renderer
+            .draw_legend(&[("white series".to_string(), Color::WHITE)], plot_area)
+            .expect("legacy legend should render");
+
+        let image = renderer.into_image();
+        // Swatch occupies (250, 22) .. (262, 34); the stroke straddles the edge.
+        // The panel frame (240/380, 15/45) and the label (x >= 270) stay outside.
+        assert!(
+            has_dark_pixel(&image, 246, 18, 267, 38),
+            "a white swatch on the near-white panel must still have a contour"
+        );
+        // ... while the fill stays exactly the series colour.
+        let interior = pixel_rgba(&image, 256, 28);
+        assert_eq!(
+            [interior[0], interior[1], interior[2]],
+            [255, 255, 255],
+            "the swatch fill must not be tinted"
+        );
+    }
+
+    #[test]
+    fn bar_and_histogram_handles_stroke_their_edge() {
+        for item in [
+            LegendItem::bar_with_edge("bars", Color::WHITE, Some((Color::BLACK, 1.5))),
+            LegendItem::histogram_with_edge("hist", Color::WHITE, Some((Color::BLACK, 1.5))),
+        ] {
+            let mut renderer = SkiaRenderer::new(60, 40, Theme::default()).unwrap();
+            renderer.pixmap.fill(Color::WHITE.to_tiny_skia_color());
+            renderer
+                .draw_legend_handle(&item, 10.0, 20.0, &handle_spacing(30.0, 14.0))
+                .expect("patch handle should render");
+
+            let image = renderer.into_image();
+            assert!(
+                has_dark_pixel(&image, 0, 0, 60, 40),
+                "{:?} handle must stroke its edge so the key matches the plot",
+                item.item_type
+            );
+            let interior = pixel_rgba(&image, 25, 20);
+            assert_eq!(
+                [interior[0], interior[1], interior[2]],
+                [255, 255, 255],
+                "the handle fill must stay exactly the series colour"
+            );
+        }
+    }
+
+    #[test]
+    fn bar_handle_without_edge_stays_flat() {
+        let mut renderer = SkiaRenderer::new(60, 40, Theme::default()).unwrap();
+        renderer.pixmap.fill(Color::WHITE.to_tiny_skia_color());
+        renderer
+            .draw_legend_handle(
+                &LegendItem::bar("bars", Color::WHITE),
+                10.0,
+                20.0,
+                &handle_spacing(30.0, 14.0),
+            )
+            .expect("patch handle should render");
+
+        let image = renderer.into_image();
+        assert!(
+            !has_dark_pixel(&image, 0, 0, 60, 40),
+            "a patch with no configured edge must not grow an implicit one"
+        );
+    }
+
+    /// The bug this layout exists to kill.
+    ///
+    /// The frame used to be sized as `label.len() * font_size * 0.6` — a
+    /// **byte** count against a guessed advance. `"WWWWWWWWWW"` is ten bytes of
+    /// glyphs each far wider than 0.6 em, so the label ran out of the frame;
+    /// `"日本語"` is three glyphs in nine bytes, so the frame was drawn about
+    /// three times too wide. Now the frame comes from the same measurement the
+    /// renderer draws with, so the label has to fit inside it.
+    #[test]
+    fn legend_frame_fits_the_measured_label_not_its_byte_count() {
+        let renderer = SkiaRenderer::new(400, 300, Theme::default()).unwrap();
+        let legend = Legend {
+            enabled: true,
+            position: crate::core::LegendPosition::UpperLeft,
+            ..Default::default()
+        };
+        let scaled = legend.scaled_for_render(renderer.render_scale());
+
+        for label in ["WWWWWWWWWW", "日本語ラベル", "Ünïcödé", "iiii"] {
+            let items = vec![LegendItem::line(label, Color::BLUE, LineStyle::Solid, 1.5)];
+            let layout = renderer
+                .legend_layout(
+                    &items,
+                    &scaled,
+                    (0.0, 0.0, 400.0, 300.0),
+                    LegendPlacement::default(),
+                )
+                .expect("legend layout");
+            let text_width = renderer
+                .measure_label_text(label, scaled.font_size)
+                .expect("measure")
+                .0;
+            let entry = layout.entries[0];
+            let inner_right = layout.x + layout.width - layout.spacing.border_pad;
+
+            assert!(
+                entry.label_x + text_width <= inner_right + 0.01,
+                "{label:?} runs past the frame: label ends at {}, frame ends at {inner_right}",
+                entry.label_x + text_width
+            );
+            // The reservation and the drawing are the same call, so the size the
+            // figure layout reserves is the size the frame is drawn at.
+            assert_eq!(
+                layout.size(),
+                renderer.measure_legend(&items, &legend).expect("reserve")
+            );
+        }
+    }
+}
+
+/// The x tick label row: what it measures, what it decides, and what it draws.
+#[cfg(test)]
+mod x_tick_label_row_tests {
+    use super::*;
+
+    const REGIONS: [&str; 10] = [
+        "North America",
+        "South America",
+        "Western Europe",
+        "Eastern Europe",
+        "Middle East",
+        "North Africa",
+        "Sub-Saharan Africa",
+        "Central Asia",
+        "South East Asia",
+        "Australasia",
+    ];
+
+    fn renderer() -> SkiaRenderer {
+        SkiaRenderer::new(600, 400, Theme::default()).expect("renderer")
+    }
+
+    fn labels(names: &[&str]) -> Vec<String> {
+        names.iter().map(|name| (*name).to_string()).collect()
+    }
+
+    /// Evenly spaced slot centres across `[left, right]`, the way a categorical
+    /// axis lays its slots out.
+    fn centers(count: usize, left: f32, right: f32) -> Vec<f32> {
+        let span = right - left;
+        (0..count)
+            .map(|index| left + span * (index as f32 + 0.5) / count as f32)
+            .collect()
+    }
+
+    fn dark_pixels(image: &crate::core::plot::Image) -> Vec<(u32, u32)> {
+        let mut found = Vec::new();
+        for y in 0..image.height {
+            for x in 0..image.width {
+                let index = ((y * image.width + x) * 4) as usize;
+                if image.pixels[index] < 128 {
+                    found.push((x, y));
+                }
+            }
+        }
+        found
+    }
+
+    /// Ten region names in one 500 px axis cannot be drawn horizontally without
+    /// overlapping — the figure this row exists for. Turned a quarter turn they
+    /// clear each other completely, because a label's height is a fraction of
+    /// its width.
+    #[test]
+    fn ten_region_names_collide_horizontally_and_clear_when_rotated() {
+        let renderer = renderer();
+        let names = labels(&REGIONS);
+        let metrics = renderer
+            .measure_x_tick_row(
+                &names,
+                &centers(REGIONS.len(), 60.0, 560.0),
+                12.0,
+                XTickRowBounds::UNBOUNDED,
+            )
+            .expect("measure");
+
+        assert!(
+            metrics.horizontal_stride > 1,
+            "ten region names should not fit horizontally, got stride {}",
+            metrics.horizontal_stride
+        );
+        assert_eq!(metrics.rotated_stride, 1, "rotated names clear each other");
+        assert!(
+            metrics.max_label_width > metrics.horizontal_extent,
+            "a rotated row is taller than a horizontal one for these labels"
+        );
+    }
+
+    /// Short names in the same axis are left alone: no rotation, no thinning,
+    /// and the row reserves exactly the height it draws at.
+    #[test]
+    fn short_names_stay_horizontal_and_complete() {
+        let renderer = renderer();
+        let names = labels(&["A", "B", "C", "D"]);
+        let metrics = renderer
+            .measure_x_tick_row(
+                &names,
+                &centers(4, 60.0, 560.0),
+                12.0,
+                XTickRowBounds::UNBOUNDED,
+            )
+            .expect("measure");
+
+        assert_eq!(metrics.horizontal_stride, 1);
+        let plan = metrics.plan(XTickRotation::Auto, true);
+        assert!(!plan.rotated);
+        assert_eq!(plan.stride, 1);
+        assert_eq!(plan.extent, metrics.horizontal_extent);
+    }
+
+    /// An empty slot label writes nothing, so it cannot collide with anything —
+    /// otherwise a nameless slot would thin its named neighbours out.
+    #[test]
+    fn unnamed_slots_do_not_collide() {
+        let renderer = renderer();
+        let mut names = labels(&[""; 10]);
+        names[0] = "Western Europe".to_string();
+        let metrics = renderer
+            .measure_x_tick_row(
+                &names,
+                &centers(10, 60.0, 560.0),
+                12.0,
+                XTickRowBounds::UNBOUNDED,
+            )
+            .expect("measure");
+
+        assert_eq!(metrics.horizontal_stride, 1);
+    }
+
+    /// The policy in one place: `Auto` rotates only when the margin can hold a
+    /// rotated row and falls back to every k-th label when it cannot, while the
+    /// explicit settings are honoured either way.
+    #[test]
+    fn auto_rotates_only_when_the_rotated_row_fits() {
+        let renderer = renderer();
+        let names = labels(&REGIONS);
+        let metrics = renderer
+            .measure_x_tick_row(
+                &names,
+                &centers(REGIONS.len(), 60.0, 560.0),
+                12.0,
+                XTickRowBounds::UNBOUNDED,
+            )
+            .expect("measure");
+
+        let rotated = metrics.plan(XTickRotation::Auto, true);
+        assert!(rotated.rotated);
+        assert_eq!(rotated.stride, metrics.rotated_stride);
+        assert_eq!(rotated.extent, metrics.max_label_width);
+
+        let thinned = metrics.plan(XTickRotation::Auto, false);
+        assert!(!thinned.rotated);
+        assert_eq!(thinned.stride, metrics.horizontal_stride);
+        assert!(thinned.stride > 1);
+        assert_eq!(thinned.extent, metrics.horizontal_extent);
+
+        assert!(!metrics.plan(XTickRotation::Horizontal, true).rotated);
+        assert!(metrics.plan(XTickRotation::Vertical, false).rotated);
+        assert!(!metrics.wants_rotation(XTickRotation::Horizontal));
+        assert!(metrics.wants_rotation(XTickRotation::Vertical));
+    }
+
+    /// The plan is what gets drawn: a stride of two draws half the names, and a
+    /// rotated row hangs down from the same baseline instead of spreading
+    /// sideways.
+    #[test]
+    fn the_plan_is_what_the_row_draws() {
+        let names = labels(&REGIONS);
+        let centers = centers(REGIONS.len(), 60.0, 560.0);
+
+        let ink = |plan: XTickLabelPlan| {
+            let mut renderer = renderer();
+            draw_x_tick_label_row(
+                &mut renderer,
+                &names,
+                &centers,
+                100.0,
+                12.0,
+                Color::BLACK,
+                plan,
+            )
+            .expect("draw");
+            dark_pixels(&renderer.into_image())
+        };
+
+        let complete = ink(XTickLabelPlan::default());
+        let thinned = ink(XTickLabelPlan {
+            stride: 2,
+            ..XTickLabelPlan::default()
+        });
+        assert!(
+            thinned.len() * 4 < complete.len() * 3,
+            "every second label should be dropped: {} vs {}",
+            thinned.len(),
+            complete.len()
+        );
+
+        let rotated = ink(XTickLabelPlan {
+            rotated: true,
+            stride: 1,
+            ..XTickLabelPlan::default()
+        });
+        let lowest = |pixels: &[(u32, u32)]| pixels.iter().map(|&(_, y)| y).max().unwrap_or(0);
+        assert!(
+            lowest(&rotated) > lowest(&complete) + 20,
+            "a rotated row hangs below a horizontal one: {} vs {}",
+            lowest(&rotated),
+            lowest(&complete)
+        );
+        assert!(
+            rotated.iter().all(|&(_, y)| y >= 99),
+            "a rotated row hangs from the baseline, it does not rise above it"
+        );
+    }
+
+    /// The end labels of a categorical axis are centred on slots that sit near
+    /// the plot area's edges, so a name wider than the outer margin runs off the
+    /// canvas. It is slid back inside instead of being cut in half.
+    #[test]
+    fn end_labels_are_slid_inside_the_canvas_rather_than_cut() {
+        let names = labels(&["A very long first category name indeed", "B", "C"]);
+        // A narrow figure's slots: the first centre sits well inside the widest
+        // name, which is the whole point.
+        let centers = centers(3, 20.0, 320.0);
+        let renderer = renderer();
+        let bounds = XTickRowBounds::canvas(renderer.width() as f32);
+        let metrics = renderer
+            .measure_x_tick_row(&names, &centers, 12.0, bounds)
+            .expect("measure");
+        let plan = metrics.plan(XTickRotation::Horizontal, false);
+
+        let (width, _) = renderer
+            .measure_text(&names[0], 12.0)
+            .expect("measure first label");
+        assert!(
+            centers[0] - width / 2.0 < 0.0,
+            "the figure under test must have an end label wider than its margin"
+        );
+        assert_eq!(
+            plan.bounds.label_left(centers[0], width),
+            plan.bounds.left,
+            "an over-hanging first label starts at the row's left gutter, not \
+             outside the canvas"
+        );
+        assert!(
+            plan.bounds.left > 0.0 && plan.bounds.right < renderer.width() as f32,
+            "the row keeps a gutter from the figure edge"
+        );
+
+        let mut renderer = renderer;
+        draw_x_tick_label_row(
+            &mut renderer,
+            &names,
+            &centers,
+            100.0,
+            12.0,
+            Color::BLACK,
+            plan,
+        )
+        .expect("draw");
+        let image = renderer.into_image();
+        let ink = dark_pixels(&image);
+        assert!(!ink.is_empty(), "the row should draw something");
+        assert!(
+            ink.iter().all(|&(x, _)| x < image.width),
+            "no label ink may fall outside the canvas"
+        );
+        assert!(
+            ink.iter().any(|&(x, _)| x < 20),
+            "the slid label should still sit hard against the left edge"
+        );
+    }
+
+    /// Sliding an end label inwards moves it towards its neighbour, so the
+    /// stride has to be measured where the labels land — otherwise the row that
+    /// was measured as clearing is drawn overlapping.
+    #[test]
+    fn the_stride_is_measured_where_the_labels_land() {
+        let renderer = renderer();
+        // Two wide names whose first is pushed right by the canvas edge: unclamped
+        // they clear each other, clamped they do not.
+        let names = labels(&["Sub-Saharan Africa", "Sub-Saharan Africa"]);
+        let (width, _) = renderer.measure_text(&names[0], 12.0).expect("measure");
+        let gap = 12.0 * X_TICK_LABEL_GAP_EM;
+        // Place the first label so that half of it hangs off the canvas, and the
+        // second exactly one clearing width to its right.
+        let first = width / 4.0;
+        let centers = vec![first, first + width + gap + 1.0];
+
+        let unclamped = renderer
+            .measure_x_tick_row(&names, &centers, 12.0, XTickRowBounds::UNBOUNDED)
+            .expect("measure");
+        assert_eq!(
+            unclamped.horizontal_stride, 1,
+            "where they are asked to be drawn, the two names clear each other"
+        );
+
+        let clamped = renderer
+            .measure_x_tick_row(&names, &centers, 12.0, XTickRowBounds::canvas(600.0))
+            .expect("measure");
+        assert_eq!(
+            clamped.horizontal_stride, 2,
+            "slid inside the canvas the first name runs into the second, so the \
+             row has to thin"
+        );
+    }
+}

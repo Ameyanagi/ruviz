@@ -1,3 +1,5 @@
+#![allow(deprecated)] // exercises the deprecated `ruviz::simple` module on purpose
+
 // Simple API tests - TDD approach
 // Tests define expected one-liner function behavior before implementation
 

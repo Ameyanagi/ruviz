@@ -6,7 +6,7 @@
 
 use ruviz::prelude::*;
 
-fn main() -> Result<()> {
+fn main() -> PlotResult<()> {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -14,7 +14,7 @@ fn main() -> Result<()> {
         .block_on(async_main())
 }
 
-async fn async_main() -> Result<()> {
+async fn async_main() -> PlotResult<()> {
     println!("Starting interactive heatmap example...");
     println!("Controls:");
     println!("  - Mouse wheel: Zoom in/out");
@@ -31,7 +31,7 @@ async fn async_main() -> Result<()> {
     let data = build_scalar_field(rows, cols);
 
     let config = HeatmapConfig::new()
-        .colormap(ColorMap::viridis())
+        .cmap(ColorMap::viridis())
         .colorbar(true)
         .colorbar_label("Field strength");
 
@@ -39,7 +39,7 @@ async fn async_main() -> Result<()> {
         .title("Interactive Heatmap Explorer")
         .xlabel("Column")
         .ylabel("Row")
-        .heatmap(&data, Some(config))
+        .heatmap_with(&data, config)
         .into();
 
     println!("Heatmap created with {} rows x {} columns", rows, cols);

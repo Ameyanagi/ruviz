@@ -1445,7 +1445,7 @@ mod tests {
                 16.0,
                 8.0,
                 &config,
-                Color::new_rgba(200, 100, 50, 0),
+                Color::from_rgba(200, 100, 50, 0),
             )
             .unwrap();
 
@@ -1492,7 +1492,7 @@ mod tests {
     fn rotated_text_is_pixel_exact_counterclockwise_parity() {
         let renderer = TextRenderer::new();
         let config = FontConfig::new(FontFamily::SansSerif, 32.0);
-        let color = Color::new_rgba(180, 90, 30, 128);
+        let color = Color::from_rgba(180, 90, 30, 128);
         let mut normal = Pixmap::new(128, 128).unwrap();
         let mut rotated = Pixmap::new(128, 128).unwrap();
 

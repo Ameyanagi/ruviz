@@ -5,7 +5,7 @@
 use ruviz::prelude::*;
 use std::f64::consts::PI;
 
-fn main() -> Result<()> {
+fn main() -> PlotResult<()> {
     // Example 1: Basic heatmap with default colormap
     basic_heatmap()?;
 
@@ -26,7 +26,7 @@ fn main() -> Result<()> {
 }
 
 /// Basic heatmap with default viridis colormap
-fn basic_heatmap() -> Result<()> {
+fn basic_heatmap() -> PlotResult<()> {
     // Create a 5x5 grid of values
     let data = vec![
         vec![1.0, 2.0, 3.0, 4.0, 5.0],
@@ -37,7 +37,7 @@ fn basic_heatmap() -> Result<()> {
     ];
 
     Plot::new()
-        .heatmap(&data, Some(HeatmapConfig::default()))
+        .heatmap_with(&data, HeatmapConfig::default())
         .title("Basic Heatmap")
         .save("generated/examples/heatmap_basic.png")?;
 
@@ -46,7 +46,7 @@ fn basic_heatmap() -> Result<()> {
 }
 
 /// Correlation matrix with annotations and custom colormap
-fn correlation_matrix() -> Result<()> {
+fn correlation_matrix() -> PlotResult<()> {
     // Simulated correlation matrix
     let data = vec![
         vec![1.0, 0.8, 0.6, -0.2, -0.4],
@@ -57,7 +57,7 @@ fn correlation_matrix() -> Result<()> {
     ];
 
     let config = HeatmapConfig::new()
-        .colormap(ColorMap::coolwarm()) // Diverging colormap
+        .cmap(ColorMap::coolwarm()) // Diverging colormap
         .vmin(-1.0)
         .vmax(1.0)
         .annotate(true)
@@ -65,7 +65,7 @@ fn correlation_matrix() -> Result<()> {
         .colorbar_label("Correlation");
 
     Plot::new()
-        .heatmap(&data, Some(config))
+        .heatmap_with(&data, config)
         .title("Correlation Matrix")
         .save("generated/examples/heatmap_correlation.png")?;
 
@@ -74,7 +74,7 @@ fn correlation_matrix() -> Result<()> {
 }
 
 /// Scientific heatmap with a function surface
-fn scientific_heatmap() -> Result<()> {
+fn scientific_heatmap() -> PlotResult<()> {
     // Create a 2D sine wave pattern
     let rows = 20;
     let cols = 30;
@@ -89,13 +89,12 @@ fn scientific_heatmap() -> Result<()> {
     }
 
     let config = HeatmapConfig::new()
-        .colormap(ColorMap::plasma())
+        .cmap(ColorMap::plasma())
         .colorbar(true)
-        .colorbar_label("sin(sin(x)*cos(y))")
-        .aspect(1.0);
+        .colorbar_label("sin(sin(x)*cos(y))");
 
     Plot::new()
-        .heatmap(&data, Some(config))
+        .heatmap_with(&data, config)
         .title("2D Sine Wave Surface")
         .xlabel("X")
         .ylabel("Y")
@@ -106,7 +105,7 @@ fn scientific_heatmap() -> Result<()> {
 }
 
 /// Log-scaled heatmap demonstrating masked zero-value cutouts
-fn masked_log_heatmap() -> Result<()> {
+fn masked_log_heatmap() -> PlotResult<()> {
     let rows = 72usize;
     let cols = 96usize;
     let center_col = (cols.saturating_sub(1)) as f64 / 2.0;
@@ -141,7 +140,7 @@ fn masked_log_heatmap() -> Result<()> {
         .colorbar_label("Absorbed Energy");
 
     Plot::new()
-        .heatmap(&data, Some(config))
+        .heatmap_with(&data, config)
         .title("Masked Log Heatmap")
         .xlabel("Position in x (cells)")
         .ylabel("Depth (cells)")
@@ -153,7 +152,7 @@ fn masked_log_heatmap() -> Result<()> {
 }
 
 /// Large heatmap for performance demonstration
-fn large_heatmap() -> Result<()> {
+fn large_heatmap() -> PlotResult<()> {
     // Create a 50x50 Gaussian-like pattern
     let size = 50;
     let mut data = vec![vec![0.0; size]; size];
@@ -167,14 +166,14 @@ fn large_heatmap() -> Result<()> {
     }
 
     let config = HeatmapConfig::new()
-        .colormap(ColorMap::inferno())
+        .cmap(ColorMap::inferno())
         .colorbar(true)
         .colorbar_label("Intensity")
         .vmin(0.0)
         .vmax(1.0);
 
     Plot::new()
-        .heatmap(&data, Some(config))
+        .heatmap_with(&data, config)
         .title("2D Gaussian Distribution")
         .xlabel("X")
         .ylabel("Y")

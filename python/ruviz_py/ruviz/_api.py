@@ -76,6 +76,30 @@ def _to_numeric_list(values: Any) -> list[float]:
     return array.astype(float).reshape(-1).tolist()
 
 
+def _to_numeric_1d(values: Any, name: str) -> list[float]:
+    """Normalize a static 3D coordinate vector without flattening matrices."""
+    if isinstance(values, ObservableSeries):
+        values = values.snapshot_values()
+    if _is_pandas_dataframe(values) or _is_polars_dataframe(values):
+        values = values.to_list()
+
+    array = np.asarray(values, dtype=float)
+    if array.ndim != 1:
+        raise TypeError(f"{name} must be a 1D numeric array")
+    return array.astype(float).tolist()
+
+
+def _to_numeric_2d(values: Any, name: str) -> list[list[float]]:
+    """Normalize a regular 3D grid while preserving its row/column shape."""
+    if _is_pandas_dataframe(values) or _is_polars_dataframe(values):
+        values = values.to_numpy()
+
+    array = np.asarray(values, dtype=float)
+    if array.ndim != 2:
+        raise TypeError(f"{name} must be a 2D numeric array")
+    return array.astype(float).tolist()
+
+
 def _to_string_list(values: Any) -> list[str]:
     if _is_pandas_dataframe(values) or _is_polars_dataframe(values):
         values = values.to_list()
@@ -940,9 +964,205 @@ class Plot:
         return self.render_png()
 
 
+class Plot3D:
+    """Static fluent builder for the opt-in opaque 3D alpha.
+
+    3D inputs are snapshotted when a series is added. The initial Python API
+    intentionally exposes deterministic CPU PNG/SVG/PDF export; interactive
+    orbit widgets and transparent surfaces remain outside the alpha contract.
+    """
+
+    def __init__(self) -> None:
+        self._state: dict[str, Any] = {"series": []}
+        self._native_plot = _native.NativePlot3DHandle()
+
+    def _add_points(self, kind: str, x: Any, y: Any, z: Any, data: Any) -> "Plot3D":
+        x_values = _to_numeric_1d(_column_values(data, x), f"{kind} x")
+        y_values = _to_numeric_1d(_column_values(data, y), f"{kind} y")
+        z_values = _to_numeric_1d(_column_values(data, z), f"{kind} z")
+        if len({len(x_values), len(y_values), len(z_values)}) != 1:
+            raise ValueError(f"{kind} x, y, and z inputs must have the same length")
+        getattr(self._native_plot, kind)(x_values, y_values, z_values)
+        self._state["series"].append({"kind": kind, "x": x_values, "y": y_values, "z": z_values})
+        return self
+
+    def _add_grid(self, kind: str, x: Any, y: Any, z: Any, data: Any) -> "Plot3D":
+        x_values = _to_numeric_1d(_column_values(data, x), f"{kind} x")
+        y_values = _to_numeric_1d(_column_values(data, y), f"{kind} y")
+        z_values = _to_numeric_2d(_column_values(data, z), f"{kind} z")
+        shape = (len(z_values), len(z_values[0]) if z_values else 0)
+        expected = (len(y_values), len(x_values))
+        if shape != expected:
+            raise ValueError(
+                f"{kind} z shape must be (len(y), len(x)); expected {expected}, got {shape}"
+            )
+        getattr(self._native_plot, kind)(x_values, y_values, z_values)
+        self._state["series"].append({"kind": kind, "x": x_values, "y": y_values, "z": z_values})
+        return self
+
+    def scatter3d(self, x: Any, y: Any, z: Any, *, data: Any = None) -> "Plot3D":
+        """Add an opaque 3D scatter series from equal-length coordinate vectors."""
+        return self._add_points("scatter3d", x, y, z, data)
+
+    def line3d(self, x: Any, y: Any, z: Any, *, data: Any = None) -> "Plot3D":
+        """Add a 3D polyline from equal-length coordinate vectors."""
+        return self._add_points("line3d", x, y, z, data)
+
+    def surface(self, x: Any, y: Any, z: Any, *, data: Any = None) -> "Plot3D":
+        """Add a regular-grid surface where ``z.shape == (len(y), len(x))``."""
+        return self._add_grid("surface", x, y, z, data)
+
+    def wireframe(self, x: Any, y: Any, z: Any, *, data: Any = None) -> "Plot3D":
+        """Add a regular-grid wireframe where ``z.shape == (len(y), len(x))``."""
+        return self._add_grid("wireframe", x, y, z, data)
+
+    def size_px(self, width: int, height: int) -> "Plot3D":
+        """Set the exported image dimensions in pixels."""
+        if width <= 0 or height <= 0:
+            raise ValueError("3D plot dimensions must be greater than zero")
+        self._native_plot.size_px(int(width), int(height))
+        self._state["sizePx"] = [int(width), int(height)]
+        return self
+
+    def dpi(self, dpi: int) -> "Plot3D":
+        """Set output dots per inch while preserving ``size_px`` dimensions."""
+        if dpi <= 0:
+            raise ValueError("3D plot dpi must be greater than zero")
+        self._native_plot.dpi(int(dpi))
+        self._state["dpi"] = int(dpi)
+        return self
+
+    def theme(self, theme: str) -> "Plot3D":
+        """Use the ``light`` or ``dark`` theme."""
+        normalized = str(theme).lower()
+        if normalized not in {"light", "dark"}:
+            raise ValueError(f"unsupported theme: {theme}")
+        self._native_plot.theme(normalized)
+        self._state["theme"] = normalized
+        return self
+
+    def title(self, title: str) -> "Plot3D":
+        """Set the plot title."""
+        self._native_plot.title(str(title))
+        self._state["title"] = str(title)
+        return self
+
+    def xlabel(self, label: str) -> "Plot3D":
+        """Set the x-axis label."""
+        self._native_plot.xlabel(str(label))
+        self._state["xLabel"] = str(label)
+        return self
+
+    def ylabel(self, label: str) -> "Plot3D":
+        """Set the y-axis label."""
+        self._native_plot.ylabel(str(label))
+        self._state["yLabel"] = str(label)
+        return self
+
+    def zlabel(self, label: str) -> "Plot3D":
+        """Set the z-axis label."""
+        self._native_plot.zlabel(str(label))
+        self._state["zLabel"] = str(label)
+        return self
+
+    def _set_limit(self, axis: str, minimum: float, maximum: float) -> "Plot3D":
+        lower = float(minimum)
+        upper = float(maximum)
+        if not np.isfinite(lower) or not np.isfinite(upper) or lower >= upper:
+            raise ValueError(f"{axis} limits must be finite and strictly ascending")
+        getattr(self._native_plot, f"{axis}lim")(lower, upper)
+        self._state[f"{axis}Lim"] = [lower, upper]
+        return self
+
+    def xlim(self, minimum: float, maximum: float) -> "Plot3D":
+        """Set finite ascending x-axis limits."""
+        return self._set_limit("x", minimum, maximum)
+
+    def ylim(self, minimum: float, maximum: float) -> "Plot3D":
+        """Set finite ascending y-axis limits."""
+        return self._set_limit("y", minimum, maximum)
+
+    def zlim(self, minimum: float, maximum: float) -> "Plot3D":
+        """Set finite ascending z-axis limits."""
+        return self._set_limit("z", minimum, maximum)
+
+    def azimuth_deg(self, degrees: float) -> "Plot3D":
+        """Set camera azimuth in degrees."""
+        self._native_plot.azimuth_deg(float(degrees))
+        self._state["azimuthDeg"] = float(degrees)
+        return self
+
+    def elevation_deg(self, degrees: float) -> "Plot3D":
+        """Set camera elevation in degrees."""
+        self._native_plot.elevation_deg(float(degrees))
+        self._state["elevationDeg"] = float(degrees)
+        return self
+
+    def perspective_deg(self, vertical_fov_deg: float = 45.0) -> "Plot3D":
+        """Use perspective projection with a vertical field of view in degrees."""
+        self._native_plot.perspective_deg(float(vertical_fov_deg))
+        self._state["projection"] = "perspective"
+        self._state["perspectiveDeg"] = float(vertical_fov_deg)
+        return self
+
+    def orthographic(self) -> "Plot3D":
+        """Use the default scientific orthographic projection."""
+        self._native_plot.orthographic()
+        self._state["projection"] = "orthographic"
+        self._state.pop("perspectiveDeg", None)
+        return self
+
+    def render_png(self) -> bytes:
+        """Render the 3D plot to deterministic CPU PNG bytes."""
+        return bytes(self._native_plot.render_png_bytes())
+
+    def render_svg(self) -> str:
+        """Render hybrid SVG with a depth-tested raster scene and vector labels."""
+        return self._native_plot.render_svg()
+
+    def save(self, path: str | Path) -> Path:
+        """Save the 3D plot as PNG, hybrid SVG, or hybrid PDF."""
+        output = Path(path)
+        self._native_plot.save(str(output))
+        return output
+
+    def to_snapshot(self) -> dict[str, Any]:
+        """Return a JSON-friendly static copy of the 3D plot state."""
+        return deepcopy(self._state)
+
+    def _repr_png_(self) -> bytes:
+        """Return PNG bytes for notebook rich display."""
+        return self.render_png()
+
+
 def plot() -> Plot:
     """Create a new fluent :class:`Plot` builder."""
     return Plot()
+
+
+def plot3d() -> Plot3D:
+    """Create an empty :class:`Plot3D` alpha builder."""
+    return Plot3D()
+
+
+def scatter3d(x: Any, y: Any, z: Any, *, data: Any = None) -> Plot3D:
+    """Create a 3D scatter plot."""
+    return Plot3D().scatter3d(x, y, z, data=data)
+
+
+def line3d(x: Any, y: Any, z: Any, *, data: Any = None) -> Plot3D:
+    """Create a 3D line plot."""
+    return Plot3D().line3d(x, y, z, data=data)
+
+
+def surface(x: Any, y: Any, z: Any, *, data: Any = None) -> Plot3D:
+    """Create a regular-grid 3D surface."""
+    return Plot3D().surface(x, y, z, data=data)
+
+
+def wireframe(x: Any, y: Any, z: Any, *, data: Any = None) -> Plot3D:
+    """Create a regular-grid 3D wireframe."""
+    return Plot3D().wireframe(x, y, z, data=data)
 
 
 def observable(values: Any) -> ObservableSeries:

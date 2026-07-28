@@ -1,174 +1,140 @@
-use ruviz::core::plot::Plot;
-use ruviz::core::position::Position;
-use ruviz::render::Color;
-use ruviz::render::style::LineStyle;
+//! Contract for `LineStyle`: each variant has to reach the pixels.
+//!
+//! Every assertion in this file used to be `assert!(result.is_ok())` on a
+//! `save()`, so a renderer that drew Dashed, Dotted, DashDot, DashDotDot and
+//! Custom all as solid lines passed the whole suite. The tests below render in
+//! memory and compare the actual output: a patterned line must cover strictly
+//! less of the canvas than a solid one, and no two styles may produce the same
+//! image.
 
-#[test]
-fn test_solid_line_style() {
-    let x_data = vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0];
-    let y_data = vec![0.0, 2.0, 1.0, 4.0, 3.0, 5.0];
+use ruviz::prelude::*;
 
-    let result = Plot::new()
-        .size_px(800, 600)
-        .title("Solid Line Style (Default)")
-        .xlabel("X Values")
-        .ylabel("Y Values")
-        .line(&x_data, &y_data)
-        .style(LineStyle::Solid)
-        .save("generated/tests/render/line_solid.png");
+/// Every style the crate offers, in a stable order.
+fn all_line_styles() -> Vec<(&'static str, LineStyle)> {
+    vec![
+        ("Solid", LineStyle::Solid),
+        ("Dashed", LineStyle::Dashed),
+        ("Dotted", LineStyle::Dotted),
+        ("DashDot", LineStyle::DashDot),
+        ("DashDotDot", LineStyle::DashDotDot),
+        ("Custom", LineStyle::Custom(vec![20.0, 5.0, 10.0, 5.0])),
+    ]
+}
 
-    assert!(result.is_ok(), "Solid line style should work");
+/// Render one long diagonal stroke with nothing else on the canvas, so the
+/// only thing that can differ between renders is the stroke itself.
+fn render_styled_line(style: LineStyle, line_width: f32) -> Image {
+    let x: Vec<f64> = (0..=20).map(|i| i as f64).collect();
+    let y = x.clone();
+
+    Plot::new()
+        .size_px(400, 300)
+        .line(&x, &y)
+        .ticks(false)
+        .grid(false)
+        .line_style(style)
+        .line_width(line_width)
+        .color(Color::from_rgb(0, 0, 0))
+        .render()
+        .expect("a styled line must render")
+}
+
+/// Pixels that differ from the canvas background.
+fn ink_pixels(image: &Image) -> usize {
+    let background = &image.pixels[..4];
+    image
+        .pixels
+        .chunks_exact(4)
+        .filter(|pixel| *pixel != background)
+        .count()
 }
 
 #[test]
-fn test_dashed_line_style() {
-    let x_data = vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0];
-    let y_data = vec![1.0, 3.0, 2.0, 5.0, 4.0, 6.0];
+fn no_two_line_styles_render_the_same_image() {
+    let rendered: Vec<(&str, Image)> = all_line_styles()
+        .into_iter()
+        .map(|(name, style)| (name, render_styled_line(style, 2.0)))
+        .collect();
 
-    let result = Plot::new()
-        .size_px(800, 600)
-        .title("Dashed Line Style")
-        .xlabel("X Values")
-        .ylabel("Y Values")
-        .line(&x_data, &y_data)
-        .style(LineStyle::Dashed)
-        .color(Color::new(255, 0, 0)) // Red dashed line
-        .save("generated/tests/render/line_dashed.png");
-
-    assert!(result.is_ok(), "Dashed line style should work");
+    for (index, (name, image)) in rendered.iter().enumerate() {
+        assert!(ink_pixels(image) > 0, "{name} drew nothing onto the canvas");
+        for (other_name, other) in rendered.iter().skip(index + 1) {
+            assert!(
+                image.pixels != other.pixels,
+                "{name} and {other_name} produced identical pixels, so at least one \
+                 of them is not being applied to the stroke"
+            );
+        }
+    }
 }
 
 #[test]
-fn test_dotted_line_style() {
-    let x_data = vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0];
-    let y_data = vec![0.5, 2.5, 1.5, 4.5, 3.5, 5.5];
+fn every_patterned_style_covers_less_than_a_solid_line() {
+    let solid = ink_pixels(&render_styled_line(LineStyle::Solid, 2.0));
+    assert!(solid > 0, "the solid reference stroke drew nothing");
 
-    let result = Plot::new()
-        .size_px(800, 600)
-        .title("Dotted Line Style")
-        .xlabel("X Values")
-        .ylabel("Y Values")
-        .line(&x_data, &y_data)
-        .style(LineStyle::Dotted)
-        .color(Color::new(0, 128, 255)) // Blue dotted line
-        .save("generated/tests/render/line_dotted.png");
-
-    assert!(result.is_ok(), "Dotted line style should work");
+    for (name, style) in all_line_styles().into_iter().skip(1) {
+        let patterned = ink_pixels(&render_styled_line(style, 2.0));
+        assert!(patterned > 0, "{name} drew nothing onto the canvas");
+        assert!(
+            patterned < solid,
+            "{name} inked {patterned} pixels and a solid line inked {solid}; a gapped \
+             pattern must cover strictly less, so {name} is rendering solid"
+        );
+    }
 }
 
 #[test]
-fn test_dash_dot_line_style() {
-    let x_data = vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0];
-    let y_data = vec![2.0, 4.0, 3.0, 6.0, 5.0, 7.0];
-
-    let result = Plot::new()
-        .size_px(800, 600)
-        .title("Dash-Dot Line Style")
-        .xlabel("X Values")
-        .ylabel("Y Values")
-        .line(&x_data, &y_data)
-        .style(LineStyle::DashDot)
-        .color(Color::new(0, 200, 0)) // Green dash-dot line
-        .save("generated/tests/render/line_dashdot.png");
-
-    assert!(result.is_ok(), "Dash-dot line style should work");
-}
-
-#[test]
-fn test_dash_dot_dot_line_style() {
-    let x_data = vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0];
-    let y_data = vec![1.5, 3.5, 2.5, 5.5, 4.5, 6.5];
-
-    let result = Plot::new()
-        .size_px(800, 600)
-        .title("Dash-Dot-Dot Line Style")
-        .xlabel("X Values")
-        .ylabel("Y Values")
-        .line(&x_data, &y_data)
-        .style(LineStyle::DashDotDot)
-        .color(Color::new(128, 0, 128)) // Purple dash-dot-dot line
-        .save("generated/tests/render/line_dashdotdot.png");
-
-    assert!(result.is_ok(), "Dash-dot-dot line style should work");
-}
-
-#[test]
-fn test_custom_line_style() {
-    let x_data = vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0];
-    let y_data = vec![0.8, 2.8, 1.8, 4.8, 3.8, 5.8];
-
-    // Custom pattern: long dash, short dash, long dash, short dash
-    let custom_pattern = vec![20.0, 5.0, 10.0, 5.0];
-
-    let result = Plot::new()
-        .size_px(800, 600)
-        .title("Custom Line Style Pattern")
-        .xlabel("X Values")
-        .ylabel("Y Values")
-        .line(&x_data, &y_data)
-        .style(LineStyle::Custom(custom_pattern))
-        .color(Color::new(255, 128, 0)) // Orange custom line
-        .save("generated/tests/render/line_custom.png");
-
-    assert!(result.is_ok(), "Custom line style should work");
-}
-
-#[test]
-fn test_multiple_line_styles() {
-    let x_data = vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0];
-    let y1_data = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
-    let y2_data = vec![6.0, 5.0, 4.0, 3.0, 2.0, 1.0];
-    let y3_data = vec![3.0, 3.5, 3.2, 3.8, 3.6, 4.0];
-
-    let result = Plot::new()
-        .size_px(800, 600)
-        .title("Multiple Line Styles")
-        .xlabel("X Values")
-        .ylabel("Y Values")
-        .line(&x_data, &y1_data)
-        .style(LineStyle::Solid)
-        .color(Color::new(255, 0, 0))
-        .label("Solid")
-        .line(&x_data, &y2_data)
-        .style(LineStyle::Dashed)
-        .color(Color::new(0, 255, 0))
-        .label("Dashed")
-        .line(&x_data, &y3_data)
-        .style(LineStyle::Dotted)
-        .color(Color::new(0, 0, 255))
-        .label("Dotted")
-        .legend(Position::TopRight)
-        .save("generated/tests/render/multiple_line_styles.png");
-
-    assert!(result.is_ok(), "Multiple line styles should work");
-}
-
-#[test]
-fn test_line_width_with_styles() {
-    let x_data = vec![0.0, 1.0, 2.0, 3.0, 4.0];
-    let y1_data = vec![1.0, 2.0, 3.0, 4.0, 5.0];
-    let y2_data = vec![5.0, 4.0, 3.0, 2.0, 1.0];
-
-    let result = Plot::new()
-        .size_px(800, 600)
-        .title("Line Styles with Different Widths")
-        .xlabel("X Values")
-        .ylabel("Y Values")
-        .line(&x_data, &y1_data)
-        .style(LineStyle::Dashed)
-        .line_width(3.0)
-        .color(Color::new(255, 0, 0))
-        .label("Thick Dashed")
-        .line(&x_data, &y2_data)
-        .style(LineStyle::Dotted)
-        .line_width(2.0)
-        .color(Color::new(0, 0, 255))
-        .label("Medium Dotted")
-        .legend(Position::TopRight)
-        .save("generated/tests/render/line_styles_with_width.png");
+fn line_width_scales_a_patterned_stroke() {
+    let thin = ink_pixels(&render_styled_line(LineStyle::Dashed, 1.0));
+    let thick = ink_pixels(&render_styled_line(LineStyle::Dashed, 4.0));
 
     assert!(
-        result.is_ok(),
-        "Line styles with different widths should work"
+        thick > thin,
+        "a 4pt dashed stroke inked {thick} pixels and a 1pt one inked {thin}; \
+         line width is not reaching the dashed geometry"
+    );
+}
+
+#[test]
+fn per_series_styles_survive_a_multi_series_plot() {
+    let x = vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0];
+    let y1 = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
+    let y2 = vec![6.0, 5.0, 4.0, 3.0, 2.0, 1.0];
+    let y3 = vec![3.0, 3.5, 3.2, 3.8, 3.6, 4.0];
+
+    let render = |style_2: LineStyle, style_3: LineStyle| {
+        Plot::new()
+            .size_px(400, 300)
+            .line(&x, &y1)
+            .ticks(false)
+            .grid(false)
+            .line_style(LineStyle::Solid)
+            .color(Color::from_rgb(255, 0, 0))
+            .label("Solid")
+            .line(&x, &y2)
+            .line_style(style_2)
+            .color(Color::from_rgb(0, 255, 0))
+            .label("Second")
+            .line(&x, &y3)
+            .line_style(style_3)
+            .color(Color::from_rgb(0, 0, 255))
+            .label("Third")
+            .legend(LegendPosition::UpperRight)
+            .render()
+            .expect("a multi-series plot must render")
+    };
+
+    let mixed = render(LineStyle::Dashed, LineStyle::Dotted);
+    let all_solid = render(LineStyle::Solid, LineStyle::Solid);
+
+    assert!(
+        mixed.pixels != all_solid.pixels,
+        "a plot whose second and third series are Dashed and Dotted must not \
+         match the same plot drawn entirely with solid lines"
+    );
+    assert!(
+        ink_pixels(&mixed) < ink_pixels(&all_solid),
+        "the dashed and dotted series must cover less than their solid counterparts"
     );
 }

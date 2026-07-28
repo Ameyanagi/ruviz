@@ -11,9 +11,12 @@
 //! - [`PlotRender`] for `HexbinPlotData`
 
 use crate::core::Result;
-use crate::plots::traits::{PlotArea, PlotCompute, PlotConfig, PlotData, PlotRender};
+use crate::plots::traits::{
+    ComputedSeries, ComputedStyle, LegendKey, PlotArea, PlotCompute, PlotConfig, PlotData,
+    PlotPrimitive, PlotRender, draw_primitives,
+};
 use crate::render::skia::SkiaRenderer;
-use crate::render::{Color, ColorMap, LineStyle, Theme};
+use crate::render::{Color, ColorMap, ColorMapSpec, Theme};
 use std::collections::HashMap;
 
 /// Configuration for hexbin plot
@@ -31,18 +34,33 @@ pub struct HexbinConfig {
     pub maxcnt: Option<usize>,
     /// Edge color for hexagons
     pub edge_color: Option<Color>,
-    /// Edge width
+    /// Edge width, in **points**
+    ///
+    /// The renderer converts it to device pixels, so a hexagon rim keeps its
+    /// physical thickness at every DPI.
     pub edge_width: f32,
     /// Alpha for fill
     pub alpha: f32,
     /// Logarithmic color scale
     pub log_scale: bool,
+    /// Draw a colorbar explaining the colour scale (default `true`).
+    ///
+    /// A hexbin *is* a colour scale — without the key, "teal" and "yellow"
+    /// carry no value — so unlike a series colour this is on by default.
+    pub colorbar: bool,
+    /// Caption printed alongside the colorbar.
+    pub colorbar_label: Option<String>,
+    /// Colorbar tick label size in points; `None` follows the theme.
+    pub colorbar_tick_font_size: Option<f32>,
+    /// Colorbar caption size in points; `None` follows the theme.
+    pub colorbar_label_font_size: Option<f32>,
 }
 
 /// Aggregation function for hexbin values
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ReduceFunction {
     /// Count points in each bin
+    #[default]
     Count,
     /// Mean of values
     Mean,
@@ -68,6 +86,10 @@ impl Default for HexbinConfig {
             edge_width: 0.0,
             alpha: 1.0,
             log_scale: false,
+            colorbar: true,
+            colorbar_label: None,
+            colorbar_tick_font_size: None,
+            colorbar_label_font_size: None,
         }
     }
 }
@@ -84,9 +106,11 @@ impl HexbinConfig {
         self
     }
 
-    /// Set colormap
-    pub fn cmap(mut self, cmap: &str) -> Self {
-        self.cmap = cmap.to_string();
+    /// Set colormap.
+    ///
+    /// Accepts a name such as `"viridis"` or a [`ColorMap`] value.
+    pub fn cmap(mut self, cmap: impl Into<ColorMapSpec>) -> Self {
+        self.cmap = cmap.into().into_name();
         self
     }
 
@@ -118,6 +142,42 @@ impl HexbinConfig {
     pub fn log_scale(mut self, log: bool) -> Self {
         self.log_scale = log;
         self
+    }
+
+    /// Show or hide the colorbar.
+    pub fn colorbar(mut self, show: bool) -> Self {
+        self.colorbar = show;
+        self
+    }
+
+    /// Caption for the colorbar — what the colours are counting or measuring.
+    pub fn colorbar_label(mut self, label: impl Into<String>) -> Self {
+        self.colorbar_label = Some(label.into());
+        self
+    }
+
+    /// Colorbar tick label size, in points.
+    pub fn colorbar_tick_font_size(mut self, size: f32) -> Self {
+        self.colorbar_tick_font_size = Some(size.max(1.0));
+        self
+    }
+
+    /// Colorbar caption size, in points.
+    pub fn colorbar_label_font_size(mut self, size: f32) -> Self {
+        self.colorbar_label_font_size = Some(size.max(1.0));
+        self
+    }
+
+    /// Colorbar font sizes, resolved against the theme.
+    ///
+    /// The same resolver heatmap and contour use, so an unconfigured colorbar
+    /// looks identical whichever plot type asked for it.
+    pub fn colorbar_font_sizes(&self, theme: &Theme) -> crate::plots::heatmap::ColorbarFontSizes {
+        crate::plots::heatmap::ColorbarFontSizes::resolve(
+            self.colorbar_tick_font_size,
+            self.colorbar_label_font_size,
+            theme,
+        )
     }
 }
 
@@ -288,10 +348,10 @@ pub fn compute_hexbin(
         let count = vals.len();
 
         // Apply mincnt filter
-        if let Some(min) = config.mincnt {
-            if count < min {
-                continue;
-            }
+        if let Some(min) = config.mincnt
+            && count < min
+        {
+            continue;
         }
 
         let value = match config.reduce_fn {
@@ -378,66 +438,121 @@ impl PlotData for HexbinPlotData {
     }
 }
 
+impl ComputedSeries for HexbinPlotData {
+    fn kind(&self) -> &'static str {
+        "hexbin"
+    }
+
+    fn point_count(&self) -> usize {
+        self.bins.len()
+    }
+
+    /// A hexbin encodes its data as colour, so its key is the colour scale —
+    /// a single swatch would have to pick one hue out of the ramp and imply
+    /// the rest.
+    fn legend_key(&self) -> LegendKey {
+        LegendKey::None
+    }
+
+    /// The ramp, its range and the caption, so a reader can decode the hexagons.
+    ///
+    /// Drawn by exactly the same code as a heatmap's or a contour's, because it
+    /// is exactly the same request.
+    fn colorbar(&self, theme: &Theme) -> Option<crate::render::colorbar::ColorbarRequest> {
+        if !self.config.colorbar {
+            return None;
+        }
+        let fonts = self.config.colorbar_font_sizes(theme);
+        let (vmin, vmax) = self.value_range;
+        Some(crate::render::colorbar::ColorbarRequest {
+            colormap: ColorMap::by_name(&self.config.cmap).unwrap_or_else(ColorMap::viridis),
+            vmin,
+            vmax,
+            value_scale: match self.config.log_scale {
+                true => crate::axes::AxisScale::Log,
+                false => crate::axes::AxisScale::Linear,
+            },
+            label: self.config.colorbar_label.clone(),
+            tick_font_size: fonts.tick,
+            label_font_size: fonts.label,
+            show_log_subticks: self.config.log_scale,
+        })
+    }
+
+    /// One filled hexagon per occupied bin, coloured by its aggregated value.
+    fn primitives(&self, area: &PlotArea, style: &ComputedStyle) -> Vec<PlotPrimitive> {
+        let config = &self.config;
+        let (min_value, max_value) = self.value_range;
+        let value_range = max_value - min_value;
+
+        let cmap = ColorMap::by_name(&config.cmap).unwrap_or_else(ColorMap::viridis);
+        // The rim width is authored in points, like every other stroke in the
+        // crate; the render scale is what makes it DPI-invariant.
+        let edge_width_px = style.scale.points_to_pixels(config.edge_width.max(0.0));
+        let edge = config
+            .edge_color
+            .filter(|_| config.edge_width > 0.0)
+            .map(|color| (style.tinted(color), edge_width_px));
+
+        self.bins
+            .iter()
+            .filter_map(|bin| {
+                let t = if value_range > 0.0 {
+                    (bin.value - min_value) / value_range
+                } else {
+                    0.5
+                };
+                let sampled = cmap.sample(t).with_alpha(config.alpha);
+                // The series alpha composes over the colormap's own, so
+                // `.alpha(0.5)` fades a hexbin instead of overriding `cmap`.
+                let fill = style.tinted(sampled);
+
+                // A hexagon with any vertex the axes cannot place has no shape
+                // at all, so it is dropped rather than filled through a NaN.
+                let points: Option<Vec<(f32, f32)>> = bin
+                    .vertices
+                    .iter()
+                    .map(|(x, y)| area.try_data_to_screen(*x, *y))
+                    .collect();
+
+                Some(PlotPrimitive::Polygon {
+                    points: points?,
+                    fill: Some(fill),
+                    edge,
+                })
+            })
+            .collect()
+    }
+}
+
 impl PlotRender for HexbinPlotData {
     fn render(
         &self,
         renderer: &mut SkiaRenderer,
         area: &PlotArea,
         _theme: &Theme,
-        _color: Color,
+        color: Color,
     ) -> Result<()> {
-        if self.bins.is_empty() {
-            return Ok(());
-        }
+        let style = ComputedStyle::opaque(renderer.render_scale(), color);
+        draw_primitives(renderer, &self.primitives(area, &style))
+    }
 
-        let config = &self.config;
-        let (min_value, max_value) = self.value_range;
-        let value_range = max_value - min_value;
-
-        // Get colormap
-        let cmap = ColorMap::by_name(&config.cmap).unwrap_or_else(ColorMap::viridis);
-
-        for bin in &self.bins {
-            // Calculate color based on value
-            let t = if value_range > 0.0 {
-                (bin.value - min_value) / value_range
-            } else {
-                0.5
-            };
-            let fill_color = cmap.sample(t).with_alpha(config.alpha);
-
-            // Convert vertices to screen coordinates
-            let screen_vertices: Vec<(f32, f32)> = bin
-                .vertices
-                .iter()
-                .map(|(x, y)| area.data_to_screen(*x, *y))
-                .collect();
-
-            // Draw filled hexagon
-            renderer.draw_filled_polygon(&screen_vertices, fill_color)?;
-
-            // Draw edge if configured
-            if let Some(edge_color) = config.edge_color {
-                if config.edge_width > 0.0 {
-                    // Draw hexagon outline
-                    for i in 0..6 {
-                        let (x1, y1) = screen_vertices[i];
-                        let (x2, y2) = screen_vertices[(i + 1) % 6];
-                        renderer.draw_line(
-                            x1,
-                            y1,
-                            x2,
-                            y2,
-                            edge_color,
-                            config.edge_width,
-                            LineStyle::Solid,
-                        )?;
-                    }
-                }
-            }
-        }
-
-        Ok(())
+    fn render_styled(
+        &self,
+        renderer: &mut SkiaRenderer,
+        area: &PlotArea,
+        _theme: &Theme,
+        color: Color,
+        alpha: f32,
+        _line_width: Option<f32>,
+    ) -> Result<()> {
+        let style = ComputedStyle {
+            scale: renderer.render_scale(),
+            color,
+            alpha,
+            line_width: None,
+        };
+        draw_primitives(renderer, &self.primitives(area, &style))
     }
 }
 
@@ -558,6 +673,51 @@ mod tests {
 
         // Test is_empty
         assert!(!hexbin_data.is_empty());
+    }
+
+    /// Pixels the hexagon rims change, at the given render scale.
+    ///
+    /// Comparing against the same plot drawn without rims isolates the edge
+    /// stroke from the fill, which otherwise dominates every pixel count.
+    fn hexbin_edge_pixels(dpi_scale: f32) -> usize {
+        fn draw(edge: Option<Color>, dpi_scale: f32) -> Vec<u8> {
+            let x: Vec<f64> = (0..100).map(|i| (i as f64) / 10.0).collect();
+            let y: Vec<f64> = (0..100).map(|i| ((i as f64) / 10.0).sin()).collect();
+            let mut config = HexbinConfig::default().gridsize(8);
+            config.edge_color = edge;
+            config.edge_width = if edge.is_some() { 1.0 } else { 0.0 };
+            let data = compute_hexbin(&x, &y, None, &config);
+
+            let mut renderer = SkiaRenderer::new(200, 200, Theme::default()).unwrap();
+            renderer.set_dpi_scale(dpi_scale);
+            let ((x_min, x_max), (y_min, y_max)) = data.data_bounds();
+            let area = PlotArea::new(20.0, 20.0, 160.0, 160.0, x_min, x_max, y_min, y_max);
+            data.render(&mut renderer, &area, &Theme::default(), Color::BLACK)
+                .unwrap();
+            renderer.into_image().pixels
+        }
+
+        let plain = draw(None, dpi_scale);
+        let rimmed = draw(Some(Color::BLACK), dpi_scale);
+        plain
+            .chunks_exact(4)
+            .zip(rimmed.chunks_exact(4))
+            .filter(|(a, b)| a != b)
+            .count()
+    }
+
+    #[test]
+    fn test_hexbin_rims_keep_their_physical_width_at_higher_dpi() {
+        // `edge_width` is in points; passing the raw number through as pixels
+        // left the rims hairline-thin at 300 DPI.
+        let single = hexbin_edge_pixels(1.0);
+        let double = hexbin_edge_pixels(2.0);
+
+        assert!(single > 0, "a 1pt rim drew nothing at all");
+        assert!(
+            double > single,
+            "hexbin rims did not thicken with DPI ({double} vs {single} changed pixels)"
+        );
     }
 
     #[test]

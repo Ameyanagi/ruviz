@@ -1,5 +1,5 @@
+use ruviz::core::LegendPosition;
 use ruviz::core::Plot;
-use ruviz::core::Position;
 use ruviz::render::{Color, MarkerStyle, Theme};
 
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
@@ -16,7 +16,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let x3: Vec<f64> = (0..25).map(|i| i as f64 * 0.4).collect();
     let y3: Vec<f64> = x3.iter().map(|&x| 0.5 * x.sin() + 0.5).collect();
 
-    // Test with scatter series using auto-positioning (Position::Best)
+    // Test with scatter series using auto-positioning (LegendPosition::Best)
     // The legend will automatically find the position with minimum data overlap
     Plot::new()
         .title("Legend Scatter Markers Test (Auto-Position)")
@@ -35,7 +35,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .label("Data C - triangles")
         .color(Color::GREEN)
         .marker(MarkerStyle::Triangle)
-        .legend(Position::Best) // Auto-positioning to minimize overlap
+        .legend(LegendPosition::Best) // Auto-positioning to minimize overlap
         .save("gallery/basic/legend_scatter_test.png")?;
 
     println!("✅ Legend scatter test completed!");

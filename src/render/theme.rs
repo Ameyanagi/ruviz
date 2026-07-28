@@ -108,8 +108,8 @@ impl Theme {
         Self {
             background: Color::WHITE,
             foreground: Color::BLACK,
-            grid_color: Color::LIGHT_GRAY,
-            line_width: 1.5, // matplotlib default: 1.5pt
+            grid_color: Color::from_gray(176), // #B0B0B0, matches GridStyle::default()
+            line_width: 1.5,                   // matplotlib default: 1.5pt
             line_style: LineStyle::Solid,
             font_family: "sans-serif".to_string(),
             font_size: 10.0,            // matplotlib default: 10pt
@@ -180,7 +180,9 @@ impl Theme {
         Self {
             background: Color::WHITE,
             foreground: Color::BLACK,
-            grid_color: Color::from_hex("#E0E0E0").unwrap(),
+            // #B0B0B0: 2.17:1 on white, matching GridStyle::default(). The old
+            // #E0E0E0 was 1.31:1 and effectively invisible on screen.
+            grid_color: Color::from_gray(176),
             line_width: 1.5,
             line_style: LineStyle::Solid,
             font_family: "Times New Roman".to_string(),
@@ -245,7 +247,7 @@ impl Theme {
         Self {
             background: Color::WHITE,
             foreground: Color::from_hex("#262626").unwrap(), // Dark gray instead of pure black
-            grid_color: Color::from_hex("#F0F0F0").unwrap(), // Light gray grid
+            grid_color: Color::from_gray(176),               // #B0B0B0, readable mid-gray grid
             line_width: 1.5,
             line_style: LineStyle::Solid,
             font_family: "DejaVu Sans".to_string(), // Seaborn's preferred font
@@ -267,8 +269,10 @@ impl Theme {
         Self {
             background: Color::WHITE,
             foreground: Color::BLACK,
-            grid_color: Color::from_hex("#E5E5E5").unwrap(), // Subtle grid for print
-            line_width: 0.75,                                // Match PlotStyle::IEEE data_width
+            // #C8C8C8: 1.86:1 on white. Lighter than GridStyle::default() because
+            // IEEE targets print, but no longer the 1.27:1 wash of #E5E5E5.
+            grid_color: Color::from_gray(200),
+            line_width: 0.75, // Match PlotStyle::IEEE data_width
             line_style: LineStyle::Solid,
             font_family: "serif".to_string(), // IEEE standard serif font
             font_size: 8.0,                   // Small size for column constraints
@@ -311,7 +315,9 @@ impl Theme {
         Self {
             background: Color::WHITE,
             foreground: Color::BLACK,
-            grid_color: Color::from_hex("#CCCCCC").unwrap(), // Visible but not dominant grid
+            // #B0B0B0: projector contrast is worse than a monitor's, so the grid
+            // has to be at least as readable as the default (2.17:1 on white).
+            grid_color: Color::from_gray(176),
             line_width: 2.5, // Thick lines for visibility (same as PlotStyle::Presentation)
             line_style: LineStyle::Solid,
             font_family: "sans-serif".to_string(), // High legibility sans-serif
@@ -333,7 +339,8 @@ impl Theme {
         Self {
             background: Color::WHITE,
             foreground: Color::BLACK,
-            grid_color: Color::from_hex("#E0E0E0").unwrap(),
+            // #B0B0B0: 2.17:1 on white, matching GridStyle::default().
+            grid_color: Color::from_gray(176),
             line_width: 1.5,
             line_style: LineStyle::Solid,
             font_family: "Arial".to_string(),
@@ -542,7 +549,7 @@ impl Theme {
         LineConfig {
             data_width: self.line_width,
             axis_width: 0.8 * scale,
-            grid_width: 0.5 * scale,
+            grid_width: 0.8 * scale, // matches GridStyle::default().line_width
             tick_width: 0.6 * scale,
             tick_length: 4.0, // Standard tick length
         }

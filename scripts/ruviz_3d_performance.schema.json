@@ -1,0 +1,273 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ruviz.dev/schemas/3d-performance-artifact-v1.json",
+  "title": "ruviz 3D performance artifact",
+  "type": "object",
+  "required": [
+    "$schema",
+    "schema_version",
+    "generated_at",
+    "provenance",
+    "methodology",
+    "coverage",
+    "profiles",
+    "measurements",
+    "gates",
+    "collection_errors"
+  ],
+  "properties": {
+    "$schema": {
+      "const": "https://ruviz.dev/schemas/3d-performance-artifact-v1.json"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "provenance": {
+      "type": "object",
+      "required": [
+        "generator",
+        "source_mode",
+        "source_revision_status",
+        "criterion_directory",
+        "dataset_manifest",
+        "git",
+        "environment",
+        "run"
+      ]
+    },
+    "methodology": {
+      "type": "object",
+      "required": [
+        "sample_percentiles",
+        "timing_unit",
+        "viewport_note",
+        "diagnostics_note",
+        "claims_policy"
+      ]
+    },
+    "coverage": {
+      "type": "object",
+      "required": [
+        "required_profile_count",
+        "measured_profile_count",
+        "unmeasured_profile_count",
+        "measurement_count"
+      ],
+      "properties": {
+        "required_profile_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "measured_profile_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unmeasured_profile_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "measurement_count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "profiles": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/profile"
+      }
+    },
+    "measurements": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/measurement"
+      }
+    },
+    "gates": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/gate"
+      }
+    },
+    "collection_errors": {
+      "type": "array"
+    }
+  },
+  "$defs": {
+    "profile": {
+      "type": "object",
+      "required": [
+        "id",
+        "backend",
+        "phase",
+        "boundary",
+        "required",
+        "status",
+        "measurement_ids"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "backend": {
+          "enum": [
+            "cpu",
+            "gpu"
+          ]
+        },
+        "phase": {
+          "enum": [
+            "cold",
+            "warm",
+            "update"
+          ]
+        },
+        "boundary": {
+          "type": "string"
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "status": {
+          "enum": [
+            "measured",
+            "unmeasured"
+          ]
+        },
+        "measurement_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "reason": {
+          "type": "string"
+        }
+      }
+    },
+    "measurement": {
+      "type": "object",
+      "required": [
+        "id",
+        "profile_id",
+        "workload",
+        "size",
+        "viewport",
+        "dataset",
+        "criterion",
+        "samples",
+        "derived",
+        "diagnostics",
+        "source"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "profile_id": {
+          "type": "string"
+        },
+        "workload": {
+          "enum": [
+            "scatter",
+            "surface"
+          ]
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "viewport": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "width",
+                "height"
+              ],
+              "properties": {
+                "width": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "height": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            }
+          ]
+        },
+        "dataset": {
+          "type": "object",
+          "required": [
+            "id",
+            "hash",
+            "identity_status"
+          ],
+          "properties": {
+            "identity_status": {
+              "enum": [
+                "verified",
+                "unverified"
+              ]
+            }
+          }
+        },
+        "samples": {
+          "type": "object",
+          "required": [
+            "unit",
+            "sample_count",
+            "min_ns",
+            "mean_ns",
+            "median_ns",
+            "p95_ns",
+            "p99_ns",
+            "max_ns",
+            "p99_over_median",
+            "per_iteration_ns"
+          ]
+        },
+        "diagnostics": {
+          "type": "object",
+          "required": [
+            "status",
+            "reason"
+          ],
+          "properties": {
+            "status": {
+              "const": "unmeasured"
+            }
+          }
+        }
+      }
+    },
+    "gate": {
+      "type": "object",
+      "required": [
+        "id",
+        "metric",
+        "operator",
+        "threshold",
+        "requires",
+        "status",
+        "reason",
+        "available_measurement_ids"
+      ],
+      "properties": {
+        "status": {
+          "const": "not_evaluated"
+        }
+      }
+    }
+  }
+}

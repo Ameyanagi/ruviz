@@ -6,7 +6,7 @@
 
 use ruviz::prelude::*;
 
-fn main() -> Result<()> {
+fn main() -> PlotResult<()> {
     // Generate sample data from a normal-like distribution
     let data: Vec<f64> = (0..200)
         .map(|i| {
@@ -23,7 +23,7 @@ fn main() -> Result<()> {
         .xlabel("Value")
         .ylabel("Proportion")
         .max_resolution(1920, 1440)
-        .ecdf_line_width(2.0)
+        .line_width(2.0)
         .label("Sample Distribution")
         .color(Color::from_palette(0))
         .legend_best()

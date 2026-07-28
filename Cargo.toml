@@ -1,19 +1,25 @@
 [workspace]
-members = ["crates/ruviz-gpui", "crates/ruviz-web", "python"]
+members = ["crates/ruviz-web", "python"]
+# `crates/ruviz-gpui` is deliberately NOT a member: it is its own workspace so
+# that its `[patch.crates-io]` GPUI override — a pin to a zed monorepo git rev —
+# cannot reach anything built here. `[patch]` is workspace-scoped and
+# `default-members` does not exempt it, so while the adapter was a member *every*
+# cargo invocation in this repository, `cargo check -p ruviz` included, resolved
+# the zed checkout: 38 `git+` lockfile entries from 6 repositories and two
+# separate wgpu builds, paid by roughly 22 CI jobs on a cold cache. The root
+# lockfile now resolves entirely from crates.io, and
+# `scripts/verify_packaged_crates.py` fails the publish gate if a single `git+`
+# source reappears in it.
+#
+# Build the adapter with `--manifest-path crates/ruviz-gpui/Cargo.toml`.
+exclude = ["crates/ruviz-gpui"]
 # Keep plain root cargo commands focused on the cross-platform core crate.
 default-members = ["."]
 resolver = "2"
 
-# Temporary workspace-wide GPUI override while crates.io still ships gpui 0.2.2.
-# This applies on every target because `[patch.crates-io]` cannot be target-gated;
-# the specific fix we need is the macOS right-drag delivery change from
-# https://github.com/zed-industries/zed/pull/49637.
-[patch.crates-io]
-gpui = { git = "https://github.com/zed-industries/zed", rev = "3060e4170ea5ef0e6886b9ac1853aaead9ddd59f" }
-
 [package]
 name = "ruviz"
-version = "0.5.0"
+version = "0.6.0"
 edition = "2024"
 rust-version = "1.92"
 authors = ["Ruviz Contributors"]
@@ -36,6 +42,32 @@ include = [
     "/CHANGELOG.md",
     "/LICENSE",
 ]
+
+# docs.rs builds on x86_64-unknown-linux-gnu with no project-specific system
+# packages installed, so `all-features = true` is not safe here: the
+# `interactive`/`interactive-gpu`/`window`/`full` features pull `rfd` with the
+# `gtk3` backend on Linux, which needs the GTK-3 development headers that our own
+# CI has to install by hand (.github/actions/install-linux-desktop-build-deps).
+# A failed docs.rs build publishes no documentation at all, so we enumerate the
+# pure-Rust features instead; every one below adds public API. `svg` is omitted
+# because it adds none: SVG export is unconditional (see `[features]`).
+[package.metadata.docs.rs]
+features = [
+    "3d",
+    "animation",
+    "animation-video",
+    "gpu",
+    "nalgebra_support",
+    "ndarray_support",
+    "pdf",
+    "performance",
+    "polars_support",
+    "serde",
+    "typst-math",
+]
+# Activates `#![cfg_attr(docsrs, feature(doc_cfg))]` in src/lib.rs so feature-gated
+# items are labelled with the feature that enables them.
+rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
 # Core rendering
@@ -65,6 +97,7 @@ polars = { version = "0.50", optional = true }
 
 # Image I/O
 image = { version = "0.25", default-features = false, features = ["png"] }
+base64 = { version = "0.22", optional = true }
 
 # PDF export (SVG → PDF pipeline)
 svg2pdf = { version = "0.13", optional = true }  # Uses usvg 0.43 internally
@@ -105,9 +138,6 @@ gif = { version = "0.14", optional = true }
 color_quant = { version = "1.1", optional = true }
 crossbeam-channel = { version = "0.5", optional = true }
 
-# High-quality GIF (optional)
-gifski = { version = "1.34", optional = true }
-
 # Pure Rust video encoding (optional)
 rav1e = { version = "0.8", optional = true, default-features = false }
 av1-grain = { version = "0.4", optional = true }
@@ -115,17 +145,25 @@ av1-grain = { version = "0.4", optional = true }
 # FreeBSD support
 [target.'cfg(target_os = "freebsd")'.dependencies]
 ctor = "0.8"
-rfd = { version = "=0.15.4", optional = true, default-features = false, features = ["gtk3"] } # pinned while keeping Linux dialogs on the repo MSRV
+# A range, not `=0.15.4`: an exact pin on a dependency reachable from the public
+# `window` feature makes any downstream needing ^0.15.5 unresolvable, with no
+# workaround short of forking. Cargo.lock pins the exact build this repo tests.
+rfd = { version = "0.15", optional = true, default-features = false, features = ["gtk3"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-rfd = { version = "=0.15.4", optional = true, default-features = false, features = ["gtk3"] } # pinned while keeping Linux dialogs on the repo MSRV
+# A range, not `=0.15.4`: an exact pin on a dependency reachable from the public
+# `window` feature makes any downstream needing ^0.15.5 unresolvable, with no
+# workaround short of forking. Cargo.lock pins the exact build this repo tests.
+rfd = { version = "0.15", optional = true, default-features = false, features = ["gtk3"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-rfd = { version = "=0.15.4", optional = true, default-features = false } # pinned while keeping desktop dialogs on the repo MSRV
+# See the linux block above for why this is a range rather than an exact pin.
+rfd = { version = "0.15", optional = true, default-features = false }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
-rfd = { version = "=0.15.4", optional = true, default-features = false } # pinned while keeping desktop dialogs on the repo MSRV
+# See the linux block above for why this is a range rather than an exact pin.
+rfd = { version = "0.15", optional = true, default-features = false }
 
 [dev-dependencies]
 criterion = { version = "0.8", features = ["html_reports"] }
@@ -140,44 +178,75 @@ trybuild = "1.0"
 sha2 = "0.10"
 plotters = { version = "0.3.7", default-features = false, features = ["bitmap_backend", "line_series"] }
 
+# Every optional dependency is referenced as `dep:<name>` so that Cargo does not
+# also mint an implicit feature named after the crate. Without `dep:`, a user
+# asking for `--features rayon` got the rayon *crate* compiled while every
+# `cfg(feature = "parallel")` site stayed switched off — a feature flag that
+# links a dependency and enables no code. The only feature names that may
+# duplicate a dependency name are the explicit aliases below, which forward to
+# the canonical feature.
+#
+# Invariant enforced by `tests/feature_hygiene_test.rs`: every feature declared
+# here either has at least one `cfg(feature = "...")` site in the repository or
+# is listed there as a deliberate alias/aggregate.
 [features]
 default = ["ndarray_support", "parallel"]
 
-# Display and window features
-window = ["winit", "raw-window-handle", "dep:softbuffer", "dep:rfd", "dep:arboard"]
-interactive = ["window"]  # Interactive mode WITHOUT GPU (decoupled)
+# Experimental 3D plotting. CPU/static support lives in this feature; direct
+# GPU rendering composes with the existing `gpu` feature.
+"3d" = ["dep:base64"]
+
+# Display and window features.
+# `interactive` owns both the desktop dependencies and the `cfg(feature =
+# "interactive")` code; `window` is kept only as an alias for it. They were
+# separate flags until 2026-07, but `window` gated no code at all, so asking for
+# it pulled winit + softbuffer + rfd(GTK3) + arboard and changed nothing.
+interactive = ["dep:winit", "dep:raw-window-handle", "dep:softbuffer", "dep:rfd", "dep:arboard"]
+window = ["interactive"]  # Alias: historical name for `interactive`
 interactive-gpu = ["interactive", "gpu"]  # Interactive mode WITH GPU acceleration
 
 # Serialization
-serde = ["dep:serde", "serde_json", "palette/serde"]
+serde = ["dep:serde", "dep:serde_json", "palette/serde"]
 
 # Data format support
 ndarray_support = ["dep:ndarray"]
-polars_support = ["polars"]
+polars_support = ["dep:polars"]
 nalgebra_support = ["dep:nalgebra"]
 # Backward-compatibility aliases (historical feature names)
 ndarray = ["ndarray_support"]
 nalgebra = ["nalgebra_support"]
+polars = ["polars_support"]
 
-# Performance optimization features
-parallel = ["rayon"]
-gpu = ["wgpu", "bytemuck", "wgsl_bindgen", "pollster", "futures-intrusive"]
-simd = ["wide"]
+# Performance optimization features.
+# `parallel` is on by default because the software 3D rasterizer genuinely uses
+# it: tiles are rendered through `rayon` at
+# `src/render/three_d/software/raster.rs`, with a serial fallback that
+# `serial_and_parallel_software_tiles_are_byte_identical` pins as byte-identical.
+# It does *not* reach the 2D raster path at all: the unreachable 2D
+# series-parallel renderer was deleted in 2026-07, so `parallel` changes no 2D
+# output and no 2D timing.
+parallel = ["dep:rayon"]
+gpu = ["dep:wgpu", "dep:bytemuck", "dep:wgsl_bindgen", "dep:pollster", "dep:futures-intrusive"]
+simd = ["dep:wide"]
 performance = ["parallel", "simd"]
 
-# Export format features
+# Export format features.
+# `svg` gates nothing: SVG export (`render_to_svg`/`export_svg`) is always
+# compiled in. It is retained purely so existing `features = ["svg"]`
+# selections keep resolving, and is a no-op.
 svg = []
-pdf = ["svg2pdf"]
+pdf = ["dep:svg2pdf"]
 typst-math = ["dep:typst", "dep:typst-svg", "dep:typst-render", "dep:typst-kit"]
 
-# Animation export features
-animation = ["gif", "color_quant", "crossbeam-channel"]
-animation-gif = ["animation"]
-animation-hq-gif = ["animation", "gifski"]
-animation-video = ["animation", "rav1e", "av1-grain"]
+# Animation export features.
+# `animation-gif` (an exact duplicate of `animation`) and `animation-hq-gif`
+# (which pulled the C-building `gifski` crate that no code referenced) were
+# removed in 2026-07: neither gated a single line.
+animation = ["dep:gif", "dep:color_quant", "dep:crossbeam-channel"]
+animation-video = ["animation", "dep:rav1e", "dep:av1-grain"]
 
 # Full feature set
-full = ["ndarray_support", "polars_support", "nalgebra_support", "window", "serde", "performance", "gpu", "svg", "pdf", "interactive-gpu", "animation", "typst-math"]
+full = ["3d", "ndarray_support", "polars_support", "nalgebra_support", "serde", "performance", "gpu", "pdf", "interactive-gpu", "animation", "typst-math"]
 
 [profile.release]
 lto = true
@@ -210,6 +279,41 @@ path = "gallery/basic/legend_handles_test.rs"
 [[example]]
 name = "legend_scatter_test"
 path = "gallery/basic/legend_scatter_test.rs"
+
+[[example]]
+name = "3d_surface"
+path = "examples/3d_surface.rs"
+required-features = ["3d"]
+
+[[example]]
+name = "doc_scatter3d"
+path = "examples/doc_scatter3d.rs"
+required-features = ["3d"]
+
+[[example]]
+name = "doc_line3d"
+path = "examples/doc_line3d.rs"
+required-features = ["3d"]
+
+[[example]]
+name = "doc_surface3d"
+path = "examples/doc_surface3d.rs"
+required-features = ["3d"]
+
+[[example]]
+name = "doc_wireframe3d"
+path = "examples/doc_wireframe3d.rs"
+required-features = ["3d"]
+
+[[example]]
+name = "generate_3d_gallery"
+path = "examples/generate_3d_gallery.rs"
+required-features = ["3d"]
+
+[[example]]
+name = "interactive_orbit3d"
+path = "examples/interactive_orbit3d.rs"
+required-features = ["3d", "interactive-gpu"]
 
 [[example]]
 name = "legend_rounded_test"
@@ -325,6 +429,11 @@ path = "examples/performance/export_plotting_benchmark_outputs.rs"
 name = "interactive_benchmark_runner"
 path = "examples/performance/interactive_benchmark_runner.rs"
 required-features = ["serde", "animation"]
+
+[[example]]
+name = "3d_dataset_manifest"
+path = "examples/performance/3d_dataset_manifest.rs"
+required-features = ["3d"]
 
 # GPU examples (require gpu feature)
 [[example]]
@@ -464,6 +573,11 @@ name = "generate_animation_gallery"
 path = "examples/generate_animation_gallery.rs"
 required-features = ["animation"]
 
+[[example]]
+name = "doc_surface3d_animation"
+path = "examples/doc_surface3d_animation.rs"
+required-features = ["3d", "animation"]
+
 # Benchmarks
 [[bench]]
 name = "memory_pool_benchmarks"
@@ -489,3 +603,8 @@ harness = false
 [[bench]]
 name = "performance"
 harness = false
+
+[[bench]]
+name = "three_d"
+harness = false
+required-features = ["3d"]

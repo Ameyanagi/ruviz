@@ -49,6 +49,13 @@ pub(super) struct MarkerBatch {
     size: f32,
     style: MarkerStyle,
     color: Color,
+    /// Marker rim as `(colour, width_in_points)`, or `None` for bare markers.
+    ///
+    /// The width stays in points here; the renderer scales it, so the rim is
+    /// DPI-invariant. An edged batch cannot use the marker sprite compositor
+    /// (its cache key has nowhere to record an edge), so keep this `None`
+    /// unless the series actually asked for a rim.
+    edge: Option<(Color, f32)>,
     clip_rect: ClipRect,
 }
 
@@ -58,6 +65,7 @@ impl MarkerBatch {
         size: f32,
         style: MarkerStyle,
         color: Color,
+        edge: Option<(Color, f32)>,
         clip_rect: ClipRect,
     ) -> Self {
         Self {
@@ -65,16 +73,18 @@ impl MarkerBatch {
             size,
             style,
             color,
+            edge,
             clip_rect,
         }
     }
 
     fn execute(&self, renderer: &mut SkiaRenderer) -> Result<()> {
-        renderer.draw_markers_clipped(
+        renderer.draw_markers_styled_clipped(
             self.points.as_ref(),
             self.size,
             self.style,
             self.color,
+            self.edge,
             self.clip_rect,
         )
     }
@@ -198,17 +208,20 @@ impl SeriesRasterPlan {
             )));
     }
 
+    /// Queue a marker batch. `edge` is `(colour, width_in_points)`, normally
+    /// `Plot::resolved_marker_edge`, and `None` for bare markers.
     pub(super) fn push_markers(
         &mut self,
         points: Arc<[Point2f]>,
         size: f32,
         style: MarkerStyle,
         color: Color,
+        edge: Option<(Color, f32)>,
         clip_rect: ClipRect,
     ) {
         self.batches
             .push(StaticRasterBatch::Markers(MarkerBatch::new(
-                points, size, style, color, clip_rect,
+                points, size, style, color, edge, clip_rect,
             )));
     }
 
@@ -248,7 +261,159 @@ pub(super) fn clip_rect_from_plot_area(plot_area: tiny_skia::Rect) -> ClipRect {
     )
 }
 
+/// Can this sample be placed on these axes at all?
+///
+/// Defers to [`crate::axes::AxisScale::is_valid_value`] — the very predicate
+/// the scales use — so a renderer can never disagree with its own axis about
+/// which samples exist. Rejects a non-finite value on any scale and a
+/// zero/negative value on a log scale.
+pub(super) fn sample_is_representable(
+    x: f64,
+    y: f64,
+    x_scale: &crate::axes::AxisScale,
+    y_scale: &crate::axes::AxisScale,
+) -> bool {
+    x_scale.is_valid_value(x) && y_scale.is_valid_value(y)
+}
+
+/// The contiguous runs of representable samples, as index ranges.
+///
+/// **This is the one place a line's breaks are decided.** The raster, SVG and
+/// parallel backends all split on these ranges, so they cannot disagree about
+/// where a polyline stops and restarts. Ranges rather than points because each
+/// backend owns its projected buffer differently.
+///
+/// An all-representable input yields a single `0..len` range, so the common
+/// case costs one pass and no allocation beyond the `Vec`.
+pub(super) fn representable_sample_runs(
+    x_data: &[f64],
+    y_data: &[f64],
+    x_scale: &crate::axes::AxisScale,
+    y_scale: &crate::axes::AxisScale,
+) -> Vec<std::ops::Range<usize>> {
+    let len = x_data.len().min(y_data.len());
+    let mut runs = Vec::new();
+    let mut start = None;
+
+    for index in 0..len {
+        if sample_is_representable(x_data[index], y_data[index], x_scale, y_scale) {
+            start.get_or_insert(index);
+        } else if let Some(run_start) = start.take() {
+            runs.push(run_start..index);
+        }
+    }
+    if let Some(run_start) = start {
+        runs.push(run_start..len);
+    }
+
+    runs
+}
+
+/// Is every sample representable on these axes?
+fn all_samples_representable(
+    x_data: &[f64],
+    y_data: &[f64],
+    x_scale: &crate::axes::AxisScale,
+    y_scale: &crate::axes::AxisScale,
+) -> bool {
+    x_data
+        .iter()
+        .zip(y_data.iter())
+        .all(|(&x, &y)| sample_is_representable(x, y, x_scale, y_scale))
+}
+
+/// Project x/y samples into pixel space, **dropping** samples the axis scales
+/// cannot represent.
+///
+/// This is the marker/scatter projection: a sample with no position on the axis
+/// simply is not drawn. Line series must use [`project_xy_subpaths`] instead —
+/// dropping a sample from a polyline silently joins the line across the gap,
+/// inventing a segment the user never supplied.
 pub(super) fn project_xy_points(
+    x_data: &[f64],
+    y_data: &[f64],
+    x_min: f64,
+    x_max: f64,
+    y_min: f64,
+    y_max: f64,
+    plot_area: tiny_skia::Rect,
+    x_scale: &crate::axes::AxisScale,
+    y_scale: &crate::axes::AxisScale,
+) -> Arc<[Point2f]> {
+    let projected = project_xy_points_unchecked(
+        x_data, y_data, x_min, x_max, y_min, y_max, plot_area, x_scale, y_scale,
+    );
+
+    if all_samples_representable(x_data, y_data, x_scale, y_scale) {
+        return projected;
+    }
+
+    x_data
+        .iter()
+        .zip(y_data.iter())
+        .zip(projected.iter())
+        .filter(|&((&x, &y), _)| sample_is_representable(x, y, x_scale, y_scale))
+        .map(|(_, point)| *point)
+        .collect::<Vec<_>>()
+        .into()
+}
+
+/// Project x/y samples into pixel space, **splitting** at every sample the axis
+/// scales cannot represent.
+///
+/// Each returned run is one contiguous sub-path; drawing them as separate
+/// polylines is what makes a line *break* at the gap instead of jumping across
+/// it. The common case — every sample representable — returns a single run and
+/// copies nothing.
+///
+/// This is the one place the split is decided, so the raster, SVG and parallel
+/// backends cannot disagree about where a line breaks.
+///
+/// # A sample isolated between two rejected ones draws nothing
+///
+/// A run of length one is a zero-length polyline, and a line has no ink of its
+/// own at a single point — matplotlib draws nothing there either. So a valid
+/// sample whose *both* neighbours are off the axis is not visible as a line.
+/// It is not lost: the marker path ([`project_xy_points`]) keeps every
+/// representable sample, so `.line(x, y).marker(..)` still shows it, and so
+/// does `.scatter(x, y)`. A marker-less line on data with isolated survivors
+/// should ask for markers.
+pub(super) fn project_xy_subpaths(
+    x_data: &[f64],
+    y_data: &[f64],
+    x_min: f64,
+    x_max: f64,
+    y_min: f64,
+    y_max: f64,
+    plot_area: tiny_skia::Rect,
+    x_scale: &crate::axes::AxisScale,
+    y_scale: &crate::axes::AxisScale,
+) -> Vec<Arc<[Point2f]>> {
+    let projected = project_xy_points_unchecked(
+        x_data, y_data, x_min, x_max, y_min, y_max, plot_area, x_scale, y_scale,
+    );
+
+    if all_samples_representable(x_data, y_data, x_scale, y_scale) {
+        return if projected.is_empty() {
+            Vec::new()
+        } else {
+            vec![projected]
+        };
+    }
+
+    representable_sample_runs(x_data, y_data, x_scale, y_scale)
+        .into_iter()
+        .map(|run| Arc::from(&projected[run]))
+        .collect()
+}
+
+/// Project every sample, representable or not.
+///
+/// A rejected sample comes back as a `NaN` pixel pair. Only
+/// [`project_xy_points`] and [`project_xy_subpaths`] may call this; every other
+/// caller must go through one of them so that rejected samples are dropped or
+/// split on rather than rasterised.
+fn project_xy_points_unchecked(
     x_data: &[f64],
     y_data: &[f64],
     x_min: f64,
@@ -344,12 +509,19 @@ fn project_scaled_xy_points(
         .into()
 }
 
+/// Build the [`PlotArea`] a `PlotRender` implementation draws through.
+///
+/// This is the only place a `PlotArea` is derived from a pixel rect plus data
+/// bounds on the raster path, so every trait-rendered plot type is projected
+/// through the figure's axis scales rather than through a linear default.
 pub(super) fn plot_area_from_rect(
     plot_area: tiny_skia::Rect,
     x_min: f64,
     x_max: f64,
     y_min: f64,
     y_max: f64,
+    x_scale: &crate::axes::AxisScale,
+    y_scale: &crate::axes::AxisScale,
 ) -> PlotArea {
     PlotArea::new(
         plot_area.x(),
@@ -361,6 +533,7 @@ pub(super) fn plot_area_from_rect(
         y_min,
         y_max,
     )
+    .with_scales(*x_scale, *y_scale)
 }
 
 #[cfg(test)]
@@ -514,5 +687,121 @@ mod tests {
             Point2f::new(210.0, 20.0),
         ];
         assert_eq!(points.as_ref(), expected.as_slice());
+    }
+
+    /// A sample the axes cannot place must break the line, not be dropped
+    /// silently — dropping it joins the two sides together and draws a segment
+    /// the user never supplied.
+    #[test]
+    fn test_log_axis_gaps_split_the_polyline_instead_of_joining_across() {
+        let plot_area = tiny_skia::Rect::from_xywh(0.0, 0.0, 100.0, 100.0);
+        let Some(plot_area) = plot_area else {
+            unreachable!("test rectangle should be valid");
+        };
+        // The 0.0 and -5.0 samples have no position on a log y axis.
+        let x_data = [1.0, 2.0, 3.0, 4.0, 5.0];
+        let y_data = [1.0, 0.0, 10.0, -5.0, 100.0];
+
+        let subpaths = project_xy_subpaths(
+            &x_data,
+            &y_data,
+            1.0,
+            5.0,
+            1.0,
+            100.0,
+            plot_area,
+            &AxisScale::Linear,
+            &AxisScale::Log,
+        );
+
+        assert_eq!(
+            subpaths.len(),
+            3,
+            "each rejected sample must break the line"
+        );
+        assert_eq!(subpaths[0].len(), 1);
+        assert_eq!(subpaths[1].len(), 1);
+        assert_eq!(subpaths[2].len(), 1);
+        for subpath in &subpaths {
+            for point in subpath.iter() {
+                assert!(
+                    point.x.is_finite() && point.y.is_finite(),
+                    "no sub-path may contain a NaN pixel"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_representable_runs_cover_leading_trailing_and_interior_gaps() {
+        let log = AxisScale::Log;
+        let linear = AxisScale::Linear;
+
+        assert_eq!(
+            representable_sample_runs(&[1.0, 2.0, 3.0], &[1.0, 2.0, 3.0], &linear, &log),
+            vec![0..3],
+            "an all-valid series is one unbroken run"
+        );
+        assert_eq!(
+            representable_sample_runs(&[1.0, 2.0, 3.0], &[0.0, 2.0, 3.0], &linear, &log),
+            vec![1..3],
+            "a leading gap must not produce an empty run"
+        );
+        assert_eq!(
+            representable_sample_runs(&[1.0, 2.0, 3.0], &[1.0, 2.0, 0.0], &linear, &log),
+            vec![0..2],
+            "a trailing gap must not produce an empty run"
+        );
+        assert_eq!(
+            representable_sample_runs(&[1.0, 2.0, 3.0, 4.0], &[1.0, 0.0, 0.0, 4.0], &linear, &log),
+            vec![0..1, 3..4],
+            "adjacent gaps collapse into one break"
+        );
+        assert!(
+            representable_sample_runs(&[1.0, 2.0], &[0.0, -1.0], &linear, &log).is_empty(),
+            "a wholly unrepresentable series draws nothing"
+        );
+    }
+
+    /// NaN is unrepresentable on *every* scale, so a linear plot must break at
+    /// a NaN too rather than relying on the rasteriser to swallow it.
+    #[test]
+    fn test_non_finite_samples_break_a_linear_polyline() {
+        assert_eq!(
+            representable_sample_runs(
+                &[1.0, 2.0, 3.0],
+                &[1.0, f64::NAN, 3.0],
+                &AxisScale::Linear,
+                &AxisScale::Linear,
+            ),
+            vec![0..1, 2..3]
+        );
+    }
+
+    /// Markers get the drop semantics, not the split semantics: a rejected
+    /// sample simply is not drawn, and the surviving markers keep their pixels.
+    #[test]
+    fn test_marker_projection_drops_unrepresentable_samples() {
+        let plot_area = tiny_skia::Rect::from_xywh(0.0, 0.0, 100.0, 100.0);
+        let Some(plot_area) = plot_area else {
+            unreachable!("test rectangle should be valid");
+        };
+        let x_data = [1.0, 2.0, 3.0];
+        let y_data = [1.0, 0.0, 100.0];
+
+        let points = project_xy_points(
+            &x_data,
+            &y_data,
+            1.0,
+            3.0,
+            1.0,
+            100.0,
+            plot_area,
+            &AxisScale::Linear,
+            &AxisScale::Log,
+        );
+
+        assert_eq!(points.len(), 2, "the log-invalid sample must be dropped");
+        assert!(points.iter().all(|p| p.x.is_finite() && p.y.is_finite()));
     }
 }

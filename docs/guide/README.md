@@ -20,9 +20,12 @@ Complete guide to using ruviz for data visualization in Rust.
 9. [Data Integration](09_data_integration.md) - Working with ndarray, polars, CSV
 10. [Export & Formats](10_export.md) - PNG, SVG, DPI settings, custom dimensions
 11. [Advanced Techniques](11_advanced.md) - Custom layouts, annotations, interactive plots
+12. [3D Plots](12_3d.md) - Scatter, line, surface, wireframe, cameras, and GPU interaction
 
 ### Migration Guides
 - [From matplotlib](../migration/matplotlib.md) - For Python/matplotlib users
+- [From Matplotlib 3D](../migration/matplotlib-3d.md) - Migrate `mplot3d` plots
+- [From Makie 3D](../migration/makie-3d.md) - Migrate `Axis3` plots
 - [From seaborn](../migration/seaborn.md) - For statistical visualization users
 
 ## Quick Links

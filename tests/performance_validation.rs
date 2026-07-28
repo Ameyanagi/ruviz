@@ -158,7 +158,7 @@ fn test_histogram_performance() {
 
     let start = Instant::now();
     let result = Plot::new()
-        .histogram(&data, None)
+        .histogram(&data)
         .title("Histogram Performance Test")
         .render();
     let duration = start.elapsed();

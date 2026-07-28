@@ -15,7 +15,6 @@ current codebase.
 | Experimental optimized paths | Internal/test-only paths and lower-level renderer code |
 | Interactive window | Enable `interactive` or `interactive-gpu` and use `show_interactive()` |
 | Embedded GPUI interactive plot | Use the `ruviz-gpui` crate and `plot_builder(...).interactive()` |
-| Lower allocation pressure | `.with_memory_pooling(true)` |
 
 ## Important Distinction
 
@@ -110,29 +109,21 @@ public render path:
 
 ### In-memory render example
 
-```toml
-[dependencies]
-ruviz = { version = "0.5.0", features = ["parallel"] }
-```
-
 ```rust
-use ruviz::core::plot::BackendType;
 use ruviz::prelude::*;
 
 let x: Vec<f64> = (0..50_000).map(|i| i as f64 * 0.001).collect();
 let y: Vec<f64> = x.iter().map(|v| v.sin()).collect();
 
 let image = Plot::new()
-    .parallel_threshold(4)
     .line(&x, &y)
     .render()?;
 
 println!("Rendered {}x{}", image.width(), image.height());
 ```
 
-`parallel_threshold(...)` and the `parallel` feature configure the stored
-parallel renderer, but they do not force the public reference render path to use
-parallel execution.
+There is no 2D parallel raster backend. The `parallel` feature parallelizes the
+software 3D tile rasterizer only; it does not change 2D output or 2D timings.
 
 ### SIMD note
 
@@ -141,7 +132,7 @@ not a guarantee that a public `render()` call will take a SIMD path.
 
 ```toml
 [dependencies]
-ruviz = { version = "0.5.0", features = ["parallel", "simd"] }
+ruviz = { version = "0.6.0", features = ["simd"] }
 ```
 
 ## What `save()` actually does
@@ -157,7 +148,6 @@ latest values before output.
 
 Two important details:
 
-- `save()` does **not** currently call the dedicated `render_with_parallel()` path
 - `save()` does **not** currently dispatch to a GPU raster path
 
 ## DataShader
@@ -211,7 +201,7 @@ path.
 
 ```toml
 [dependencies]
-ruviz = { version = "0.5.0", features = ["gpu"] }
+ruviz = { version = "0.6.0", features = ["gpu"] }
 ```
 
 ```rust
@@ -247,7 +237,7 @@ dependency for you.
 
 ```toml
 [dependencies]
-ruviz = { version = "0.5.0", features = ["interactive"] }
+ruviz = { version = "0.6.0", features = ["interactive"] }
 tokio = { version = "1", features = ["rt", "macros"] }
 ```
 
@@ -349,21 +339,15 @@ Animation examples live behind the separate `animation` feature:
 
 ## Memory pooling
 
-Memory pooling is separate from backend selection and is always opt-in:
-
-```rust
-use ruviz::prelude::*;
-
-Plot::new()
-    .with_memory_pooling(true)
-    .line(&x, &y)
-    .save("pooled_plot.png")?;
-```
+`ruviz::render::PooledRenderer` is a standalone buffer-pool helper for
+lower-level renderer code. It is not on the `render()`/`save()` path, and there
+is no `Plot` setting that attaches it, because attaching it changed nothing.
 
 ## Recommendations
 
 - Start with plain `save()` or `render()` before setting backend preferences.
-- Add `parallel`/`simd` only after benchmarking a path that uses them.
+- Add `simd` only after benchmarking a path that uses it; `parallel` only
+  affects the software 3D backend.
 - Use `.gpu(true)` for GPU metadata or GPU-capable interactive work, not as a
   static PNG export guarantee.
 - Use `.resolved_backend_name()` to verify the actual public PNG backend.

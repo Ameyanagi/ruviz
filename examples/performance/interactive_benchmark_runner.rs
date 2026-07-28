@@ -422,7 +422,7 @@ fn build_plot(run: &ScenarioRun, dataset: &Dataset) -> Plot {
                 .scatter_source(x.to_vec(), temporal_scatter_signal(x))
                 .into_plot()
         }
-        (Dataset::Heatmap { matrix, .. }, "heatmap") => builder.heatmap(matrix, None).into_plot(),
+        (Dataset::Heatmap { matrix, .. }, "heatmap") => builder.heatmap(matrix).into_plot(),
         _ => unreachable!("dataset and plot kind should align"),
     }
 }

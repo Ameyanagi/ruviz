@@ -1175,37 +1175,19 @@ impl GeometrySnapshot {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
-struct AxisConstraints {
-    x_limits: Option<(f64, f64)>,
-    y_limits: Option<(f64, f64)>,
-    x_scale: AxisScale,
-    y_scale: AxisScale,
-}
+/// Turn raw data bounds into the axis range the static renderer would use.
+///
+/// Routed through [`Plot::apply_manual_axis_limits`] so an interactive session's
+/// initial view matches `Plot::render()` exactly, autoscale margin included.
+fn apply_axis_constraints(plot: &Plot, data_bounds: DataBounds) -> DataBounds {
+    let (x_min, x_max, y_min, y_max) = plot.apply_manual_axis_limits((
+        data_bounds.x_min,
+        data_bounds.x_max,
+        data_bounds.y_min,
+        data_bounds.y_max,
+    ));
 
-impl AxisConstraints {
-    fn from_plot(plot: &Plot) -> Self {
-        Self {
-            x_limits: plot.layout.x_limits,
-            y_limits: plot.layout.y_limits,
-            x_scale: plot.layout.x_scale.clone(),
-            y_scale: plot.layout.y_scale.clone(),
-        }
-    }
-
-    fn apply(self, data_bounds: DataBounds) -> DataBounds {
-        let (mut x_min, mut x_max) = self
-            .x_limits
-            .unwrap_or((data_bounds.x_min, data_bounds.x_max));
-        let (mut y_min, mut y_max) = self
-            .y_limits
-            .unwrap_or((data_bounds.y_min, data_bounds.y_max));
-
-        (x_min, x_max) = expand_degenerate_range(x_min, x_max, &self.x_scale);
-        (y_min, y_max) = expand_degenerate_range(y_min, y_max, &self.y_scale);
-
-        DataBounds::from_limits(x_min, x_max, y_min, y_max)
-    }
+    DataBounds::from_limits(x_min, x_max, y_min, y_max)
 }
 
 #[derive(Clone, Debug)]
@@ -1264,7 +1246,7 @@ impl InteractivePlotSession {
                 empty_bounds.3,
             )
         });
-        let initial_bounds = AxisConstraints::from_plot(prepared.plot()).apply(initial_data_bounds);
+        let initial_bounds = apply_axis_constraints(prepared.plot(), initial_data_bounds);
         let dirty = Arc::new(Mutex::new(DirtyDomains::with_all()));
         let dirty_epoch = Arc::new(AtomicU64::new(0));
         let mutation_epoch = Arc::new(AtomicU64::new(0));
@@ -2049,8 +2031,8 @@ impl InteractivePlotSession {
         InteractiveViewBoundsSnapshot {
             base_bounds: data_bounds_to_viewport_rect(state.base_bounds),
             visible_bounds: data_bounds_to_viewport_rect(state.visible_bounds),
-            x_scale: plot.layout.x_scale.clone(),
-            y_scale: plot.layout.y_scale.clone(),
+            x_scale: plot.layout.x_scale,
+            y_scale: plot.layout.y_scale,
         }
     }
 
@@ -2165,6 +2147,7 @@ impl InteractivePlotSession {
             .render_gate
             .lock()
             .expect("InteractivePlotSession render gate poisoned");
+        #[allow(clippy::let_unit_value)]
         let frame_start = start_frame_timer();
         self.resize(size_px, scale_factor);
         self.apply_input(PlotInputEvent::SetTime { time_seconds });
@@ -2203,7 +2186,6 @@ impl InteractivePlotSession {
                 || dirty_before_render.data
                 || dirty_before_render.temporal
             {
-                let constraints = AxisConstraints::from_plot(source_plot);
                 let mut state = self
                     .inner
                     .state
@@ -2216,7 +2198,7 @@ impl InteractivePlotSession {
                     .and_then(|frame| compute_data_bounds_from_frame(source_plot, frame).ok())
                     .unwrap_or(state.data_bounds);
                 state.data_bounds = next_data_bounds;
-                state.base_bounds = constraints.apply(next_data_bounds);
+                state.base_bounds = apply_axis_constraints(source_plot, next_data_bounds);
                 let pending_visible_restore = state.pending_visible_restore.take();
                 if let Some(requested) = pending_visible_restore {
                     state.visible_bounds = normalize_visible_bounds(
@@ -2304,10 +2286,10 @@ impl InteractivePlotSession {
 
             self.run_render_test_hook(RenderTestPoint::BeforeFinalCommit);
             self.commit_frame_if_current(epoch_before_render, base_result.generation)?;
-            if base_result.updated {
-                if let Some(frame) = resolved_frame.as_ref() {
-                    frame.acknowledge_rendered(source_plot);
-                }
+            if base_result.updated
+                && let Some(frame) = resolved_frame.as_ref()
+            {
+                frame.acknowledge_rendered(source_plot);
             }
 
             let surface_capability = if target == RenderTargetKind::Surface {
@@ -2346,12 +2328,11 @@ impl InteractivePlotSession {
             })
         })();
 
-        if render_result.is_err() {
-            if let (Some(previous), Some(epoch)) = (state_before_render, render_epoch) {
-                if !self.restore_state_if_epoch(previous, epoch) {
-                    return Err(render_superseded_error());
-                }
-            }
+        if render_result.is_err()
+            && let (Some(previous), Some(epoch)) = (state_before_render, render_epoch)
+            && !self.restore_state_if_epoch(previous, epoch)
+        {
+            return Err(render_superseded_error());
         }
         render_result
     }
@@ -2367,10 +2348,10 @@ impl InteractivePlotSession {
                 .state
                 .lock()
                 .expect("InteractivePlotSession state lock poisoned");
-            if let Some(geometry) = &state.geometry {
-                if geometry.key == *key {
-                    return Ok(geometry.clone());
-                }
+            if let Some(geometry) = &state.geometry
+                && geometry.key == *key
+            {
+                return Ok(geometry.clone());
             }
         }
 
@@ -2416,17 +2397,16 @@ impl InteractivePlotSession {
                 .dirty
                 .lock()
                 .expect("InteractivePlotSession dirty lock poisoned");
-            if !dirty.needs_base_render() {
-                if let Some(cached) = &state.base_cache {
-                    if cached.key == *key {
-                        return Ok(BaseLayerResult {
-                            image: Arc::clone(&cached.image),
-                            generation: cached.generation,
-                            updated: false,
-                            used_incremental_data: false,
-                        });
-                    }
-                }
+            if !dirty.needs_base_render()
+                && let Some(cached) = &state.base_cache
+                && cached.key == *key
+            {
+                return Ok(BaseLayerResult {
+                    image: Arc::clone(&cached.image),
+                    generation: cached.generation,
+                    updated: false,
+                    used_incremental_data: false,
+                });
             }
         }
 
@@ -2434,15 +2414,14 @@ impl InteractivePlotSession {
             && !dirty_before_render.layout
             && !dirty_before_render.temporal
             && !dirty_before_render.interaction
-        {
-            if let Some(incremental) = self.try_incremental_stream_render(
+            && let Some(incremental) = self.try_incremental_stream_render(
                 key,
                 geometry,
                 frame.ok_or_else(render_superseded_error)?,
                 epoch_before_render,
-            )? {
-                return Ok(incremental);
-            }
+            )?
+        {
+            return Ok(incremental);
         }
 
         let state = self
@@ -2549,15 +2528,15 @@ impl InteractivePlotSession {
                 .dirty
                 .lock()
                 .expect("InteractivePlotSession dirty lock poisoned");
-            if !dirty_before_render.needs_overlay_render() && !dirty.needs_overlay_render() {
-                if let Some(cached) = &state.overlay_cache {
-                    if cached.key == overlay_key {
-                        return Ok(OverlayLayerResult {
-                            image: cached.image.clone(),
-                            updated: false,
-                        });
-                    }
-                }
+            if !dirty_before_render.needs_overlay_render()
+                && !dirty.needs_overlay_render()
+                && let Some(cached) = &state.overlay_cache
+                && cached.key == overlay_key
+            {
+                return Ok(OverlayLayerResult {
+                    image: cached.image.clone(),
+                    updated: false,
+                });
             }
         }
 
@@ -2631,7 +2610,7 @@ impl InteractivePlotSession {
                 &mut pixels,
                 size_px,
                 hit,
-                Color::new_rgba(255, 165, 0, 180),
+                Color::from_rgba(255, 165, 0, 180),
                 hit_clip,
             );
         }
@@ -2640,7 +2619,7 @@ impl InteractivePlotSession {
                 &mut pixels,
                 size_px,
                 hit,
-                Color::new_rgba(255, 0, 0, 180),
+                Color::from_rgba(255, 0, 0, 180),
                 hit_clip,
             );
         }
@@ -2649,8 +2628,8 @@ impl InteractivePlotSession {
                 &mut pixels,
                 size_px,
                 region,
-                Color::new_rgba(0, 100, 255, 72),
-                Color::new_rgba(96, 208, 255, 220),
+                Color::from_rgba(0, 100, 255, 72),
+                Color::from_rgba(96, 208, 255, 220),
             );
         }
         if let Some(tooltip) = &state.tooltip {
@@ -3096,8 +3075,12 @@ fn compute_data_bounds_from_frame(plot: &Plot, frame: &ResolvedFrame<'_>) -> Res
         ));
     }
 
+    // Pair each resolved entry with its originating series, exactly as the
+    // static render path does: a resolved entry alone cannot see the error bars
+    // attached with `with_yerr`/`with_xerr`, so zoom-to-fit would clip their
+    // whiskers against the spine.
     let (mut x_min, mut x_max, mut y_min, mut y_max) =
-        plot.calculate_data_bounds_from_resolved(&frame.series)?;
+        plot.calculate_data_bounds_for_frame(&plot.series_mgr.series, &frame.series)?;
 
     (x_min, x_max) = expand_degenerate_range(x_min, x_max, &plot.layout.x_scale);
     (y_min, y_max) = expand_degenerate_range(y_min, y_max, &plot.layout.y_scale);
@@ -3392,7 +3375,9 @@ fn require_annotation_coord_in_scale_domain(
     label: &str,
 ) -> Result<()> {
     require_finite_annotation_f64(value, label)?;
-    if matches!(scale, crate::axes::AxisScale::Log) && value <= 0.0 {
+    // Same predicate the renderer projects through, so an annotation can never
+    // be accepted at a coordinate the axis then refuses to place.
+    if !scale.is_valid_value(value) {
         return Err(invalid_annotation(format!(
             "{label} must be positive on a logarithmic axis"
         )));
@@ -3538,8 +3523,11 @@ fn validate_dynamic_annotation(
                         "{label} contains a non-finite value at index {index}"
                     )));
                 }
-                if matches!(scale, crate::axes::AxisScale::Log)
-                    && let Some(index) = values.iter().position(|value| *value <= 0.0)
+                // Same predicate the renderer projects through, so a fill can
+                // never be accepted at a coordinate the axis then refuses.
+                if let Some(index) = values
+                    .iter()
+                    .position(|value| !scale.is_valid_value(*value))
                 {
                     return Err(invalid_annotation(format!(
                         "{label} contains a non-positive value at index {index} on a logarithmic axis"
@@ -3596,11 +3584,15 @@ fn clip_overlay_to_plot_area(pixels: &mut [u8], size_px: (u32, u32), plot_area: 
     }
 }
 
+/// Can this axis place `value` at all?
+///
+/// Delegates to [`AxisScale::is_valid_value`], the single home of the rule, so
+/// the hit test cannot accept a sample the renderer refuses to draw (or the
+/// reverse). The hand-written copy this replaced also let `NaN` and `inf`
+/// through on linear and symlog axes, making them hit-testable at a garbage
+/// screen position.
 fn axis_accepts_value(scale: &AxisScale, value: f64) -> bool {
-    match scale {
-        AxisScale::Linear | AxisScale::SymLog { .. } => true,
-        AxisScale::Log => value > 0.0,
-    }
+    scale.is_valid_value(value)
 }
 
 fn screen_distance(first: ViewportPoint, second: ViewportPoint) -> f64 {
@@ -3822,8 +3814,8 @@ fn geometry_snapshot_for_state(
         plot_area: layout.plot_area_rect,
         x_bounds: (visible.x_min, visible.x_max),
         y_bounds: (visible.y_min, visible.y_max),
-        x_scale: plot.layout.x_scale.clone(),
-        y_scale: plot.layout.y_scale.clone(),
+        x_scale: plot.layout.x_scale,
+        y_scale: plot.layout.y_scale,
         annotation_theme: layout.annotation_theme,
         annotation_font_family: layout.annotation_font_family,
         annotation_render_scale: layout.annotation_render_scale,
@@ -3945,8 +3937,8 @@ fn compute_plot_layout_from_frame(
         &renderer,
         &content,
         dpi,
-        &crate::render::skia::format_tick_labels(&x_ticks),
-        &crate::render::skia::format_tick_labels(&y_ticks),
+        &crate::axes::format_tick_labels_for_scale(&x_ticks, &layout_plot.layout.x_scale),
+        &crate::axes::format_tick_labels_for_scale(&y_ticks, &layout_plot.layout.y_scale),
     )?;
     let layout = layout_plot.compute_layout_from_measurements(
         size_px,

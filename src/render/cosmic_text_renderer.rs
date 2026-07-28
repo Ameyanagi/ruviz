@@ -172,7 +172,7 @@ mod tests {
     #[test]
     fn legacy_renderer_preserves_destination_alpha() {
         let mut renderer = CosmicTextRenderer::new().unwrap();
-        let color = Color::new_rgba(180, 90, 30, 96);
+        let color = Color::from_rgba(180, 90, 30, 96);
 
         let mut transparent = Pixmap::new(128, 96).unwrap();
         renderer

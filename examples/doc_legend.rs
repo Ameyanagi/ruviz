@@ -4,7 +4,7 @@
 
 use ruviz::prelude::*;
 
-fn main() -> Result<()> {
+fn main() -> PlotResult<()> {
     let x: Vec<f64> = (0..100).map(|i| i as f64 * 0.1).collect();
     let sin_y: Vec<f64> = x.iter().map(|&v| v.sin()).collect();
     let cos_y: Vec<f64> = x.iter().map(|&v| v.cos()).collect();

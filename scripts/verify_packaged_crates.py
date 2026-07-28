@@ -28,6 +28,15 @@ SUPPORTED_GPUI_TARGETS = {
 }
 WORKSPACE_ONLY_DEV_DEPENDENCIES = {"gpui_macos", "gpui_platform"}
 
+# `crates/ruviz-gpui` is its own workspace, deliberately outside the one rooted
+# at the repository root. `[patch.crates-io]` is workspace-scoped and
+# `default-members` does not exempt it, so as long as the adapter was a root
+# member its pin to a zed monorepo git rev applied to *every* cargo command in
+# the repository — `cargo check -p ruviz` included. The checks below assert the
+# split as strictly as the previous membership assertion did, plus the invariant
+# the split buys: the root workspace resolves entirely from crates.io.
+GPUI_CRATE_DIR = "crates/ruviz-gpui"
+
 
 class VerificationError(RuntimeError):
     """A packaged-crate invariant was not satisfied."""
@@ -40,6 +49,9 @@ class WorkspaceContract:
     gpui_patch_git: str
     gpui_patch_rev: str
     workspace_only_dev_dependencies: frozenset[str]
+    # Directory `cargo package --package ruviz-gpui` has to run in: the adapter
+    # is no longer reachable from the repository-root workspace.
+    gpui_workspace: Path = Path(GPUI_CRATE_DIR)
 
 
 @dataclass(frozen=True)
@@ -132,13 +144,95 @@ def validate_active_dependency_sources(
                 )
 
 
+def require_registry_only_lockfile(lockfile: Path) -> None:
+    """The root workspace must resolve every package from crates.io.
+
+    This is the invariant the ruviz-gpui workspace split exists to create, and
+    it is a strictly stronger statement than "the GPUI patch is not in the root
+    manifest": a `git+` source can also arrive through a transitive dependency,
+    a `[patch]` on some other crate, or a git dependency added to `ruviz-web` or
+    `python`. Asserting it on the lockfile catches all of those at once, and it
+    is what makes "no git source can leak into the published ruviz package"
+    true by construction rather than by inspection of the packaged archive.
+    """
+    if not lockfile.is_file():
+        raise VerificationError(f"root lockfile is missing: {lockfile}")
+    try:
+        lock = tomllib.loads(lockfile.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        raise VerificationError(f"cannot read {lockfile}: {exc}") from exc
+
+    packages = lock.get("package")
+    if not isinstance(packages, list) or not packages:
+        raise VerificationError(f"{lockfile} has no package list")
+
+    offenders = sorted(
+        f"{package.get('name')} {package.get('version')} ({package['source']})"
+        for package in packages
+        if isinstance(package, dict)
+        and isinstance(package.get("source"), str)
+        and package["source"].startswith("git+")
+    )
+    if offenders:
+        shown = ", ".join(offenders[:5])
+        if len(offenders) > 5:
+            shown += f", and {len(offenders) - 5} more"
+        raise VerificationError(
+            f"{lockfile} resolves {len(offenders)} git dependencies, so a root "
+            f"cargo command no longer builds only crates.io code: {shown}"
+        )
+
+
+def require_pinned_zed_git_dependencies(
+    manifest: dict[str, Any], *, git: str, rev: str
+) -> None:
+    """Every git dependency in ruviz-gpui must name the patched zed pin.
+
+    The `gpui_macos`/`gpui_platform` dev-dependencies must be built from the
+    same zed revision as the `[patch.crates-io]` override, or the test build and
+    the library build disagree about which GPUI they are linking. That used to
+    be maintained by a comment; this makes the drift a verification failure.
+    """
+    for table_name, dependencies in iter_dependency_tables(manifest):
+        for name, dependency in dependencies.items():
+            if not isinstance(dependency, dict) or "git" not in dependency:
+                continue
+            if dependency["git"] != git or dependency.get("rev") != rev:
+                raise VerificationError(
+                    f"ruviz-gpui git dependency {name} in {table_name} is pinned "
+                    f"to {dependency['git']}@{dependency.get('rev')}, but the "
+                    f"GPUI patch pins {git}@{rev}"
+                )
+
+
 def inspect_workspace(workspace: Path) -> WorkspaceContract:
     root_manifest = load_toml(workspace / "Cargo.toml")
-    gpui_manifest = load_toml(workspace / "crates/ruviz-gpui/Cargo.toml")
+    gpui_workspace = workspace / GPUI_CRATE_DIR
+    gpui_manifest = load_toml(gpui_workspace / "Cargo.toml")
 
-    members = root_manifest.get("workspace", {}).get("members", [])
-    if "crates/ruviz-gpui" not in members:
-        raise VerificationError("ruviz-gpui is not a workspace member")
+    root_workspace = root_manifest.get("workspace", {})
+    members = root_workspace.get("members", [])
+    if not isinstance(members, list) or GPUI_CRATE_DIR in members:
+        raise VerificationError(
+            f"{GPUI_CRATE_DIR} must not be a member of the root workspace; its "
+            "GPUI git patch would then apply to every root cargo command"
+        )
+    if GPUI_CRATE_DIR not in root_workspace.get("exclude", []):
+        raise VerificationError(
+            f"the root workspace must list {GPUI_CRATE_DIR} in `exclude` so it "
+            "cannot be pulled back in"
+        )
+    if root_manifest.get("patch"):
+        raise VerificationError(
+            "the root workspace must declare no `[patch]` table; every root "
+            "cargo command has to resolve from crates.io alone"
+        )
+    require_registry_only_lockfile(workspace / "Cargo.lock")
+
+    if not isinstance(gpui_manifest.get("workspace"), dict):
+        raise VerificationError(
+            f"{GPUI_CRATE_DIR} must declare its own `[workspace]` table"
+        )
 
     root_package = root_manifest.get("package", {})
     gpui_package = gpui_manifest.get("package", {})
@@ -151,19 +245,27 @@ def inspect_workspace(workspace: Path) -> WorkspaceContract:
     if not isinstance(version, str) or gpui_package.get("version") != version:
         raise VerificationError("ruviz and ruviz-gpui versions must match")
 
+    # The path dependency now crosses a workspace boundary, so it is the only
+    # thing keeping the adapter buildable against unpublished core changes — and
+    # the version next to it is the only thing keeping the published archive
+    # pointed at the matching crates.io release. Both are still required.
     local_ruviz = dependency_table(gpui_manifest, "dependencies", "ruviz")
     if not isinstance(local_ruviz, dict):
         raise VerificationError("ruviz-gpui must declare ruviz with version and path")
     if local_ruviz.get("version") != version or local_ruviz.get("path") != "../..":
         raise VerificationError(
-            "ruviz-gpui must use the matching ruviz version and workspace path"
+            "ruviz-gpui must use the matching ruviz version and the ../.. path to "
+            "the core crate"
         )
 
-    patch = root_manifest.get("patch", {}).get("crates-io", {}).get("gpui")
+    patch = gpui_manifest.get("patch", {}).get("crates-io", {}).get("gpui")
     if not isinstance(patch, dict) or not patch.get("git") or not patch.get("rev"):
         raise VerificationError(
-            "the workspace GPUI override must be a pinned git patch"
+            f"the GPUI override must be a pinned git patch in {GPUI_CRATE_DIR}"
         )
+    require_pinned_zed_git_dependencies(
+        gpui_manifest, git=str(patch["git"]), rev=str(patch["rev"])
+    )
 
     gpui_versions: set[str] = set()
     gpui_targets: set[str] = set()
@@ -203,6 +305,7 @@ def inspect_workspace(workspace: Path) -> WorkspaceContract:
         gpui_patch_git=str(patch["git"]),
         gpui_patch_rev=str(patch["rev"]),
         workspace_only_dev_dependencies=frozenset(workspace_only_dev_dependencies),
+        gpui_workspace=gpui_workspace,
     )
 
 
@@ -488,10 +591,14 @@ def write_consumer(
     ruviz_gpui: ExtractedCrate,
 ) -> None:
     dependencies = [
-        f'ruviz = {{ version = "={ruviz.version}" }}',
+        (
+            f'ruviz = {{ version = "={ruviz.version}", default-features = false, '
+            'features = ["3d", "gpu"] }'
+        ),
         (
             "ruviz-gpui = { path = "
-            f"{toml_string(ruviz_gpui.root)}, default-features = false }}"
+            f"{toml_string(ruviz_gpui.root)}, default-features = false, "
+            'features = ["3d-gpu"] }'
         ),
     ]
     patch = ""
@@ -524,6 +631,9 @@ fn embed<V: 'static>(cx: &mut Context<V>) -> Entity<RuvizPlot> {
 
 fn main() {
     let _ = embed::<RuvizPlot>;
+    let _ = scatter3d(&[0.0, 1.0], &[0.0, 1.0], &[0.0, 1.0])
+        .title("packaged 3d consumer");
+    let _ = std::mem::size_of::<ruviz_gpui::RuvizPlot3D>();
 }
 """
     (directory / "src").mkdir(parents=True)
@@ -657,6 +767,24 @@ def validate_metadata(
                 f"Cargo resolve graph has no usable node for {package['name']}"
             )
         return node
+
+    def require_features(package: dict[str, Any], required: set[str]) -> None:
+        features = node_for(package).get("features")
+        if not isinstance(features, list) or not all(
+            isinstance(feature, str) for feature in features
+        ):
+            raise VerificationError(
+                f"Cargo resolve graph has no usable feature list for {package['name']}"
+            )
+        missing = sorted(required.difference(features))
+        if missing:
+            raise VerificationError(
+                f"{package['name']} packaged consumer did not enable required "
+                f"features: {', '.join(missing)}"
+            )
+
+    require_features(core, {"3d", "gpu"})
+    require_features(adapter, {"3d", "3d-gpu", "gpu"})
 
     def require_normal_edge(
         package: dict[str, Any], dependency_name: str, expected_id: str
@@ -800,7 +928,9 @@ def verify(args: argparse.Namespace) -> None:
 
         if args.ruviz_gpui_archive is None:
             gpui_archive = package_crate(
-                workspace=workspace,
+                # ruviz-gpui is not reachable from the root workspace any more,
+                # so it has to be packaged from inside its own.
+                workspace=contract.gpui_workspace,
                 target_dir=package_target / "ruviz-gpui",
                 name="ruviz-gpui",
                 version=contract.version,
@@ -875,7 +1005,9 @@ def verify(args: argparse.Namespace) -> None:
 
         print(
             f"Verified ruviz {contract.version} and ruviz-gpui {contract.version} "
-            f"in {args.mode} mode: GPUI {contract.gpui_version} is registry-sourced."
+            f"in {args.mode} mode: GPUI {contract.gpui_version} is registry-sourced, "
+            f"{GPUI_CRATE_DIR} is a separate workspace, and the root lockfile "
+            "resolves entirely from crates.io."
         )
 
 

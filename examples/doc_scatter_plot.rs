@@ -4,7 +4,7 @@
 
 use ruviz::prelude::*;
 
-fn main() -> Result<()> {
+fn main() -> PlotResult<()> {
     // Generate some sample data with noise
     let x: Vec<f64> = (0..50).map(|i| i as f64 * 0.2).collect();
     let y: Vec<f64> = x

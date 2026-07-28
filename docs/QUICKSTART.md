@@ -5,7 +5,7 @@ Get started with ruviz in less than 5 minutes!
 ## What's New in v0.5.0
 
 - Streaming data can be replaced atomically with `StreamingXY::replace`, and acknowledgement watermarks are tracked per consumer so shared streams never composite stale frames.
-- Outside legend positions (`OutsideRight`, `OutsideLeft`, `OutsideUpper`, `OutsideLower`) are honored across PNG, SVG, parallel, interactive, and subplot rendering.
+- Outside legend positions (`OutsideRight`, `OutsideLeft`, `OutsideUpper`, `OutsideLower`) are honored across PNG, SVG, interactive, and subplot rendering.
 - Interactive annotations can be added, updated, and removed at runtime, and heatmaps accept a configurable row origin.
 - Builders gain a conditional `.when(...)` combinator, and the GPUI adapter gains coordinate mapping, pointer events, and view-preserving plot replacement.
 
@@ -31,7 +31,7 @@ ruviz = "0.5.0"
 ```rust,check
 use ruviz::prelude::*;
 
-fn main() -> Result<()> {
+fn main() -> PlotResult<()> {
     // Create some data
     let x = vec![0.0, 1.0, 2.0, 3.0, 4.0];
     let y = vec![0.0, 1.0, 4.0, 9.0, 16.0];
@@ -92,7 +92,7 @@ If you want publication-style math in labels and titles, enable Typst text rende
 
 ```toml
 [dependencies]
-ruviz = { version = "0.5.0", features = ["typst-math"] }
+ruviz = { version = "0.6.0", features = ["typst-math"] }
 ```
 
 `.typst(true)` is only available when `typst-math` is enabled. The configured
@@ -111,7 +111,7 @@ If you want Typst to stay optional in your own crate, forward a local feature fi
 
 ```toml
 [dependencies]
-ruviz = { version = "0.5.0", default-features = false }
+ruviz = { version = "0.6.0", default-features = false }
 
 [features]
 default = []
@@ -123,7 +123,7 @@ Then guard the call:
 ```rust,check
 use ruviz::prelude::*;
 
-fn main() -> Result<()> {
+fn main() -> PlotResult<()> {
     let x = vec![0.0, 1.0, 2.0, 3.0, 4.0];
     let y = vec![0.0, 1.0, 4.0, 9.0, 16.0];
 
@@ -146,7 +146,7 @@ fn main() -> Result<()> {
 ```rust,check,features=typst-math
 use ruviz::prelude::*;
 
-fn main() -> Result<()> {
+fn main() -> PlotResult<()> {
     let x = vec![0.0, 1.0, 2.0, 3.0, 4.0];
     let y = vec![0.0, 1.0, 4.0, 9.0, 16.0];
 
@@ -170,7 +170,7 @@ Let's create a more interesting plot with real data:
 ```rust,check
 use ruviz::prelude::*;
 
-fn main() -> Result<()> {
+fn main() -> PlotResult<()> {
     // Generate sine wave data
     let x: Vec<f64> = (0..100)
         .map(|i| i as f64 * 0.1)
@@ -251,7 +251,7 @@ let data: Vec<f64> = (0..1000)
     .collect();
 
 Plot::new()
-    .histogram(&data, None)
+    .histogram(&data)
     .title("Data Distribution")
     .xlabel("Value")
     .ylabel("Frequency")
@@ -271,22 +271,22 @@ Plot::new()
     // Linear
     .line(&x, &x.iter().map(|&v| v).collect::<Vec<_>>())
     .label("Linear")
-    .color(Color::new(0, 100, 200))
+    .color(Color::from_rgb(0, 100, 200))
 
     // Quadratic
     .line(&x, &x.iter().map(|&v| v * v).collect::<Vec<_>>())
     .label("Quadratic")
-    .color(Color::new(200, 0, 100))
+    .color(Color::from_rgb(200, 0, 100))
 
     // Cubic
     .line(&x, &x.iter().map(|&v| v.powi(3)).collect::<Vec<_>>())
     .label("Cubic")
-    .color(Color::new(0, 200, 100))
+    .color(Color::from_rgb(0, 200, 100))
 
     .title("Polynomial Functions")
     .xlabel("x")
     .ylabel("y")
-    .legend(Position::TopLeft)
+    .legend(LegendPosition::UpperLeft)
     .save("polynomials.png")?;
 ```
 
@@ -363,7 +363,7 @@ Plot::new()
 ### With polars (requires `polars_support` feature)
 ```toml
 [dependencies]
-ruviz = { version = "0.5.0", features = ["polars_support"] }
+ruviz = { version = "0.6.0", features = ["polars_support"] }
 polars = "0.50"
 ```
 
@@ -387,11 +387,11 @@ Plot::new()
 ## Performance Tips
 
 ### For Larger Native Builds
-The default feature set already includes `parallel`. Add `performance` only
-when you have benchmarked a path that benefits from the extra SIMD support:
+2D rendering is single-threaded and needs no feature flags. Add `performance`
+only when you have benchmarked a path that benefits from the extra SIMD support:
 ```toml
 [dependencies]
-ruviz = { version = "0.5.0", features = ["performance"] }
+ruviz = { version = "0.6.0", features = ["performance"] }
 ```
 
 ### Large Dataset Export
@@ -411,7 +411,7 @@ ruviz uses `Result` types for proper error handling:
 ```rust,check
 use ruviz::prelude::*;
 
-fn create_plot() -> Result<()> {
+fn create_plot() -> PlotResult<()> {
     let x = vec![1.0, 2.0, 3.0];
     let y = vec![1.0, 4.0];  // Mismatched length!
 

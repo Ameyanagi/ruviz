@@ -1,7 +1,9 @@
-//! Tick formatting with nice numbers algorithm
+//! Tick label formatting with nice numbers algorithm
 //!
-//! Implements Wilkinson's extended algorithm for selecting "nice" tick values
-//! and provides clean tick label formatting matching matplotlib conventions.
+//! Provides clean tick label formatting matching matplotlib conventions. Tick
+//! *positions* are not decided here: step selection is delegated to the one
+//! canonical generator in [`crate::axes::ticks`], so the values this type
+//! produces can never drift from the ticks the renderers draw.
 //!
 //! # Example
 //!
@@ -19,8 +21,42 @@
 //! // Result: "5" (not "5.0")
 //! ```
 
+use crate::axes::ticks::{MAX_TICK_STEPS, clean_float, select_nice_step};
+
 /// Nice numbers for tick selection (powers of 10 multiplied by these)
 const NICE_NUMBERS: [f64; 4] = [1.0, 2.0, 5.0, 10.0];
+
+/// Mantissa decimals a scientific axis starts from: `1.00e-6`.
+const SCIENTIFIC_MANTISSA_DIGITS: usize = 2;
+
+/// Hard ceiling on digits in a tick label.
+///
+/// An `f64` carries about 17 significant decimal digits; past that, widening a
+/// label cannot separate two values that the type itself cannot separate.
+const MAX_LABEL_DIGITS: usize = 17;
+
+/// Do these labels tell the ticks apart?
+///
+/// An axis whose labels repeat is unreadable: the reader cannot tell which
+/// gridline is which, and the repetition hides how fine the range really is.
+/// Ticks that are genuinely equal (a degenerate range collapses to one value)
+/// may of course share a label — only *different* values sharing one is a
+/// defect.
+///
+/// This is the single test both notations are held to, so the plain branch and
+/// the scientific branch cannot disagree about what counts as legible.
+fn labels_separate_values(values: &[f64], labels: &[String]) -> bool {
+    // Tick counts are capped well under a hundred, so the quadratic scan is
+    // cheaper than allocating a map and needs no float hashing.
+    for (index, (&value, label)) in values.iter().zip(labels).enumerate() {
+        for (&earlier_value, earlier_label) in values.iter().zip(labels).take(index) {
+            if earlier_label == label && earlier_value != value {
+                return false;
+            }
+        }
+    }
+    true
+}
 
 /// Tick formatter configuration
 ///
@@ -137,10 +173,13 @@ impl TickFormatter {
         nice_fraction * 10.0_f64.powf(exponent)
     }
 
-    /// Generate nice tick values for a range
+    /// Generate nice tick values covering a range
     ///
-    /// Uses the extended Wilkinson algorithm to select aesthetically
-    /// pleasing tick values that span the data range.
+    /// Step selection is delegated to the one canonical tick generator in
+    /// [`crate::axes::ticks`], so this cannot drift from the ticks the
+    /// renderers draw. The only difference is the emission: this method
+    /// *covers* the range (the first tick is at or below `min`, the last at or
+    /// above `max`), whereas the renderers trim to the data range.
     ///
     /// # Arguments
     ///
@@ -165,36 +204,44 @@ impl TickFormatter {
             return vec![min];
         }
 
-        // Calculate nice tick spacing
-        let target_ticks = ((self.min_ticks + self.max_ticks) / 2) as f64;
-        let rough_step = range / (target_ticks - 1.0);
-        let step = Self::nice_number(rough_step, true);
+        let target_ticks = (self.min_ticks + self.max_ticks) / 2;
+        let step = select_nice_step(min, max, target_ticks).unwrap_or_else(|| {
+            let rough_step = range / (target_ticks.max(2) - 1) as f64;
+            Self::nice_number(rough_step, true)
+        });
+        if !step.is_finite() || step <= 0.0 {
+            return vec![min, max];
+        }
 
-        // Calculate nice bounds
-        let nice_min = (min / step).floor() * step;
-        let nice_max = (max / step).ceil() * step;
+        // Nice bounds that cover the data range.
+        let first_index = (min / step).floor();
+        let last_index = (max / step).ceil();
+        let steps = last_index - first_index;
+        if !steps.is_finite() || steps < 0.0 || steps > MAX_TICK_STEPS as f64 {
+            return vec![min, max];
+        }
 
-        // Generate tick values
-        let mut ticks = Vec::new();
-        let mut tick = nice_min;
-
-        // Safety limit to prevent infinite loops
-        let max_iterations = 100;
-        let mut iterations = 0;
-
-        while tick <= nice_max + step * 0.5 && iterations < max_iterations {
-            // Clean up floating point errors
-            let clean_tick = Self::clean_float(tick, step);
-            ticks.push(clean_tick);
-            tick += step;
-            iterations += 1;
+        // Bounded integer-index emission: terminates by construction and does
+        // not accumulate drift the way repeated addition does.
+        let start = first_index * step;
+        if !start.is_finite() || start + step <= start {
+            return vec![min, max];
+        }
+        let steps = steps.round() as usize;
+        let mut ticks: Vec<f64> = (0..=steps)
+            .map(|i| clean_float(start + (i as f64) * step, step))
+            .filter(|tick| tick.is_finite())
+            .collect();
+        ticks.dedup();
+        if ticks.is_empty() {
+            return vec![min, max];
         }
 
         // Ensure we don't exceed max_ticks
         if ticks.len() > self.max_ticks {
             // Take every nth tick to reduce count
             let skip = (ticks.len() as f64 / self.max_ticks as f64).ceil() as usize;
-            ticks = ticks.into_iter().step_by(skip).collect();
+            ticks = ticks.into_iter().step_by(skip.max(1)).collect();
         }
 
         ticks
@@ -227,7 +274,7 @@ impl TickFormatter {
 
         // Check if it's effectively an integer
         if (value - value.round()).abs() < 1e-9 {
-            return format!("{:.0}", value);
+            return format!("{:.0}", Self::normalize_zero(value.round()));
         }
 
         // Format with minimal decimal places
@@ -237,47 +284,127 @@ impl TickFormatter {
         Self::trim_trailing_zeros(&formatted)
     }
 
-    /// Format multiple tick values with consistent precision
+    /// Format a whole axis worth of tick values.
     ///
-    /// All ticks will use the same number of decimal places,
-    /// determined by the tick that needs the most precision.
+    /// This is the axis-level formatter: **notation and precision are decided
+    /// once for the whole slice**, never per value. All ticks use the same
+    /// number of decimal places (driven by the tick needing the most), and the
+    /// axis switches to scientific notation as a unit or not at all — a single
+    /// axis can never show "1.0e5" next to "80000".
     pub fn format_ticks(&self, values: &[f64]) -> Vec<String> {
         if values.is_empty() {
             return Vec::new();
         }
 
-        // Find the required precision
-        let max_precision = values
+        // Plain decimals are what a reader expects, so they are tried first and
+        // kept as long as they can still tell the ticks apart.
+        let plain_allowed = !self.use_scientific || self.plain_precision_is_sufficient(values);
+        if plain_allowed {
+            let labels = self.plain_labels(values, self.max_decimals);
+            if labels_separate_values(values, &labels) {
+                return labels;
+            }
+            if !self.use_scientific {
+                // The caller asked for plain decimals; widen them rather than
+                // switching notation behind its back.
+                return self.plain_labels(values, MAX_LABEL_DIGITS);
+            }
+        }
+
+        self.scientific_labels(values)
+    }
+
+    /// Format every tick as a plain decimal with one shared precision.
+    ///
+    /// The precision is the largest any tick needs to be represented exactly,
+    /// capped at `max_decimals` — so all labels line up and none of them
+    /// invents digits the data does not have.
+    fn plain_labels(&self, values: &[f64], max_decimals: usize) -> Vec<String> {
+        let precision = values
             .iter()
             .map(|&v| Self::required_precision(v))
             .max()
             .unwrap_or(0)
-            .min(self.max_decimals);
+            .min(max_decimals);
 
-        // Format all values with consistent precision
         values
             .iter()
             .map(|&v| {
-                if max_precision == 0 || (v - v.round()).abs() < 1e-9 {
-                    format!("{:.0}", v)
+                let v = Self::normalize_zero(v);
+                if precision == 0 || (v - v.round()).abs() < 1e-9 {
+                    format!("{:.0}", Self::normalize_zero(v.round()))
                 } else {
-                    let formatted = format!("{:.prec$}", v, prec = max_precision);
+                    let formatted = format!("{:.prec$}", v, prec = precision);
                     Self::trim_trailing_zeros(&formatted)
                 }
             })
             .collect()
     }
 
-    /// Clean up floating point errors
-    fn clean_float(value: f64, step: f64) -> f64 {
-        // Round to a precision appropriate for the step size
-        let decimals = if step >= 1.0 {
-            0
-        } else {
-            (-step.log10().floor()) as i32 + 1
+    /// Format every tick in scientific notation, with just enough mantissa
+    /// digits to keep the labels distinct.
+    ///
+    /// Three significant digits used to be hard-coded here, which is why a
+    /// narrow range like `1e-6 .. 1.0001e-6` collapsed onto eleven identical
+    /// `1.00e-6` labels: the axis had correctly decided that plain decimals
+    /// could not resolve it, then threw away the resolution anyway. The digit
+    /// count is now driven by the same requirement the notation switch is —
+    /// that two ticks with different values never print the same string.
+    fn scientific_labels(&self, values: &[f64]) -> Vec<String> {
+        let render = |mantissa_digits: usize| -> Vec<String> {
+            values
+                .iter()
+                .map(|&v| {
+                    if v == 0.0 {
+                        // Zero has no exponent and reads the same in either
+                        // notation, so it never forces a mantissa on the axis.
+                        "0".to_string()
+                    } else {
+                        format!("{:.prec$e}", v, prec = mantissa_digits)
+                    }
+                })
+                .collect()
         };
-        let mult = 10.0_f64.powi(decimals);
-        (value * mult).round() / mult
+
+        // Two decimals is the customary axis look; widen only as far as the
+        // data actually demands, and never past what an f64 can distinguish.
+        for mantissa_digits in SCIENTIFIC_MANTISSA_DIGITS..MAX_LABEL_DIGITS {
+            let labels = render(mantissa_digits);
+            if labels_separate_values(values, &labels) {
+                return labels;
+            }
+        }
+        render(MAX_LABEL_DIGITS)
+    }
+
+    /// Can every value be rendered faithfully with at most `max_decimals`
+    /// places?
+    ///
+    /// "Faithfully" means within 0.1% — plain decimals below the cap do not
+    /// merely lose a digit, they misstate the tick (1.5e-6 renders as
+    /// "0.000002", a 33% error, and neighbouring ticks can collide on one
+    /// label). Ordinary float noise is orders of magnitude under this bound, so
+    /// only genuinely sub-resolution axes trip it.
+    fn plain_precision_is_sufficient(&self, values: &[f64]) -> bool {
+        const MAX_RELATIVE_LABEL_ERROR: f64 = 1e-3;
+
+        let mult = 10.0_f64.powi(self.max_decimals as i32);
+        if !mult.is_finite() {
+            return true;
+        }
+
+        values.iter().all(|&value| {
+            if !value.is_finite() {
+                return true;
+            }
+            let rounded = (value * mult).round() / mult;
+            (rounded - value).abs() <= value.abs() * MAX_RELATIVE_LABEL_ERROR
+        })
+    }
+
+    /// Map `-0.0` onto `0.0` so no tick ever renders as "-0".
+    fn normalize_zero(value: f64) -> f64 {
+        if value == 0.0 { 0.0 } else { value }
     }
 
     /// Determine required decimal places for a value
@@ -442,6 +569,91 @@ mod tests {
         // Half values should have decimals
         assert_eq!(labels[1], "0.5");
         assert_eq!(labels[3], "1.5");
+    }
+
+    #[test]
+    fn test_format_ticks_never_mixes_notations() {
+        let formatter = TickFormatter::default();
+
+        // An axis fine enough to exhaust `max_decimals` switches as a whole
+        // rather than per value: plain formatting would render 1.5e-6 and
+        // 2.0e-6 as the same label.
+        let labels = formatter.format_ticks(&[0.0, 1.5e-6, 3.0e-6, 4.5e-6]);
+        let scientific = labels.iter().filter(|l| l.contains('e')).count();
+        assert_eq!(
+            scientific, 3,
+            "expected the whole axis in scientific notation: {labels:?}"
+        );
+        assert_eq!(labels[0], "0");
+
+        // Distinct labels either way.
+        let unique: std::collections::BTreeSet<_> = labels.iter().collect();
+        assert_eq!(unique.len(), labels.len(), "duplicate labels: {labels:?}");
+
+        // Ranges that plain decimals can represent stay plain end to end.
+        for values in [
+            vec![0.0, 200000.0, 400000.0, 600000.0],
+            vec![0.0, 0.25, 0.5, 0.75, 1.0],
+            vec![-1e-5, 0.0, 1e-5],
+        ] {
+            let labels = formatter.format_ticks(&values);
+            assert!(
+                labels.iter().all(|l| !l.contains('e')),
+                "unexpected scientific notation in {labels:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_format_never_renders_negative_zero() {
+        let formatter = TickFormatter::default();
+
+        assert_eq!(formatter.format_tick(-0.0), "0");
+        assert_eq!(formatter.format_ticks(&[-0.0, 0.5])[0], "0");
+        assert_eq!(formatter.format_ticks(&[-0.0, 1.0])[0], "0");
+    }
+
+    #[test]
+    fn test_generate_ticks_uses_canonical_step_selection() {
+        let formatter = TickFormatter::default();
+
+        // Same step the renderers would pick for this range, emitted so that
+        // it covers the range instead of being trimmed to it.
+        assert_eq!(
+            formatter.generate_ticks(0.7, 9.3),
+            vec![0.0, 2.0, 4.0, 6.0, 8.0, 10.0]
+        );
+        // Nine ticks against a target of six is a 50% overshoot, which the
+        // asymmetric density term now rejects: `MaxNLocator(nbins=6)` picks
+        // step 2 for this range too. The assertion above is unaffected —
+        // `select_nice_step` returns that same step 2 directly instead of
+        // returning step 1 and leaning on `max_ticks` decimation afterwards.
+        assert_eq!(
+            crate::axes::generate_ticks(0.7, 9.3, 6),
+            vec![2.0, 4.0, 6.0, 8.0]
+        );
+    }
+
+    #[test]
+    fn test_generate_ticks_terminates_at_extreme_magnitudes() {
+        let formatter = TickFormatter::default();
+
+        // Steps below one ULP of the axis start used to stall the emission
+        // loop; the bounded index walk and the ULP guard must both hold.
+        for (min, max) in [
+            (1e16, 1e16 + 2.0),
+            (1e16, 1e16 + 5.0),
+            (0.0, f64::MAX),
+            (f64::MIN_POSITIVE, 1.0),
+        ] {
+            let ticks = formatter.generate_ticks(min, max);
+            assert!(!ticks.is_empty(), "no ticks for ({min}, {max})");
+            assert!(
+                ticks.len() <= 101,
+                "unbounded tick count for ({min}, {max}): {}",
+                ticks.len()
+            );
+        }
     }
 
     #[test]

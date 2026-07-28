@@ -8,6 +8,8 @@ pub mod grid_style;
 pub mod layout;
 pub mod legend;
 pub mod plot;
+#[cfg(feature = "3d")]
+pub mod plot3d;
 pub mod position;
 pub mod style;
 pub mod style_utils;
@@ -22,11 +24,11 @@ pub use annotation::{
     TextVAlign,
 };
 pub use config::{
-    ComputedMargins, FigureConfig, LineConfig, MarginConfig, PlotConfig, SpacingConfig,
-    SpineConfig, TypographyConfig,
+    ComputedMargins, DEFAULT_AUTOSCALE_MARGIN, FigureConfig, LineConfig, MarginConfig, PlotConfig,
+    SpacingConfig, SpineConfig, TypographyConfig,
 };
 pub use constants::{dimensions, dpi, font_scales, font_sizes, line_widths, margins, spacing};
-pub use error::{PlottingError, Result};
+pub use error::{PlotResult, PlottingError, Result};
 pub use grid_style::GridStyle;
 pub use layout::{
     ComputedMarginsPixels, LayoutCalculator, LayoutConfig, LayoutRect, MeasuredDimensions,
@@ -36,22 +38,42 @@ pub(crate) use layout::{LayoutMeasurements, ResolvedLayout};
 #[allow(deprecated)]
 pub use legend::LegendFrame; // Deprecated alias for backward compatibility
 pub use legend::{
-    Legend, LegendAnchor, LegendItem, LegendItemType, LegendPosition, LegendSpacing,
-    LegendSpacingPixels, LegendStyle, find_best_position,
+    LEGEND_OCCUPANCY_RESOLUTION, Legend, LegendAnchor, LegendEntryLayout, LegendItem,
+    LegendItemType, LegendLayout, LegendOccupancy, LegendPlacement, LegendPosition, LegendSpacing,
+    LegendSpacingPixels, LegendStyle, LegendTitleLayout, estimated_label_width, find_best_position,
+    layout_legend, measure_legend_size,
 };
 pub use plot::{
     AnnotationId, BackendFallbackReason, BackendOperation, BackendResolution, BackendType,
     BuilderWhen, DirtyDomain, DirtyDomains, FramePacing, FrameStats, HitResult, Image, ImageTarget,
     InsetAnchor, InsetLayout, InteractiveFrame, InteractiveFrameWithGeneration,
     InteractivePlotSession, InteractiveViewportSnapshot, IntoPlot, LayerRenderState, Plot,
-    PlotBuilder, PlotInput, PlotInputEvent, PlotSource, PreparedPlot, QualityPolicy,
-    ReactiveSubscription, ReactiveValue, RenderTargetKind, SeriesStyle, SurfaceCapability,
-    SurfaceTarget, TextEngineMode, TickDirection, TickSides, ViewportPoint, ViewportRect,
+    PlotBuilder, PlotInputEvent, PlotSource, PreparedPlot, QualityPolicy, ReactiveSubscription,
+    ReactiveValue, RenderTargetKind, SurfaceCapability, SurfaceTarget, TextEngineMode,
+    TickDirection, TickSides, ViewportPoint, ViewportRect,
 };
+// `PlotInput` and `SeriesStyle` are internal representations of a half-built series
+// (`SeriesStyle` alone has 18 public fields, including reactive-animation plumbing).
+// Re-exporting them froze every internal refactor into a breaking change, so they are
+// crate-visible here and absent from `crate::prelude`.
+pub(crate) use plot::{PlotInput, SeriesStyle};
+#[cfg(all(feature = "3d", feature = "gpu", not(target_arch = "wasm32")))]
+pub use plot3d::GpuBenchmarkSession3D;
+#[cfg(feature = "3d")]
+pub use plot3d::{
+    AxisAspect3D, Bounds3D, Camera3D, CameraSnapshot3D, InputEvent3D, InteractionResult3D,
+    InteractivePlot3DSession, Line3DBuilder, PickHit3D, PickPrimitive3D, Point3D, PointerButton3D,
+    ProjectedPoint3D, Projection3D, RenderDiagnostics3D, Scatter3DBuilder, ScreenRay3D,
+    Surface3DBuilder, Wireframe3DBuilder, release_3d_gpu_resources,
+};
+#[cfg(all(feature = "3d", feature = "gpu"))]
+#[doc(hidden)]
+pub use plot3d::{GpuSurfacePresentStatus3D, GpuSurfaceSession3D};
+#[allow(deprecated)]
 pub use position::Position;
 pub use style::PlotStyle;
 pub use style_utils::StyleResolver;
-pub use subplot::{GridSpec, SubplotFigure, subplots, subplots_default};
+pub use subplot::{FigureRect, GridSpec, SubplotFigure, figure, subplots, subplots_default};
 pub use tick_formatter::TickFormatter;
 pub use transform::CoordinateTransform;
 pub use types::{BoundingBox, Orientation, Point2f};

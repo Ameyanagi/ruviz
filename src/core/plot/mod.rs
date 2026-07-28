@@ -10,7 +10,7 @@
 //! - [`PlotConfiguration`] - Display settings (title, labels, dimensions, theme)
 //! - [`SeriesManager`] - Data series storage and auto-coloring
 //! - [`LayoutManager`] - Legend, grid, ticks, margins, axis limits/scales
-//! - [`RenderPipeline`] - Backend selection, parallel/pooled rendering
+//! - [`RenderPipeline`] - Backend selection and output-size overrides
 //!
 //! # Usage
 //!
@@ -31,7 +31,7 @@
 //!     .line(&x, &y2)
 //!     .color(Color::BLUE)
 //!     .label("Series 2")
-//!     .legend(Position::TopRight)
+//!     .legend(LegendPosition::UpperRight)
 //!     .save("multi.png")?;
 //! ```
 //!
@@ -90,13 +90,6 @@ pub(super) enum RenderExecutionMode {
 }
 
 impl RenderExecutionMode {
-    pub(super) fn allows_parallel(self) -> bool {
-        // The reference-parity branch keeps the parallel renderer out of the
-        // candidate image path until that backend can satisfy the same visual
-        // tolerance as the reference raster pipeline.
-        false
-    }
-
     pub(super) fn allows_auto_datashader(self) -> bool {
         matches!(self, Self::Optimized)
     }
@@ -112,6 +105,9 @@ impl RenderExecutionMode {
 #[doc(hidden)]
 pub struct RenderDiagnostics {
     pub render_mode: &'static str,
+    /// Always `false`: there is no 2D series-parallel raster path. Kept so
+    /// existing readers of this struct keep compiling, and asserted false by
+    /// `nonbreaking_plot_api_test`.
     pub used_parallel: bool,
     pub used_auto_datashader: bool,
     pub used_exact_line_canonicalization: bool,
@@ -239,48 +235,91 @@ macro_rules! impl_series_continuation_methods {
         pub fn histogram<D: $crate::data::NumericData1D>(
             $self_,
             data: &D,
-            config: Option<$crate::plots::HistogramConfig>,
-        ) -> $crate::core::plot::PlotSeriesBuilder {
-            $self_.$finalize().histogram(data, config)
+        ) -> $crate::core::plot::PlotBuilder<$crate::plots::HistogramConfig> {
+            $self_.$finalize().histogram(data)
+        }
+
+        /// Continue with a histogram series built from an existing config.
+        pub fn histogram_with<D: $crate::data::NumericData1D>(
+            $self_,
+            data: &D,
+            config: $crate::plots::HistogramConfig,
+        ) -> $crate::core::plot::PlotBuilder<$crate::plots::HistogramConfig> {
+            $self_.$finalize().histogram_with(data, config)
         }
 
         /// Continue with a histogram series from source-backed values.
         pub fn histogram_source<D: $crate::core::plot::IntoPlotData>(
             $self_,
             data: D,
-            config: Option<$crate::plots::HistogramConfig>,
-        ) -> $crate::core::plot::PlotSeriesBuilder {
-            $self_.$finalize().histogram_source(data, config)
+        ) -> $crate::core::plot::PlotBuilder<$crate::plots::HistogramConfig> {
+            $self_.$finalize().histogram_source(data)
+        }
+
+        /// Continue with a source-backed histogram series built from an existing config.
+        pub fn histogram_source_with<D: $crate::core::plot::IntoPlotData>(
+            $self_,
+            data: D,
+            config: $crate::plots::HistogramConfig,
+        ) -> $crate::core::plot::PlotBuilder<$crate::plots::HistogramConfig> {
+            $self_.$finalize().histogram_source_with(data, config)
         }
 
         /// Continue with a box plot series.
         pub fn boxplot<D: $crate::data::NumericData1D>(
             $self_,
             data: &D,
-            config: Option<$crate::plots::BoxPlotConfig>,
-        ) -> $crate::core::plot::PlotSeriesBuilder {
-            $self_.$finalize().boxplot(data, config)
+        ) -> $crate::core::plot::PlotBuilder<$crate::plots::BoxPlotConfig> {
+            $self_.$finalize().boxplot(data)
+        }
+
+        /// Continue with a box plot series built from an existing config.
+        pub fn boxplot_with<D: $crate::data::NumericData1D>(
+            $self_,
+            data: &D,
+            config: $crate::plots::BoxPlotConfig,
+        ) -> $crate::core::plot::PlotBuilder<$crate::plots::BoxPlotConfig> {
+            $self_.$finalize().boxplot_with(data, config)
         }
 
         /// Continue with a box plot series from source-backed values.
         pub fn boxplot_source<D: $crate::core::plot::IntoPlotData>(
             $self_,
             data: D,
-            config: Option<$crate::plots::BoxPlotConfig>,
-        ) -> $crate::core::plot::PlotSeriesBuilder {
-            $self_.$finalize().boxplot_source(data, config)
+        ) -> $crate::core::plot::PlotBuilder<$crate::plots::BoxPlotConfig> {
+            $self_.$finalize().boxplot_source(data)
+        }
+
+        /// Continue with a source-backed box plot series built from an existing config.
+        pub fn boxplot_source_with<D: $crate::core::plot::IntoPlotData>(
+            $self_,
+            data: D,
+            config: $crate::plots::BoxPlotConfig,
+        ) -> $crate::core::plot::PlotBuilder<$crate::plots::BoxPlotConfig> {
+            $self_.$finalize().boxplot_source_with(data, config)
         }
 
         /// Continue with a heatmap series.
         pub fn heatmap<D>(
             $self_,
             data: &D,
-            config: Option<$crate::plots::heatmap::HeatmapConfig>,
-        ) -> $crate::core::plot::PlotSeriesBuilder
+        ) -> $crate::core::plot::PlotBuilder<$crate::plots::heatmap::HeatmapConfig>
         where
             D: $crate::data::NumericData2D + ?Sized,
         {
-            $self_.$finalize().heatmap(data, config)
+            $self_.$finalize().heatmap(data)
+        }
+
+        /// Continue with a heatmap series built from an existing config.
+        pub fn heatmap_with<D>(
+            $self_,
+            data: &D,
+            config: $crate::plots::heatmap::HeatmapConfig,
+        ) -> $crate::core::plot::PlotBuilder<$crate::plots::heatmap::HeatmapConfig>
+        where
+            D: $crate::data::NumericData2D + ?Sized,
+        {
+            $self_.$finalize().heatmap_with(data, config)
         }
 
         /// Continue with a KDE series.
@@ -391,11 +430,103 @@ macro_rules! impl_series_continuation_methods {
             $self_.$finalize().quiver(x_data, y_data, u_data, v_data)
         }
 
+        /// Continue with a rug series.
+        pub fn rug<T, D: $crate::data::Data1D<T>>(
+            $self_,
+            data: &D,
+        ) -> $crate::core::plot::PlotBuilder<$crate::plots::distribution::RugConfig>
+        where
+            T: Into<f64> + Copy,
+        {
+            $self_.$finalize().rug(data)
+        }
+
+        /// Continue with a strip series.
+        pub fn strip<S: AsRef<str>, D: $crate::data::NumericData1D>(
+            $self_,
+            categories: &[S],
+            values: &D,
+        ) -> $crate::core::plot::PlotBuilder<$crate::plots::categorical::StripConfig> {
+            $self_.$finalize().strip(categories, values)
+        }
+
+        /// Continue with a swarm series.
+        pub fn swarm<S: AsRef<str>, D: $crate::data::NumericData1D>(
+            $self_,
+            categories: &[S],
+            values: &D,
+        ) -> $crate::core::plot::PlotBuilder<$crate::plots::categorical::SwarmConfig> {
+            $self_.$finalize().swarm(categories, values)
+        }
+
+        /// Continue with a hexbin series.
+        pub fn hexbin<X, Y>(
+            $self_,
+            x: &X,
+            y: &Y,
+        ) -> $crate::core::plot::PlotBuilder<$crate::plots::continuous::hexbin::HexbinConfig>
+        where
+            X: $crate::data::NumericData1D,
+            Y: $crate::data::NumericData1D,
+        {
+            $self_.$finalize().hexbin(x, y)
+        }
+
+        /// Continue with a dendrogram series.
+        pub fn dendrogram(
+            $self_,
+            linkage: &$crate::stats::clustering::Linkage,
+        ) -> $crate::core::plot::PlotBuilder<$crate::plots::hierarchical::DendrogramConfig> {
+            $self_.$finalize().dendrogram(linkage)
+        }
+
+        /// Continue with a grouped bar series.
+        pub fn grouped_bar<C, S, V>(
+            $self_,
+            categories: &[C],
+            series: &[(S, V)],
+        ) -> $crate::core::plot::PlotBuilder<$crate::plots::categorical::GroupedBarConfig>
+        where
+            C: ToString,
+            S: ToString,
+            V: $crate::data::NumericData1D,
+        {
+            $self_.$finalize().grouped_bar(categories, series)
+        }
+
+        /// Continue with a stacked bar series.
+        pub fn stacked_bar<C, S, V>(
+            $self_,
+            categories: &[C],
+            series: &[(S, V)],
+        ) -> $crate::core::plot::PlotBuilder<$crate::plots::categorical::StackedBarConfig>
+        where
+            C: ToString,
+            S: ToString,
+            V: $crate::data::NumericData1D,
+        {
+            $self_.$finalize().stacked_bar(categories, series)
+        }
+
+        /// Continue with a stacked area series.
+        pub fn stacked_area<X, S, V>(
+            $self_,
+            x: &X,
+            series: &[(S, V)],
+        ) -> $crate::core::plot::PlotBuilder<$crate::plots::continuous::StackPlotConfig>
+        where
+            X: $crate::data::NumericData1D,
+            S: ToString,
+            V: $crate::data::NumericData1D,
+        {
+            $self_.$finalize().stacked_area(x, series)
+        }
+
         /// Continue with a new streaming line series.
         pub fn line_streaming(
             $self_,
             stream: &$crate::data::StreamingXY,
-        ) -> $crate::core::plot::PlotSeriesBuilder {
+        ) -> $crate::core::plot::PlotBuilder<$crate::plots::basic::LineConfig> {
             $self_.$finalize().line_streaming(stream)
         }
 
@@ -403,7 +534,7 @@ macro_rules! impl_series_continuation_methods {
         pub fn scatter_streaming(
             $self_,
             stream: &$crate::data::StreamingXY,
-        ) -> $crate::core::plot::PlotSeriesBuilder {
+        ) -> $crate::core::plot::PlotBuilder<$crate::plots::basic::ScatterConfig> {
             $self_.$finalize().scatter_streaming(stream)
         }
 
@@ -413,7 +544,7 @@ macro_rules! impl_series_continuation_methods {
             x_data: &X,
             y_data: &Y,
             y_errors: &E,
-        ) -> $crate::core::plot::PlotSeriesBuilder
+        ) -> $crate::core::plot::PlotBuilder<$crate::plots::error::ErrorBarConfig>
         where
             X: $crate::data::NumericData1D,
             Y: $crate::data::NumericData1D,
@@ -428,7 +559,7 @@ macro_rules! impl_series_continuation_methods {
             x_data: X,
             y_data: Y,
             y_errors: E,
-        ) -> $crate::core::plot::PlotSeriesBuilder
+        ) -> $crate::core::plot::PlotBuilder<$crate::plots::error::ErrorBarConfig>
         where
             X: $crate::core::plot::IntoPlotData,
             Y: $crate::core::plot::IntoPlotData,
@@ -444,7 +575,7 @@ macro_rules! impl_series_continuation_methods {
             y_data: &Y,
             x_errors: &EX,
             y_errors: &EY,
-        ) -> $crate::core::plot::PlotSeriesBuilder
+        ) -> $crate::core::plot::PlotBuilder<$crate::plots::error::ErrorBarConfig>
         where
             X: $crate::data::NumericData1D,
             Y: $crate::data::NumericData1D,
@@ -461,7 +592,7 @@ macro_rules! impl_series_continuation_methods {
             y_data: Y,
             x_errors: EX,
             y_errors: EY,
-        ) -> $crate::core::plot::PlotSeriesBuilder
+        ) -> $crate::core::plot::PlotBuilder<$crate::plots::error::ErrorBarConfig>
         where
             X: $crate::core::plot::IntoPlotData,
             Y: $crate::core::plot::IntoPlotData,
@@ -476,16 +607,17 @@ macro_rules! impl_series_continuation_methods {
 }
 
 mod annotations;
+mod bounds;
 mod builder;
 mod config;
 mod configuration;
 mod construction;
 pub mod data;
+mod error_bars;
 mod image;
 mod interactive_session;
 mod layout_manager;
 mod mixed_render;
-mod parallel_render;
 mod prepared;
 mod raster_batches;
 mod raster_fast_path;
@@ -500,7 +632,8 @@ mod series_manager;
 mod tests;
 mod types;
 
-pub use builder::{BuilderWhen, IntoPlot, PlotBuilder, PlotInput, SeriesStyle};
+pub use builder::{BuilderWhen, IntoPlot, PlotBuilder};
+pub(crate) use builder::{PlotInput, SeriesStyle};
 pub use config::{
     BackendFallbackReason, BackendOperation, BackendResolution, BackendType, GridMode,
     TickDirection, TickSides,
@@ -517,7 +650,7 @@ pub use interactive_session::{
 pub use layout_manager::LayoutManager;
 pub use prepared::{PreparedPlot, ReactiveSubscription};
 pub use render_pipeline::RenderPipeline;
-pub use series_builders::{PlotSeriesBuilder, SeriesGroupBuilder};
+pub use series_builders::SeriesGroupBuilder;
 pub use series_manager::SeriesManager;
 pub use types::{InsetAnchor, InsetLayout, Plot};
 
@@ -525,10 +658,10 @@ use crate::{
     axes::AxisScale,
     core::{
         Annotation, ArrowStyle, FillStyle, GridStyle, LayoutCalculator, LayoutConfig,
-        LayoutMeasurements, Legend, LegendItem, LegendItemType, LegendPosition, MarginConfig,
-        MeasuredDimensions, PlotConfig, PlotContent, PlotLayout, PlotStyle, PlottingError,
-        Position, REFERENCE_DPI, RenderScale, ResolvedLayout, Result, ShapeStyle, StyleResolver,
-        TextStyle, pt_to_px,
+        LayoutMeasurements, Legend, LegendItem, LegendItemType, LegendOccupancy, LegendPosition,
+        MarginConfig, MeasuredDimensions, PlotConfig, PlotContent, PlotLayout, PlotStyle,
+        PlottingError, REFERENCE_DPI, RenderScale, ResolvedLayout, Result, ShapeStyle,
+        StyleResolver, TextStyle, pt_to_px,
     },
     data::{
         Data1D, DataShader, NullPolicy, NumericData1D, NumericData2D, StreamingXY,
@@ -540,13 +673,14 @@ use crate::{
     plots::traits::PlotRender,
     render::skia::{
         SkiaRenderer, calculate_plot_area_config, calculate_plot_area_dpi, generate_ticks,
-        map_data_to_pixels,
+        map_data_to_pixels, try_map_data_to_pixels_scaled,
     },
     render::{Color, LineStyle, MarkerStyle, Theme},
 };
 use std::{
     borrow::Cow,
     collections::{HashMap, HashSet},
+    fmt,
     path::Path,
     sync::Arc,
 };
@@ -554,12 +688,9 @@ use std::{
 use self::data::{ReactiveTeardown, SharedReactiveCallback};
 pub(crate) use self::types::{
     LegendConfig, PendingIngestionError, PlotSeries, ResolvedData, ResolvedFrame, ResolvedSeries,
-    ResolvedSeriesStyle, ResolvedStreamingPair, ResolvedStyle, SeriesGroupMeta, SeriesType,
-    TickConfig,
+    ResolvedSeriesStyle, ResolvedStreamingPair, ResolvedStyle, SeriesGroupMeta, SeriesStyleProps,
+    SeriesType, TickConfig,
 };
-
-#[cfg(feature = "parallel")]
-use crate::render::{ParallelRenderer, SeriesRenderData};
 
 #[cfg(feature = "gpu")]
 use crate::render::gpu::GpuRenderer;

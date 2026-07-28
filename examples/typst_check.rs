@@ -3,9 +3,9 @@ use ruviz::prelude::*;
 use std::fs;
 
 #[cfg(feature = "typst-math")]
-fn run() -> Result<()> {
+fn run() -> PlotResult<()> {
     let out_dir = "generated/examples";
-    fs::create_dir_all(out_dir).map_err(ruviz::core::PlottingError::IoError)?;
+    fs::create_dir_all(out_dir).map_err(ruviz::core::PlottingError::from)?;
 
     let x: Vec<f64> = (0..80).map(|i| i as f64 * 0.05).collect();
     let y: Vec<f64> = x.iter().map(|&v| (-v).exp()).collect();
@@ -51,13 +51,13 @@ fn run() -> Result<()> {
 }
 
 #[cfg(not(feature = "typst-math"))]
-fn run() -> Result<()> {
+fn run() -> PlotResult<()> {
     println!(
         "This example requires `typst-math`.\nRun: cargo run --example typst_check --features typst-math"
     );
     Ok(())
 }
 
-fn main() -> Result<()> {
+fn main() -> PlotResult<()> {
     run()
 }

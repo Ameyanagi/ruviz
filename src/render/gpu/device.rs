@@ -138,8 +138,11 @@ impl DeviceSelector {
             wgpu::Backend::Metal => score += 20,
             #[cfg(target_os = "linux")]
             wgpu::Backend::Vulkan => score += 20,
+            #[cfg(not(target_os = "linux"))]
             wgpu::Backend::Vulkan => score += 15,
+            #[cfg(not(target_os = "windows"))]
             wgpu::Backend::Dx12 => score += 15,
+            #[cfg(not(target_os = "macos"))]
             wgpu::Backend::Metal => score += 15,
             wgpu::Backend::Gl => score += 5,
             wgpu::Backend::BrowserWebGpu => score += 5,

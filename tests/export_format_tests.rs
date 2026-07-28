@@ -178,12 +178,12 @@ fn test_direct_renderer_exports() -> std::result::Result<(), Box<dyn std::error:
         100.0,
         700.0,
         500.0,
-        Color::new(255, 0, 0),
+        Color::from_rgb(255, 0, 0),
         2.0,
         LineStyle::Solid,
     )?;
-    renderer.draw_circle(400.0, 300.0, 50.0, Color::new(0, 255, 0), true)?;
-    renderer.draw_rectangle(200.0, 200.0, 100.0, 50.0, Color::new(0, 0, 255), false)?;
+    renderer.draw_circle(400.0, 300.0, 50.0, Color::from_rgb(0, 255, 0), true)?;
+    renderer.draw_rectangle(200.0, 200.0, 100.0, 50.0, Color::from_rgb(0, 0, 255), false)?;
 
     // Save as PNG
     renderer.save_png("generated/tests/export/direct/01_manual_drawing.png")?;
@@ -202,7 +202,7 @@ fn test_direct_renderer_exports() -> std::result::Result<(), Box<dyn std::error:
             (350.0, 150.0),
             (450.0, 50.0),
         ],
-        Color::new(255, 255, 0),
+        Color::from_rgb(255, 255, 0),
         3.0,
         LineStyle::Dashed,
     )?;
@@ -221,7 +221,7 @@ fn test_direct_renderer_exports() -> std::result::Result<(), Box<dyn std::error:
         &x_ticks,
         &y_ticks,
         plot_area,
-        Color::new(200, 200, 200),
+        Color::from_rgb(200, 200, 200),
         LineStyle::Dotted,
         1.0,
     )?;
@@ -231,7 +231,7 @@ fn test_direct_renderer_exports() -> std::result::Result<(), Box<dyn std::error:
         &y_ticks,
         &TickDirection::Inside,
         &TickSides::all(),
-        Color::new(0, 0, 0),
+        Color::from_rgb(0, 0, 0),
     )?;
     grid_renderer.save_png("generated/tests/export/direct/03_grid_and_axes.png")?;
     assert_png_rendered(

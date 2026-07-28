@@ -358,7 +358,7 @@ mod tests {
     #[test]
     fn test_color_conversion() {
         let renderer = PdfRenderer::new(160.0, 120.0, "Test").unwrap();
-        let color = Color::new(255, 128, 0);
+        let color = Color::from_rgb(255, 128, 0);
         let pdf_color = renderer.color_to_pdf(color);
         assert!((pdf_color.r - 1.0).abs() < 0.01);
         assert!((pdf_color.g - 0.5).abs() < 0.01);

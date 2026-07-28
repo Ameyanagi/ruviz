@@ -4,7 +4,7 @@
 
 use ruviz::prelude::*;
 
-fn main() -> Result<()> {
+fn main() -> PlotResult<()> {
     // Create sample 2D data
     let data: Vec<Vec<f64>> = (0..10)
         .map(|i| {
@@ -19,7 +19,7 @@ fn main() -> Result<()> {
         .xlabel("X")
         .ylabel("Y")
         .max_resolution(1920, 1440)
-        .heatmap(&data, None)
+        .heatmap(&data)
         .save("docs/assets/rustdoc/heatmap.png")?;
 
     println!("✓ Generated docs/assets/rustdoc/heatmap.png");

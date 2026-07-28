@@ -671,13 +671,11 @@ fn test_indexed_hit_test_preserves_point_and_heatmap_tie_ordering() {
     let heatmap_values = vec![vec![1.0]];
     let mixed_plot: Plot = Plot::new()
         .scatter(&first_x, &first_y)
-        .heatmap(
+        .heatmap_with(
             &heatmap_values,
-            Some(
-                crate::plots::heatmap::HeatmapConfig::new()
-                    .extent(-1.0, 1.0, -1.0, 1.0)
-                    .colorbar(false),
-            ),
+            crate::plots::heatmap::HeatmapConfig::new()
+                .extent(-1.0, 1.0, -1.0, 1.0)
+                .colorbar(false),
         )
         .scatter(&second_x, &second_y)
         .xlim(-1.0, 1.0)
@@ -851,6 +849,9 @@ fn test_interactive_log_auto_bounds_preserve_sub_epsilon_positive_range() {
         .ticks(false)
         .grid(false)
         .into();
+    // The interactive initial view mirrors the static render, autoscale margin
+    // included, so the expected x range is the padded one.
+    let (expected_min, expected_max, _, _) = plot.effective_data_bounds().unwrap();
     let session = plot.prepare_interactive();
     session
         .render_to_surface(render_target())
@@ -859,8 +860,11 @@ fn test_interactive_log_auto_bounds_preserve_sub_epsilon_positive_range() {
     let snapshot = session.viewport_snapshot().unwrap();
     assert_eq!(
         (snapshot.visible_bounds.min.x, snapshot.visible_bounds.max.x),
-        (min, max)
+        (expected_min, expected_max)
     );
+    // The padded range must stay strictly positive and still bracket the data.
+    assert!(expected_min > 0.0, "expected_min = {expected_min}");
+    assert!(expected_min < min && expected_max > max);
 }
 
 #[test]
@@ -1202,23 +1206,19 @@ fn test_scaled_error_bar_hit_and_selection_refresh_use_displayed_geometry() {
 fn test_heatmap_axis_hit_uses_scaled_screen_to_data_and_cell_geometry() {
     let values = vec![vec![1.0, 2.0]];
     let plot: Plot = Plot::new()
-        .heatmap(
+        .heatmap_with(
             &values,
-            Some(
-                crate::plots::heatmap::HeatmapConfig::new()
-                    .extent(1.0, 100.0, 1.0, 100.0)
-                    .colorbar(false),
-            ),
+            crate::plots::heatmap::HeatmapConfig::new()
+                .extent(1.0, 100.0, 1.0, 100.0)
+                .colorbar(false),
         )
-        .xscale(crate::axes::AxisScale::Log)
-        .yscale(crate::axes::AxisScale::Log)
         .xlim(1.0, 100.0)
         .ylim(1.0, 100.0)
         .into();
     let session = plot.prepare_interactive();
     session
         .render_to_surface(render_target())
-        .expect("log-axis heatmap frame should render");
+        .expect("heatmap frame should render");
     let screen_position = session
         .data_to_screen(ViewportPoint::new(10.0, 10.0))
         .unwrap()
@@ -1240,6 +1240,73 @@ fn test_heatmap_axis_hit_uses_scaled_screen_to_data_and_cell_geometry() {
     }
 }
 
+/// The hit test has always projected heatmap cell bounds scale-aware. The
+/// renderer used to project them linearly, so under a log axis the rectangle the
+/// user could click was not the rectangle they could see.
+///
+/// Both now go through the same scale-aware projection, so the cell the hit test
+/// reports must be the cell the axis says is there — checked here against the
+/// log positions the axis itself would produce.
+#[test]
+fn test_heatmap_cell_hit_agrees_with_a_logarithmic_axis() {
+    use crate::axes::AxisScale;
+
+    let values = vec![vec![1.0, 2.0]];
+    let plot: Plot = Plot::new()
+        .heatmap_with(
+            &values,
+            crate::plots::heatmap::HeatmapConfig::new()
+                .extent(1.0, 100.0, 1.0, 100.0)
+                .colorbar(false),
+        )
+        .xscale(AxisScale::Log)
+        .yscale(AxisScale::Log)
+        .xlim(1.0, 100.0)
+        .ylim(1.0, 100.0)
+        .into();
+    let session = plot.prepare_interactive();
+    session
+        .render_to_surface(render_target())
+        .expect("a log-axis heatmap must render, with its cells following the axis");
+
+    // x = 3 is inside the left cell (which spans 1..50.5) on either scale, but
+    // it sits at 24% of a log axis and at 2% of a linear one, so a linear
+    // projection could not produce the rectangle asserted below.
+    let screen_position = session
+        .data_to_screen(ViewportPoint::new(3.0, 3.0))
+        .unwrap()
+        .unwrap();
+
+    match session.hit_test(screen_position) {
+        HitResult::HeatmapCell {
+            row,
+            col,
+            value,
+            screen_rect,
+            ..
+        } => {
+            assert_eq!((row, col), (0, 0));
+            assert_eq!(value, 1.0);
+            assert!(screen_rect.contains(screen_position));
+
+            // The cell's own edges, projected by the axis, must be its corners.
+            let expected_min = session
+                .data_to_screen(ViewportPoint::new(1.0, 100.0))
+                .unwrap()
+                .unwrap();
+            let expected_max = session
+                .data_to_screen(ViewportPoint::new(50.5, 1.0))
+                .unwrap()
+                .unwrap();
+            assert!((screen_rect.min.x - expected_min.x).abs() < 1e-3);
+            assert!((screen_rect.min.y - expected_min.y).abs() < 1e-3);
+            assert!((screen_rect.max.x - expected_max.x).abs() < 1e-3);
+            assert!((screen_rect.max.y - expected_max.y).abs() < 1e-3);
+        }
+        other => panic!("expected a scaled heatmap cell hit, got {other:?}"),
+    }
+}
+
 #[test]
 fn test_heatmap_origin_hit_rows_values_and_rectangles_survive_reversed_y_axis() {
     use crate::plots::{HeatmapConfig, HeatmapOrigin};
@@ -1249,14 +1316,12 @@ fn test_heatmap_origin_hit_rows_values_and_rectangles_survive_reversed_y_axis() 
         for reversed in [false, true] {
             let (y_min, y_max) = if reversed { (24.0, 20.0) } else { (20.0, 24.0) };
             let plot: Plot = Plot::new()
-                .heatmap(
+                .heatmap_with(
                     &values,
-                    Some(
-                        HeatmapConfig::new()
-                            .extent(10.0, 14.0, 20.0, 24.0)
-                            .origin(origin)
-                            .colorbar(false),
-                    ),
+                    HeatmapConfig::new()
+                        .extent(10.0, 14.0, 20.0, 24.0)
+                        .origin(origin)
+                        .colorbar(false),
                 )
                 .into_plot()
                 .xlim(10.0, 14.0)
@@ -1324,7 +1389,7 @@ fn test_incremental_streaming_uses_scaled_geometry_and_displayed_hit_data() {
     stream.push_many(vec![(1.0, -10.0), (10.0, 0.0)]);
     let plot: Plot = Plot::new()
         .line_streaming(&stream)
-        .color(Color::new(220, 20, 20))
+        .color(Color::from_rgb(220, 20, 20))
         .into_plot()
         .xscale(crate::axes::AxisScale::Log)
         .yscale(crate::axes::AxisScale::symlog(1.0))
@@ -2254,7 +2319,7 @@ fn test_draw_rect_outline_clamps_to_buffer_bounds() {
         &mut pixels,
         (4, 4),
         ViewportRect::from_points(ViewportPoint::new(-1.0, -1.0), ViewportPoint::new(3.0, 3.0)),
-        Color::new_rgba(255, 128, 64, 255),
+        Color::from_rgba(255, 128, 64, 255),
         2,
     );
 
@@ -2349,7 +2414,7 @@ fn test_surface_frames_stay_in_parity_with_image_frames_for_supported_series() {
         .size_px(320, 240)
         .ticks(false)
         .grid(false)
-        .heatmap(&heatmap_values, None)
+        .heatmap(&heatmap_values)
         .into();
     let heatmap_session = heatmap_plot.prepare_interactive();
     let heatmap_image = heatmap_session
@@ -2375,9 +2440,7 @@ fn test_surface_frames_stay_in_parity_with_image_frames_for_supported_series() {
 
 #[test]
 fn test_unsupported_surface_series_fall_back_to_image_capability() {
-    let plot: Plot = Plot::new()
-        .histogram(&[0.0, 1.0, 1.5, 2.0, 2.5], None)
-        .into();
+    let plot: Plot = Plot::new().histogram(&[0.0, 1.0, 1.5, 2.0, 2.5]).into();
     let session = plot.prepare_interactive();
 
     let frame = session
@@ -2439,7 +2502,7 @@ fn test_large_dataset_surface_frames_render_without_blackout() {
     let histogram: Plot = Plot::new()
         .size_px(320, 200)
         .ticks(false)
-        .histogram(&histogram_samples, None)
+        .histogram(&histogram_samples)
         .into();
     let histogram_session = histogram.prepare_interactive();
     let histogram_frame = histogram_session
@@ -2450,9 +2513,9 @@ fn test_large_dataset_surface_frames_render_without_blackout() {
     let heatmap_plot: Plot = Plot::new()
         .size_px(320, 200)
         .ticks(false)
-        .heatmap(
+        .heatmap_with(
             &heatmap,
-            Some(crate::plots::heatmap::HeatmapConfig::new().colorbar(false)),
+            crate::plots::heatmap::HeatmapConfig::new().colorbar(false),
         )
         .into();
     let heatmap_session = heatmap_plot.prepare_interactive();
@@ -3006,13 +3069,11 @@ fn test_hit_test_uses_displayed_geometry_until_next_render() {
 fn test_heatmap_hover_skips_masked_log_cells() {
     let values = vec![vec![0.0, 1.0, 10.0]];
     let plot: Plot = Plot::new()
-        .heatmap(
+        .heatmap_with(
             &values,
-            Some(
-                crate::plots::heatmap::HeatmapConfig::new()
-                    .value_scale(crate::axes::AxisScale::Log)
-                    .colorbar(false),
-            ),
+            crate::plots::heatmap::HeatmapConfig::new()
+                .value_scale(crate::axes::AxisScale::Log)
+                .colorbar(false),
         )
         .into();
     let session = plot.prepare_interactive();
@@ -3080,13 +3141,11 @@ fn test_heatmap_hover_skips_masked_log_cells() {
 fn test_refresh_hit_result_drops_masked_log_heatmap_cells() {
     let values = vec![vec![0.0, 1.0, 10.0]];
     let plot: Plot = Plot::new()
-        .heatmap(
+        .heatmap_with(
             &values,
-            Some(
-                crate::plots::heatmap::HeatmapConfig::new()
-                    .value_scale(crate::axes::AxisScale::Log)
-                    .colorbar(false),
-            ),
+            crate::plots::heatmap::HeatmapConfig::new()
+                .value_scale(crate::axes::AxisScale::Log)
+                .colorbar(false),
         )
         .into();
     let session = plot.prepare_interactive();
@@ -3454,8 +3513,8 @@ fn test_incremental_line_render_preserves_markers() {
 
     let plot: Plot = Plot::new()
         .line_streaming(&stream)
-        .color(Color::new(220, 20, 20))
-        .width(1.0)
+        .color(Color::from_rgb(220, 20, 20))
+        .line_width(1.0)
         .marker(MarkerStyle::Square)
         .marker_size(18.0)
         .into();
@@ -3593,7 +3652,7 @@ fn test_dashboard_like_reactive_updates_do_not_drift_manual_ylim() {
     );
     let event_x = Observable::new(vec![2.0, 6.0, 9.5]);
     let event_y = Observable::new(vec![1.1, -1.3, 1.4]);
-    let accent = Observable::new(Color::new(42, 157, 143));
+    let accent = Observable::new(Color::from_rgb(42, 157, 143));
 
     let plot: Plot = Plot::new()
         .line(&x, &vec![1.2; x.len()])
@@ -3610,12 +3669,12 @@ fn test_dashboard_like_reactive_updates_do_not_drift_manual_ylim() {
         .into();
     let plot: Plot = plot
         .line_source(x.clone(), baseline.clone())
-        .color(Color::new(38, 70, 83))
+        .color(Color::from_rgb(38, 70, 83))
         .line_width(1.6)
         .into();
     let plot: Plot = plot
         .scatter_source(event_x.clone(), event_y.clone())
-        .color(Color::new(231, 111, 81))
+        .color(Color::from_rgb(231, 111, 81))
         .marker(MarkerStyle::Diamond)
         .marker_size(9.0)
         .xlim(0.0, 12.0)
@@ -3643,7 +3702,7 @@ fn test_dashboard_like_reactive_updates_do_not_drift_manual_ylim() {
     );
     event_x.set(vec![1.0, 4.5, 10.5]);
     event_y.set(vec![1.5, -1.4, 1.7]);
-    accent.set(Color::new(231, 111, 81));
+    accent.set(Color::from_rgb(231, 111, 81));
 
     session
         .render_to_surface(render_target())
@@ -3662,7 +3721,7 @@ fn test_dashboard_like_reactive_updates_do_not_drift_manual_ylim() {
 fn test_surface_frame_pixels_honor_manual_ylim() {
     let plot: Plot = Plot::new()
         .scatter(&[0.5], &[1.0])
-        .color(Color::new(220, 20, 20))
+        .color(Color::from_rgb(220, 20, 20))
         .marker(MarkerStyle::Square)
         .marker_size(18.0)
         .ticks(false)
@@ -3670,7 +3729,7 @@ fn test_surface_frame_pixels_honor_manual_ylim() {
         .into();
     let plot: Plot = plot
         .scatter(&[0.5], &[-1.0])
-        .color(Color::new(20, 20, 220))
+        .color(Color::from_rgb(20, 20, 220))
         .marker(MarkerStyle::Square)
         .marker_size(18.0)
         .ticks(false)
@@ -3780,7 +3839,7 @@ fn test_surface_frame_pixels_honor_manual_ylim() {
 fn test_surface_frame_clips_series_pixels_to_plot_area_after_zoom() {
     let plot: Plot = Plot::new()
         .line(&[0.0, 5.0, 10.0], &[0.0, 5.0, 10.0])
-        .color(Color::new(220, 20, 20))
+        .color(Color::from_rgb(220, 20, 20))
         .line_width(18.0)
         .ticks(false)
         .grid(false)

@@ -4,7 +4,7 @@
 
 use ruviz::prelude::*;
 
-fn main() -> Result<()> {
+fn main() -> PlotResult<()> {
     // Example 1: Simple line plot to PDF
     line_plot_pdf()?;
 
@@ -23,13 +23,13 @@ fn main() -> Result<()> {
 }
 
 /// Simple line plot exported to PDF
-fn line_plot_pdf() -> Result<()> {
+fn line_plot_pdf() -> PlotResult<()> {
     let x: Vec<f64> = (0..50).map(|i| i as f64 * 0.1).collect();
     let y: Vec<f64> = x.iter().map(|&x| (x * 2.0).sin()).collect();
 
     Plot::new()
         .line(&x, &y)
-        .color(Color::new(31, 119, 180))
+        .color(Color::from_rgb(31, 119, 180))
         .title("Sine Wave (PDF Export)")
         .xlabel("X")
         .ylabel("sin(2x)")
@@ -40,14 +40,14 @@ fn line_plot_pdf() -> Result<()> {
 }
 
 /// Scatter plot exported to PDF
-fn scatter_plot_pdf() -> Result<()> {
+fn scatter_plot_pdf() -> PlotResult<()> {
     // Generate some random-looking data
     let x: Vec<f64> = (0..30).map(|i| i as f64 * 0.3).collect();
     let y: Vec<f64> = x.iter().map(|&x| x * 0.5 + (x * 3.0).sin() * 0.5).collect();
 
     Plot::new()
         .scatter(&x, &y)
-        .color(Color::new(214, 39, 40))
+        .color(Color::from_rgb(214, 39, 40))
         .title("Scatter Plot (PDF)")
         .xlabel("X")
         .ylabel("Y")
@@ -58,13 +58,13 @@ fn scatter_plot_pdf() -> Result<()> {
 }
 
 /// Bar chart exported to PDF
-fn bar_chart_pdf() -> Result<()> {
+fn bar_chart_pdf() -> PlotResult<()> {
     let categories = vec!["Q1", "Q2", "Q3", "Q4"];
     let values = vec![25.0, 45.0, 30.0, 55.0];
 
     Plot::new()
         .bar(&categories, &values)
-        .color(Color::new(44, 160, 44))
+        .color(Color::from_rgb(44, 160, 44))
         .title("Quarterly Sales (PDF)")
         .xlabel("Quarter")
         .ylabel("Sales ($K)")
@@ -75,17 +75,17 @@ fn bar_chart_pdf() -> Result<()> {
 }
 
 /// Multi-series plot exported to PDF
-fn multi_series_pdf() -> Result<()> {
+fn multi_series_pdf() -> PlotResult<()> {
     let x: Vec<f64> = (0..40).map(|i| i as f64 * 0.1).collect();
     let y1: Vec<f64> = x.iter().map(|&x| x.sin()).collect();
     let y2: Vec<f64> = x.iter().map(|&x| x.cos()).collect();
 
     Plot::new()
         .line(&x, &y1)
-        .color(Color::new(31, 119, 180))
+        .color(Color::from_rgb(31, 119, 180))
         .label("sin(x)")
         .line(&x, &y2)
-        .color(Color::new(255, 127, 14))
+        .color(Color::from_rgb(255, 127, 14))
         .label("cos(x)")
         .title("Trigonometric Functions (PDF)")
         .xlabel("X (radians)")

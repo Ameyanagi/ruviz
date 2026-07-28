@@ -4,7 +4,7 @@
 
 use ruviz::prelude::*;
 
-fn main() -> Result<()> {
+fn main() -> PlotResult<()> {
     // Create sample data
     let x: Vec<f64> = (0..20).map(|i| i as f64 * 0.5).collect();
     let y: Vec<f64> = x.iter().map(|&xi| xi * xi / 10.0).collect();

@@ -50,6 +50,7 @@
 //! ```
 
 use super::data::{PlotData, ReactiveValue};
+use super::types::SeriesStyleProps;
 use crate::render::{Color, LineStyle, MarkerStyle};
 
 /// Extension trait providing a generic conditional combinator for fluent builders.
@@ -84,7 +85,6 @@ pub trait BuilderWhen: Sized {
 
 impl BuilderWhen for super::Plot {}
 impl<C> BuilderWhen for PlotBuilder<C> where C: crate::plots::PlotConfig + Clone {}
-impl BuilderWhen for super::series_builders::PlotSeriesBuilder {}
 impl BuilderWhen for super::series_builders::SeriesGroupBuilder {}
 impl BuilderWhen for crate::core::subplot::SubplotFigure {}
 impl BuilderWhen for crate::core::config::PlotConfigBuilder {}
@@ -94,8 +94,8 @@ impl BuilderWhen for crate::interactive::window::InteractiveWindowBuilder {}
 
 /// Trait for types that can be converted to a finalized [`Plot`](super::Plot)
 ///
-/// This trait enables uniform handling of all builder types (`Plot`, `PlotBuilder<C>`,
-/// `PlotSeriesBuilder`) and allows functions to accept any builder generically.
+/// This trait enables uniform handling of both builder types (`Plot` and
+/// `PlotBuilder<C>`) and allows functions to accept any builder generically.
 ///
 /// # When to Use
 ///
@@ -114,8 +114,6 @@ impl BuilderWhen for crate::interactive::window::InteractiveWindowBuilder {}
 ///
 /// // Works with PlotBuilder
 /// save_with_title(Plot::new().kde(&data), "KDE Plot")?;
-///
-/// // Works with PlotSeriesBuilder
 /// save_with_title(Plot::new().line(&x, &y), "Line Plot")?;
 /// ```
 ///
@@ -210,6 +208,18 @@ macro_rules! impl_terminal_methods {
                 self.finalize().save_pdf(path)
             }
 
+            /// Save to PDF file with an explicit `(width_mm, height_mm)` page size.
+            ///
+            /// Finalizes the series before saving.
+            #[cfg(all(feature = "pdf", not(target_arch = "wasm32")))]
+            pub fn save_pdf_with_size<P: AsRef<std::path::Path>>(
+                self,
+                path: P,
+                size: Option<(f64, f64)>,
+            ) -> crate::core::Result<()> {
+                self.finalize().save_pdf_with_size(path, size)
+            }
+
             /// Save with specific dimensions
             ///
             /// Finalizes the series before saving.
@@ -225,12 +235,11 @@ macro_rules! impl_terminal_methods {
 
             impl_series_continuation_methods!(self.finalize());
 
-            /// Set legend position
-            ///
-            /// Finalizes the series and sets legend position on the resulting Plot.
-            pub fn legend_position(self, position: crate::core::LegendPosition) -> super::Plot {
-                self.finalize().legend_position(position)
-            }
+            // NOTE: `legend_position` deliberately lives on the generic
+            // `impl<C> PlotBuilder<C>` block (next to `legend` and `legend_best`)
+            // rather than here. Defining it per config type is what let it drift
+            // into returning `Plot` instead of `Self` and silently ending the
+            // builder chain; a single generic definition makes that impossible.
 
             /// Finish configuring this series and return to the main Plot
             ///
@@ -307,6 +316,83 @@ macro_rules! impl_inset_builder_methods {
     };
 }
 
+/// Generate the four colour-key setters for every plot type that draws one.
+///
+/// A colour key is the whole reading of a heatmap, a contour, a hexbin or a
+/// magnitude-coloured quiver, so all four spell it identically. Writing the
+/// setters by hand is what let heatmap and quiver ship with a colorbar their
+/// builders could not reach while contour and hexbin exposed two of the four —
+/// generating them from one list makes that divergence impossible.
+///
+/// The four `*Config` types all carry `colorbar: bool`,
+/// `colorbar_label: Option<String>`, `colorbar_tick_font_size: Option<f32>` and
+/// `colorbar_label_font_size: Option<f32>`; the font sizes are normalised here
+/// so one plot type cannot accept a 0 pt caption that another rejects.
+macro_rules! impl_colorbar_builder_methods {
+    ($(($config:ty, $series_name:literal, $reads:literal)),+ $(,)?) => {
+        $(
+            impl PlotBuilder<$config> {
+                #[doc = concat!("Show or hide the colorbar. It is on by default, because ", $reads, ".")]
+                pub fn colorbar(mut self, show: bool) -> Self {
+                    self.config.colorbar = show;
+                    self
+                }
+
+                #[doc = concat!(
+                    "Caption for the colorbar — what this ",
+                    $series_name,
+                    "'s colours are measuring."
+                )]
+                ///
+                /// The caption is drawn rotated a quarter turn beside the bar.
+                pub fn colorbar_label<S: Into<String>>(mut self, label: S) -> Self {
+                    self.config.colorbar_label = Some(label.into());
+                    self
+                }
+
+                /// Set the colorbar tick font size, in points.
+                ///
+                /// Leave it unset to follow the figure's theme.
+                pub fn colorbar_tick_font_size(mut self, size: f32) -> Self {
+                    self.config.colorbar_tick_font_size = Some(size.max(1.0));
+                    self
+                }
+
+                /// Set the colorbar caption font size, in points.
+                ///
+                /// Leave it unset to follow the figure's theme.
+                pub fn colorbar_label_font_size(mut self, size: f32) -> Self {
+                    self.config.colorbar_label_font_size = Some(size.max(1.0));
+                    self
+                }
+            }
+        )+
+    };
+}
+
+impl_colorbar_builder_methods!(
+    (
+        crate::plots::heatmap::HeatmapConfig,
+        "heatmap",
+        "the colour of a cell is the whole reading and nothing else decodes it"
+    ),
+    (
+        crate::plots::ContourConfig,
+        "contour",
+        "the colour of a band is the whole reading and nothing else decodes it"
+    ),
+    (
+        crate::plots::continuous::hexbin::HexbinConfig,
+        "hexbin",
+        "the colour of a hexagon is the whole reading and nothing else decodes it"
+    ),
+    (
+        crate::plots::QuiverConfig,
+        "quiver",
+        "an arrow's colour is the only thing that reports its magnitude"
+    ),
+);
+
 /// Marker type for plot input data
 ///
 /// This enum captures the different input types that plot series can have.
@@ -315,6 +401,8 @@ macro_rules! impl_inset_builder_methods {
 pub enum PlotInput {
     /// Single 1D data array (for KDE, histogram, ECDF, etc.)
     Single(Vec<f64>),
+    /// Single 1D data array from a source-backed value (histogram, box plot).
+    SingleSource(super::PlotData),
     /// Paired X-Y data (for line, scatter, etc.)
     XY(Vec<f64>, Vec<f64>),
     /// Paired X-Y data from source-backed plot values.
@@ -342,6 +430,21 @@ pub enum PlotInput {
         u: Vec<f64>,
         v: Vec<f64>,
     },
+    /// X/Y data with optional error magnitudes (error bar series).
+    ErrorBars {
+        x: super::PlotData,
+        y: super::PlotData,
+        x_errors: Option<super::PlotData>,
+        y_errors: Option<super::PlotData>,
+    },
+    /// Live X/Y buffer read at render time (streaming line and scatter series).
+    Streaming(crate::data::StreamingXY),
+    /// A hierarchical clustering result (dendrogram series).
+    Linkage(crate::stats::clustering::Linkage),
+    /// N named value series over one shared axis (grouped bar, stacked bar,
+    /// stacked area). The axis is category names for the bar charts and
+    /// numeric x positions for stacked area.
+    MultiSeries(super::types::MultiSeriesInput),
 }
 
 impl PlotInput {
@@ -349,13 +452,45 @@ impl PlotInput {
     pub fn point_count(&self) -> usize {
         match self {
             PlotInput::Single(data) => data.len(),
+            PlotInput::SingleSource(data) => data.len(),
             PlotInput::XY(x, _) => x.len(),
             PlotInput::XYSource(x, _) => x.len(),
             PlotInput::Grid2D { x, y, .. } => x.len() * y.len(),
             PlotInput::Categorical { values, .. } => values.len(),
             PlotInput::CategoricalSource { values, .. } => values.len(),
             PlotInput::Quiver { x, .. } => x.len(),
+            PlotInput::ErrorBars { x, .. } => x.len(),
+            PlotInput::Streaming(stream) => stream.len(),
+            PlotInput::MultiSeries(input) => input.point_count(),
+            // One "point" per merge in the tree, which is what the renderer draws.
+            PlotInput::Linkage(linkage) => linkage.matrix.len(),
         }
+    }
+}
+
+/// Resolve an X/Y-shaped [`PlotInput`] into the pair of [`PlotData`] lanes that
+/// line and scatter series render from.
+///
+/// Streaming input is the same series with a live buffer attached, so the buffer
+/// is recorded on `style` here rather than in a second series constructor — that
+/// keeps `line_streaming` and `line` on exactly one code path.
+fn resolve_xy_input(input: &PlotInput, style: &mut SeriesStyle) -> (PlotData, PlotData) {
+    match input {
+        PlotInput::XY(x, y) => (PlotData::Static(x.clone()), PlotData::Static(y.clone())),
+        PlotInput::XYSource(x, y) => (x.clone(), y.clone()),
+        PlotInput::Single(y) => {
+            // Generate x values as indices
+            let x: Vec<f64> = (0..y.len()).map(|i| i as f64).collect();
+            (PlotData::Static(x), PlotData::Static(y.clone()))
+        }
+        PlotInput::Streaming(stream) => {
+            style.streaming_source = Some(stream.clone());
+            (
+                PlotData::Streaming(stream.x().clone()),
+                PlotData::Streaming(stream.y().clone()),
+            )
+        }
+        _ => (PlotData::Static(vec![]), PlotData::Static(vec![])),
     }
 }
 
@@ -394,30 +529,13 @@ fn validate_quiver_input(x: &[f64], y: &[f64], u: &[f64], v: &[f64]) -> crate::c
 pub struct SeriesStyle {
     /// Series label for legend
     pub label: Option<String>,
-    /// Series color
-    pub color: Option<Color>,
-    /// Reactive series color source
-    pub color_source: Option<ReactiveValue<Color>>,
-    /// Line width override
-    pub line_width: Option<f32>,
-    /// Reactive line width source
-    pub line_width_source: Option<ReactiveValue<f32>>,
-    /// Line style override
-    pub line_style: Option<LineStyle>,
-    /// Reactive line style source
-    pub line_style_source: Option<ReactiveValue<LineStyle>>,
-    /// Marker style (for scatter-like plots)
-    pub marker_style: Option<MarkerStyle>,
-    /// Reactive marker style source
-    pub marker_style_source: Option<ReactiveValue<MarkerStyle>>,
-    /// Marker size
-    pub marker_size: Option<f32>,
-    /// Reactive marker size source
-    pub marker_size_source: Option<ReactiveValue<f32>>,
-    /// Alpha/transparency (0.0 = transparent, 1.0 = opaque)
-    pub alpha: Option<f32>,
-    /// Reactive alpha/transparency source
-    pub alpha_source: Option<ReactiveValue<f32>>,
+    /// The reactive style properties, declared once by
+    /// [`series_style_properties!`](super::types::SeriesStyleProps).
+    ///
+    /// `PlotSeries` holds the same type, and building a series moves this
+    /// straight across — so the two cannot come to disagree about what a
+    /// property is or what setting it means.
+    pub(crate) props: SeriesStyleProps,
     /// Y-axis error bar values
     pub y_errors: Option<crate::plots::error::ErrorValues>,
     /// X-axis error bar values
@@ -426,86 +544,8 @@ pub struct SeriesStyle {
     pub error_config: Option<crate::plots::error::ErrorBarConfig>,
     /// Inset placement for non-Cartesian series in mixed plots.
     pub inset_layout: Option<super::InsetLayout>,
-}
-
-impl SeriesStyle {
-    pub(crate) fn set_color_source_value(&mut self, color: ReactiveValue<Color>) {
-        match color {
-            ReactiveValue::Static(color) => {
-                self.color = Some(color);
-                self.color_source = None;
-            }
-            source => {
-                self.color = None;
-                self.color_source = Some(source);
-            }
-        }
-    }
-
-    pub(crate) fn set_line_width_source_value(&mut self, width: ReactiveValue<f32>) {
-        match width {
-            ReactiveValue::Static(width) => {
-                self.line_width = Some(width.max(0.1));
-                self.line_width_source = None;
-            }
-            source => {
-                self.line_width = None;
-                self.line_width_source = Some(source);
-            }
-        }
-    }
-
-    pub(crate) fn set_line_style_source_value(&mut self, style: ReactiveValue<LineStyle>) {
-        match style {
-            ReactiveValue::Static(style) => {
-                self.line_style = Some(style);
-                self.line_style_source = None;
-            }
-            source => {
-                self.line_style = None;
-                self.line_style_source = Some(source);
-            }
-        }
-    }
-
-    pub(crate) fn set_marker_style_source_value(&mut self, style: ReactiveValue<MarkerStyle>) {
-        match style {
-            ReactiveValue::Static(style) => {
-                self.marker_style = Some(style);
-                self.marker_style_source = None;
-            }
-            source => {
-                self.marker_style = None;
-                self.marker_style_source = Some(source);
-            }
-        }
-    }
-
-    pub(crate) fn set_marker_size_source_value(&mut self, size: ReactiveValue<f32>) {
-        match size {
-            ReactiveValue::Static(size) => {
-                self.marker_size = Some(size.max(0.1));
-                self.marker_size_source = None;
-            }
-            source => {
-                self.marker_size = None;
-                self.marker_size_source = Some(source);
-            }
-        }
-    }
-
-    pub(crate) fn set_alpha_source_value(&mut self, alpha: ReactiveValue<f32>) {
-        match alpha {
-            ReactiveValue::Static(alpha) => {
-                self.alpha = Some(alpha.clamp(0.0, 1.0));
-                self.alpha_source = None;
-            }
-            source => {
-                self.alpha = None;
-                self.alpha_source = Some(source);
-            }
-        }
-    }
+    /// Live buffer this series re-reads at render time (streaming series only).
+    pub streaming_source: Option<crate::data::StreamingXY>,
 }
 
 /// Generic plot builder for trait-based plot types
@@ -596,8 +636,7 @@ where
     ///     .save("colored.png")?;
     /// ```
     pub fn color(mut self, color: Color) -> Self {
-        self.style.color = Some(color);
-        self.style.color_source = None;
+        self.style.props.color.set(color.into());
         self
     }
 
@@ -606,7 +645,7 @@ where
     where
         S: Into<ReactiveValue<Color>>,
     {
-        self.style.set_color_source_value(color.into());
+        self.style.props.color.set(color.into());
         self
     }
 
@@ -621,8 +660,7 @@ where
     ///     .save("thick.png")?;
     /// ```
     pub fn line_width(mut self, width: f32) -> Self {
-        self.style.line_width = Some(width.max(0.1));
-        self.style.line_width_source = None;
+        self.style.props.line_width.set(width.into());
         self
     }
 
@@ -631,7 +669,7 @@ where
     where
         S: Into<ReactiveValue<f32>>,
     {
-        self.style.set_line_width_source_value(width.into());
+        self.style.props.line_width.set(width.into());
         self
     }
 
@@ -646,8 +684,7 @@ where
     ///     .save("dashed.png")?;
     /// ```
     pub fn line_style(mut self, style: LineStyle) -> Self {
-        self.style.line_style = Some(style);
-        self.style.line_style_source = None;
+        self.style.props.line_style.set(style.into());
         self
     }
 
@@ -656,7 +693,7 @@ where
     where
         S: Into<ReactiveValue<LineStyle>>,
     {
-        self.style.set_line_style_source_value(style.into());
+        self.style.props.line_style.set(style.into());
         self
     }
 
@@ -673,8 +710,7 @@ where
     ///     .save("transparent.png")?;
     /// ```
     pub fn alpha(mut self, alpha: f32) -> Self {
-        self.style.alpha = Some(alpha.clamp(0.0, 1.0));
-        self.style.alpha_source = None;
+        self.style.props.alpha.set(alpha.into());
         self
     }
 
@@ -683,7 +719,7 @@ where
     where
         S: Into<ReactiveValue<f32>>,
     {
-        self.style.set_alpha_source_value(alpha.into());
+        self.style.props.alpha.set(alpha.into());
         self
     }
 
@@ -812,6 +848,10 @@ where
 
     /// Enable legend with automatic best position
     ///
+    /// Equivalent to `legend(LegendPosition::Best)`. Available on every
+    /// `PlotBuilder<C>`, exactly like [`legend`](Self::legend) and
+    /// [`legend_position`](Self::legend_position).
+    ///
     /// This method forwards to the inner Plot.
     pub fn legend_best(mut self) -> Self {
         self.plot = self.plot.legend_best();
@@ -820,9 +860,40 @@ where
 
     /// Enable legend at a specific position
     ///
-    /// This method forwards to the inner Plot.
-    pub fn legend(mut self, position: crate::core::Position) -> Self {
+    /// Accepts a [`LegendPosition`](crate::core::LegendPosition) (canonical) or
+    /// the deprecated [`Position`](crate::core::Position), which converts
+    /// losslessly. This method forwards to the inner Plot.
+    pub fn legend(mut self, position: impl Into<crate::core::LegendPosition>) -> Self {
         self.plot = self.plot.legend(position);
+        self
+    }
+
+    /// Enable legend at a specific position
+    ///
+    /// Long-form spelling of [`legend`](Self::legend), matching
+    /// [`Plot::legend_position`](super::Plot::legend_position) so the same call
+    /// works before and after a series method. Accepts a
+    /// [`LegendPosition`](crate::core::LegendPosition) (canonical) or the
+    /// deprecated [`Position`](crate::core::Position), which converts losslessly.
+    ///
+    /// Returns `Self`, so the chain continues into further series or config
+    /// calls:
+    ///
+    /// ```rust,no_run
+    /// use ruviz::prelude::*;
+    ///
+    /// let x = vec![0.0, 1.0, 2.0];
+    /// let y = vec![0.0, 1.0, 0.5];
+    ///
+    /// Plot::new()
+    ///     .line(&x, &y)
+    ///     .legend_position(LegendPosition::UpperRight)
+    ///     .line_width(2.0) // still on the builder
+    ///     .save("legend.png")?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn legend_position(mut self, position: impl Into<crate::core::LegendPosition>) -> Self {
+        self.plot = self.plot.legend_position(position.into());
         self
     }
 
@@ -956,6 +1027,14 @@ where
     /// This method forwards to the inner Plot.
     pub fn tick_sides(mut self, sides: crate::core::TickSides) -> Self {
         self.plot = self.plot.tick_sides(sides);
+        self
+    }
+
+    /// How the x tick labels are oriented when they would collide.
+    ///
+    /// This method forwards to the inner Plot.
+    pub fn xtick_rotation(mut self, rotation: crate::render::XTickRotation) -> Self {
+        self.plot = self.plot.xtick_rotation(rotation);
         self
     }
 
@@ -1268,21 +1347,29 @@ where
 // =============================================================================
 
 impl PlotBuilder<crate::plots::KdeConfig> {
-    /// Set bandwidth for KDE
+    /// Set the bandwidth selection method.
     ///
-    /// Bandwidth controls the smoothness of the density estimate.
-    /// If not set, Scott's rule is used for automatic bandwidth selection.
+    /// Bandwidth controls the smoothness of the density estimate. Defaults to
+    /// Scott's rule. Takes the same argument as
+    /// [`PlotBuilder::<ViolinConfig>::bandwidth`](PlotBuilder::bandwidth):
+    /// a [`BandwidthMethod`](crate::plots::BandwidthMethod), or a bare number
+    /// for a fixed bandwidth.
     ///
     /// # Example
     ///
     /// ```rust,ignore
     /// Plot::new()
     ///     .kde(&data)
-    ///     .bandwidth(0.5)
+    ///     .bandwidth(0.5)                            // fixed
+    ///     .save("kde.png")?;
+    ///
+    /// Plot::new()
+    ///     .kde(&data)
+    ///     .bandwidth(BandwidthMethod::Silverman)     // rule
     ///     .save("kde.png")?;
     /// ```
-    pub fn bandwidth(mut self, bw: f64) -> Self {
-        self.config.bandwidth = Some(bw);
+    pub fn bandwidth(mut self, bw: impl Into<crate::plots::BandwidthMethod>) -> Self {
+        self.config.bandwidth = bw.into();
         self
     }
 
@@ -1323,6 +1410,10 @@ impl PlotBuilder<crate::plots::KdeConfig> {
     /// Set KDE line width
     ///
     /// This is a config-level setting separate from the series style line_width.
+    #[deprecated(
+        since = "0.6.0",
+        note = "use `line_width`, the spelling shared by every builder; unlike `kde_line_width` it is honoured by every backend"
+    )]
     pub fn kde_line_width(mut self, width: f32) -> Self {
         self.config.line_width = width.max(0.1);
         self
@@ -1424,6 +1515,10 @@ impl PlotBuilder<crate::plots::EcdfConfig> {
     }
 
     /// Set line width for ECDF
+    #[deprecated(
+        since = "0.6.0",
+        note = "use `line_width`, the spelling shared by every builder; unlike `ecdf_line_width` it is honoured by every backend"
+    )]
     pub fn ecdf_line_width(mut self, width: f32) -> Self {
         self.config.line_width = width.max(0.1);
         self
@@ -1502,13 +1597,28 @@ impl PlotBuilder<crate::plots::ContourConfig> {
         self
     }
 
-    /// Set colormap by name (e.g., "viridis", "plasma", "magma")
-    pub fn colormap_name(mut self, name: &str) -> Self {
-        self.config.cmap = name.to_string();
+    /// Set the colormap.
+    ///
+    /// Accepts a name such as `"viridis"` or a [`ColorMap`](crate::render::ColorMap) value.
+    pub fn cmap(mut self, cmap: impl Into<crate::render::ColorMapSpec>) -> Self {
+        self.config.cmap = cmap.into().into_name();
         self
     }
 
+    /// Set colormap by name (e.g., "viridis", "plasma", "magma")
+    #[deprecated(
+        since = "0.6.0",
+        note = "renamed: use `cmap(name)`, which also accepts a `ColorMap` value"
+    )]
+    pub fn colormap_name(self, name: &str) -> Self {
+        self.cmap(name)
+    }
+
     /// Set contour line width
+    #[deprecated(
+        since = "0.6.0",
+        note = "use `line_width`, the spelling shared by every builder; unlike `contour_line_width` it is honoured by every backend"
+    )]
     pub fn contour_line_width(mut self, width: f32) -> Self {
         self.config.line_width = width.max(0.1);
         self
@@ -1539,32 +1649,9 @@ impl PlotBuilder<crate::plots::ContourConfig> {
         self
     }
 
-    /// Enable/disable colorbar for the contour plot
-    ///
-    /// When enabled, a colorbar showing the value-to-color mapping is displayed
-    /// to the right of the contour plot.
-    ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// Plot::new()
-    ///     .contour(&x, &y, &z)
-    ///     .colorbar(true)
-    ///     .colorbar_label("Temperature (°C)")
-    ///     .save("contour_with_colorbar.png")?;
-    /// ```
-    pub fn colorbar(mut self, show: bool) -> Self {
-        self.config.colorbar = show;
-        self
-    }
-
-    /// Set the colorbar label
-    ///
-    /// The label is displayed rotated 90° next to the colorbar.
-    pub fn colorbar_label(mut self, label: &str) -> Self {
-        self.config.colorbar_label = Some(label.to_string());
-        self
-    }
+    // `colorbar`, `colorbar_label`, `colorbar_tick_font_size` and
+    // `colorbar_label_font_size` come from `impl_colorbar_builder_methods!`,
+    // which every plot type that draws a colour key shares.
 
     /// Finalize the contour series and add it to the plot
     fn finalize(self) -> super::Plot {
@@ -1664,10 +1751,24 @@ impl PlotBuilder<crate::plots::PieConfig> {
         self
     }
 
-    /// Set label font size
-    pub fn font_size(mut self, size: f32) -> Self {
+    /// Set slice label font size in typographic points
+    ///
+    /// Named for the thing it changes, matching the neighbouring
+    /// [`label_distance`](Self::label_distance) and
+    /// [`show_labels`](Self::show_labels), and distinct from the plot-wide
+    /// `Plot::font_size` and [`legend_font_size`](Self::legend_font_size).
+    pub fn label_font_size(mut self, size: f32) -> Self {
         self.config.label_font_size = size;
         self
+    }
+
+    /// Set label font size
+    #[deprecated(
+        since = "0.6.0",
+        note = "ambiguous against the plot-wide `Plot::font_size`: use `label_font_size`, which sets the pie slice label size"
+    )]
+    pub fn font_size(self, size: f32) -> Self {
+        self.label_font_size(size)
     }
 
     /// Set label distance from center (as fraction of radius)
@@ -1724,19 +1825,23 @@ impl PlotBuilder<crate::plots::RadarConfig> {
     ///     .save("radar.png")?;
     /// ```
     pub fn series<V: crate::data::Data1D<f64>>(mut self, values: &V) -> Self {
-        let values_vec: Vec<f64> = (0..values.len())
-            .filter_map(|i| values.get(i).copied())
-            .collect();
+        // Contiguous storage copies in one memcpy; anything else keeps the
+        // per-element path. Same values either way.
+        let values_vec: Vec<f64> = match values.as_slice() {
+            Some(slice) => slice.to_vec(),
+            None => (0..values.len())
+                .filter_map(|i| values.get(i).copied())
+                .collect(),
+        };
 
         // Capture any pending label from the previous .label() call for the PREVIOUS series
         // Pattern: .series([...]).label("A").series([...]).label("B")
         // When the second .series() is called, we capture "A" for the first series
-        if let Some(label) = self.style.label.take() {
-            if let Some(last) = self.config.series_labels.last_mut() {
-                if last.is_empty() {
-                    *last = label;
-                }
-            }
+        if let Some(label) = self.style.label.take()
+            && let Some(last) = self.config.series_labels.last_mut()
+            && last.is_empty()
+        {
+            *last = label;
         }
 
         // Store series data in the input
@@ -1762,13 +1867,14 @@ impl PlotBuilder<crate::plots::RadarConfig> {
     /// Set label for the current (most recently added) series
     ///
     /// This label appears in the legend for this specific series.
-    pub fn series_label(mut self, name: &str) -> Self {
+    pub fn series_label<S: Into<String>>(mut self, name: S) -> Self {
+        let name = name.into();
         // Update the label for the most recently added series
         if let Some(last) = self.config.series_labels.last_mut() {
-            *last = name.to_string();
+            last.clone_from(&name);
         }
         // Also update the style label for backward compatibility
-        self.style.label = Some(name.to_string());
+        self.style.label = Some(name);
         self
     }
 
@@ -1796,10 +1902,10 @@ impl PlotBuilder<crate::plots::RadarConfig> {
     /// Plot::new()
     ///     .radar(&["A", "B", "C"])
     ///     .add_series("Series 1", &[1.0, 2.0, 3.0])
-    ///         .with_color(Color::RED)
-    ///         .with_fill_alpha(0.4)
+    ///         .series_color(Color::RED)
+    ///         .series_fill_alpha(0.4)
     ///     .add_series("Series 2", &[3.0, 2.0, 1.0])
-    ///         .with_color(Color::BLUE)
+    ///         .series_color(Color::BLUE)
     ///     .save("styled.png")?;
     /// ```
     pub fn add_series<S, V>(mut self, name: S, values: &V) -> Self
@@ -1807,9 +1913,14 @@ impl PlotBuilder<crate::plots::RadarConfig> {
         S: Into<String>,
         V: crate::data::Data1D<f64>,
     {
-        let values_vec: Vec<f64> = (0..values.len())
-            .filter_map(|i| values.get(i).copied())
-            .collect();
+        // Contiguous storage copies in one memcpy; anything else keeps the
+        // per-element path. Same values either way.
+        let values_vec: Vec<f64> = match values.as_slice() {
+            Some(slice) => slice.to_vec(),
+            None => (0..values.len())
+                .filter_map(|i| values.get(i).copied())
+                .collect(),
+        };
 
         let name_string = name.into();
 
@@ -1847,10 +1958,14 @@ impl PlotBuilder<crate::plots::RadarConfig> {
         self
     }
 
-    /// Set color for the current (most recently added) series
+    /// Set the colour of the current (most recently added) radar series
     ///
-    /// This method applies to the series added by the most recent `add_series()` call.
-    /// If no series has been added, this is a no-op.
+    /// Applies to the series added by the most recent `add_series()` call, and
+    /// pairs with [`series_label`](Self::series_label). If no series has been
+    /// added, this is a no-op.
+    ///
+    /// Not to be confused with the chart-wide [`color`](Self::color), which sets
+    /// the whole radar series' base colour.
     ///
     /// # Example
     ///
@@ -1858,25 +1973,36 @@ impl PlotBuilder<crate::plots::RadarConfig> {
     /// Plot::new()
     ///     .radar(&["A", "B", "C"])
     ///     .add_series("Red Series", &[1.0, 2.0, 3.0])
-    ///         .with_color(Color::RED)
+    ///         .series_color(Color::RED)
     ///     .save("red.png")?;
     /// ```
-    pub fn with_color(mut self, color: Color) -> Self {
-        if let Some(idx) = self.config.current_series_idx {
-            if let Some(ref mut colors) = self.config.colors {
-                if let Some(c) = colors.get_mut(idx) {
-                    *c = color;
-                }
-            }
+    pub fn series_color(mut self, color: Color) -> Self {
+        if let Some(idx) = self.config.current_series_idx
+            && let Some(ref mut colors) = self.config.colors
+            && let Some(c) = colors.get_mut(idx)
+        {
+            *c = color;
         }
         self
     }
 
-    /// Set fill alpha for the current (most recently added) series
+    /// Set color for the current (most recently added) series
+    #[deprecated(
+        since = "0.6.0",
+        note = "renamed for consistency with `series_label`: use `series_color`"
+    )]
+    pub fn with_color(self, color: Color) -> Self {
+        self.series_color(color)
+    }
+
+    /// Set the fill alpha of the current (most recently added) radar series
     ///
-    /// This method applies to the series added by the most recent `add_series()` call.
-    /// Values range from 0.0 (transparent) to 1.0 (opaque).
-    /// If no series has been added, this is a no-op.
+    /// Applies to the series added by the most recent `add_series()` call.
+    /// Values range from 0.0 (transparent) to 1.0 (opaque). If no series has
+    /// been added, this is a no-op.
+    ///
+    /// Not to be confused with the chart-wide
+    /// [`fill_alpha`](Self::fill_alpha).
     ///
     /// # Example
     ///
@@ -1884,22 +2010,34 @@ impl PlotBuilder<crate::plots::RadarConfig> {
     /// Plot::new()
     ///     .radar(&["A", "B", "C"])
     ///     .add_series("Transparent", &[1.0, 2.0, 3.0])
-    ///         .with_fill_alpha(0.2)
+    ///         .series_fill_alpha(0.2)
     ///     .save("transparent.png")?;
     /// ```
-    pub fn with_fill_alpha(mut self, alpha: f32) -> Self {
-        if let Some(idx) = self.config.current_series_idx {
-            if let Some(a) = self.config.per_series_fill_alphas.get_mut(idx) {
-                *a = Some(alpha.clamp(0.0, 1.0));
-            }
+    pub fn series_fill_alpha(mut self, alpha: f32) -> Self {
+        if let Some(idx) = self.config.current_series_idx
+            && let Some(a) = self.config.per_series_fill_alphas.get_mut(idx)
+        {
+            *a = Some(alpha.clamp(0.0, 1.0));
         }
         self
     }
 
-    /// Set line width for the current (most recently added) series
+    /// Set fill alpha for the current (most recently added) series
+    #[deprecated(
+        since = "0.6.0",
+        note = "renamed for consistency with `series_label`: use `series_fill_alpha`"
+    )]
+    pub fn with_fill_alpha(self, alpha: f32) -> Self {
+        self.series_fill_alpha(alpha)
+    }
+
+    /// Set the line width of the current (most recently added) radar series
     ///
-    /// This method applies to the series added by the most recent `add_series()` call.
-    /// If no series has been added, this is a no-op.
+    /// Applies to the series added by the most recent `add_series()` call, in
+    /// typographic points. If no series has been added, this is a no-op.
+    ///
+    /// Not to be confused with the chart-wide
+    /// [`radar_line_width`](Self::radar_line_width).
     ///
     /// # Example
     ///
@@ -1907,21 +2045,31 @@ impl PlotBuilder<crate::plots::RadarConfig> {
     /// Plot::new()
     ///     .radar(&["A", "B", "C"])
     ///     .add_series("Thick Lines", &[1.0, 2.0, 3.0])
-    ///         .with_line_width(3.0)
+    ///         .series_line_width(3.0)
     ///     .save("thick.png")?;
     /// ```
-    pub fn with_line_width(mut self, width: f32) -> Self {
-        if let Some(idx) = self.config.current_series_idx {
-            if let Some(w) = self.config.per_series_line_widths.get_mut(idx) {
-                *w = Some(width.max(0.1));
-            }
+    pub fn series_line_width(mut self, width: f32) -> Self {
+        if let Some(idx) = self.config.current_series_idx
+            && let Some(w) = self.config.per_series_line_widths.get_mut(idx)
+        {
+            *w = Some(width.max(0.1));
         }
         self
     }
 
-    /// Set fill alpha for the current series
+    /// Set line width for the current (most recently added) series
+    #[deprecated(
+        since = "0.6.0",
+        note = "renamed for consistency with `series_label`: use `series_line_width`"
+    )]
+    pub fn with_line_width(self, width: f32) -> Self {
+        self.series_line_width(width)
+    }
+
+    /// Set the chart-wide fill alpha
     ///
-    /// Values range from 0.0 (transparent) to 1.0 (opaque).
+    /// Values range from 0.0 (transparent) to 1.0 (opaque). For a single
+    /// series, use [`series_fill_alpha`](Self::series_fill_alpha).
     pub fn fill_alpha(mut self, alpha: f32) -> Self {
         self.config.fill_alpha = alpha.clamp(0.0, 1.0);
         self
@@ -1955,12 +2103,11 @@ impl PlotBuilder<crate::plots::RadarConfig> {
     fn finalize(mut self) -> super::Plot {
         // Capture any pending label from the last .label() call for the last series
         // (since there's no subsequent .series() call to capture it)
-        if let Some(label) = self.style.label.take() {
-            if let Some(last) = self.config.series_labels.last_mut() {
-                if last.is_empty() {
-                    *last = label;
-                }
-            }
+        if let Some(label) = self.style.label.take()
+            && let Some(last) = self.config.series_labels.last_mut()
+            && last.is_empty()
+        {
+            *last = label;
         }
 
         // Parse series from the accumulated data
@@ -2048,6 +2195,30 @@ impl PlotBuilder<crate::plots::PolarPlotConfig> {
         self
     }
 
+    /// Show/hide the concentric rings of the polar grid.
+    pub fn show_rgrid(mut self, show: bool) -> Self {
+        self.config.show_rgrid = show;
+        self
+    }
+
+    /// Show/hide the radial spokes of the polar grid.
+    pub fn show_thetagrid(mut self, show: bool) -> Self {
+        self.config.show_thetagrid = show;
+        self
+    }
+
+    /// How many concentric rings — and radial labels — the grid has.
+    pub fn rgrid_count(mut self, count: usize) -> Self {
+        self.config.rgrid_count = count;
+        self
+    }
+
+    /// How many spokes — and angular labels — the grid has.
+    pub fn thetagrid_count(mut self, count: usize) -> Self {
+        self.config.thetagrid_count = count;
+        self
+    }
+
     /// Finalize the polar series and add it to the plot
     fn finalize(self) -> super::Plot {
         let (r, theta) = match &self.input {
@@ -2111,10 +2282,30 @@ impl PlotBuilder<crate::plots::ViolinConfig> {
         self
     }
 
-    /// Set violin width
-    pub fn width(mut self, width: f64) -> Self {
+    /// Set the violin body width, in data units
+    ///
+    /// This is the maximum width of the density silhouette measured on the
+    /// category axis, *not* a fraction of the category slot — that is
+    /// `box_width` on the boxen builder.
+    ///
+    /// ```rust,ignore
+    /// Plot::new()
+    ///     .violin(&data)
+    ///     .violin_width(0.8)
+    ///     .save("violin.png")?;
+    /// ```
+    pub fn violin_width(mut self, width: f64) -> Self {
         self.config.width = width.max(0.1);
         self
+    }
+
+    /// Set violin width
+    #[deprecated(
+        since = "0.6.0",
+        note = "ambiguous: `width` means something different on every plot type. Use `violin_width`, which sets the violin body width in data units"
+    )]
+    pub fn width(self, width: f64) -> Self {
+        self.violin_width(width)
     }
 
     /// Set horizontal orientation
@@ -2135,23 +2326,24 @@ impl PlotBuilder<crate::plots::ViolinConfig> {
         self
     }
 
-    /// Set category name for this violin
-    ///
-    /// The category name is displayed on the X-axis instead of numeric values.
-    /// This enables categorical axis mode for the plot.
-    ///
-    /// # Example
+    /// Choose how the KDE bandwidth is selected.
     ///
     /// ```rust,ignore
     /// Plot::new()
     ///     .violin(&data)
-    ///     .category("Group A")
+    ///     .bandwidth(BandwidthMethod::Silverman)
     ///     .save("violin.png")?;
     /// ```
-    pub fn category(mut self, name: &str) -> Self {
-        self.config.category = Some(name.to_string());
+    pub fn bandwidth(mut self, method: impl Into<crate::plots::BandwidthMethod>) -> Self {
+        self.config.bandwidth = method.into();
         self
     }
+
+    // `.category(..)` and `.x_position(..)` are not written here. They come from
+    // `impl_category_axis!` in series_internal.rs, which emits them for every
+    // categorical plot type at once — a hand-written copy here is exactly how
+    // violin ended up with a `.category()` that box plots and boxen plots did
+    // not have.
 
     /// Finalize the violin series and add it to the plot
     fn finalize(self) -> super::Plot {
@@ -2184,10 +2376,22 @@ impl PlotBuilder<crate::plots::BoxenConfig> {
         self
     }
 
-    /// Set the box width as a fraction of category spacing.
-    pub fn width(mut self, width: f64) -> Self {
+    /// Set the box width as a fraction of category spacing (0.1 – 1.0)
+    ///
+    /// A *fraction*, not data units — the violin builder's `violin_width` is
+    /// the data-unit knob.
+    pub fn box_width(mut self, width: f64) -> Self {
         self.config.width = width.clamp(0.1, 1.0);
         self
+    }
+
+    /// Set the box width as a fraction of category spacing.
+    #[deprecated(
+        since = "0.6.0",
+        note = "ambiguous: `width` means something different on every plot type. Use `box_width`, which sets the box width as a fraction of category spacing"
+    )]
+    pub fn width(self, width: f64) -> Self {
+        self.box_width(width)
     }
 
     /// Set the saturation gradient used across nested boxes.
@@ -2252,27 +2456,71 @@ impl_terminal_methods!(crate::plots::BoxenConfig);
 
 impl PlotBuilder<crate::plots::QuiverConfig> {
     /// Set the scale factor applied to arrow lengths.
-    pub fn scale(mut self, scale: f64) -> Self {
+    ///
+    /// Part of the `arrow_*` family: [`arrow_scale`](Self::arrow_scale),
+    /// [`arrow_width`](Self::arrow_width),
+    /// [`arrow_head_length`](Self::arrow_head_length),
+    /// [`arrow_head_width`](Self::arrow_head_width).
+    pub fn arrow_scale(mut self, scale: f64) -> Self {
         self.config.scale = scale.max(0.0);
         self
     }
 
-    /// Set the arrow stroke width in points.
-    pub fn width(mut self, width: f32) -> Self {
+    /// Set the scale factor applied to arrow lengths.
+    #[deprecated(
+        since = "0.6.0",
+        note = "ambiguous against the axis-scale setters `xscale`/`yscale`: use `arrow_scale`, which scales arrow lengths"
+    )]
+    pub fn scale(self, scale: f64) -> Self {
+        self.arrow_scale(scale)
+    }
+
+    /// Set the arrow shaft stroke width, in typographic points.
+    ///
+    /// A stroke width — unlike the violin builder's data-unit `violin_width`
+    /// or the boxen builder's fractional `box_width`.
+    pub fn arrow_width(mut self, width: f32) -> Self {
         self.config.width = width.max(0.1);
         self
     }
 
+    /// Set the arrow stroke width in points.
+    #[deprecated(
+        since = "0.6.0",
+        note = "ambiguous: `width` means something different on every plot type. Use `arrow_width`, which sets the arrow shaft stroke width in points"
+    )]
+    pub fn width(self, width: f32) -> Self {
+        self.arrow_width(width)
+    }
+
     /// Set the arrow head length as a fraction of arrow length.
-    pub fn headlength(mut self, headlength: f64) -> Self {
+    pub fn arrow_head_length(mut self, headlength: f64) -> Self {
         self.config.headlength = headlength.max(0.0);
         self
     }
 
+    /// Set the arrow head length as a fraction of arrow length.
+    #[deprecated(
+        since = "0.6.0",
+        note = "renamed for consistency with the rest of the `arrow_*` family: use `arrow_head_length`"
+    )]
+    pub fn headlength(self, headlength: f64) -> Self {
+        self.arrow_head_length(headlength)
+    }
+
     /// Set the arrow head width as a fraction of arrow length.
-    pub fn headwidth(mut self, headwidth: f64) -> Self {
+    pub fn arrow_head_width(mut self, headwidth: f64) -> Self {
         self.config.headwidth = headwidth.max(0.0);
         self
+    }
+
+    /// Set the arrow head width as a fraction of arrow length.
+    #[deprecated(
+        since = "0.6.0",
+        note = "renamed for consistency with the rest of the `arrow_*` family: use `arrow_head_width`"
+    )]
+    pub fn headwidth(self, headwidth: f64) -> Self {
+        self.arrow_head_width(headwidth)
     }
 
     /// Interpret `u` as angles in radians and `v` as magnitudes.
@@ -2294,8 +2542,10 @@ impl PlotBuilder<crate::plots::QuiverConfig> {
     }
 
     /// Set the colormap used when coloring arrows by magnitude.
-    pub fn cmap<S: Into<String>>(mut self, cmap: S) -> Self {
-        self.config.cmap = cmap.into();
+    ///
+    /// Accepts a name such as `"viridis"` or a [`ColorMap`](crate::render::ColorMap) value.
+    pub fn cmap(mut self, cmap: impl Into<crate::render::ColorMapSpec>) -> Self {
+        self.config.cmap = cmap.into().into_name();
         self
     }
 
@@ -2341,8 +2591,7 @@ impl PlotBuilder<crate::plots::basic::LineConfig> {
     pub fn marker(mut self, style: crate::render::MarkerStyle) -> Self {
         self.config.marker = Some(style);
         self.config.show_markers = true;
-        self.style.marker_style = Some(style);
-        self.style.marker_style_source = None;
+        self.style.props.marker_style.set(style.into());
         self
     }
 
@@ -2352,7 +2601,7 @@ impl PlotBuilder<crate::plots::basic::LineConfig> {
         S: Into<ReactiveValue<crate::render::MarkerStyle>>,
     {
         self.config.show_markers = true;
-        self.style.set_marker_style_source_value(style.into());
+        self.style.props.marker_style.set(style.into());
         self
     }
 
@@ -2362,8 +2611,7 @@ impl PlotBuilder<crate::plots::basic::LineConfig> {
     /// * `size` - Marker size in points (default: 6.0)
     pub fn marker_size(mut self, size: f32) -> Self {
         self.config.marker_size = size.max(0.1);
-        self.style.marker_size = Some(size.max(0.1));
-        self.style.marker_size_source = None;
+        self.style.props.marker_size.set(size.into());
         self
     }
 
@@ -2372,7 +2620,7 @@ impl PlotBuilder<crate::plots::basic::LineConfig> {
     where
         S: Into<ReactiveValue<f32>>,
     {
-        self.style.set_marker_size_source_value(size.into());
+        self.style.props.marker_size.set(size.into());
         self
     }
 
@@ -2392,41 +2640,59 @@ impl PlotBuilder<crate::plots::basic::LineConfig> {
 
     /// Set line style (solid, dashed, dotted, etc.)
     ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// Plot::new()
-    ///     .line(&x, &y)
-    ///     .style(LineStyle::Dashed)
-    ///     .save("dashed_line.png")?;
-    /// ```
-    pub fn style(mut self, line_style: crate::render::LineStyle) -> Self {
-        self.style.line_style = Some(line_style);
-        self.style.line_style_source = None;
-        self
+    /// Exactly equivalent to [`line_style`](Self::line_style), which is the
+    /// spelling every builder shares.
+    #[deprecated(
+        since = "0.6.0",
+        note = "ambiguous short alias: use `line_style`, the spelling shared by every builder"
+    )]
+    pub fn style(self, line_style: crate::render::LineStyle) -> Self {
+        self.line_style(line_style)
     }
 
     /// Set a reactive line style.
-    pub fn style_source<S>(mut self, line_style: S) -> Self
+    #[deprecated(
+        since = "0.6.0",
+        note = "ambiguous short alias: use `line_style_source`, the spelling shared by every builder"
+    )]
+    pub fn style_source<S>(self, line_style: S) -> Self
     where
         S: Into<ReactiveValue<crate::render::LineStyle>>,
     {
-        self.style.set_line_style_source_value(line_style.into());
+        self.line_style_source(line_style)
+    }
+
+    /// Set the marker edge colour
+    ///
+    /// Turns the edge on; see
+    /// [`LineConfig::marker_edge_color`](crate::plots::basic::LineConfig::marker_edge_color).
+    pub fn marker_edge_color(mut self, color: Color) -> Self {
+        self.config = std::mem::take(&mut self.config).marker_edge_color(color);
+        self
+    }
+
+    /// Set the marker edge width in points
+    ///
+    /// A positive width turns the edge on and `0.0` turns it off; see
+    /// [`LineConfig::marker_edge_width`](crate::plots::basic::LineConfig::marker_edge_width).
+    pub fn marker_edge_width(mut self, width: f32) -> Self {
+        self.config = std::mem::take(&mut self.config).marker_edge_width(width);
+        self
+    }
+
+    /// Show or hide the marker edge
+    ///
+    /// Line markers follow the same default scatter markers do — bare unless
+    /// asked otherwise; see
+    /// [`LineConfig::show_marker_edge`](crate::plots::basic::LineConfig::show_marker_edge).
+    pub fn show_marker_edge(mut self, show: bool) -> Self {
+        self.config = std::mem::take(&mut self.config).show_marker_edge(show);
         self
     }
 
     /// Finalize the line series and add it to the plot
-    fn finalize(self) -> super::Plot {
-        let (x_data, y_data) = match &self.input {
-            PlotInput::XY(x, y) => (PlotData::Static(x.clone()), PlotData::Static(y.clone())),
-            PlotInput::XYSource(x, y) => (x.clone(), y.clone()),
-            PlotInput::Single(y) => {
-                // Generate x values as indices
-                let x: Vec<f64> = (0..y.len()).map(|i| i as f64).collect();
-                (PlotData::Static(x), PlotData::Static(y.clone()))
-            }
-            _ => (PlotData::Static(vec![]), PlotData::Static(vec![])),
-        };
+    fn finalize(mut self) -> super::Plot {
+        let (x_data, y_data) = resolve_xy_input(&self.input, &mut self.style);
 
         self.plot
             .add_line_series(x_data, y_data, &self.config, self.style)
@@ -2453,8 +2719,7 @@ impl PlotBuilder<crate::plots::basic::ScatterConfig> {
     /// ```
     pub fn marker(mut self, style: crate::render::MarkerStyle) -> Self {
         self.config.marker = style;
-        self.style.marker_style = Some(style);
-        self.style.marker_style_source = None;
+        self.style.props.marker_style.set(style.into());
         self
     }
 
@@ -2463,7 +2728,7 @@ impl PlotBuilder<crate::plots::basic::ScatterConfig> {
     where
         S: Into<ReactiveValue<crate::render::MarkerStyle>>,
     {
-        self.style.set_marker_style_source_value(style.into());
+        self.style.props.marker_style.set(style.into());
         self
     }
 
@@ -2473,8 +2738,7 @@ impl PlotBuilder<crate::plots::basic::ScatterConfig> {
     /// * `size` - Marker size in points (default: 6.0)
     pub fn marker_size(mut self, size: f32) -> Self {
         self.config.size = size.max(0.1);
-        self.style.marker_size = Some(size.max(0.1));
-        self.style.marker_size_source = None;
+        self.style.props.marker_size.set(size.into());
         self
     }
 
@@ -2483,36 +2747,47 @@ impl PlotBuilder<crate::plots::basic::ScatterConfig> {
     where
         S: Into<ReactiveValue<f32>>,
     {
-        self.style.set_marker_size_source_value(size.into());
+        self.style.props.marker_size.set(size.into());
         self
     }
 
     /// Set marker edge width
     ///
+    /// A positive width turns the edge on and `0.0` turns it off. Delegates to
+    /// [`ScatterConfig::edge_width`](crate::plots::basic::ScatterConfig::edge_width)
+    /// so that rule lives in exactly one place.
+    ///
     /// # Arguments
-    /// * `width` - Edge width in points (default: 0.5)
+    /// * `width` - Edge width in points (default: 0.8)
     pub fn edge_width(mut self, width: f32) -> Self {
-        self.config.edge_width = width.max(0.0);
+        self.config = std::mem::take(&mut self.config).edge_width(width);
         self
     }
 
     /// Set marker edge color
+    ///
+    /// Turns the edge on; see
+    /// [`ScatterConfig::edge_color`](crate::plots::basic::ScatterConfig::edge_color).
     pub fn edge_color(mut self, color: Color) -> Self {
-        self.config.edge_color = Some(color);
+        self.config = std::mem::take(&mut self.config).edge_color(color);
+        self
+    }
+
+    /// Show or hide the marker edge
+    ///
+    /// Markers are bare by default; `.show_edge(true)` rims a filled marker
+    /// with its own fill darkened by 30%. A rim is drawn over the marker's
+    /// boundary, so it darkens overlapping neighbours and dominates markers of
+    /// a few points — see
+    /// [`ScatterConfig::show_edge`](crate::plots::basic::ScatterConfig::show_edge).
+    pub fn show_edge(mut self, show: bool) -> Self {
+        self.config = std::mem::take(&mut self.config).show_edge(show);
         self
     }
 
     /// Finalize the scatter series and add it to the plot
-    fn finalize(self) -> super::Plot {
-        let (x_data, y_data) = match &self.input {
-            PlotInput::XY(x, y) => (PlotData::Static(x.clone()), PlotData::Static(y.clone())),
-            PlotInput::XYSource(x, y) => (x.clone(), y.clone()),
-            PlotInput::Single(y) => {
-                let x: Vec<f64> = (0..y.len()).map(|i| i as f64).collect();
-                (PlotData::Static(x), PlotData::Static(y.clone()))
-            }
-            _ => (PlotData::Static(vec![]), PlotData::Static(vec![])),
-        };
+    fn finalize(mut self) -> super::Plot {
+        let (x_data, y_data) = resolve_xy_input(&self.input, &mut self.style);
 
         self.plot
             .add_scatter_series(x_data, y_data, &self.config, self.style)
@@ -2600,5 +2875,292 @@ impl PlotBuilder<crate::plots::basic::BarConfig> {
 // Generate terminal methods for BarConfig
 impl_terminal_methods!(crate::plots::basic::BarConfig);
 
+// ============================================================================
+// Terminal methods for the four config types whose `finalize()` lives in
+// `series_api.rs`.
+//
+// `Plot`'s fields are `pub(super)`, so the histogram/box plot/heatmap/error bar
+// `finalize()` bodies cannot be written from `src/plots/*.rs`; they live in
+// `series_api.rs` instead. `macro_rules! impl_terminal_methods` is textually
+// scoped to this file, so the invocations have to be here.
+// ============================================================================
+impl_terminal_methods!(crate::plots::HistogramConfig);
+impl_terminal_methods!(crate::plots::BoxPlotConfig);
+impl_terminal_methods!(crate::plots::heatmap::HeatmapConfig);
+impl_terminal_methods!(crate::plots::error::ErrorBarConfig);
+
+// The compute-only plot types, which enter through `SeriesType::Computed`.
+// Their `finalize()`s are in `series_api.rs` for the same reason as the four
+// above: they touch `Plot`'s `pub(super)` fields.
+impl_terminal_methods!(crate::plots::distribution::RugConfig);
+impl_terminal_methods!(crate::plots::categorical::StripConfig);
+impl_terminal_methods!(crate::plots::categorical::SwarmConfig);
+impl_terminal_methods!(crate::plots::continuous::hexbin::HexbinConfig);
+impl_terminal_methods!(crate::plots::hierarchical::DendrogramConfig);
+
+// The multi-series plot types (grouped bar, stacked bar, stacked area). Their
+// `finalize()`s are in `series_api.rs` for the same reason as the ones above:
+// they touch `Plot`'s `pub(super)` fields.
+impl_terminal_methods!(crate::plots::categorical::GroupedBarConfig);
+impl_terminal_methods!(crate::plots::categorical::StackedBarConfig);
+impl_terminal_methods!(crate::plots::continuous::StackPlotConfig);
+
 #[cfg(test)]
 mod tests;
+
+/// Tests for the API-consistency guarantees this module is responsible for:
+/// every setter returns `Self`, the unambiguous names are the ones that work,
+/// and each deprecated alias still does exactly what the new name does.
+#[cfg(test)]
+mod api_consistency_tests {
+    use super::*;
+    use crate::core::LegendPosition;
+
+    fn sample() -> Vec<f64> {
+        (0..64)
+            .map(|i| (i as f64 * 0.37).sin() + i as f64 / 32.0)
+            .collect()
+    }
+
+    // ===== 1. No setter may end the chain =====
+
+    #[test]
+    fn legend_position_returns_the_builder_so_the_chain_continues() {
+        // Regression: `legend_position` used to return `Plot`, silently dropping
+        // the caller out of the builder mid-chain.
+        let builder = super::super::Plot::new()
+            .line(&[0.0, 1.0, 2.0], &[0.0, 1.0, 0.5])
+            .legend_position(LegendPosition::UpperRight)
+            // These only resolve if `legend_position` returned `Self`.
+            .line_width(2.5)
+            .label("series");
+
+        assert_eq!(builder.style.props.line_width.cloned(), Some(2.5));
+        assert_eq!(builder.style.label.as_deref(), Some("series"));
+        assert!(builder.get_plot().layout.legend.enabled);
+        assert_eq!(
+            builder.get_plot().layout.legend.position,
+            LegendPosition::UpperRight
+        );
+    }
+
+    #[test]
+    fn legend_position_is_available_on_non_cartesian_builders_too() {
+        let builder = super::super::Plot::new()
+            .pie(&[1.0, 2.0, 3.0])
+            .legend_position(LegendPosition::OutsideRight)
+            .donut(0.4);
+
+        assert!(builder.get_plot().layout.legend.enabled);
+        assert_eq!(
+            builder.get_plot().layout.legend.position,
+            LegendPosition::OutsideRight
+        );
+        assert!((builder.get_config().inner_radius - 0.4).abs() < 1e-12);
+    }
+
+    // ===== 4. legend / legend_best / legend_position parity =====
+
+    #[test]
+    fn legend_legend_best_and_legend_position_agree_on_the_builder() {
+        let via_legend = super::super::Plot::new()
+            .kde(&sample())
+            .legend(LegendPosition::Best);
+        let via_best = super::super::Plot::new().kde(&sample()).legend_best();
+        let via_position = super::super::Plot::new()
+            .kde(&sample())
+            .legend_position(LegendPosition::Best);
+
+        for builder in [&via_legend, &via_best, &via_position] {
+            assert!(builder.get_plot().layout.legend.enabled);
+            assert_eq!(
+                builder.get_plot().layout.legend.position,
+                LegendPosition::Best
+            );
+        }
+    }
+
+    // ===== 2. `width` no longer means three different things =====
+
+    #[test]
+    fn violin_width_sets_the_body_width_and_the_deprecated_alias_matches() {
+        let renamed = super::super::Plot::new()
+            .violin(&sample())
+            .violin_width(0.75);
+        #[allow(deprecated)]
+        let legacy = super::super::Plot::new().violin(&sample()).width(0.75);
+
+        assert!((renamed.get_config().width - 0.75).abs() < 1e-12);
+        assert!((legacy.get_config().width - renamed.get_config().width).abs() < 1e-12);
+    }
+
+    #[test]
+    fn box_width_sets_the_category_fraction_and_the_deprecated_alias_matches() {
+        let renamed = super::super::Plot::new().boxen(&sample()).box_width(0.7);
+        #[allow(deprecated)]
+        let legacy = super::super::Plot::new().boxen(&sample()).width(0.7);
+
+        assert!((renamed.get_config().width - 0.7).abs() < 1e-12);
+        assert!((legacy.get_config().width - renamed.get_config().width).abs() < 1e-12);
+        // Still a fraction: clamped into 0.1..=1.0, unlike violin_width.
+        let clamped = super::super::Plot::new().boxen(&sample()).box_width(9.0);
+        assert!((clamped.get_config().width - 1.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn arrow_family_sets_quiver_config_and_the_deprecated_aliases_match() {
+        let x = vec![0.0, 1.0];
+        let y = vec![0.0, 1.0];
+        let u = vec![1.0, 0.5];
+        let v = vec![0.25, 0.75];
+
+        let renamed = super::super::Plot::new()
+            .quiver(&x, &y, &u, &v)
+            .arrow_scale(0.25)
+            .arrow_width(1.25)
+            .arrow_head_length(0.35)
+            .arrow_head_width(0.2);
+
+        #[allow(deprecated)]
+        let legacy = super::super::Plot::new()
+            .quiver(&x, &y, &u, &v)
+            .scale(0.25)
+            .width(1.25)
+            .headlength(0.35)
+            .headwidth(0.2);
+
+        assert!((renamed.get_config().scale - 0.25).abs() < 1e-12);
+        assert!((renamed.get_config().width - 1.25).abs() < 1e-6);
+        assert!((renamed.get_config().headlength - 0.35).abs() < 1e-12);
+        assert!((renamed.get_config().headwidth - 0.2).abs() < 1e-12);
+
+        assert!((legacy.get_config().scale - renamed.get_config().scale).abs() < 1e-12);
+        assert!((legacy.get_config().width - renamed.get_config().width).abs() < 1e-6);
+        assert!((legacy.get_config().headlength - renamed.get_config().headlength).abs() < 1e-12);
+        assert!((legacy.get_config().headwidth - renamed.get_config().headwidth).abs() < 1e-12);
+    }
+
+    // ===== 3. line_style / line_width are the one spelling =====
+
+    #[test]
+    fn line_style_and_the_deprecated_style_alias_are_equivalent() {
+        let renamed = super::super::Plot::new()
+            .line(&[0.0, 1.0], &[0.0, 1.0])
+            .line_style(LineStyle::Dashed);
+        #[allow(deprecated)]
+        let legacy = super::super::Plot::new()
+            .line(&[0.0, 1.0], &[0.0, 1.0])
+            .style(LineStyle::Dashed);
+
+        assert_eq!(
+            renamed.style.props.line_style.cloned(),
+            Some(LineStyle::Dashed)
+        );
+        assert_eq!(
+            legacy.style.props.line_style.cloned(),
+            renamed.style.props.line_style.cloned()
+        );
+        assert!(legacy.style.props.line_style.source().is_none());
+    }
+
+    #[test]
+    fn line_style_source_and_the_deprecated_style_source_alias_are_equivalent() {
+        let renamed = super::super::Plot::new()
+            .line(&[0.0, 1.0], &[0.0, 1.0])
+            .line_style_source(LineStyle::Dotted);
+        #[allow(deprecated)]
+        let legacy = super::super::Plot::new()
+            .line(&[0.0, 1.0], &[0.0, 1.0])
+            .style_source(LineStyle::Dotted);
+
+        assert_eq!(
+            renamed.style.props.line_style.cloned(),
+            Some(LineStyle::Dotted)
+        );
+        assert_eq!(
+            legacy.style.props.line_style.cloned(),
+            renamed.style.props.line_style.cloned()
+        );
+    }
+
+    #[test]
+    fn generic_line_width_reaches_every_builder_that_had_a_bespoke_spelling() {
+        // `line_width` is the replacement named by the deprecation notes on
+        // `kde_line_width` / `ecdf_line_width` / `contour_line_width`; it must
+        // record the override on all three.
+        let kde = super::super::Plot::new().kde(&sample()).line_width(3.0);
+        let ecdf = super::super::Plot::new().ecdf(&sample()).line_width(3.0);
+        let contour_x = vec![0.0, 1.0, 2.0];
+        let contour_y = vec![0.0, 1.0];
+        let contour_z = vec![0.5; contour_x.len() * contour_y.len()];
+        let contour = super::super::Plot::new()
+            .contour(&contour_x, &contour_y, &contour_z)
+            .line_width(3.0);
+
+        assert_eq!(kde.style.props.line_width.cloned(), Some(3.0));
+        assert_eq!(ecdf.style.props.line_width.cloned(), Some(3.0));
+        assert_eq!(contour.style.props.line_width.cloned(), Some(3.0));
+    }
+
+    // ===== Renamed-for-clarity accessors =====
+
+    #[test]
+    fn pie_label_font_size_replaces_the_ambiguous_font_size() {
+        let renamed = super::super::Plot::new()
+            .pie(&[1.0, 2.0])
+            .label_font_size(14.0);
+        #[allow(deprecated)]
+        let legacy = super::super::Plot::new().pie(&[1.0, 2.0]).font_size(14.0);
+
+        assert!((renamed.get_config().label_font_size - 14.0).abs() < 1e-6);
+        assert!(
+            (legacy.get_config().label_font_size - renamed.get_config().label_font_size).abs()
+                < 1e-6
+        );
+    }
+
+    #[test]
+    fn radar_series_stylers_replace_the_with_prefixed_spellings() {
+        let renamed = super::super::Plot::new()
+            .radar(&["A", "B", "C"])
+            .add_series("One", &[1.0, 2.0, 3.0])
+            .series_color(Color::RED)
+            .series_fill_alpha(0.25)
+            .series_line_width(3.0);
+
+        #[allow(deprecated)]
+        let legacy = super::super::Plot::new()
+            .radar(&["A", "B", "C"])
+            .add_series("One", &[1.0, 2.0, 3.0])
+            .with_color(Color::RED)
+            .with_fill_alpha(0.25)
+            .with_line_width(3.0);
+
+        assert_eq!(
+            renamed.get_config().colors.as_deref(),
+            Some([Color::RED].as_slice())
+        );
+        assert_eq!(
+            renamed.get_config().per_series_fill_alphas,
+            vec![Some(0.25)]
+        );
+        assert_eq!(renamed.get_config().per_series_line_widths, vec![Some(3.0)]);
+
+        assert_eq!(legacy.get_config().colors, renamed.get_config().colors);
+        assert_eq!(
+            legacy.get_config().per_series_fill_alphas,
+            renamed.get_config().per_series_fill_alphas
+        );
+        assert_eq!(
+            legacy.get_config().per_series_line_widths,
+            renamed.get_config().per_series_line_widths
+        );
+        // The chart-wide knob stays separate from the per-series one.
+        let chart_wide = super::super::Plot::new()
+            .radar(&["A", "B", "C"])
+            .add_series("One", &[1.0, 2.0, 3.0])
+            .fill_alpha(0.9);
+        assert!((chart_wide.get_config().fill_alpha - 0.9).abs() < 1e-6);
+        assert_eq!(chart_wide.get_config().per_series_fill_alphas, vec![None]);
+    }
+}

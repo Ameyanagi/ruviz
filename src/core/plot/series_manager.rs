@@ -104,7 +104,9 @@ impl SeriesManager {
                         return Err("Data series cannot be empty");
                     }
                 }
-                SeriesType::Bar { categories, values } => {
+                SeriesType::Bar {
+                    categories, values, ..
+                } => {
                     if categories.len() != values.len() {
                         return Err("Categories and values must have the same length");
                     }

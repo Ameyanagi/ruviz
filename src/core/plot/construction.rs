@@ -6,24 +6,6 @@ struct CachedResolvedData {
     values: Arc<[f64]>,
 }
 
-fn resolve_reactive_style<T: Clone>(
-    source: &ReactiveValue<T>,
-    time: f64,
-    cache: &mut HashMap<data::ReactiveSourceId, T>,
-) -> T {
-    if let Some(source_id) = source.source_id() {
-        if let Some(value) = cache.get(&source_id) {
-            return value.clone();
-        }
-
-        let value = source.resolve(time);
-        cache.insert(source_id, value.clone());
-        return value;
-    }
-
-    source.resolve(time)
-}
-
 fn resolve_plot_data<'a>(
     source: &'a PlotData,
     time: f64,
@@ -90,7 +72,9 @@ fn resolve_series_for_frame<'a>(
             x: resolve_plot_data(x_data, time, cache, acknowledgements),
             y: resolve_plot_data(y_data, time, cache, acknowledgements),
         },
-        SeriesType::Bar { categories, values } => ResolvedSeries::Bar {
+        SeriesType::Bar {
+            categories, values, ..
+        } => ResolvedSeries::Bar {
             categories,
             values: resolve_plot_data(values, time, cache, acknowledgements),
         },
@@ -352,6 +336,20 @@ impl Plot {
             legend_items.extend(series.to_legend_items(palette_slot, &self.display.theme));
         }
 
+        // Labelled fills (confidence bands and friends) are annotations, not series,
+        // so they never reached the loop above.
+        for annotation in &self.annotations {
+            if let Annotation::FillBetween { style, .. } = annotation
+                && let Some(label) = &style.label
+            {
+                legend_items.push(LegendItem::area(
+                    label.clone(),
+                    style.color.with_alpha(style.alpha),
+                    style.edge_color,
+                ));
+            }
+        }
+
         legend_items
     }
 
@@ -419,63 +417,6 @@ impl Plot {
         self.display.config.typography = self.display.config.typography.scale(factor);
         self.layout.legend.font_size = None;
         self
-    }
-
-    /// Configure parallel rendering settings
-    #[cfg(feature = "parallel")]
-    pub fn with_parallel(mut self, threads: Option<usize>) -> Self {
-        if let Some(thread_count) = threads {
-            self.render.parallel_renderer = ParallelRenderer::with_threads(thread_count);
-        }
-        self
-    }
-
-    /// Set parallel processing threshold
-    #[cfg(feature = "parallel")]
-    pub fn parallel_threshold(mut self, threshold: usize) -> Self {
-        self.render.parallel_renderer = self.render.parallel_renderer.with_threshold(threshold);
-        self
-    }
-
-    /// Enable memory pooled rendering for allocation optimization
-    ///
-    /// This reduces allocation overhead by 30-50% for large datasets by reusing
-    /// memory buffers for coordinate transformations and rendering operations.
-    pub fn with_memory_pooling(mut self, enable: bool) -> Self {
-        self.render.enable_pooled_rendering = enable;
-        if enable && self.render.pooled_renderer.is_none() {
-            self.render.pooled_renderer = Some(crate::render::PooledRenderer::new());
-        }
-        self
-    }
-
-    /// Configure memory pool sizes for specific workloads
-    ///
-    /// # Arguments
-    /// * `f32_pool_size` - Initial capacity for coordinate transformation pools
-    /// * `position_pool_size` - Initial capacity for position/point pools  
-    /// * `segment_pool_size` - Initial capacity for line segment pools
-    pub fn with_pool_sizes(
-        mut self,
-        f32_pool_size: usize,
-        position_pool_size: usize,
-        segment_pool_size: usize,
-    ) -> Self {
-        self.render.pooled_renderer = Some(crate::render::PooledRenderer::with_pool_sizes(
-            f32_pool_size,
-            position_pool_size,
-            segment_pool_size,
-        ));
-        self.render.enable_pooled_rendering = true;
-        self
-    }
-
-    /// Get memory pool statistics for monitoring and optimization
-    pub fn pool_stats(&self) -> Option<crate::render::PooledRendererStats> {
-        self.render
-            .pooled_renderer
-            .as_ref()
-            .map(|renderer| renderer.get_pool_stats())
     }
 
     /// Set the plot title
@@ -688,9 +629,16 @@ impl Plot {
     ///
     /// # Deprecation
     ///
-    /// Prefer `size(width, height)` which takes dimensions in inches for
-    /// DPI-independent sizing, or `size_pixels(width, height)` for pixel-based sizing.
-    #[deprecated(since = "0.2.0", note = "Use size() or size_pixels() instead")]
+    /// Prefer [`Plot::size`], which takes dimensions in inches for
+    /// DPI-independent sizing, or [`Plot::size_px`] for pixel-based sizing.
+    ///
+    /// Note that neither replacement rescales DPI for you: this method's
+    /// implicit DPI bump is exactly the behaviour it is deprecated for. To
+    /// reproduce it, call `.size_px(w, h).dpi(d)` with the DPI you want.
+    #[deprecated(
+        since = "0.2.0",
+        note = "use `size(width_in, height_in)` for inches or `size_px(width_px, height_px)` for pixels"
+    )]
     pub fn dimensions(mut self, width: u32, height: u32) -> Self {
         self.display.dimensions = (width.max(100), height.max(100));
 
@@ -1166,10 +1114,10 @@ impl Plot {
 
         let size_px = (size_px.0.max(1), size_px.1.max(1));
 
-        if let Some(dpi) = preferred_dpi.filter(|dpi| dpi.is_finite() && *dpi > 0.0) {
-            if Self::canvas_size_for_figure_dpi(figure, dpi) == size_px {
-                return Some(dpi);
-            }
+        if let Some(dpi) = preferred_dpi.filter(|dpi| dpi.is_finite() && *dpi > 0.0)
+            && Self::canvas_size_for_figure_dpi(figure, dpi) == size_px
+        {
+            return Some(dpi);
         }
 
         let figure_width = f64::from(figure.width);
@@ -1233,27 +1181,26 @@ impl Plot {
         }
     }
 
+    /// Pixel x of every category tick, or `None` when the figure has no
+    /// category axis.
+    ///
+    /// `category_positions` comes from `CategoryAxis::harvest`, which is the one
+    /// place that decides where a category sits. This used to carry a second
+    /// answer — a `category_count` from which it re-derived bar positions as
+    /// `0..n` — so a figure mixing bars with a positioned distribution could get
+    /// ticks in one place and boxes in another.
     pub(super) fn categorical_x_tick_pixels(
         plot_area: tiny_skia::Rect,
         x_min: f64,
         x_max: f64,
-        category_count: Option<usize>,
-        violin_positions: &[f64],
+        category_positions: &[f64],
     ) -> Option<Vec<f32>> {
-        if !violin_positions.is_empty() {
-            Some(
-                violin_positions
-                    .iter()
-                    .map(|&x_pos| Self::x_data_to_pixel(plot_area, x_pos, x_min, x_max))
-                    .collect(),
-            )
-        } else {
-            category_count.map(|count| {
-                (0..count)
-                    .map(|index| Self::x_data_to_pixel(plot_area, index as f64, x_min, x_max))
-                    .collect()
-            })
-        }
+        (!category_positions.is_empty()).then(|| {
+            category_positions
+                .iter()
+                .map(|&x_pos| Self::x_data_to_pixel(plot_area, x_pos, x_min, x_max))
+                .collect()
+        })
     }
 
     fn resolve_style(&self, time: f64) -> ResolvedStyle {
@@ -1288,39 +1235,21 @@ impl Plot {
                 .flatten()
                 .unwrap_or(series_index);
 
-            let color = series
-                .color_source
-                .as_ref()
-                .map(|source| resolve_reactive_style(source, time, &mut color_cache))
-                .or(series.color);
-            let line_width = series
-                .line_width_source
-                .as_ref()
-                .map(|source| resolve_reactive_style(source, time, &mut f32_cache))
-                .or(series.line_width);
+            let color = series.props.color.resolve(time, &mut color_cache);
+            let line_width = series.props.line_width.resolve(time, &mut f32_cache);
             let line_style = series
-                .line_style_source
-                .as_ref()
-                .map(|source| resolve_reactive_style(source, time, &mut line_style_cache))
-                .or_else(|| series.line_style.clone())
+                .props
+                .line_style
+                .resolve(time, &mut line_style_cache)
                 .unwrap_or_else(|| theme.line_style.clone());
             let marker_style = series
-                .marker_style_source
-                .as_ref()
-                .map(|source| resolve_reactive_style(source, time, &mut marker_style_cache))
-                .or(series.marker_style);
-            let marker_size = series
-                .marker_size_source
-                .as_ref()
-                .map(|source| resolve_reactive_style(source, time, &mut f32_cache))
-                .or(series.marker_size);
-            let alpha = series
-                .alpha_source
-                .as_ref()
-                .map(|source| resolve_reactive_style(source, time, &mut f32_cache))
-                .or(series.alpha);
+                .props
+                .marker_style
+                .resolve(time, &mut marker_style_cache);
+            let marker_size = series.props.marker_size.resolve(time, &mut f32_cache);
+            let alpha = series.props.alpha.resolve(time, &mut f32_cache);
             let resolved_color = resolver.series_color(color, palette_slot);
-            let has_top_level_color = series.color.is_some() || series.color_source.is_some();
+            let has_top_level_color = series.props.color.is_set();
             let radar_colors = match &series.series_type {
                 SeriesType::Radar { data } => Some(Arc::from(
                     data.series
@@ -1501,19 +1430,36 @@ impl Plot {
 
         debug_assert_eq!(resolved.series_mgr.series.len(), style.series.len());
         for (series, series_style) in resolved.series_mgr.series.iter_mut().zip(&style.series) {
-            series.color = Some(series_style.color);
-            series.color_source = None;
-            series.line_width = series_style.line_width;
-            series.line_width_source = None;
-            series.line_style = Some(series_style.line_style.clone());
-            series.line_style_source = None;
-            series.marker_style = series_style.marker_style;
-            series.marker_style_source = None;
-            series.marker_size = series_style.marker_size;
-            series.marker_size_source = None;
-            series.alpha = Some(series_style.alpha);
-            series.alpha_source = None;
+            // Each write installs this frame's answer and retires the source
+            // that produced it; `clear_sources` then catches any property
+            // this loop does not name, so a newly declared one cannot survive as
+            // a live source that re-samples over the frame.
+            series
+                .props
+                .color
+                .replace_resolved(Some(series_style.color));
+            series
+                .props
+                .line_width
+                .replace_resolved(series_style.line_width);
+            series
+                .props
+                .line_style
+                .replace_resolved(Some(series_style.line_style.clone()));
+            series
+                .props
+                .marker_style
+                .replace_resolved(series_style.marker_style);
+            series
+                .props
+                .marker_size
+                .replace_resolved(series_style.marker_size);
+            series
+                .props
+                .alpha
+                .replace_resolved(Some(series_style.alpha));
             series.resolved_radar_colors = series_style.radar_colors.clone();
+            series.props.clear_sources();
         }
         resolved
     }
@@ -1646,14 +1592,12 @@ impl Plot {
     }
 
     pub(super) fn has_dynamic_style_sources(&self) -> bool {
-        self.series_mgr.series.iter().any(|series| {
-            series.color_source.is_some()
-                || series.line_width_source.is_some()
-                || series.line_style_source.is_some()
-                || series.marker_style_source.is_some()
-                || series.marker_size_source.is_some()
-                || series.alpha_source.is_some()
-        })
+        // One traversal, on `PlotSeries` itself: a `*_source` field only ever
+        // holds a non-static value, so "is set" and "is reactive" agree.
+        self.series_mgr
+            .series
+            .iter()
+            .any(PlotSeries::has_reactive_style_sources)
     }
 
     pub(crate) fn collect_reactive_versions(&self) -> Vec<u64> {

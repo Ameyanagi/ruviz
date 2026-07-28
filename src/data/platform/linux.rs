@@ -129,10 +129,10 @@ pub fn check_hugepage_support() -> bool {
     }
 
     // Check /sys/kernel/mm/hugepages/ directory
-    if fs::metadata("/sys/kernel/mm/hugepages").is_ok() {
-        if let Ok(entries) = fs::read_dir("/sys/kernel/mm/hugepages") {
-            return entries.count() > 0;
-        }
+    if fs::metadata("/sys/kernel/mm/hugepages").is_ok()
+        && let Ok(entries) = fs::read_dir("/sys/kernel/mm/hugepages")
+    {
+        return entries.count() > 0;
     }
 
     false

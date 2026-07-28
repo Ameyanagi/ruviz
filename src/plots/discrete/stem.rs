@@ -37,8 +37,9 @@ pub struct StemConfig {
 }
 
 /// Marker style for stem heads
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum StemMarker {
+    #[default]
     Circle,
     Square,
     Diamond,
@@ -47,8 +48,9 @@ pub enum StemMarker {
 }
 
 /// Orientation for stem plots
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum StemOrientation {
+    #[default]
     Vertical,
     Horizontal,
 }
@@ -337,12 +339,12 @@ impl PlotRender for StemData {
             }
 
             // Draw marker at baseline if configured
-            if config.bottom_marker {
-                if let Some(style) = marker_style {
-                    let (bx, by) = stem.baseline_marker_position(config.orientation);
-                    let (sbx, sby) = area.data_to_screen(bx, by);
-                    renderer.draw_marker(sbx, sby, config.marker_size * 0.7, style, line_color)?;
-                }
+            if config.bottom_marker
+                && let Some(style) = marker_style
+            {
+                let (bx, by) = stem.baseline_marker_position(config.orientation);
+                let (sbx, sby) = area.data_to_screen(bx, by);
+                renderer.draw_marker(sbx, sby, config.marker_size * 0.7, style, line_color)?;
             }
         }
 

@@ -1,5 +1,5 @@
+use ruviz::core::LegendPosition;
 use ruviz::core::Plot;
-use ruviz::core::Position;
 use ruviz::render::{Color, LineStyle, Theme};
 
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
@@ -23,12 +23,12 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .line(&x_data, &y2)
         .label("cos(x) - dashed")
         .color(Color::RED)
-        .style(LineStyle::Dashed)
+        .line_style(LineStyle::Dashed)
         .line(&x_data, &y3)
         .label("sin(x/2) - dotted")
         .color(Color::GREEN)
-        .style(LineStyle::Dotted)
-        .legend(Position::TopRight)
+        .line_style(LineStyle::Dotted)
+        .legend(LegendPosition::UpperRight)
         .save("gallery/basic/legend_handles_test.png")?;
 
     println!("✅ Legend handles test completed!");

@@ -9,9 +9,22 @@
 //! - [`PlotCompute`] for `Area` and `StackedArea` marker structs
 //! - [`PlotData`] for `AreaData` and `StackedAreaData`
 //! - [`PlotRender`] for `AreaData` and `StackedAreaData`
+//!
+//! # How the builder draws a stacked area
+//!
+//! [`Plot::stacked_area`](crate::core::Plot::stacked_area) does **not** add one
+//! series holding the whole chart. It adds **one series per named value
+//! column** — a [`StackedAreaBand`] each — because a palette slot, a legend
+//! entry and a `.color()` are per-series things and a stack whose bands cannot
+//! be told apart in the legend says nothing. [`stacked_area_bands`] performs
+//! that split; [`StackedAreaData`] remains the whole-chart shape for callers
+//! driving [`PlotCompute`] and [`PlotRender`] directly.
 
 use crate::core::Result;
-use crate::plots::traits::{PlotArea, PlotCompute, PlotConfig, PlotData, PlotRender};
+use crate::plots::traits::{
+    ComputedSeries, ComputedStyle, LegendKey, PlotArea, PlotCompute, PlotConfig, PlotData,
+    PlotPrimitive, PlotRender, draw_primitives,
+};
 use crate::render::skia::SkiaRenderer;
 use crate::render::{Color, LineStyle, Theme};
 
@@ -33,9 +46,10 @@ pub struct AreaConfig {
 }
 
 /// Interpolation method for area fill
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum AreaInterpolation {
     /// Linear interpolation between points
+    #[default]
     Linear,
     /// Step function (constant until next point)
     Step,
@@ -231,9 +245,10 @@ pub struct StackPlotConfig {
 }
 
 /// Baseline mode for stack plot
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum StackBaseline {
     /// Zero baseline (standard stacked area)
+    #[default]
     Zero,
     /// Symmetric around zero (streamgraph style)
     Symmetric,
@@ -249,7 +264,7 @@ impl Default for StackPlotConfig {
             labels: vec![],
             baseline: StackBaseline::Zero,
             show_lines: false,
-            line_color: Color::new(255, 255, 255),
+            line_color: Color::from_rgb(255, 255, 255),
             line_width: 0.5,
         }
     }
@@ -618,6 +633,191 @@ impl PlotRender for StackedAreaData {
     }
 }
 
+// ============================================================================
+// One band at a time: what the `Plot` builder actually adds
+// ============================================================================
+
+/// The filled region one *named* value column of a stacked area chart covers.
+///
+/// A stacked area chart is N of these, added to the plot as N ordinary series:
+/// the palette slot, the legend entry, the `.color()` override and the
+/// `.label()` are all per-series things, so a chart that needs N of each is N
+/// series. Nothing about the render path is multi-series.
+///
+/// `lower` is the running total of the bands underneath and `upper` includes
+/// this one, so the union of the bands' [`PlotData::data_bounds`] is the
+/// cumulative extent of the stack — there is no separate whole-chart bounds
+/// arm that could disagree with the geometry.
+#[derive(Debug, Clone)]
+pub struct StackedAreaBand {
+    /// Shared x positions.
+    pub x: Vec<f64>,
+    /// Running total under this band, per sample.
+    pub lower: Vec<f64>,
+    /// Running total including this band, per sample.
+    pub upper: Vec<f64>,
+    /// Fill opacity from the chart config; composes with the series alpha.
+    pub(crate) alpha: f32,
+    /// Whether to stroke this band's top edge as a separator. False on the
+    /// topmost band, whose top edge is the silhouette of the chart rather than
+    /// a boundary between two bands.
+    pub(crate) show_line: bool,
+    /// Separator colour.
+    pub(crate) line_color: Color,
+    /// Separator width in **points**, so it is DPI-invariant.
+    pub(crate) line_width: f32,
+}
+
+/// One [`StackedAreaBand`] per named value column.
+///
+/// `names` and `values` are parallel: `values[i]` is the column named
+/// `names[i]`, sampled at the same `x` as every other column.
+pub fn stacked_area_bands(
+    x: &[f64],
+    names: &[String],
+    ys: &[Vec<f64>],
+    config: &StackPlotConfig,
+) -> Vec<(String, StackedAreaBand)> {
+    let stacks = compute_stack(x, ys, config.baseline);
+    let last = stacks.len().saturating_sub(1);
+
+    stacks
+        .into_iter()
+        .enumerate()
+        .map(|(index, (lower, upper))| {
+            (
+                names.get(index).cloned().unwrap_or_default(),
+                StackedAreaBand {
+                    x: x.to_vec(),
+                    lower,
+                    upper,
+                    alpha: config.alpha,
+                    show_line: config.show_lines && index < last,
+                    line_color: config.line_color,
+                    line_width: config.line_width,
+                },
+            )
+        })
+        .collect()
+}
+
+impl PlotData for StackedAreaBand {
+    fn data_bounds(&self) -> ((f64, f64), (f64, f64)) {
+        let mut x_min = f64::INFINITY;
+        let mut x_max = f64::NEG_INFINITY;
+        for &value in &self.x {
+            if value.is_finite() {
+                x_min = x_min.min(value);
+                x_max = x_max.max(value);
+            }
+        }
+
+        let mut y_min = f64::INFINITY;
+        let mut y_max = f64::NEG_INFINITY;
+        for &value in self.lower.iter().chain(self.upper.iter()) {
+            if value.is_finite() {
+                y_min = y_min.min(value);
+                y_max = y_max.max(value);
+            }
+        }
+
+        if !x_min.is_finite() || !y_min.is_finite() {
+            return ((0.0, 1.0), (0.0, 1.0));
+        }
+        ((x_min, x_max), (y_min, y_max))
+    }
+
+    fn is_empty(&self) -> bool {
+        self.x.is_empty() || self.upper.is_empty()
+    }
+}
+
+impl ComputedSeries for StackedAreaBand {
+    fn kind(&self) -> &'static str {
+        "stacked_area"
+    }
+
+    fn point_count(&self) -> usize {
+        self.x.len()
+    }
+
+    /// A filled patch — a line swatch would claim the band is a curve.
+    fn legend_key(&self) -> LegendKey {
+        LegendKey::Patch
+    }
+
+    /// One filled band, plus its separator when it has one above it.
+    fn primitives(&self, area: &PlotArea, style: &ComputedStyle) -> Vec<PlotPrimitive> {
+        let fill = style.tinted(style.color.with_alpha(self.alpha));
+
+        // A vertex the axes cannot place is not part of the shape, and the
+        // shape closes over the vertices that remain — the polygon rule.
+        let points = area.project_points(fill_between_polygon(&self.x, &self.lower, &self.upper));
+        let mut primitives = Vec::new();
+        if points.len() >= 3 {
+            primitives.push(PlotPrimitive::Polygon {
+                points,
+                fill: Some(fill),
+                edge: None,
+            });
+        }
+
+        if self.show_line {
+            // `.line_width(..)` on the chain overrides the config's own, so the
+            // separator obeys the same width knob every other stroke does.
+            let width_px = style.stroke_px(self.line_width);
+            let color = style.tinted(self.line_color);
+            // A separator is a *line*, so it breaks at a gap rather than being
+            // drawn across one.
+            for run in area.project_subpaths(self.x.iter().copied().zip(self.upper.iter().copied()))
+            {
+                for pair in run.windows(2) {
+                    primitives.push(PlotPrimitive::Line {
+                        from: pair[0],
+                        to: pair[1],
+                        color,
+                        width_px,
+                        style: LineStyle::Solid,
+                    });
+                }
+            }
+        }
+
+        primitives
+    }
+}
+
+impl PlotRender for StackedAreaBand {
+    fn render(
+        &self,
+        renderer: &mut SkiaRenderer,
+        area: &PlotArea,
+        _theme: &Theme,
+        color: Color,
+    ) -> Result<()> {
+        let style = ComputedStyle::opaque(renderer.render_scale(), color);
+        draw_primitives(renderer, &self.primitives(area, &style))
+    }
+
+    fn render_styled(
+        &self,
+        renderer: &mut SkiaRenderer,
+        area: &PlotArea,
+        _theme: &Theme,
+        color: Color,
+        alpha: f32,
+        _line_width: Option<f32>,
+    ) -> Result<()> {
+        let style = ComputedStyle {
+            scale: renderer.render_scale(),
+            color,
+            alpha,
+            line_width: None,
+        };
+        draw_primitives(renderer, &self.primitives(area, &style))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -780,5 +980,86 @@ mod tests {
 
         // Test is_empty
         assert!(!stack_data.is_empty());
+    }
+
+    // ===== The per-band split the `Plot` builder adds =====
+
+    fn stack_input() -> (Vec<f64>, Vec<String>, Vec<Vec<f64>>) {
+        (
+            vec![0.0, 1.0, 2.0],
+            vec!["a".to_string(), "b".to_string()],
+            vec![vec![1.0, 2.0, 1.0], vec![2.0, 1.0, 2.0]],
+        )
+    }
+
+    #[test]
+    fn a_stacked_area_splits_into_one_band_per_named_column() {
+        let (x, names, ys) = stack_input();
+        let bands = stacked_area_bands(&x, &names, &ys, &StackPlotConfig::default());
+
+        assert_eq!(bands.len(), 2, "one series per named value column");
+        assert_eq!(bands[0].0, "a");
+        assert_eq!(bands[1].0, "b");
+        assert_eq!(bands[0].1.lower, vec![0.0, 0.0, 0.0]);
+        assert_eq!(bands[0].1.upper, vec![1.0, 2.0, 1.0]);
+        assert_eq!(bands[1].1.lower, vec![1.0, 2.0, 1.0]);
+        assert_eq!(bands[1].1.upper, vec![3.0, 3.0, 3.0]);
+    }
+
+    #[test]
+    fn bands_report_cumulative_bounds() {
+        let (x, names, ys) = stack_input();
+        let bands = stacked_area_bands(&x, &names, &ys, &StackPlotConfig::default());
+
+        assert_eq!(bands[0].1.data_bounds(), ((0.0, 2.0), (0.0, 2.0)));
+        assert_eq!(bands[1].1.data_bounds(), ((0.0, 2.0), (1.0, 3.0)));
+
+        // The union is what the axis has to show, and it matches the
+        // whole-chart compute exactly.
+        let top = bands
+            .iter()
+            .map(|(_, b)| b.data_bounds().1.1)
+            .fold(f64::NEG_INFINITY, f64::max);
+        let whole =
+            StackedArea::compute(StackedAreaInput::new(&x, &ys), &StackPlotConfig::default())
+                .unwrap();
+        assert_eq!(top, whole.data_bounds().1.1);
+    }
+
+    #[test]
+    fn only_the_bands_underneath_carry_a_separator() {
+        // The top band's upper edge is the silhouette of the chart, not a
+        // boundary between two bands, so stroking it would draw an outline the
+        // reader has to interpret as a series.
+        let (x, names, ys) = stack_input();
+        let config = StackPlotConfig::default().lines(true);
+        let bands = stacked_area_bands(&x, &names, &ys, &config);
+
+        assert!(bands[0].1.show_line);
+        assert!(!bands[1].1.show_line);
+    }
+
+    #[test]
+    fn a_band_draws_one_filled_polygon() {
+        let (x, names, ys) = stack_input();
+        let bands = stacked_area_bands(&x, &names, &ys, &StackPlotConfig::default());
+        let band = &bands[0].1;
+        let ((x_min, x_max), (y_min, y_max)) = band.data_bounds();
+        let area = PlotArea::new(0.0, 0.0, 200.0, 100.0, x_min, x_max, y_min, y_max);
+        let style = ComputedStyle::opaque(
+            crate::core::units::RenderScale::new(96.0),
+            Color::from_rgb(10, 20, 30),
+        );
+
+        let primitives = band.primitives(&area, &style);
+        assert_eq!(primitives.len(), 1);
+        assert!(matches!(
+            &primitives[0],
+            PlotPrimitive::Polygon {
+                points,
+                fill: Some(_),
+                edge: None,
+            } if points.len() == 6
+        ));
     }
 }

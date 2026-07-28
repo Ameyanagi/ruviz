@@ -11,7 +11,7 @@ fn plot_with_font(font_family: Option<&str>) -> Plot {
     }
 }
 
-pub fn build_subplots_figure(font_family: Option<&str>) -> Result<SubplotFigure> {
+pub fn build_subplots_figure(font_family: Option<&str>) -> PlotResult<SubplotFigure> {
     let x: Vec<f64> = (0..50).map(|i| i as f64 * 0.2).collect();
     let y_sin: Vec<f64> = x.iter().map(|&v| v.sin()).collect();
     let y_cos: Vec<f64> = x.iter().map(|&v| v.cos()).collect();
@@ -81,7 +81,7 @@ pub fn build_subplots_figure(font_family: Option<&str>) -> Result<SubplotFigure>
     Ok(figure)
 }
 
-fn main() -> Result<()> {
+fn main() -> PlotResult<()> {
     build_subplots_figure(None)?.save("docs/assets/rustdoc/subplots.png")?;
 
     println!("✓ Generated docs/assets/rustdoc/subplots.png");

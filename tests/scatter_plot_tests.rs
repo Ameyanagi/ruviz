@@ -82,7 +82,7 @@ fn test_scatter_plot_with_custom_colors() {
         .xlabel("X Values")
         .ylabel("Y Values")
         .scatter(&x_data, &y_data)
-        .color(Color::new(255, 0, 0))
+        .color(Color::from_rgb(255, 0, 0))
         .save("generated/tests/render/scatter_custom_color.png");
 
     assert!(
@@ -104,9 +104,9 @@ fn test_multiple_scatter_series() {
         .xlabel("X Values")
         .ylabel("Y Values")
         .scatter(&x1_data, &y1_data)
-        .color(Color::new(255, 0, 0))
+        .color(Color::from_rgb(255, 0, 0))
         .scatter(&x2_data, &y2_data)
-        .color(Color::new(0, 0, 255))
+        .color(Color::from_rgb(0, 0, 255))
         .save("generated/tests/render/multiple_scatter_series.png");
 
     assert!(

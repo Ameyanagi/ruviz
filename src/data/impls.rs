@@ -20,13 +20,13 @@ where
     let values = data.try_collect_row_major_f64()?;
     let Some(expected_len) = rows.checked_mul(cols) else {
         return Err(PlottingError::DataExtractionFailed {
-            source: "NumericData2D".to_string(),
+            origin: "NumericData2D".to_string(),
             message: format!("shape {}x{} causes integer overflow", rows, cols),
         });
     };
     if expected_len != values.len() {
         return Err(PlottingError::DataExtractionFailed {
-            source: "NumericData2D".to_string(),
+            origin: "NumericData2D".to_string(),
             message: format!(
                 "shape {}x{} does not match collected length {}",
                 rows,
@@ -70,8 +70,8 @@ mod tests {
     fn test_collect_numeric_data_2d_overflow_shape() {
         let err = collect_numeric_data_2d(&OverflowShapeData).unwrap_err();
         match err {
-            PlottingError::DataExtractionFailed { source, message } => {
-                assert_eq!(source, "NumericData2D");
+            PlottingError::DataExtractionFailed { origin, message } => {
+                assert_eq!(origin, "NumericData2D");
                 assert!(message.contains("integer overflow"));
             }
             other => panic!("expected DataExtractionFailed, got {other:?}"),
@@ -82,8 +82,8 @@ mod tests {
     fn test_collect_numeric_data_2d_shape_mismatch() {
         let err = collect_numeric_data_2d(&MismatchShapeData).unwrap_err();
         match err {
-            PlottingError::DataExtractionFailed { source, message } => {
-                assert_eq!(source, "NumericData2D");
+            PlottingError::DataExtractionFailed { origin, message } => {
+                assert_eq!(origin, "NumericData2D");
                 assert!(message.contains("does not match collected length"));
             }
             other => panic!("expected DataExtractionFailed, got {other:?}"),

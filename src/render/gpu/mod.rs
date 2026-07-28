@@ -1,5 +1,6 @@
 //! GPU backend foundation with wgpu
 //! High-performance GPU-accelerated rendering for massive datasets
+#![cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
 
 use crate::core::error::PlottingError;
 use crate::data::platform::get_platform_optimizer;

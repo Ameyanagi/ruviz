@@ -8,8 +8,8 @@ use crate::render::gpu::GpuRenderer;
 use crate::{
     core::plot::{Image, InteractiveViewportSnapshot},
     core::{
-        FramePacing, HitResult, InteractivePlotSession, Plot, PlotInputEvent, QualityPolicy,
-        ReactiveSubscription, Result, SurfaceTarget, ViewportPoint,
+        FramePacing, HitResult, InteractivePlotSession, Plot, PlotInputEvent, PlottingError,
+        QualityPolicy, ReactiveSubscription, Result, SurfaceTarget, ViewportPoint,
     },
     interactive::{
         event::{Annotation, Point2D, Rectangle},
@@ -95,10 +95,10 @@ impl RealTimeRenderer {
             performance_monitor: PerformanceMonitor::new(),
             last_device_scale: 1.0,
 
-            hover_highlight_color: Color::new_rgba(255, 165, 0, 180), // Orange with transparency
-            selection_highlight_color: Color::new_rgba(255, 0, 0, 120), // Red with transparency
-            brush_color: Color::new_rgba(0, 100, 255, 60),            // Blue with high transparency
-            brush_outline_color: Color::new_rgba(96, 208, 255, 220),
+            hover_highlight_color: Color::from_rgba(255, 165, 0, 180), // Orange with transparency
+            selection_highlight_color: Color::from_rgba(255, 0, 0, 120), // Red with transparency
+            brush_color: Color::from_rgba(0, 100, 255, 60), // Blue with high transparency
+            brush_outline_color: Color::from_rgba(96, 208, 255, 220),
             annotation_renderer: AnnotationRenderer::new(),
 
             quality_mode: RenderQuality::Interactive,
@@ -295,30 +295,31 @@ impl RealTimeRenderer {
         None
     }
 
-    /// Get all data points in selection region
+    /// Get all data points in a selection region.
+    ///
+    /// # Errors
+    /// Always fails: ruviz has no region query over the interactive session's
+    /// spatial index yet, only the per-point
+    /// [`InteractivePlotSession::hit_test`] that backs
+    /// [`Self::get_data_point_at`]. This method used to synthesise IDs from a
+    /// hard-coded lattice of 100 imaginary points and hand them back as if they
+    /// were real selections; refusing is the only honest answer until a real
+    /// region query exists.
+    ///
+    /// Use [`Self::get_data_point_at`] for per-point hit testing in the
+    /// meantime.
     pub fn get_points_in_region(
         &self,
         region: Rectangle,
         state: &InteractionState,
-    ) -> Vec<DataPointId> {
-        let mut points = Vec::new();
-
-        // Convert screen region to data region
-        let data_min = state.screen_to_data(region.min);
-        let data_max = state.screen_to_data(region.max);
-        let data_region = Rectangle::from_points(data_min, data_max);
-
-        // In real implementation, would use spatial indexing to find points efficiently
-        // For now, simulate selecting some points
-        for i in 0..100 {
-            let test_point = Point2D::new(i as f64 % 100.0, (i as f64 * 0.5) % 100.0);
-
-            if data_region.contains(test_point) {
-                points.push(DataPointId(i));
-            }
-        }
-
-        points
+    ) -> Result<Vec<DataPointId>> {
+        let _ = (region, state);
+        Err(PlottingError::UnsupportedOperation {
+            operation: "RealTimeRenderer::get_points_in_region",
+            reason: "no region query exists over the point hit index yet; use \
+                     `get_data_point_at` for per-point hit testing"
+                .to_string(),
+        })
     }
 
     /// Update renderer dimensions
@@ -415,13 +416,13 @@ impl RealTimeRenderer {
         device_scale: f32,
     ) -> Result<Vec<u8>> {
         // Check if we can use cached render
-        if !state.needs_redraw && !state.viewport_dirty {
-            if let Some(cached) = self
+        if !state.needs_redraw
+            && !state.viewport_dirty
+            && let Some(cached) = self
                 .render_cache
                 .get_base_render(state.zoom_level, state.pan_offset)
-            {
-                return Ok(cached);
-            }
+        {
+            return Ok(cached);
         }
 
         // Render fresh base plot
@@ -797,7 +798,7 @@ impl RealTimeRenderer {
 
         let tooltip_rect = Rectangle::new(left, top, left + tooltip_width, top + tooltip_height);
 
-        let tooltip_color = Color::new_rgba(255, 255, 220, 200); // Light yellow
+        let tooltip_color = Color::from_rgba(255, 255, 220, 200); // Light yellow
         self.draw_selection_rectangle(pixel_data, tooltip_rect, tooltip_color)?;
 
         let Some(size) =
@@ -819,7 +820,7 @@ impl RealTimeRenderer {
             (left + TOOLTIP_PADDING_X) as f32,
             (top + TOOLTIP_PADDING_Y) as f32,
             &font,
-            Color::new_rgba(24, 24, 24, 255),
+            Color::from_rgba(24, 24, 24, 255),
         ) {
             log::debug!(
                 "Skipping legacy tooltip text render after text rasterization failed: {err}"
@@ -1175,6 +1176,31 @@ mod tests {
 
         renderer.set_device_scale(0.0);
         assert!((renderer.last_device_scale - 1.0).abs() < f32::EPSILON);
+    }
+
+    /// Regression: this returned IDs synthesised from a hard-coded lattice of
+    /// 100 imaginary points, so any caller received fabricated selections.
+    #[test]
+    fn test_get_points_in_region_refuses_instead_of_fabricating_ids() {
+        let runtime = tokio::runtime::Runtime::new().expect("runtime should initialize for tests");
+        let renderer = runtime
+            .block_on(RealTimeRenderer::new())
+            .expect("renderer should initialize for tests");
+        let state = InteractionState::default();
+
+        let result =
+            renderer.get_points_in_region(Rectangle::new(0.0, 0.0, 10_000.0, 10_000.0), &state);
+
+        // `UnsupportedOperation`, not `FeatureNotEnabled`: no cargo feature
+        // turns this on, so the error must not suggest that one does.
+        let Err(error) = result else {
+            panic!("region selection must be refused, not answered with fabricated ids");
+        };
+        assert!(matches!(error, PlottingError::UnsupportedOperation { .. }));
+        assert!(
+            error.to_string().contains("get_data_point_at"),
+            "the refusal should point at the supported alternative, got: {error}"
+        );
     }
 
     #[test]

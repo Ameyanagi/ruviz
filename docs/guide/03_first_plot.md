@@ -156,7 +156,7 @@ let data: Vec<f64> = (0..1000)
     .collect();
 
 Plot::new()
-    .histogram(&data, None)  // Auto bin count
+    .histogram(&data)  // Auto bin count
     .title("Histogram")
     .xlabel("Value")
     .ylabel("Frequency")
@@ -178,7 +178,7 @@ use ruviz::prelude::*;
 
 Plot::new()
     .line(&x, &y)
-    .color(Color::new(255, 0, 0))  // Red line
+    .color(Color::from_rgb(255, 0, 0))  // Red line
     .save("red_line.png")?;
 ```
 
@@ -203,7 +203,7 @@ Plot::new()
     .scatter(&x, &y)
     .marker(MarkerStyle::Circle)
     .marker_size(10.0)
-    .color(Color::new(0, 0, 255))
+    .color(Color::from_rgb(0, 0, 255))
     .save("blue_circles.png")?;
 ```
 
@@ -232,11 +232,11 @@ let y2 = vec![0.0, 2.0, 4.0, 6.0, 8.0];
 Plot::new()
     .line(&x, &y1)
         .label("Quadratic")
-        .color(Color::new(255, 0, 0))
+        .color(Color::from_rgb(255, 0, 0))
     .line(&x, &y2)
         .label("Linear")
-        .color(Color::new(0, 0, 255))
-    .legend(Position::TopLeft)
+        .color(Color::from_rgb(0, 0, 255))
+    .legend(LegendPosition::UpperLeft)
     .title("Multiple Series")
     .save("multi_series.png")?;
 ```
@@ -253,12 +253,12 @@ let y_scatter = vec![1.5, 2.3, 2.9, 4.2, 4.8];
 Plot::new()
     .line(&x, &y_line)
         .label("Theory")
-        .color(Color::new(0, 0, 255))
+        .color(Color::from_rgb(0, 0, 255))
     .scatter(&x, &y_scatter)
         .label("Measured")
         .marker(MarkerStyle::Circle)
-        .color(Color::new(255, 0, 0))
-    .legend(Position::TopLeft)
+        .color(Color::from_rgb(255, 0, 0))
+    .legend(LegendPosition::UpperLeft)
     .title("Theory vs Measurement")
     .save("mixed_plot.png")?;
 ```
@@ -304,7 +304,7 @@ Plot::new()
 Add to `Cargo.toml`:
 ```toml
 [dependencies]
-ruviz = { version = "0.5.0", features = ["ndarray_support"] }
+ruviz = { version = "0.6.0", features = ["ndarray_support"] }
 ndarray = "0.17"
 ```
 
@@ -394,12 +394,12 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         // Sine wave
         .line(&x, &y_sin)
             .label("sin(x)")
-            .color(Color::new(0, 0, 255))
+            .color(Color::from_rgb(0, 0, 255))
             .line_width(2.0)
         // Cosine wave
         .line(&x, &y_cos)
             .label("cos(x)")
-            .color(Color::new(255, 0, 0))
+            .color(Color::from_rgb(255, 0, 0))
             .line_style(LineStyle::Dashed)
             .line_width(2.0)
         // Configuration
@@ -409,7 +409,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .xlim(0.0, 2.0 * PI)
         .ylim(-1.5, 1.5)
         .grid(true)
-        .legend(Position::TopRight)
+        .legend(LegendPosition::UpperRight)
         .save("trig_functions.png")?;
 
     println!("✅ Plot saved to trig_functions.png");
@@ -461,7 +461,7 @@ cargo run --release  # Much faster than debug builds
 Plot::new()
     .line(&x, &y)
         .label("My Data")  // Required for legend
-    .legend(Position::TopRight)
+    .legend(LegendPosition::UpperRight)
     .save("plot.png")?;
 ```
 
@@ -493,7 +493,7 @@ Plot::new()
 ```rust
 .size_px(width, height)     // Figure size
 .dpi(resolution)               // Image resolution
-.color(Color::new(r,g,b)) // Series color
+.color(Color::from_rgb(r,g,b)) // Series color
 .line_width(width)             // Line thickness
 .marker(MarkerStyle::Circle)   // Marker shape
 .marker_size(size)             // Marker size
@@ -501,7 +501,7 @@ Plot::new()
 .grid(true)                    // Show grid
 .xlim(min, max)                // X axis range (descending values reverse it)
 .ylim(min, max)                // Y axis range (descending values reverse it)
-.legend(Position::TopRight)    // Show legend
+.legend(LegendPosition::UpperRight)    // Show legend
 .theme(Theme::dark())          // Apply theme
 ```
 

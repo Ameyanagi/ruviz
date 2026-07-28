@@ -227,6 +227,13 @@ impl SkiaRenderer {
         dpi: f32,
     ) -> Result<()> {
         let (px, py) = transform.point(x, y);
+        // A label the axes cannot place is skipped whole — box, border and all
+        // — exactly as the SVG backend skips it. Only guarding the glyph run
+        // would still leave the background rectangle to be transformed by a
+        // `NaN` translation.
+        if !Self::all_finite(&[px, py]) {
+            return Ok(());
+        }
         let render_scale = RenderScale::new(dpi);
         let font_size_px = render_scale.points_to_pixels(style.font_size.max(0.1));
         let padding_px = render_scale.points_to_pixels(style.padding.max(0.0));
@@ -476,7 +483,10 @@ impl SkiaRenderer {
         let dy = tip_y - from_y;
         let len = (dx * dx + dy * dy).sqrt();
 
-        if len < 0.001 {
+        // Twin of the SVG guard: `NaN < 0.001` is false, so an unplaceable
+        // endpoint used to reach `PathBuilder` and be discarded there instead
+        // of being skipped here.
+        if !len.is_finite() || len < 0.001 {
             return Ok(());
         }
 
@@ -735,16 +745,15 @@ impl SkiaRenderer {
             transform.plot_area.top(),
             right - left,
             transform.plot_area.height(),
-        ) {
-            if let Some(fill_color) = &style.fill_color {
-                let mut paint = Paint::default();
-                let color_with_alpha = fill_color.with_alpha(style.fill_alpha);
-                paint.set_color(color_with_alpha.to_tiny_skia_color());
-                paint.anti_alias = true;
+        ) && let Some(fill_color) = &style.fill_color
+        {
+            let mut paint = Paint::default();
+            let color_with_alpha = fill_color.with_alpha(style.fill_alpha);
+            paint.set_color(color_with_alpha.to_tiny_skia_color());
+            paint.anti_alias = true;
 
-                self.pixmap
-                    .fill_rect(rect, &paint, Transform::identity(), None);
-            }
+            self.pixmap
+                .fill_rect(rect, &paint, Transform::identity(), None);
         }
 
         Ok(())
@@ -779,16 +788,15 @@ impl SkiaRenderer {
             top,
             transform.plot_area.width(),
             bottom - top,
-        ) {
-            if let Some(fill_color) = &style.fill_color {
-                let mut paint = Paint::default();
-                let color_with_alpha = fill_color.with_alpha(style.fill_alpha);
-                paint.set_color(color_with_alpha.to_tiny_skia_color());
-                paint.anti_alias = true;
+        ) && let Some(fill_color) = &style.fill_color
+        {
+            let mut paint = Paint::default();
+            let color_with_alpha = fill_color.with_alpha(style.fill_alpha);
+            paint.set_color(color_with_alpha.to_tiny_skia_color());
+            paint.anti_alias = true;
 
-                self.pixmap
-                    .fill_rect(rect, &paint, Transform::identity(), None);
-            }
+            self.pixmap
+                .fill_rect(rect, &paint, Transform::identity(), None);
         }
 
         Ok(())

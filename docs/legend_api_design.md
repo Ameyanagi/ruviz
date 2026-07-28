@@ -47,9 +47,9 @@ Plot::new()
     .legend()
         .position_top_right()
         .font_size(14.0)
-        .background_color(Color::new(255, 255, 255))
+        .background_color(Color::from_rgb(255, 255, 255))
         .background_alpha(0.9)
-        .border_color(Color::new(0, 0, 0))
+        .border_color(Color::from_rgb(0, 0, 0))
         .padding(10.0)
         .spacing(15.0)
     .save("plot.png")?;
@@ -163,7 +163,7 @@ impl Plot {
 
 ## Benefits
 
-1. **Intuitive**: `legend_top_right()` vs `legend(Position::TopRight)`
+1. **Intuitive**: `legend_top_right()` vs `legend(LegendPosition::UpperRight)`
 2. **Discoverable**: IDE autocomplete shows all legend options
 3. **Flexible**: Simple cases are simple, complex cases are possible
 4. **Consistent**: All legend methods follow same pattern
@@ -185,7 +185,7 @@ use ruviz::core::position::Position;
 
 Plot::new()
     .line(&x, &y)
-    .legend(Position::TopRight)  // Verbose, requires import
+    .legend(LegendPosition::UpperRight)  // Verbose, requires import
     .save("plot.png")?;
 ```
 

@@ -4,7 +4,7 @@
 
 use ruviz::prelude::*;
 
-fn main() -> Result<()> {
+fn main() -> PlotResult<()> {
     let categories = vec!["A", "B", "C", "D", "E"];
     let values = vec![23.0, 45.0, 56.0, 78.0, 32.0];
 

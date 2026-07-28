@@ -104,7 +104,7 @@ fn build_histogram(samples: usize) -> Plot {
     Plot::new()
         .size_px(640, 480)
         .dpi(100)
-        .histogram(&values, None)
+        .histogram(&values)
         .into_plot()
 }
 
@@ -121,11 +121,11 @@ fn build_heatmap(rows: usize, cols: usize) -> Plot {
     Plot::new()
         .size_px(640, 640)
         .dpi(100)
-        .heatmap(&matrix, None)
+        .heatmap(&matrix)
         .into_plot()
 }
 
-fn main() -> Result<()> {
+fn main() -> PlotResult<()> {
     let (case, operation, iterations) = parse_args();
     let plot = match case {
         Case::Line(points) => {

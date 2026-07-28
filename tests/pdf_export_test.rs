@@ -20,7 +20,7 @@ fn test_pdf_line_plot_export() {
         .title("Line Plot PDF Test")
         .xlabel("X Value")
         .ylabel("Y Value")
-        .legend(Position::TopLeft)
+        .legend(LegendPosition::UpperLeft)
         .save_pdf(&output_path);
 
     assert!(
@@ -57,7 +57,7 @@ fn test_pdf_multi_series_export() {
         .title("Multi-Series PDF Test")
         .xlabel("X Axis")
         .ylabel("Y Axis")
-        .legend(Position::TopLeft)
+        .legend(LegendPosition::UpperLeft)
         .save_pdf(&output_path);
 
     assert!(
@@ -104,7 +104,7 @@ fn test_svg_line_plot_export() {
         .title("Line Plot SVG Test")
         .xlabel("X Value")
         .ylabel("Y Value")
-        .legend(Position::TopLeft)
+        .legend(LegendPosition::UpperLeft)
         .export_svg(&output_path);
 
     assert!(

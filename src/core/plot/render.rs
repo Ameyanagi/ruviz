@@ -1,20 +1,69 @@
 use super::*;
+use crate::render::skia::{XTickLabelPlan, XTickRowBounds, XTickRowMetrics, draw_x_tick_label_row};
 
-#[derive(Debug, Clone)]
-struct ColorbarMeasurementSpec {
-    vmin: f64,
-    vmax: f64,
-    value_scale: AxisScale,
-    label: Option<String>,
-    tick_font_size: f32,
-    label_font_size: f32,
-    show_log_subticks: bool,
+/// Where the data actually is, for [`LegendPosition::Best`].
+///
+/// One function, called by every backend that draws a legend, so raster and SVG
+/// cannot answer `Best` with different corners. Samples are projected through
+/// the same mapper the drawing code uses and a sample the axis scales cannot
+/// place is dropped, exactly as the drawing code drops it — a log axis must not
+/// push a legend away from a point it never drew.
+///
+/// Only the series that carry explicit `(x, y)` samples are binned. Bars,
+/// histograms and box plots contribute nothing yet, which leaves the grid empty
+/// for a bar-only figure and makes `Best` degrade to `UpperRight` — the
+/// behaviour those plots already had.
+fn legend_occupancy(
+    series: &[ResolvedSeries<'_>],
+    plot_area: tiny_skia::Rect,
+    (x_min, x_max, y_min, y_max): (f64, f64, f64, f64),
+    x_scale: &AxisScale,
+    y_scale: &AxisScale,
+) -> LegendOccupancy {
+    let points = series
+        .iter()
+        .filter_map(|series| match series {
+            ResolvedSeries::Line { x, y }
+            | ResolvedSeries::Scatter { x, y }
+            | ResolvedSeries::ErrorBars { x, y, .. }
+            | ResolvedSeries::ErrorBarsXY { x, y, .. } => Some((x, y)),
+            _ => None,
+        })
+        .flat_map(|(x, y)| {
+            x.iter().zip(y.iter()).filter_map(|(&x, &y)| {
+                try_map_data_to_pixels_scaled(
+                    x, y, x_min, x_max, y_min, y_max, plot_area, x_scale, y_scale,
+                )
+            })
+        });
+
+    LegendOccupancy::from_screen_points(
+        (
+            plot_area.left(),
+            plot_area.top(),
+            plot_area.right(),
+            plot_area.bottom(),
+        ),
+        points,
+    )
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AnnotationRenderLayer {
     Underlay,
     Overlay,
+}
+
+/// One grid drawing pass produced by [`Plot::grid_layers`].
+///
+/// Carries the tick pixel positions to stroke plus the stroke appearance for
+/// that pass, so major and minor grids keep their distinct weight and opacity.
+#[derive(Debug, Clone)]
+pub(crate) struct GridLayer {
+    pub x_pixels: Vec<f32>,
+    pub y_pixels: Vec<f32>,
+    pub color: Color,
+    pub width_px: f32,
 }
 
 impl Plot {
@@ -40,6 +89,14 @@ impl Plot {
             | Annotation::HSpan { .. }
             | Annotation::VSpan { .. }
             | Annotation::Rectangle { .. } => AnnotationRenderLayer::Underlay,
+            // Arrows the library emits as series structure — `stem()` pushes its
+            // stems this way — paint below the series so they do not cover their
+            // own markers. Provenance is carried on the style, never inferred
+            // from the head style: a caller-built headless arrow is a normal
+            // pointer annotation and belongs in the overlay.
+            Annotation::Arrow { style, .. } if style.is_series_structure() => {
+                AnnotationRenderLayer::Underlay
+            }
             Annotation::Text { .. }
             | Annotation::Arrow { .. }
             | Annotation::HLine { .. }
@@ -55,12 +112,273 @@ impl Plot {
         Self::annotation_render_layer(annotation) == AnnotationRenderLayer::Overlay
     }
 
+    /// The one gate every output path passes through before a frame is
+    /// resolved.
+    ///
+    /// `save`, `render`/`render_at`, `render_to_svg`/`export_svg`,
+    /// `save_pdf_with_size` and `render_to_renderer` all call this first, so it
+    /// sits *above* the raster/vector split. Validation that must hold for the
+    /// figure regardless of how it is rasterised belongs here and not inside a
+    /// renderer: a check duplicated per backend is a check the backends will
+    /// eventually disagree about, which is exactly how `.export_svg()` came to
+    /// accept a figure `.save()` refused.
     pub(super) fn validate_before_frame_resolution(&self) -> Result<()> {
         self.validate_runtime_environment()?;
         if let Some(error) = self.pending_ingestion_error() {
             return Err(error);
         }
+        self.validate_aggregate_geometry_against_axis_scales(&self.series_mgr.series)?;
+        self.validate_annotation_shapes_against_axis_scales()?;
         Ok(())
+    }
+
+    /// Refuse annotation *shapes* whose defining coordinates an axis cannot place.
+    ///
+    /// The same split as [`Self::validate_aggregate_geometry_against_axis_scales`],
+    /// applied to annotations rather than to series.
+    ///
+    /// * A text label, an arrow or a reference line is a **mark at a
+    ///   position**. One the axis cannot place is skipped — by both backends,
+    ///   identically — exactly as an unplaceable scatter point is. Not checked.
+    /// * A rectangle, a span or a filled region is a **shape**, and the
+    ///   coordinates *are* what define it. A corner the axis cannot place does
+    ///   not make the shape smaller, it makes it undrawable.
+    ///
+    /// Left to the backends, the second case is where they part company: the
+    /// SVG renderer refuses the element and latches the fault, while tiny-skia
+    /// answers the same input with `Rect::from_xywh`/`PathBuilder::finish`
+    /// returning `None` and simply draws nothing. One would report and one
+    /// would go quiet — the divergence this tranche exists to remove. Refusing
+    /// here, above the split, means neither backend ever sees the `NaN` and the
+    /// user gets the message that names the axis and the fix.
+    fn validate_annotation_shapes_against_axis_scales(&self) -> Result<()> {
+        for annotation in &self.annotations {
+            match annotation {
+                Annotation::Rectangle {
+                    x,
+                    y,
+                    width,
+                    height,
+                    ..
+                } => {
+                    Self::reject_unplaceable_values(
+                        [*x, *x + *width],
+                        &self.layout.x_scale,
+                        "x",
+                        "rectangle annotation",
+                    )?;
+                    Self::reject_unplaceable_values(
+                        [*y, *y + *height],
+                        &self.layout.y_scale,
+                        "y",
+                        "rectangle annotation",
+                    )?;
+                }
+                Annotation::HSpan { x_min, x_max, .. } => {
+                    Self::reject_unplaceable_values(
+                        [*x_min, *x_max],
+                        &self.layout.x_scale,
+                        "x",
+                        "horizontal span annotation",
+                    )?;
+                }
+                Annotation::VSpan { y_min, y_max, .. } => {
+                    Self::reject_unplaceable_values(
+                        [*y_min, *y_max],
+                        &self.layout.y_scale,
+                        "y",
+                        "vertical span annotation",
+                    )?;
+                }
+                Annotation::FillBetween { x, y1, y2, .. } => {
+                    // Both curves and the shared abscissa are outline vertices
+                    // of one closed polygon, so any of them can break it.
+                    Self::reject_unplaceable_values(
+                        x.iter().copied(),
+                        &self.layout.x_scale,
+                        "x",
+                        "filled region annotation",
+                    )?;
+                    Self::reject_unplaceable_values(
+                        y1.iter().chain(y2.iter()).copied(),
+                        &self.layout.y_scale,
+                        "y",
+                        "filled region annotation",
+                    )?;
+                }
+                Annotation::Text { .. }
+                | Annotation::Arrow { .. }
+                | Annotation::HLine { .. }
+                | Annotation::VLine { .. } => {}
+            }
+        }
+        Ok(())
+    }
+
+    /// Refuse aggregate geometry whose defining values an axis cannot place.
+    ///
+    /// Two kinds of series meet an unrepresentable sample very differently:
+    ///
+    /// * A **point or line** series is a set of independent samples. One that a
+    ///   log axis cannot place is simply not drawn and the polyline breaks at
+    ///   the gap, so the user still gets the rest of their data. Those series
+    ///   are deliberately *not* checked here.
+    /// * **Aggregate geometry** — a bar, a histogram's bins, a box plot's
+    ///   quartiles, a violin's density, a boxen's letter values — is *computed
+    ///   from* its values. A single non-positive value does not make the shape
+    ///   shorter, it makes it undefined: the box plot that motivated this
+    ///   rendered two orphan strokes and a flier, with no box at all, and
+    ///   reported success. Those are refused here.
+    ///
+    /// The scan runs on the **raw data** against the plot's scales, not on the
+    /// computed axis bounds, and that is the whole point. The bounds
+    /// accumulator admits only coordinates the scale can represent, so a range
+    /// derived from it can never look invalid — which is why
+    /// [`Self::validate_axis_scale_ranges_for_render`] stopped catching this
+    /// case, the raster backend fell over later on a `NaN` rectangle, and the
+    /// SVG backend happily wrote `height="NaN"`.
+    pub(crate) fn validate_aggregate_geometry_against_axis_scales(
+        &self,
+        series_list: &[PlotSeries],
+    ) -> Result<()> {
+        for series in series_list {
+            match &series.series_type {
+                SeriesType::Bar { values, config, .. } => {
+                    // The bar's baseline (`config.bottom`, zero by default) is
+                    // not data and is deliberately not checked: a log value
+                    // axis draws bars down to the axis floor, and refusing that
+                    // would make every log bar chart impossible.
+                    let (axis, scale) = match config.orientation {
+                        crate::plots::basic::BarOrientation::Vertical => {
+                            ("y", &self.layout.y_scale)
+                        }
+                        crate::plots::basic::BarOrientation::Horizontal => {
+                            ("x", &self.layout.x_scale)
+                        }
+                    };
+                    Self::reject_unplaceable_values(
+                        values.resolve_cow(0.0).iter().copied(),
+                        scale,
+                        axis,
+                        "bar",
+                    )?;
+                }
+                SeriesType::Histogram { data, config, .. } => {
+                    // Bins run along x. The counts are a derived height rising
+                    // from the baseline, exactly like a bar's, so the value
+                    // axis is not checked.
+                    let scale = &self.layout.x_scale;
+                    match config.range {
+                        // An explicit range *is* the outer pair of bin edges;
+                        // samples outside it are never binned, so only the
+                        // range itself has to be placeable.
+                        Some((low, high)) => Self::reject_unplaceable_values(
+                            [low, high].into_iter(),
+                            scale,
+                            "x",
+                            "histogram",
+                        )?,
+                        None => Self::reject_unplaceable_values(
+                            data.resolve_cow(0.0).iter().copied(),
+                            scale,
+                            "x",
+                            "histogram",
+                        )?,
+                    }
+                }
+                SeriesType::BoxPlot { data, config } => {
+                    let (axis, scale) = match config.orientation {
+                        crate::plots::boxplot::BoxOrientation::Vertical => {
+                            ("y", &self.layout.y_scale)
+                        }
+                        crate::plots::boxplot::BoxOrientation::Horizontal => {
+                            ("x", &self.layout.x_scale)
+                        }
+                    };
+                    Self::reject_unplaceable_values(
+                        data.resolve_cow(0.0).iter().copied(),
+                        scale,
+                        axis,
+                        "box plot",
+                    )?;
+                }
+                SeriesType::Violin { data } => {
+                    // The violin body is a kernel density estimate over the
+                    // whole sample, so every value shapes the outline; one the
+                    // axis cannot place does not shorten the body, it punches a
+                    // hole in it.
+                    let (axis, scale) = match data.config.orientation {
+                        crate::plots::distribution::Orientation::Vertical => {
+                            ("y", &self.layout.y_scale)
+                        }
+                        crate::plots::distribution::Orientation::Horizontal => {
+                            ("x", &self.layout.x_scale)
+                        }
+                    };
+                    Self::reject_unplaceable_values(
+                        data.data.iter().copied(),
+                        scale,
+                        axis,
+                        "violin",
+                    )?;
+                }
+                SeriesType::Boxen { data } => {
+                    // Only the letter-value bands and the median are checked.
+                    // Outliers are drawn one marker at a time, exactly like a
+                    // scatter point, so an unplaceable one is skippable and must
+                    // not cost the user the whole figure.
+                    let (axis, scale) = match data.config.orient {
+                        crate::plots::distribution::BoxenOrientation::Vertical => {
+                            ("y", &self.layout.y_scale)
+                        }
+                        crate::plots::distribution::BoxenOrientation::Horizontal => {
+                            ("x", &self.layout.x_scale)
+                        }
+                    };
+                    Self::reject_unplaceable_values(
+                        data.boxes
+                            .iter()
+                            .flat_map(|band| [band.lower, band.upper])
+                            .chain(std::iter::once(data.median)),
+                        scale,
+                        axis,
+                        "boxen",
+                    )?;
+                }
+                // Everything else is drawn sample by sample — a line, a scatter,
+                // an error bar, a heatmap cell, a contour vertex. An
+                // unrepresentable sample there is a gap in the drawing, not an
+                // undefined shape, so it is dropped by the projection and the
+                // geometry breaks at the hole instead of being refused.
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
+    /// Build the refusal for one unplaceable aggregate value.
+    ///
+    /// The message opens with the shared `LOG_SCALE_REQUIRES_POSITIVE` wording
+    /// so it names the axis and points at `SymLog`, then says which value and
+    /// which plot type provoked it — the two things the previous "Invalid
+    /// rectangle dimensions" left the user to guess.
+    fn reject_unplaceable_values(
+        values: impl IntoIterator<Item = f64>,
+        scale: &AxisScale,
+        axis: &'static str,
+        plot_kind: &'static str,
+    ) -> Result<()> {
+        let Some(offender) = scale.first_unplaceable(values) else {
+            return Ok(());
+        };
+        let shared = crate::axes::scale::LOG_SCALE_REQUIRES_POSITIVE;
+        Err(PlottingError::InvalidInput(format!(
+            "Invalid {axis}-axis range: {shared} \
+             (the {plot_kind} value {offender} has no position on the logarithmic {axis} axis, \
+             and the shape is defined by it rather than drawn point by point, \
+             so it cannot simply be skipped. Use `.{axis}scale(AxisScale::SymLog {{ linthresh }})` \
+             or remove the non-positive values.)"
+        )))
     }
 
     fn render_image_with_mode(&self, mode: RenderExecutionMode) -> Result<Image> {
@@ -97,6 +415,14 @@ impl Plot {
         if !Self::needs_cartesian_axes_for_series(series_list) {
             return Ok(());
         }
+
+        // Belt and braces. `validate_before_frame_resolution` already ran this
+        // for every public entry point, and it is idempotent; repeating it in
+        // the one function both backends call means a future path that reaches
+        // a renderer without passing the entry gate still gets an error rather
+        // than a `NaN` rectangle.
+        self.validate_aggregate_geometry_against_axis_scales(series_list)?;
+        self.validate_annotation_shapes_against_axis_scales()?;
 
         self.layout
             .x_scale
@@ -202,19 +528,50 @@ impl Plot {
         }
     }
 
-    pub(crate) fn grid_tick_pixels(
-        major_pixels: &[f32],
-        minor_pixels: &[f32],
+    /// Convert a grid stroke width from points to device pixels.
+    ///
+    /// Floored at one device pixel: a sub-pixel grid stroke is antialiased into
+    /// a washed-out band and effectively disappears.
+    pub(crate) fn grid_stroke_px(points: f32, points_to_px: &impl Fn(f32) -> f32) -> f32 {
+        points_to_px(points).max(crate::core::style_utils::defaults::MIN_GRID_LINE_WIDTH_PX)
+    }
+
+    /// Split the grid into the passes the renderer has to draw.
+    ///
+    /// Major and minor grid lines are *not* interchangeable: [`GridStyle`]
+    /// carries a separate `minor_line_width` and `minor_alpha` so minor lines
+    /// read as subordinate. Concatenating both tick sets into a single draw call
+    /// throws that away and paints minor lines at full major weight, so each
+    /// pass is emitted separately with its own colour and stroke width.
+    ///
+    /// For [`GridMode::Both`] the minor pass comes first so that major lines
+    /// overdraw any coincident minor line.
+    pub(crate) fn grid_layers(
+        style: &GridStyle,
         mode: &GridMode,
-    ) -> Vec<f32> {
+        x_major: &[f32],
+        y_major: &[f32],
+        x_minor: &[f32],
+        y_minor: &[f32],
+        points_to_px: impl Fn(f32) -> f32,
+    ) -> Vec<GridLayer> {
+        let major = || GridLayer {
+            x_pixels: x_major.to_vec(),
+            y_pixels: y_major.to_vec(),
+            color: style.effective_color(),
+            width_px: Self::grid_stroke_px(style.line_width, &points_to_px),
+        };
+        let minor = || GridLayer {
+            x_pixels: x_minor.to_vec(),
+            y_pixels: y_minor.to_vec(),
+            color: style.effective_minor_color(),
+            width_px: Self::grid_stroke_px(style.minor_line_width, &points_to_px),
+        };
+
         match mode {
-            GridMode::MajorOnly => major_pixels.to_vec(),
-            GridMode::MinorOnly => minor_pixels.to_vec(),
-            GridMode::Both => major_pixels
-                .iter()
-                .chain(minor_pixels.iter())
-                .copied()
-                .collect(),
+            GridMode::MajorOnly => vec![major()],
+            GridMode::MinorOnly => vec![minor()],
+            GridMode::Both => vec![minor(), major()],
         }
     }
 
@@ -283,52 +640,31 @@ impl Plot {
             y_max,
         )?;
 
-        let bar_categories: Option<Cow<'_, [String]>> =
-            self.series_mgr.series.iter().find_map(|s| {
-                if let SeriesType::Bar { categories, .. } = &s.series_type {
-                    Some(Cow::Borrowed(categories.as_slice()))
-                } else {
-                    None
-                }
-            });
+        // One harvest for every categorical plot type: bars, box plots,
+        // violins and boxen plots all sit in the same unit-wide slots.
+        let category_axis = super::series_internal::CategoryAxis::harvest(&self.series_mgr.series);
+        let (category_labels, category_positions): (&[String], &[f64]) = match &category_axis {
+            Some(axis) => (&axis.labels, &axis.positions),
+            None => (&[], &[]),
+        };
+        let is_categorical = category_axis.is_some();
 
-        let violin_data: Vec<(String, f64)> = self
-            .series_mgr
-            .series
-            .iter()
-            .filter_map(|s| {
-                if let SeriesType::Violin { data } = &s.series_type {
-                    data.config
-                        .category
-                        .clone()
-                        .map(|cat| (cat, data.config.x_position))
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        let (violin_categories, violin_positions): (Vec<String>, Vec<f64>) =
-            violin_data.into_iter().unzip();
-
-        let is_violin_categorical = !violin_categories.is_empty();
-
-        let bar_categories = bar_categories.or(if is_violin_categorical {
-            Some(Cow::Borrowed(violin_categories.as_slice()))
-        } else {
-            None
-        });
         let content = self.create_plot_content_from_resolved_text(y_min, y_max, frame);
-        let (layout, x_ticks, y_ticks) = self.compute_layout_with_configured_ticks(
-            &renderer,
-            (scaled_width, scaled_height),
-            &content,
-            dpi,
-            x_min,
-            x_max,
-            y_min,
-            y_max,
-        )?;
+        let (layout, x_ticks, y_ticks, x_tick_label_plan) = self
+            .compute_layout_with_categorical_ticks(
+                &renderer,
+                (scaled_width, scaled_height),
+                &content,
+                dpi,
+                x_min,
+                x_max,
+                y_min,
+                y_max,
+                category_labels,
+                category_positions,
+            )?;
+        // The row that was measured is the row that is drawn.
+        renderer.set_x_tick_label_plan(x_tick_label_plan);
         let plot_area = Self::plot_area_from_layout(&layout)?;
 
         let x_tick_pixels: Vec<f32> = x_ticks
@@ -364,35 +700,29 @@ impl Plot {
 
         let draw_axes = Self::needs_cartesian_axes_for_series(&self.series_mgr.series);
         if self.layout.grid_style.visible && draw_axes {
-            let grid_color = self.layout.grid_style.effective_color();
-            let grid_width_px = self.line_width_px(self.layout.grid_style.line_width);
-            let grid_x_pixels = Self::grid_tick_pixels(
+            let layers = Self::grid_layers(
+                &self.layout.grid_style,
+                &self.layout.tick_config.grid_mode,
                 &x_tick_pixels,
-                &x_minor_tick_pixels,
-                &self.layout.tick_config.grid_mode,
-            );
-            let grid_y_pixels = Self::grid_tick_pixels(
                 &y_tick_pixels,
+                &x_minor_tick_pixels,
                 &y_minor_tick_pixels,
-                &self.layout.tick_config.grid_mode,
+                |points| self.line_width_px(points),
             );
-            renderer.draw_grid(
-                &grid_x_pixels,
-                &grid_y_pixels,
-                plot_area,
-                grid_color,
-                self.layout.grid_style.line_style.clone(),
-                grid_width_px,
-            )?;
+            for layer in &layers {
+                renderer.draw_grid(
+                    &layer.x_pixels,
+                    &layer.y_pixels,
+                    plot_area,
+                    layer.color,
+                    self.layout.grid_style.line_style.clone(),
+                    layer.width_px,
+                )?;
+            }
         }
 
-        let categorical_x_tick_pixels = Self::categorical_x_tick_pixels(
-            plot_area,
-            x_min,
-            x_max,
-            bar_categories.as_ref().map(|categories| categories.len()),
-            &violin_positions,
-        );
+        let categorical_x_tick_pixels =
+            Self::categorical_x_tick_pixels(plot_area, x_min, x_max, category_positions);
 
         let draw_ticks = draw_axes && self.layout.tick_config.enabled;
         if draw_ticks {
@@ -445,11 +775,11 @@ impl Plot {
 
         let tick_size_px = pt_to_px(self.display.config.typography.tick_size(), dpi);
 
-        if draw_axes && is_violin_categorical {
-            renderer.draw_axis_labels_at_categorical_violin(
+        if draw_axes && is_categorical {
+            renderer.draw_axis_labels_at_categorical(
                 &layout.plot_area,
-                &violin_categories,
-                &violin_positions,
+                category_labels,
+                category_positions,
                 x_min,
                 x_max,
                 y_min,
@@ -462,68 +792,50 @@ impl Plot {
                 dpi,
                 self.layout.tick_config.enabled,
                 false,
+                &self.layout.y_scale,
             )?;
         } else if draw_axes {
-            if let Some(ref categories) = bar_categories {
-                renderer.draw_axis_labels_at_categorical(
-                    &layout.plot_area,
-                    categories,
-                    x_min,
-                    x_max,
-                    y_min,
-                    y_max,
-                    &y_ticks,
-                    layout.xtick_baseline_y,
-                    layout.ytick_right_x,
-                    tick_size_px,
-                    self.display.theme.foreground,
-                    dpi,
-                    self.layout.tick_config.enabled,
-                    false,
-                )?;
-            } else {
-                renderer.draw_axis_labels_at_scaled(
-                    &layout.plot_area,
-                    x_min,
-                    x_max,
-                    y_min,
-                    y_max,
-                    &x_ticks,
-                    &y_ticks,
-                    layout.xtick_baseline_y,
-                    layout.ytick_right_x,
-                    tick_size_px,
-                    self.display.theme.foreground,
-                    dpi,
-                    self.layout.tick_config.enabled,
-                    false,
-                    &self.layout.x_scale,
-                    &self.layout.y_scale,
-                )?;
-            }
+            renderer.draw_axis_labels_at_scaled(
+                &layout.plot_area,
+                x_min,
+                x_max,
+                y_min,
+                y_max,
+                &x_ticks,
+                &y_ticks,
+                layout.xtick_baseline_y,
+                layout.ytick_right_x,
+                tick_size_px,
+                self.display.theme.foreground,
+                dpi,
+                self.layout.tick_config.enabled,
+                false,
+                &self.layout.x_scale,
+                &self.layout.y_scale,
+            )?;
         }
 
-        if let Some(ref pos) = layout.title_pos {
-            if let Some(title) = frame.title.as_deref() {
-                renderer.draw_title_at_with_weight(
-                    pos,
-                    title,
-                    self.display.theme.foreground,
-                    self.display.config.typography.title_weight,
-                )?;
-            }
+        if let Some(ref pos) = layout.title_pos
+            && let Some(title) = frame.title.as_deref()
+        {
+            renderer.draw_title_at_with_weight(
+                pos,
+                title,
+                self.display.theme.foreground,
+                self.display.config.typography.title_weight,
+            )?;
         }
 
-        if let Some(ref pos) = layout.xlabel_pos {
-            if let Some(xlabel) = frame.xlabel.as_deref() {
-                renderer.draw_xlabel_at(pos, xlabel, self.display.theme.foreground)?;
-            }
+        if let Some(ref pos) = layout.xlabel_pos
+            && let Some(xlabel) = frame.xlabel.as_deref()
+        {
+            renderer.draw_xlabel_at(pos, xlabel, self.display.theme.foreground)?;
         }
 
-        if let Some(ref pos) = layout.ylabel_pos {
-            if let Some(ylabel) = frame.ylabel.as_deref() {
-                renderer.draw_ylabel_at(pos, ylabel, self.display.theme.foreground)?;
-            }
+        if let Some(ref pos) = layout.ylabel_pos
+            && let Some(ylabel) = frame.ylabel.as_deref()
+        {
+            renderer.draw_ylabel_at(pos, ylabel, self.display.theme.foreground)?;
         }
 
         renderer.draw_annotations_where_scaled(
@@ -568,89 +880,24 @@ impl Plot {
 
         let legend_items = self.collect_legend_items();
         if !legend_items.is_empty() && frame.style.legend.enabled {
+            let occupancy = legend_occupancy(
+                &frame.series,
+                plot_area,
+                (x_min, x_max, y_min, y_max),
+                &self.layout.x_scale,
+                &self.layout.y_scale,
+            );
             renderer.draw_legend_full_resolved(
                 &legend_items,
                 &frame.style.legend,
                 plot_area,
-                None,
+                Some(&occupancy),
                 layout.legend_rect.as_ref().map(|rect| rect.bounds()),
             )?;
         }
 
         let diagnostics = renderer.render_diagnostics().clone();
         Ok((renderer, diagnostics))
-    }
-
-    #[cfg(feature = "parallel")]
-    fn try_render_parallel_image_with_diagnostics(
-        &self,
-        mode: RenderExecutionMode,
-        frame: &ResolvedFrame<'_>,
-    ) -> Result<Option<(Image, RenderDiagnostics)>> {
-        if !mode.allows_parallel() {
-            return Ok(None);
-        }
-
-        self.validate_runtime_environment()?;
-        if let Some(err) = self.pending_ingestion_error() {
-            return Err(err);
-        }
-
-        if !frame.series.is_empty() {
-            self.validate_resolved_series(&frame.series)?;
-        }
-
-        let total_points = Self::calculate_total_points_from_resolved(&frame.series);
-        let series_count = frame.series.len();
-        let has_mixed_coordinates = Self::has_mixed_coordinate_series(&self.series_mgr.series);
-        let parallel_safe_for_markers =
-            self.series_mgr
-                .series
-                .iter()
-                .all(|series| match &series.series_type {
-                    SeriesType::Line { .. } => {
-                        series.marker_style.is_none()
-                            && series.x_errors.is_none()
-                            && series.y_errors.is_none()
-                    }
-                    SeriesType::Scatter { .. }
-                    | SeriesType::Bar { .. }
-                    | SeriesType::ErrorBars { .. }
-                    | SeriesType::ErrorBarsXY { .. }
-                    | SeriesType::Histogram { .. }
-                    | SeriesType::BoxPlot { .. } => true,
-                    SeriesType::Heatmap { .. }
-                    | SeriesType::Kde { .. }
-                    | SeriesType::Ecdf { .. }
-                    | SeriesType::Violin { .. }
-                    | SeriesType::Boxen { .. }
-                    | SeriesType::Contour { .. }
-                    | SeriesType::Pie { .. }
-                    | SeriesType::Radar { .. }
-                    | SeriesType::Polar { .. }
-                    | SeriesType::Quiver { .. } => false,
-                });
-
-        if has_mixed_coordinates
-            || !parallel_safe_for_markers
-            || !self
-                .render
-                .parallel_renderer
-                .should_use_parallel(series_count, total_points)
-        {
-            return Ok(None);
-        }
-
-        let image = self.render_with_parallel_resolved(frame)?;
-        let diagnostics = RenderDiagnostics {
-            render_mode: match mode {
-                RenderExecutionMode::Reference => "reference",
-                RenderExecutionMode::Optimized => "optimized",
-            },
-            used_parallel: true,
-            ..RenderDiagnostics::default()
-        };
-        Ok(Some((image, diagnostics)))
     }
 
     pub(super) fn render_image_with_mode_and_series_renderer<F>(
@@ -677,14 +924,6 @@ impl Plot {
         self.validate_before_frame_resolution()?;
         let frame = self.resolve_frame(time)?;
         let style_shell = self.resolved_style_shell(&frame.style);
-        #[cfg(feature = "parallel")]
-        if let Some(parallel_render) =
-            style_shell.try_render_parallel_image_with_diagnostics(mode, &frame)?
-        {
-            frame.acknowledge_rendered(self);
-            return Ok(parallel_render);
-        }
-
         let result = style_shell
             .render_renderer_with_resolved_frame(mode, &frame, draw_series)
             .map(|(renderer, diagnostics)| (renderer.into_image(), diagnostics));
@@ -827,15 +1066,12 @@ impl Plot {
 
         match requested_backend {
             BackendType::Skia => unreachable!("Skia resolution returned above"),
+            // There is no 2D series-parallel raster backend in any build
+            // configuration; the `parallel` cargo feature only parallelizes the
+            // software 3D tile rasterizer. So this is always a fallback, and the
+            // reason never depends on the feature flag.
             BackendType::Parallel => {
-                #[cfg(not(feature = "parallel"))]
-                {
-                    self.backend_fallback(BackendFallbackReason::FeatureDisabled)
-                }
-                #[cfg(feature = "parallel")]
-                {
-                    self.backend_fallback(BackendFallbackReason::UnsupportedOperation)
-                }
+                self.backend_fallback(BackendFallbackReason::UnsupportedOperation)
             }
             BackendType::GPU => {
                 #[cfg(not(feature = "gpu"))]
@@ -1117,7 +1353,7 @@ impl Plot {
         let mode = plot.render_execution_mode(BackendOperation::RasterImage);
         let (subplot_renderer, _) =
             plot.render_renderer_with_frame_and_diagnostics(mode, &frame)?;
-        renderer.draw_subplot(subplot_renderer.into_image(), 0, 0)?;
+        renderer.draw_image_layer(&subplot_renderer.into_image_demultiplied(), 0, 0)?;
         frame.acknowledge_rendered(self);
         Ok(())
     }
@@ -1198,50 +1434,23 @@ impl Plot {
         self.create_plot_content_at_time(y_min, y_max, 0.0)
     }
 
-    fn colorbar_measurement_spec(&self) -> Option<ColorbarMeasurementSpec> {
+    /// The colorbar whose width the layout has to reserve room for.
+    ///
+    /// One colorbar is drawn (they all share `colorbar_rect`), so the first
+    /// series that asks for one is the one measured. It is the *same*
+    /// [`ColorbarRequest`] the drawing code will use, which is what stops the
+    /// margin being measured from one range and the strip drawn from another.
+    fn colorbar_measurement_spec(&self) -> Option<crate::render::colorbar::ColorbarRequest> {
         self.series_mgr
             .series
             .iter()
-            .find_map(|series| match &series.series_type {
-                SeriesType::Heatmap { data } if data.config.colorbar => {
-                    Some(ColorbarMeasurementSpec {
-                        vmin: data.vmin,
-                        vmax: data.vmax,
-                        value_scale: data.config.value_scale.clone(),
-                        label: data.config.colorbar_label.clone(),
-                        tick_font_size: data.config.colorbar_tick_font_size,
-                        label_font_size: data.config.colorbar_label_font_size,
-                        show_log_subticks: data.config.colorbar_log_subticks,
-                    })
-                }
-                SeriesType::Contour { data } if data.config.colorbar => {
-                    let (vmin, vmax) = if data.levels.is_empty() {
-                        (0.0, 1.0)
-                    } else {
-                        (
-                            data.levels.first().copied().unwrap_or(0.0),
-                            data.levels.last().copied().unwrap_or(1.0),
-                        )
-                    };
-
-                    Some(ColorbarMeasurementSpec {
-                        vmin,
-                        vmax,
-                        value_scale: AxisScale::Linear,
-                        label: data.config.colorbar_label.clone(),
-                        tick_font_size: data.config.colorbar_tick_font_size,
-                        label_font_size: data.config.colorbar_label_font_size,
-                        show_log_subticks: false,
-                    })
-                }
-                _ => None,
-            })
+            .find_map(|series| self.series_colorbar_request(&series.series_type))
     }
 
     fn measure_colorbar_right_margin(
         &self,
         renderer: &SkiaRenderer,
-        spec: &ColorbarMeasurementSpec,
+        spec: &crate::render::colorbar::ColorbarRequest,
     ) -> Result<f32> {
         let render_scale = renderer.render_scale();
         let colorbar_width = render_scale.logical_pixels_to_pixels(COLORBAR_WIDTH_PX);
@@ -1335,45 +1544,10 @@ impl Plot {
             .to_legend(self.display.config.typography.legend_size());
         let legend_items = self.collect_legend_items();
         if legend.enabled && legend.position.is_outside() && !legend_items.is_empty() {
-            measurements.legend = Some(Self::measure_legend(renderer, &legend, &legend_items)?);
+            measurements.legend = Some(renderer.measure_legend(&legend_items, &legend)?);
         }
 
         Ok(Some(measurements))
-    }
-
-    fn measure_legend(
-        renderer: &SkiaRenderer,
-        legend: &Legend,
-        items: &[LegendItem],
-    ) -> Result<(f32, f32)> {
-        let legend = legend.scaled_for_render(renderer.render_scale());
-        let spacing = legend.spacing.to_pixels(legend.font_size);
-        let mut max_label_width = 0.0_f32;
-        for item in items {
-            max_label_width = max_label_width.max(
-                renderer
-                    .measure_label_text(&item.label, legend.font_size)?
-                    .0,
-            );
-        }
-        let columns = legend.columns.max(1);
-        let rows = items.len().div_ceil(columns);
-        let item_width = spacing.handle_length + spacing.handle_text_pad + max_label_width;
-        let content_width =
-            item_width * columns as f32 + columns.saturating_sub(1) as f32 * spacing.column_spacing;
-        let content_height =
-            rows as f32 * legend.font_size + rows.saturating_sub(1) as f32 * spacing.label_spacing;
-        let title_size = if let Some(title) = legend.title.as_deref() {
-            let title_width = renderer.measure_label_text(title, legend.font_size)?.0;
-            (title_width, legend.font_size + spacing.label_spacing)
-        } else {
-            (0.0, 0.0)
-        };
-
-        Ok((
-            content_width.max(title_size.0) + spacing.border_pad * 2.0,
-            content_height + title_size.1 + spacing.border_pad * 2.0,
-        ))
     }
 
     pub(super) fn compute_layout_from_measurements(
@@ -1745,27 +1919,188 @@ impl Plot {
         y_min: f64,
         y_max: f64,
     ) -> Result<(ResolvedLayout, Vec<f64>, Vec<f64>)> {
-        if !content.show_tick_labels {
-            let measurements =
-                self.measure_layout_text_with_ticks(renderer, content, dpi, &[], &[])?;
-            let layout = self.compute_layout_from_measurements(
-                canvas_size,
-                content,
-                dpi,
-                measurements.as_ref(),
-            );
-            return Ok((layout, Vec::new(), Vec::new()));
-        }
-
-        let (x_ticks, y_ticks) = self.configured_major_ticks(x_min, x_max, y_min, y_max);
-        let x_labels = crate::render::skia::format_tick_labels(&x_ticks);
-        let y_labels = crate::render::skia::format_tick_labels(&y_ticks);
-        let measurements =
-            self.measure_layout_text_with_ticks(renderer, content, dpi, &x_labels, &y_labels)?;
+        let (measurements, x_ticks, y_ticks) =
+            self.measure_configured_ticks(renderer, content, dpi, x_min, x_max, y_min, y_max)?;
         let layout =
             self.compute_layout_from_measurements(canvas_size, content, dpi, measurements.as_ref());
 
         Ok((layout, x_ticks, y_ticks))
+    }
+
+    /// The same layout, plus the plan its categorical x tick labels are drawn
+    /// with.
+    ///
+    /// Categorical labels are user strings: ten region names collide into one
+    /// illegible run that no tick-count budget can prevent. This is where that
+    /// row is measured and where the bottom margin is reserved from the answer —
+    /// before the plot area is computed, so the labels are given room rather
+    /// than clipped. `category_labels` empty (a numeric axis) leaves both the
+    /// layout and the plan exactly as they were.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn compute_layout_with_categorical_ticks(
+        &self,
+        renderer: &SkiaRenderer,
+        canvas_size: (u32, u32),
+        content: &PlotContent,
+        dpi: f32,
+        x_min: f64,
+        x_max: f64,
+        y_min: f64,
+        y_max: f64,
+        category_labels: &[String],
+        category_positions: &[f64],
+    ) -> Result<(ResolvedLayout, Vec<f64>, Vec<f64>, XTickLabelPlan)> {
+        let (measurements, x_ticks, y_ticks) =
+            self.measure_configured_ticks(renderer, content, dpi, x_min, x_max, y_min, y_max)?;
+        let layout =
+            self.compute_layout_from_measurements(canvas_size, content, dpi, measurements.as_ref());
+        let (layout, plan) = self.resolve_x_tick_label_row(
+            renderer,
+            canvas_size,
+            content,
+            dpi,
+            measurements.as_ref(),
+            layout,
+            category_labels,
+            category_positions,
+            x_min,
+            x_max,
+        )?;
+
+        Ok((layout, x_ticks, y_ticks, plan))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn measure_configured_ticks(
+        &self,
+        renderer: &SkiaRenderer,
+        content: &PlotContent,
+        dpi: f32,
+        x_min: f64,
+        x_max: f64,
+        y_min: f64,
+        y_max: f64,
+    ) -> Result<(Option<LayoutMeasurements>, Vec<f64>, Vec<f64>)> {
+        if !content.show_tick_labels {
+            let measurements =
+                self.measure_layout_text_with_ticks(renderer, content, dpi, &[], &[])?;
+            return Ok((measurements, Vec::new(), Vec::new()));
+        }
+
+        let (x_ticks, y_ticks) = self.configured_major_ticks(x_min, x_max, y_min, y_max);
+        // Must be the scale-aware formatter: the renderer draws a log axis as
+        // "10³", so measuring "1000" here would size the margins for a string
+        // that is never drawn.
+        let x_labels = crate::axes::format_tick_labels_for_scale(&x_ticks, &self.layout.x_scale);
+        let y_labels = crate::axes::format_tick_labels_for_scale(&y_ticks, &self.layout.y_scale);
+        let measurements =
+            self.measure_layout_text_with_ticks(renderer, content, dpi, &x_labels, &y_labels)?;
+
+        Ok((measurements, x_ticks, y_ticks))
+    }
+
+    /// Decide how the categorical x tick label row is drawn, and re-reserve the
+    /// bottom margin from that decision.
+    ///
+    /// The row is measured against the plot area the horizontal pass produced.
+    /// That is sound because the only margin this can change is the bottom one,
+    /// and the bottom margin does not move the plot area's left or right edge —
+    /// so a label measured here is drawn at the same x.
+    ///
+    /// Whether a rotated row *fits* is a question only the layout can answer:
+    /// a content-driven layout caps its margins by canvas fraction and a fixed
+    /// one does not grow at all. So the trial layout below is computed and then
+    /// asked, rather than the margin arithmetic being restated here.
+    #[allow(clippy::too_many_arguments)]
+    fn resolve_x_tick_label_row(
+        &self,
+        renderer: &SkiaRenderer,
+        canvas_size: (u32, u32),
+        content: &PlotContent,
+        dpi: f32,
+        measurements: Option<&LayoutMeasurements>,
+        layout: ResolvedLayout,
+        category_labels: &[String],
+        category_positions: &[f64],
+        x_min: f64,
+        x_max: f64,
+    ) -> Result<(ResolvedLayout, XTickLabelPlan)> {
+        if category_labels.is_empty() || !content.show_tick_labels {
+            return Ok((layout, XTickLabelPlan::default()));
+        }
+
+        let tick_size_px =
+            RenderScale::new(dpi).points_to_pixels(self.display.config.typography.tick_size());
+        let centers = SkiaRenderer::categorical_label_centers(
+            &layout.plot_area,
+            category_positions,
+            x_min,
+            x_max,
+        );
+        // The row is kept inside the canvas, not inside the plot area: an end
+        // label is allowed to overhang its own slot into the outer margin (that
+        // is where a first or last category name lives), it is only stopped
+        // from running off the figure.
+        let metrics = renderer.measure_x_tick_row(
+            category_labels,
+            &centers,
+            tick_size_px,
+            XTickRowBounds::canvas(canvas_size.0 as f32),
+        )?;
+        if metrics.horizontal_extent <= 0.0 {
+            // Every slot is unnamed: nothing is drawn, so nothing is reserved.
+            return Ok((layout, XTickLabelPlan::default()));
+        }
+
+        let rotation = self.layout.tick_config.xtick_rotation;
+        let rotated_fits = metrics.wants_rotation(rotation) && {
+            let trial = self.layout_with_x_tick_extent(
+                canvas_size,
+                content,
+                dpi,
+                measurements,
+                &metrics,
+                metrics.max_label_width,
+            );
+            Self::x_tick_row_fits(&trial, canvas_size.1 as f32, metrics.max_label_width)
+        };
+
+        let plan = metrics.plan(rotation, rotated_fits);
+        let layout = self.layout_with_x_tick_extent(
+            canvas_size,
+            content,
+            dpi,
+            measurements,
+            &metrics,
+            plan.extent,
+        );
+
+        Ok((layout, plan))
+    }
+
+    /// The layout that reserves `extent` vertical pixels for the x tick labels.
+    fn layout_with_x_tick_extent(
+        &self,
+        canvas_size: (u32, u32),
+        content: &PlotContent,
+        dpi: f32,
+        measurements: Option<&LayoutMeasurements>,
+        metrics: &XTickRowMetrics,
+        extent: f32,
+    ) -> ResolvedLayout {
+        let mut measurements = measurements.cloned().unwrap_or_default();
+        measurements.xtick = Some((metrics.max_label_width, extent));
+        self.compute_layout_from_measurements(canvas_size, content, dpi, Some(&measurements))
+    }
+
+    /// Whether a label row `extent` pixels tall clears the x label and the
+    /// bottom of the canvas.
+    fn x_tick_row_fits(layout: &ResolvedLayout, canvas_height: f32, extent: f32) -> bool {
+        let limit = layout
+            .xlabel_pos
+            .as_ref()
+            .map_or(canvas_height, |position| position.y);
+        layout.xtick_baseline_y + extent <= limit
     }
 
     fn measure_tick_label_extent(
@@ -1875,9 +2210,10 @@ impl Plot {
                     }
                 }
                 SeriesType::Violin { data } => {
-                    // Add violin KDE points
+                    // Add violin KDE points, at the centre of the category slot
+                    // this violin was assigned.
                     for &y in &data.kde.x {
-                        let x = 0.5; // Centered position
+                        let x = data.config.x_center();
                         if y.is_finite() {
                             x_values.push(x);
                             y_values.push(y);
@@ -1889,7 +2225,7 @@ impl Plot {
                     for boxen_box in &data.boxes {
                         let rect = crate::plots::distribution::boxen_rect(
                             boxen_box,
-                            0.5,
+                            data.config.x_center(),
                             data.config.orient,
                         );
                         for (x, y) in rect {
@@ -1944,6 +2280,18 @@ impl Plot {
                     for point in &data.points {
                         x_values.push(point.x);
                         y_values.push(point.y);
+                    }
+                }
+                SeriesType::Computed { data } => {
+                    // A compute-only plot type states its own extent; the
+                    // corners of it are what the datashader grid needs.
+                    let ((x0, x1), (y0, y1)) =
+                        crate::plots::traits::PlotData::data_bounds(data.as_ref());
+                    for (x, y) in [(x0, y0), (x1, y1)] {
+                        if x.is_finite() && y.is_finite() {
+                            x_values.push(x);
+                            y_values.push(y);
+                        }
                     }
                 }
             }
@@ -2477,7 +2825,12 @@ impl Plot {
         let dx = tip.0 - from.0;
         let dy = tip.1 - from.1;
         let len = (dx * dx + dy * dy).sqrt();
-        if len < 0.001 {
+        // `NaN < 0.001` is false, so an unplaceable endpoint used to fall
+        // straight through this guard and build a triangle out of `NaN`
+        // vertices. An arrow is a mark, not aggregate geometry: both backends
+        // skip it, rather than one refusing the document and the other quietly
+        // dropping the head.
+        if !len.is_finite() || len < 0.001 {
             return;
         }
 
@@ -2588,6 +2941,32 @@ impl Plot {
             self.display.config.figure.dpi,
             measured_dimensions.as_ref(),
         );
+
+        // The same harvest the raster backend runs, so PNG and SVG cannot label
+        // the same figure differently: bars, box plots, violins and boxen plots
+        // all report the unit-wide slots they occupy.
+        let category_axis = super::series_internal::CategoryAxis::harvest(&self.series_mgr.series);
+        let (category_labels, category_positions): (&[String], &[f64]) = match &category_axis {
+            Some(axis) => (&axis.labels, &axis.positions),
+            None => (&[], &[]),
+        };
+        let is_categorical = category_axis.is_some();
+
+        // ...and the same label row, measured with the same renderer, so the
+        // bottom margin is reserved from the row both backends will draw.
+        let (layout, x_tick_label_plan) = self.resolve_x_tick_label_row(
+            &measurement_renderer,
+            (width_px, height_px),
+            &content,
+            self.display.config.figure.dpi,
+            measured_dimensions.as_ref(),
+            layout,
+            category_labels,
+            category_positions,
+            x_min,
+            x_max,
+        )?;
+
         let plot_left = layout.plot_area.left;
         let plot_right = layout.plot_area.right;
         let plot_top = layout.plot_area.top;
@@ -2605,15 +2984,6 @@ impl Plot {
         // Draw background
         svg.draw_rectangle(0.0, 0.0, width, height, self.display.theme.background, true);
 
-        // Check if we have a bar chart (need special X-axis handling)
-        let bar_categories: Option<&Vec<String>> = self.series_mgr.series.iter().find_map(|s| {
-            if let SeriesType::Bar { categories, .. } = &s.series_type {
-                Some(categories)
-            } else {
-                None
-            }
-        });
-
         // Compute Y-axis tick layout (fix parameter order: pixel_top then pixel_bottom)
         let y_tick_layout = TickLayout::compute_y_axis(
             y_min,
@@ -2623,7 +2993,7 @@ impl Plot {
             &self.layout.y_scale,
             self.layout.tick_config.major_ticks_y,
         );
-        let x_tick_layout = if bar_categories.is_none() {
+        let x_tick_layout = if !is_categorical {
             Some(TickLayout::compute(
                 x_min,
                 x_max,
@@ -2668,48 +3038,37 @@ impl Plot {
         // Skip grid for non-Cartesian plots (Pie, Radar, Polar)
         let draw_axes = Self::needs_cartesian_axes_for_series(&self.series_mgr.series);
         if self.layout.grid_style.visible && draw_axes {
-            let grid_color = self.layout.grid_style.effective_color();
-            let grid_width_px = self.line_width_px(self.layout.grid_style.line_width);
-            let grid_y_pixels = Self::grid_tick_pixels(
-                &y_tick_layout.pixel_positions,
-                &y_minor_tick_pixels,
-                &self.layout.tick_config.grid_mode,
-            );
-            if bar_categories.is_some() {
-                // For bar charts, only draw horizontal grid lines
-                svg.draw_grid(
-                    &[], // no vertical grid lines for bar charts
-                    &grid_y_pixels,
-                    plot_left,
-                    plot_right,
-                    plot_top,
-                    plot_bottom,
-                    grid_color,
-                    self.layout.grid_style.line_style.clone(),
-                    grid_width_px,
-                );
+            // Bar charts only get horizontal grid lines.
+            let (x_major_pixels, x_minor_pixels): (&[f32], &[f32]) = if is_categorical {
+                (&[], &[])
             } else {
-                // For other charts, compute X-axis ticks and draw full grid
                 let x_tick_layout = x_tick_layout.as_ref().ok_or_else(|| {
                     PlottingError::RenderError(
                         "missing x tick layout for non-categorical SVG grid".to_string(),
                     )
                 })?;
-                let grid_x_pixels = Self::grid_tick_pixels(
-                    &x_tick_layout.pixel_positions,
-                    &x_minor_tick_pixels,
-                    &self.layout.tick_config.grid_mode,
-                );
+                (&x_tick_layout.pixel_positions, &x_minor_tick_pixels)
+            };
+            let layers = Self::grid_layers(
+                &self.layout.grid_style,
+                &self.layout.tick_config.grid_mode,
+                x_major_pixels,
+                &y_tick_layout.pixel_positions,
+                x_minor_pixels,
+                &y_minor_tick_pixels,
+                |points| self.line_width_px(points),
+            );
+            for layer in &layers {
                 svg.draw_grid(
-                    &grid_x_pixels,
-                    &grid_y_pixels,
+                    &layer.x_pixels,
+                    &layer.y_pixels,
                     plot_left,
                     plot_right,
                     plot_top,
                     plot_bottom,
-                    grid_color,
+                    layer.color,
                     self.layout.grid_style.line_style.clone(),
-                    grid_width_px,
+                    layer.width_px,
                 );
             }
         }
@@ -2745,19 +3104,15 @@ impl Plot {
 
         // Draw axes and tick labels
         if draw_axes {
-            if let Some(categories) = bar_categories {
-                let x_range = x_max - x_min;
-                let category_x_tick_positions: Vec<f32> = (0..categories.len())
-                    .map(|index| {
-                        if x_range.abs() < f64::EPSILON {
-                            plot_left + plot_width * 0.5
-                        } else {
-                            plot_left + (((index as f64) - x_min) / x_range) as f32 * plot_width
-                        }
-                    })
-                    .collect();
+            if is_categorical {
+                let category_x_tick_positions = SkiaRenderer::categorical_label_centers(
+                    &layout.plot_area,
+                    category_positions,
+                    x_min,
+                    x_max,
+                );
 
-                // Bar chart: draw axes with category labels
+                // Categorical axis: ticks at the slot centres, labels under them.
                 if self.layout.tick_config.enabled {
                     let (
                         axis_width,
@@ -2802,16 +3157,18 @@ impl Plot {
                         tick_size_px,
                     )?;
 
-                    // Draw category labels on X-axis
-                    for (category, &x) in categories.iter().zip(category_x_tick_positions.iter()) {
-                        svg.draw_text_centered(
-                            category,
-                            x,
-                            layout.xtick_baseline_y,
-                            tick_size_px,
-                            self.display.theme.foreground,
-                        )?;
-                    }
+                    // Draw the category labels on the x axis through the one row
+                    // drawer both backends use, following the one plan both
+                    // backends resolved.
+                    draw_x_tick_label_row(
+                        &mut svg,
+                        category_labels,
+                        &category_x_tick_positions,
+                        layout.xtick_baseline_y,
+                        tick_size_px,
+                        self.display.theme.foreground,
+                        x_tick_label_plan,
+                    )?;
                 }
             } else {
                 // Normal chart: draw axes with numeric labels
@@ -2890,14 +3247,12 @@ impl Plot {
             self.series_mgr.series.iter().zip(&frame.series).enumerate()
         {
             let default_color = series
+                .props
                 .color
-                .unwrap_or_else(|| self.display.theme.get_color(idx));
+                .value_or(self.display.theme.get_color(idx));
             let inset_rect = inset_rects[idx];
             let (series_area, series_bounds) = if let Some(inset_rect) = inset_rect {
-                (
-                    inset_rect,
-                    self.calculate_data_bounds_from_resolved(std::slice::from_ref(resolved))?,
-                )
+                (inset_rect, self.inset_bounds_from_resolved(resolved)?)
             } else {
                 (plot_area, (x_min, x_max, y_min, y_max))
             };
@@ -2948,55 +3303,71 @@ impl Plot {
         )?;
         svg.end_group(); // End clip group
 
+        // Colorbars sit beside the plot area, so they belong outside its clip.
+        self.render_svg_colorbars(&mut svg, plot_area)?;
+
         // Draw title/xlabel/ylabel using layout-computed positions.
-        if let Some(ref pos) = layout.title_pos {
-            if let Some(title) = frame.title.as_deref() {
-                svg.draw_text_centered_with_weight(
-                    title,
-                    pos.x,
-                    pos.y,
-                    pos.size,
-                    self.display.theme.foreground,
-                    self.display.config.typography.title_weight,
-                )?;
-            }
+        if let Some(ref pos) = layout.title_pos
+            && let Some(title) = frame.title.as_deref()
+        {
+            svg.draw_text_centered_with_weight(
+                title,
+                pos.x,
+                pos.y,
+                pos.size,
+                self.display.theme.foreground,
+                self.display.config.typography.title_weight,
+            )?;
         }
-        if let Some(ref pos) = layout.xlabel_pos {
-            if let Some(xlabel) = frame.xlabel.as_deref() {
-                svg.draw_text_centered(
-                    xlabel,
-                    pos.x,
-                    pos.y,
-                    pos.size,
-                    self.display.theme.foreground,
-                )?;
-            }
+        if let Some(ref pos) = layout.xlabel_pos
+            && let Some(xlabel) = frame.xlabel.as_deref()
+        {
+            svg.draw_text_centered(
+                xlabel,
+                pos.x,
+                pos.y,
+                pos.size,
+                self.display.theme.foreground,
+            )?;
         }
-        if let Some(ref pos) = layout.ylabel_pos {
-            if let Some(ylabel) = frame.ylabel.as_deref() {
-                svg.draw_text_rotated(
-                    ylabel,
-                    pos.x,
-                    pos.y,
-                    pos.size,
-                    self.display.theme.foreground,
-                    -90.0,
-                )?;
-            }
+        if let Some(ref pos) = layout.ylabel_pos
+            && let Some(ylabel) = frame.ylabel.as_deref()
+        {
+            svg.draw_text_rotated(
+                ylabel,
+                pos.x,
+                pos.y,
+                pos.size,
+                self.display.theme.foreground,
+                -90.0,
+            )?;
         }
 
         // Draw legend if we have labeled series and legend is enabled
         if !legend_items.is_empty() && frame.style.legend.enabled {
             let plot_bounds = (plot_left, plot_top, plot_right, plot_bottom);
+            let occupancy = legend_occupancy(
+                &frame.series,
+                plot_area,
+                (x_min, x_max, y_min, y_max),
+                &self.layout.x_scale,
+                &self.layout.y_scale,
+            );
             svg.draw_legend_full_resolved(
                 &legend_items,
                 &frame.style.legend,
                 plot_bounds,
-                None,
+                Some(&occupancy),
                 layout.legend_rect.as_ref().map(|rect| rect.bounds()),
             )?;
         }
 
+        // The renderer drops a shape whose dimensions are non-finite rather
+        // than printing `width="NaN"`, and latches why. `SvgRenderer::save`
+        // checks that latch, but this path hands the string back to the caller
+        // (and to `export_svg`'s own atomic write), so it has to check too —
+        // otherwise a refused element is silently missing from the document.
+        svg.check_geometry()?;
         Ok(svg.to_svg_string())
     }
 
@@ -3091,5 +3462,538 @@ impl Plot {
         }
 
         Ok(rgb_data)
+    }
+}
+
+/// One validity verdict for every backend.
+///
+/// These cover three regressions that arrived together, all from the same
+/// cause: a sample a log axis cannot place started projecting to `NaN` instead
+/// of being clamped, and the pre-render range check — which reads *projected*
+/// bounds — stopped seeing anything wrong, because a bounds accumulator that
+/// skips unrepresentable samples can never produce an invalid range.
+///
+/// 1. The backends disagreed. `.xscale(Log).histogram(&[0.0, ..])` was `Err`
+///    from `save()` and `Ok` from `export_svg()`.
+/// 2. The message regressed from one that named the axis and the fix to
+///    "Rendering error: Invalid rectangle dimensions", which names neither.
+/// 3. A log-y box plot over data containing a zero returned `Ok` and drew a
+///    figure with no box in it — two orphan strokes and a flier.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod log_axis_validity_tests {
+    use super::*;
+    use crate::axes::scale::LOG_SCALE_REQUIRES_POSITIVE;
+    use tempfile::tempdir;
+
+    /// Push one figure through every public output path and require the same
+    /// refusal from all of them.
+    ///
+    /// `$build` is re-evaluated per backend because each terminal method
+    /// consumes the builder — which is also what makes this a genuine parity
+    /// test rather than four looks at one cached result.
+    macro_rules! assert_every_backend_refuses {
+        ($axis:literal, $build:expr) => {{
+            let dir = tempdir().expect("a temporary directory");
+
+            let raster = $build
+                .save(dir.path().join("figure.png"))
+                .expect_err("save() must refuse this figure");
+            let vector = $build
+                .export_svg(dir.path().join("figure.svg"))
+                .expect_err("export_svg() must refuse this figure");
+            let svg_string = match $build.render_to_svg() {
+                Ok(_) => panic!("render_to_svg() must refuse this figure"),
+                Err(error) => error,
+            };
+            let image = match $build.render() {
+                Ok(_) => panic!("render() must refuse this figure"),
+                Err(error) => error,
+            };
+            let png_bytes = match $build.render_png_bytes() {
+                Ok(_) => panic!("render_png_bytes() must refuse this figure"),
+                Err(error) => error,
+            };
+            // The prepared runtime is a second front door to the raster
+            // backend: it resolves its own frame and caches it, so it has to
+            // pass the same gate rather than inherit it.
+            let prepared = match $build.into_plot().prepare().render_png_bytes() {
+                Ok(_) => panic!("PreparedPlot::render_png_bytes() must refuse this figure"),
+                Err(error) => error,
+            };
+
+            let message = raster.to_string();
+            assert_eq!(
+                message,
+                vector.to_string(),
+                "save() and export_svg() must fail identically; a check that lives inside \
+                 one backend is a check the backends will disagree about"
+            );
+            assert_eq!(message, svg_string.to_string(), "render_to_svg() disagreed");
+            assert_eq!(message, image.to_string(), "render() disagreed");
+            assert_eq!(
+                message,
+                png_bytes.to_string(),
+                "render_png_bytes() disagreed"
+            );
+            assert_eq!(
+                message,
+                prepared.to_string(),
+                "PreparedPlot::render_png_bytes() disagreed"
+            );
+
+            // The PDF pipeline renders through the SVG backend but writes the
+            // file itself, so it is its own entry point and needs its own gate.
+            #[cfg(feature = "pdf")]
+            {
+                let pdf = $build
+                    .save_pdf(dir.path().join("figure.pdf"))
+                    .expect_err("save_pdf() must refuse this figure");
+                assert_eq!(message, pdf.to_string(), "save_pdf() disagreed");
+            }
+
+            assert!(
+                matches!(raster, PlottingError::InvalidInput(_)),
+                "an unplottable figure is bad input, not a rendering failure: {raster:?}"
+            );
+            assert!(
+                message.contains(LOG_SCALE_REQUIRES_POSITIVE),
+                "the refusal must keep the wording that names the fix: {message}"
+            );
+            assert!(
+                message.contains(concat!("Invalid ", $axis, "-axis range")),
+                concat!("the refusal must name the ", $axis, " axis: {}"),
+                message
+            );
+            assert!(
+                message.contains("SymLog"),
+                "the refusal must point at the scale that can show these values: {message}"
+            );
+            assert!(
+                !message.contains("Invalid rectangle dimensions"),
+                "geometry-level fallout must never be what the user is shown: {message}"
+            );
+
+            message
+        }};
+    }
+
+    /// Regression: `.save()` returned `Err` and `.export_svg()` returned `Ok`
+    /// on the same figure.
+    #[test]
+    fn test_every_backend_refuses_a_histogram_a_log_x_axis_cannot_bin() {
+        let data = vec![0.0, 1.0, 10.0, 100.0];
+        let message = assert_every_backend_refuses!(
+            "x",
+            Plot::new()
+                .size_px(240, 180)
+                .histogram(&data)
+                .xscale(AxisScale::Log)
+        );
+        assert!(
+            message.contains("histogram"),
+            "the refusal must say which series provoked it: {message}"
+        );
+    }
+
+    #[test]
+    fn test_every_backend_refuses_a_bar_a_log_value_axis_cannot_size() {
+        let values = vec![1.0, 0.0, 100.0];
+        let message = assert_every_backend_refuses!(
+            "y",
+            Plot::new()
+                .size_px(240, 180)
+                .bar(&["a", "b", "c"], &values)
+                .yscale(AxisScale::Log)
+        );
+        assert!(message.contains("bar"), "{message}");
+    }
+
+    /// Regression: this returned `Ok` and rendered a figure with no box —
+    /// silently wrong output, the worst of the failure modes.
+    #[test]
+    fn test_every_backend_refuses_a_box_plot_a_log_value_axis_cannot_place() {
+        let data = vec![-1.0, 0.0, 1.0, 10.0, 100.0];
+        let message = assert_every_backend_refuses!(
+            "y",
+            Plot::new()
+                .size_px(240, 180)
+                .boxplot(&data)
+                .yscale(AxisScale::Log)
+        );
+        assert!(message.contains("box plot"), "{message}");
+    }
+
+    /// A violin's outline is a density estimate over every sample, and a
+    /// boxen's bands are letter values: same class of geometry, same refusal.
+    #[test]
+    fn test_every_backend_refuses_distribution_bodies_a_log_axis_cannot_place() {
+        // Symmetric about zero, so the sample set carries negatives (the
+        // violin's density is fitted to them) and the median is exactly zero
+        // (a letter-value band edge the boxen has to draw).
+        let data: Vec<f64> = (0..=60).map(|index| index as f64 - 30.0).collect();
+
+        let violin = assert_every_backend_refuses!(
+            "y",
+            Plot::new()
+                .size_px(240, 180)
+                .violin(&data)
+                .yscale(AxisScale::Log)
+        );
+        assert!(violin.contains("violin"), "{violin}");
+
+        let boxen = assert_every_backend_refuses!(
+            "y",
+            Plot::new()
+                .size_px(240, 180)
+                .boxen(&data)
+                .yscale(AxisScale::Log)
+        );
+        assert!(boxen.contains("boxen"), "{boxen}");
+    }
+
+    /// The counterpart requirement: a point series is a set of independent
+    /// samples, so one the axis cannot place is dropped and the line breaks at
+    /// the gap. Refusing here would cost the user the other 99% of their data.
+    #[test]
+    fn test_a_line_series_keeps_rendering_around_a_sample_the_log_axis_drops() {
+        let x = vec![1.0, 2.0, 3.0, 4.0, 5.0];
+        let y = vec![10.0, 20.0, 0.0, 40.0, 50.0];
+        let dir = tempdir().expect("a temporary directory");
+
+        Plot::new()
+            .size_px(240, 180)
+            .line(&x, &y)
+            .yscale(AxisScale::Log)
+            .save(dir.path().join("line.png"))
+            .expect("a line series must still render around an unplaceable sample");
+
+        Plot::new()
+            .size_px(240, 180)
+            .line(&x, &y)
+            .yscale(AxisScale::Log)
+            .export_svg(dir.path().join("line.svg"))
+            .expect("both backends must agree that this figure is fine");
+
+        let svg = Plot::new()
+            .size_px(240, 180)
+            .line(&x, &y)
+            .yscale(AxisScale::Log)
+            .render_to_svg()
+            .expect("a line series must still render around an unplaceable sample");
+
+        // "Dropped" means dropped: the sample must not reach an output
+        // primitive, as `height="NaN"` and `y1="NaN"` are not valid SVG.
+        assert!(
+            !svg.contains("NaN"),
+            "no NaN may reach the SVG output for a skipped sample"
+        );
+        assert!(
+            svg.contains("<polyline") || svg.contains("<path"),
+            "the rest of the series must still be drawn"
+        );
+    }
+
+    /// The refusal is about the *log* axis, not about negative data. A scale
+    /// that can place every finite number must never lose a figure to it.
+    #[test]
+    fn test_aggregate_geometry_is_never_refused_on_a_scale_that_can_place_it() {
+        let values = vec![-5.0, 0.0, 5.0];
+        for scale in [AxisScale::Linear, AxisScale::symlog(1.0)] {
+            Plot::new()
+                .size_px(240, 180)
+                .bar(&["a", "b", "c"], &values)
+                .yscale(scale)
+                .render()
+                .unwrap_or_else(|error| panic!("{scale:?} refused a figure it can draw: {error}"));
+        }
+
+        let data = vec![-1.0, 0.0, 1.0, 10.0, 100.0];
+        Plot::new()
+            .size_px(240, 180)
+            .boxplot(&data)
+            .render()
+            .expect("the default linear axes must draw this box plot");
+    }
+
+    /// An explicit histogram range *is* the outer pair of bin edges. Samples
+    /// outside it are never binned, so they cannot make a bar unplaceable and
+    /// must not cost the user the figure.
+    #[test]
+    fn test_an_explicit_positive_histogram_range_survives_out_of_range_samples() {
+        let data = vec![-50.0, 0.0, 1.0, 10.0, 100.0];
+        let config = crate::plots::histogram::HistogramConfig::new()
+            .range(1.0, 100.0)
+            .bins(4);
+
+        Plot::new()
+            .size_px(240, 180)
+            .histogram_with(&data, config)
+            .xscale(AxisScale::Log)
+            .render()
+            .expect("only the bin edges have to be placeable on the axis");
+    }
+
+    /// The scan reads raw data against the configured scale, not the computed
+    /// bounds — which is exactly why it catches what the range check cannot.
+    ///
+    /// Pinning the axis to an explicitly valid positive range satisfies
+    /// `validate_axis_scale_ranges_for_render` outright, and the bounds
+    /// accumulator would have satisfied it anyway by skipping the samples it
+    /// cannot represent. The figure must still be refused.
+    #[test]
+    fn test_the_refusal_survives_an_explicitly_valid_axis_range() {
+        let data = vec![-1.0, 0.0, 1.0, 10.0, 100.0];
+        let message = assert_every_backend_refuses!(
+            "y",
+            Plot::new()
+                .size_px(240, 180)
+                .boxplot(&data)
+                .ylim(1.0, 100.0)
+                .yscale(AxisScale::Log)
+        );
+        assert!(message.contains("box plot"), "{message}");
+    }
+
+    /// Annotation *shapes* are the same class of geometry as a bar, and they
+    /// used to split the backends worse than a bar did.
+    ///
+    /// A rectangle, a span or a filled region whose corner a log axis cannot
+    /// place projects to `NaN`. Left to the renderers, the SVG side refuses the
+    /// element and latches the fault while tiny-skia answers the same input
+    /// with `Rect::from_xywh`/`PathBuilder::finish` returning `None` and simply
+    /// drawing nothing — one reports, one goes quiet. Refusing above the split
+    /// is what makes them agree.
+    #[test]
+    fn test_every_backend_refuses_annotation_shapes_a_log_axis_cannot_place() {
+        let x = vec![1.0, 2.0, 3.0];
+        let y = vec![10.0, 20.0, 30.0];
+
+        let rectangle = assert_every_backend_refuses!(
+            "y",
+            Plot::new()
+                .size_px(240, 180)
+                .line(&x, &y)
+                .yscale(AxisScale::Log)
+                // Bottom edge sits on zero, which a log y axis cannot place.
+                .annotate(Annotation::rectangle(1.0, 0.0, 1.0, 5.0))
+        );
+        assert!(rectangle.contains("rectangle annotation"), "{rectangle}");
+
+        let span = assert_every_backend_refuses!(
+            "x",
+            Plot::new()
+                .size_px(240, 180)
+                .line(&x, &y)
+                .xscale(AxisScale::Log)
+                .annotate(Annotation::hspan(0.0, 2.0))
+        );
+        assert!(span.contains("horizontal span annotation"), "{span}");
+
+        let fill = assert_every_backend_refuses!(
+            "y",
+            Plot::new()
+                .size_px(240, 180)
+                .line(&x, &y)
+                .yscale(AxisScale::Log)
+                // The classic "fill down to zero" idiom, which a log axis has
+                // no floor for: both backends drew nothing at all before.
+                .fill_between(&x, &y, &[0.0, 0.0, 0.0])
+        );
+        assert!(fill.contains("filled region annotation"), "{fill}");
+    }
+
+    /// The counterpart: a mark is not a shape.
+    ///
+    /// Text, arrows and reference lines are drawn at a position rather than
+    /// built out of one, so both backends skip an unplaceable one — the same
+    /// answer they give an unplaceable scatter point. Refusing them would cost
+    /// the user the whole figure over a label.
+    #[test]
+    fn test_annotation_marks_are_skipped_rather_than_refused_on_a_log_axis() {
+        let x = vec![1.0, 2.0, 3.0];
+        let y = vec![10.0, 20.0, 30.0];
+        let build = || {
+            Plot::new()
+                .size_px(240, 180)
+                .line(&x, &y)
+                .yscale(AxisScale::Log)
+                .annotate(Annotation::text(2.0, 0.0, "unplaceable"))
+                .annotate(Annotation::hline(0.0))
+                .annotate(Annotation::vline(2.0))
+                // The head is a triangle built from the endpoints, and `NaN`
+                // slips through a bare `len < 0.001` test — so this covers the
+                // arrow head as well as the shaft.
+                .annotate(Annotation::arrow(1.0, 10.0, 3.0, 0.0))
+        };
+        let dir = tempdir().expect("a temporary directory");
+
+        build()
+            .save(dir.path().join("marks.png"))
+            .expect("an unplaceable mark must not cost the figure");
+        let svg = build()
+            .render_to_svg()
+            .expect("both backends must agree that this figure is fine");
+        assert!(
+            !svg.contains("NaN"),
+            "a skipped mark must not reach the SVG output: {svg}"
+        );
+    }
+}
+
+/// The categorical x tick label row: measured, then given room, then drawn.
+#[cfg(test)]
+mod categorical_tick_label_tests {
+    use super::*;
+    use crate::core::plot::builder::IntoPlot;
+
+    const REGIONS: [&str; 10] = [
+        "North America",
+        "South America",
+        "Western Europe",
+        "Eastern Europe",
+        "Middle East",
+        "North Africa",
+        "Sub-Saharan Africa",
+        "Central Asia",
+        "South East Asia",
+        "Australasia",
+    ];
+
+    const INITIALS: [&str; 10] = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"];
+
+    fn bar_plot(categories: &[&str]) -> Plot {
+        let values: Vec<f64> = (0..categories.len())
+            .map(|index| index as f64 + 1.0)
+            .collect();
+        Plot::new()
+            .size_px(800, 600)
+            .bar(categories, &values)
+            .into_plot()
+    }
+
+    /// Resolve the layout exactly as `render()` does.
+    fn resolved(plot: &Plot) -> (ResolvedLayout, XTickLabelPlan) {
+        let (x_min, x_max, y_min, y_max) = plot
+            .effective_data_bounds()
+            .expect("data bounds should be available");
+        let content = plot.create_plot_content(y_min, y_max);
+        let mut renderer = SkiaRenderer::new(
+            plot.display.dimensions.0,
+            plot.display.dimensions.1,
+            plot.display.theme.clone(),
+        )
+        .expect("measurement renderer");
+        renderer.set_render_scale(plot.render_scale());
+        renderer.set_text_engine_mode(plot.display.text_engine);
+        let axis = super::super::series_internal::CategoryAxis::harvest(&plot.series_mgr.series)
+            .expect("a bar chart has a category axis");
+        let (layout, _, _, plan) = plot
+            .compute_layout_with_categorical_ticks(
+                &renderer,
+                plot.display.dimensions,
+                &content,
+                plot.display.config.figure.dpi,
+                x_min,
+                x_max,
+                y_min,
+                y_max,
+                &axis.labels,
+                &axis.positions,
+            )
+            .expect("categorical layout");
+        (layout, plan)
+    }
+
+    /// Ten region names in one 800 px figure are rotated rather than drawn on
+    /// top of each other, and every one of them is still drawn.
+    #[test]
+    fn ten_region_names_rotate_instead_of_colliding() {
+        let (_, plan) = resolved(&bar_plot(&REGIONS));
+
+        assert!(plan.rotated, "ten region names must not stay horizontal");
+        assert_eq!(plan.stride, 1, "rotated names all fit, so none is dropped");
+    }
+
+    /// The room the rotated row needs is reserved *before* the plot area is
+    /// computed — reserve it afterwards and the labels are clipped instead of
+    /// overlapping, which is not an improvement.
+    #[test]
+    fn the_rotated_row_is_given_its_room_before_the_plot_area() {
+        let (long, plan) = resolved(&bar_plot(&REGIONS));
+        let (short, _) = resolved(&bar_plot(&INITIALS));
+
+        assert!(
+            plan.extent <= long.margins.bottom,
+            "the reserved bottom margin has to hold the whole row: {} into {}",
+            plan.extent,
+            long.margins.bottom
+        );
+        assert!(
+            long.margins.bottom > short.margins.bottom + 20.0,
+            "the rotated row must widen the bottom margin: {} vs {}",
+            long.margins.bottom,
+            short.margins.bottom
+        );
+        assert!(
+            long.plot_area.bottom < short.plot_area.bottom,
+            "and that room has to come out of the plot area, not off the canvas"
+        );
+    }
+
+    /// Short names are left alone: no rotation, no thinning, and the same
+    /// margins the figure had before any of this existed.
+    #[test]
+    fn short_names_are_left_exactly_as_they_were() {
+        let (layout, plan) = resolved(&bar_plot(&INITIALS));
+
+        assert!(!plan.rotated);
+        assert_eq!(plan.stride, 1);
+        assert!(
+            layout.margins.bottom < 90.0,
+            "single letters should not inflate the bottom margin: {}",
+            layout.margins.bottom
+        );
+    }
+
+    /// A figure whose bottom margin is fixed cannot grow, so the row is thinned
+    /// instead of rotated into a margin that was never going to appear. This is
+    /// why "does it fit?" is a question for the layout and not for arithmetic
+    /// restated next to the labels.
+    #[test]
+    fn a_fixed_margin_thins_the_row_instead_of_clipping_it() {
+        let values: Vec<f64> = (0..REGIONS.len()).map(|index| index as f64 + 1.0).collect();
+        let plot = Plot::new()
+            .size_px(800, 600)
+            .tight_layout_pad(4.0)
+            .bar(&REGIONS, &values)
+            .into_plot();
+
+        let (_, plan) = resolved(&plot);
+
+        assert!(!plan.rotated, "a 30 px margin cannot hold a rotated row");
+        assert!(
+            plan.stride > 1,
+            "so the row has to be thinned to stay legible"
+        );
+    }
+
+    /// Both backends draw the row the same way, because both take it from the
+    /// same plan: the SVG twin used not to measure its category labels at all.
+    #[test]
+    fn the_svg_twin_rotates_the_same_row() {
+        let svg = bar_plot(&REGIONS)
+            .render_to_svg()
+            .expect("a bar chart renders to SVG");
+
+        assert!(
+            svg.contains("rotate(-90.0)"),
+            "the SVG row must be rotated too"
+        );
+        for region in REGIONS {
+            assert!(
+                svg.contains(region),
+                "{region} must survive into the SVG output"
+            );
+        }
     }
 }

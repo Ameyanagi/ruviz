@@ -1,11 +1,56 @@
 /// Box plot implementation with statistical analysis and outlier detection
+use crate::core::plot::PlotBuilder;
 use crate::core::style_utils::{StyleResolver, defaults};
 use crate::core::{PlottingError, Result};
 use crate::data::Data1D;
 use crate::plots::traits::{PlotArea, PlotConfig, PlotData, PlotRender};
 use crate::render::{Color, LineStyle, MarkerStyle, SkiaRenderer, Theme};
 
+// ===========================================================================
+// The category axis, in data units
+// ===========================================================================
+
+/// Half the width of one category slot, in data units.
+///
+/// Bars, box plots, violins and boxen plots share a single categorical x axis:
+/// slot *i* is centred on `i` and spans `i ± CATEGORY_SLOT_HALF_WIDTH`, so an
+/// axis showing *n* categories runs `-0.5 ..= n - 0.5`.
+///
+/// The consequence worth relying on is that **every width knob on every one of
+/// those plot types is a fraction of one slot** — `BoxPlotConfig::width_ratio`,
+/// `ViolinConfig::width` and `BoxenConfig::width` all mean the same thing, and
+/// none of them has to know how many categories the figure ended up with.
+pub const CATEGORY_SLOT_HALF_WIDTH: f64 = 0.5;
+
+/// The data-space span of the category slot centred on `center`.
+///
+/// Bounds calculation, tick placement and geometry all go through this, so a
+/// plot type cannot be *drawn* in one slot and *measured* in another.
+pub fn category_slot_span(center: f64) -> (f64, f64) {
+    (
+        center - CATEGORY_SLOT_HALF_WIDTH,
+        center + CATEGORY_SLOT_HALF_WIDTH,
+    )
+}
+
+/// One `(tick label, slot centre)` pair per category, in slot order.
+///
+/// For the plot types whose input *is* a list of category names — bars, strip,
+/// swarm — a category's slot is its index. Names shorter than `count` leave the
+/// remaining slots unlabelled rather than shifting anything, so a slot always
+/// means the same position whether or not it has a name.
+pub fn category_slots(names: &[String], count: usize) -> Vec<(String, f64)> {
+    (0..count)
+        .map(|index| (names.get(index).cloned().unwrap_or_default(), index as f64))
+        .collect()
+}
+
 /// Configuration for box plots
+///
+/// Style knobs left as `None` fall back to the crate defaults in
+/// [`crate::core::style_utils::defaults`]. Every one of them is resolved into
+/// [`BoxPlotData`], which is what renderers read — see the geometry contract
+/// documented there.
 #[derive(Debug, Clone)]
 pub struct BoxPlotConfig {
     /// Method for calculating outliers
@@ -34,13 +79,25 @@ pub struct BoxPlotConfig {
     pub cap_width: Option<f32>,
     /// Outlier marker size (default 6.0)
     pub flier_size: Option<f32>,
+    /// Category label written under this box on the x axis.
+    ///
+    /// Set with [`category`](Self::category()). Bars, box plots, violins and
+    /// boxen plots share one category axis: slot *i* is centred on `i` and one
+    /// data unit wide, so `width_ratio` is a fraction of that slot no matter
+    /// how many boxes the figure holds.
+    pub category: Option<String>,
+    /// Explicit centre on the category axis; `None` claims the next free slot.
+    ///
+    /// Set with [`x_position`](Self::x_position()).
+    pub x_position: Option<f64>,
 }
 
 /// Methods for detecting outliers
 #[allow(clippy::upper_case_acronyms)] // IQR is the standard statistics acronym
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum OutlierMethod {
     /// Standard IQR method: outliers beyond 1.5 * IQR from quartiles
+    #[default]
     IQR,
     /// Modified IQR method: outliers beyond 2.5 * IQR from quartiles
     ModifiedIQR,
@@ -51,18 +108,20 @@ pub enum OutlierMethod {
 }
 
 /// Box plot orientation
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum BoxOrientation {
     /// Vertical box plots
+    #[default]
     Vertical,
     /// Horizontal box plots
     Horizontal,
 }
 
 /// Methods for calculating whiskers
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum WhiskerMethod {
     /// Whiskers extend to min/max values within 1.5 * IQR from quartiles
+    #[default]
     Tukey,
     /// Whiskers extend to actual min/max of data
     MinMax,
@@ -73,6 +132,28 @@ pub enum WhiskerMethod {
 }
 
 /// Computed box plot statistics
+///
+/// # The style fields are the geometry contract
+///
+/// [`calculate_box_plot`] resolves every optional style knob on
+/// [`BoxPlotConfig`] against the crate defaults and stores the concrete value
+/// here. [`BoxPlotData::render_styled`] is the reference implementation that
+/// consumes them, and **any** backend drawing a box plot must read them from
+/// this struct rather than re-deriving constants:
+///
+/// | Field | Meaning | Default |
+/// | --- | --- | --- |
+/// | [`x_center`](Self::x_center) | centre of the box's category slot, in data units | `0.0` |
+/// | [`width_ratio`](Self::width_ratio) | box width as a fraction of the category slot | `0.5` |
+/// | [`cap_width`](Self::cap_width) | whisker cap width as a fraction of the box width | `0.5` |
+/// | [`fill_alpha`](Self::fill_alpha) | opacity of the box fill | `0.7` |
+/// | [`edge_width`](Self::edge_width) | box outline width, in points | `0.8` |
+/// | [`whisker_width`](Self::whisker_width) | whisker/cap stroke width; `None` = `theme.line_width` | `None` |
+/// | [`median_width`](Self::median_width) | median stroke width; `None` = `theme.line_width * 1.5` | `None` |
+/// | [`flier_size`](Self::flier_size) | outlier marker size | `6.0` |
+///
+/// A backend that hardcodes `0.3`/`0.6`/`4.0` instead makes the matching
+/// setters silent no-ops.
 #[derive(Debug, Clone)]
 pub struct BoxPlotData {
     /// Minimum value (or lower whisker)
@@ -95,6 +176,12 @@ pub struct BoxPlotData {
     pub iqr: f64,
     /// Box orientation
     pub orientation: BoxOrientation,
+    /// Centre of this box's category slot, in data units.
+    ///
+    /// Resolved from `BoxPlotConfig::x_position` when the series was added, so
+    /// every backend reads the same number instead of each picking its own
+    /// "centre of the plot".
+    pub x_center: f64,
     /// Fill alpha for box
     pub fill_alpha: f32,
     /// Edge color (None = auto-derive)
@@ -120,8 +207,8 @@ pub struct BoxPlotData {
 // Implement PlotData trait for BoxPlotData
 impl PlotData for BoxPlotData {
     fn data_bounds(&self) -> ((f64, f64), (f64, f64)) {
-        // For vertical box plots, x is typically categorical (0, 1, 2, etc.)
-        // and y spans the data range
+        // The category axis carries one unit-wide slot per box, centred on
+        // `x_center`; the value axis spans the data.
         let (y_min, y_max) = if self.outliers.is_empty() {
             (self.min, self.max)
         } else {
@@ -134,9 +221,10 @@ impl PlotData for BoxPlotData {
             (self.min.min(outlier_min), self.max.max(outlier_max))
         };
 
+        let slot = category_slot_span(self.x_center);
         match self.orientation {
-            BoxOrientation::Vertical => ((-0.5, 0.5), (y_min, y_max)),
-            BoxOrientation::Horizontal => ((y_min, y_max), (-0.5, 0.5)),
+            BoxOrientation::Vertical => (slot, (y_min, y_max)),
+            BoxOrientation::Horizontal => ((y_min, y_max), slot),
         }
     }
 
@@ -187,8 +275,9 @@ impl PlotRender for BoxPlotData {
         let whisker_width = self.whisker_width.unwrap_or(theme.line_width);
         let median_width = self.median_width.unwrap_or(theme.line_width * 1.5);
 
-        // For rendering, use the center position (x=0 for single box)
-        let center_x = 0.0;
+        // The box sits at the centre of its category slot, wherever that slot
+        // ended up — not at "the middle of the plot".
+        let center_x = self.x_center;
 
         match self.orientation {
             BoxOrientation::Vertical => {
@@ -237,8 +326,9 @@ impl BoxPlotData {
         median_width: f32,
         marker_color: Color,
     ) -> Result<()> {
-        // Calculate box dimensions
-        let box_half_width = (self.width_ratio * 0.5) as f64;
+        // Widths are fractions of one category slot, which is
+        // `2 * CATEGORY_SLOT_HALF_WIDTH` data units across.
+        let box_half_width = self.width_ratio as f64 * CATEGORY_SLOT_HALF_WIDTH;
         let cap_half_width = box_half_width * self.cap_width as f64;
 
         // Convert key y-values to screen coordinates
@@ -332,18 +422,12 @@ impl BoxPlotData {
         }
 
         // Draw mean if present
-        if self.show_mean {
-            if let Some(mean_val) = self.mean {
-                let (mx, my) = area.data_to_screen(center_x, mean_val);
-                // Diamond marker for mean
-                renderer.draw_marker(
-                    mx,
-                    my,
-                    self.flier_size,
-                    MarkerStyle::Diamond,
-                    marker_color,
-                )?;
-            }
+        if self.show_mean
+            && let Some(mean_val) = self.mean
+        {
+            let (mx, my) = area.data_to_screen(center_x, mean_val);
+            // Diamond marker for mean
+            renderer.draw_marker(mx, my, self.flier_size, MarkerStyle::Diamond, marker_color)?;
         }
 
         Ok(())
@@ -362,8 +446,9 @@ impl BoxPlotData {
         median_width: f32,
         marker_color: Color,
     ) -> Result<()> {
-        // Calculate box dimensions
-        let box_half_height = (self.width_ratio * 0.5) as f64;
+        // Widths are fractions of one category slot, exactly as in the
+        // vertical case — the orientation only decides which axis carries it.
+        let box_half_height = self.width_ratio as f64 * CATEGORY_SLOT_HALF_WIDTH;
         let cap_half_height = box_half_height * self.cap_width as f64;
 
         // Convert key x-values to screen coordinates
@@ -457,17 +542,11 @@ impl BoxPlotData {
         }
 
         // Draw mean if present
-        if self.show_mean {
-            if let Some(mean_val) = self.mean {
-                let (mx, my) = area.data_to_screen(mean_val, center_y);
-                renderer.draw_marker(
-                    mx,
-                    my,
-                    self.flier_size,
-                    MarkerStyle::Diamond,
-                    marker_color,
-                )?;
-            }
+        if self.show_mean
+            && let Some(mean_val) = self.mean
+        {
+            let (mx, my) = area.data_to_screen(mean_val, center_y);
+            renderer.draw_marker(mx, my, self.flier_size, MarkerStyle::Diamond, marker_color)?;
         }
 
         Ok(())
@@ -490,6 +569,8 @@ impl Default for BoxPlotConfig {
             median_width: None,
             cap_width: None,
             flier_size: None,
+            category: None,
+            x_position: None,
         }
     }
 }
@@ -500,6 +581,18 @@ impl PlotConfig for BoxPlotConfig {}
 impl BoxPlotConfig {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Resolve the box edge against `theme` and the resolved fill colour.
+    ///
+    /// Returns `(colour, width_in_points)` — the same pair
+    /// [`BoxPlotData::render`] strokes the box with, so a legend key cannot
+    /// drift from the patch it stands for. `edge_color: None` derives the
+    /// colour by darkening the fill; see [`StyleResolver::patch_edge`].
+    pub fn resolved_edge(&self, theme: &Theme, fill: Color) -> Option<(Color, f32)> {
+        let resolver = StyleResolver::new(theme);
+        let width = resolver.patch_line_width(self.edge_width);
+        resolver.patch_edge(fill, self.edge_color, width)
     }
 
     pub fn outlier_method(mut self, method: OutlierMethod) -> Self {
@@ -576,6 +669,107 @@ impl BoxPlotConfig {
     }
 }
 
+/// Box plot configuration reachable straight from [`Plot::boxplot`].
+///
+/// [`Plot::boxplot`] returns `PlotBuilder<BoxPlotConfig>`, exactly like the
+/// other series methods return their own `PlotBuilder<C>`, so these mirror
+/// [`BoxPlotConfig`]'s own setters one for one and can be interleaved freely
+/// with the shared styling and plot-level methods on the builder.
+///
+/// ```rust,no_run
+/// use ruviz::prelude::*;
+///
+/// let data = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 20.0];
+///
+/// Plot::new()
+///     .boxplot(&data)
+///     .show_mean(true)
+///     .width_ratio(0.4)
+///     .save("boxplot.png")?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
+/// [`Plot::boxplot`]: crate::core::Plot::boxplot
+impl PlotBuilder<BoxPlotConfig> {
+    /// Choose how outliers are detected.
+    pub fn outlier_method(mut self, method: OutlierMethod) -> Self {
+        self.config = std::mem::take(&mut self.config).outlier_method(method);
+        self
+    }
+
+    /// Show or hide outliers as individual points.
+    pub fn show_outliers(mut self, show: bool) -> Self {
+        self.config = std::mem::take(&mut self.config).show_outliers(show);
+        self
+    }
+
+    /// Show or hide the mean marker.
+    pub fn show_mean(mut self, show: bool) -> Self {
+        self.config = std::mem::take(&mut self.config).show_mean(show);
+        self
+    }
+
+    /// Set the box orientation.
+    pub fn orientation(mut self, orientation: BoxOrientation) -> Self {
+        self.config = std::mem::take(&mut self.config).orientation(orientation);
+        self
+    }
+
+    /// Choose how the whisker ends are calculated.
+    pub fn whisker_method(mut self, method: WhiskerMethod) -> Self {
+        self.config = std::mem::take(&mut self.config).whisker_method(method);
+        self
+    }
+
+    /// Set the box fill opacity (0.0-1.0).
+    pub fn fill_alpha(mut self, alpha: f32) -> Self {
+        self.config = std::mem::take(&mut self.config).fill_alpha(alpha);
+        self
+    }
+
+    /// Set the box edge colour explicitly.
+    pub fn edge_color(mut self, color: Color) -> Self {
+        self.config = std::mem::take(&mut self.config).edge_color(color);
+        self
+    }
+
+    /// Set the box edge width in points.
+    pub fn edge_width(mut self, width: f32) -> Self {
+        self.config = std::mem::take(&mut self.config).edge_width(width);
+        self
+    }
+
+    /// Set the box width as a fraction of the available slot.
+    pub fn width_ratio(mut self, ratio: f32) -> Self {
+        self.config = std::mem::take(&mut self.config).width_ratio(ratio);
+        self
+    }
+
+    /// Set the whisker line width in points.
+    pub fn whisker_width(mut self, width: f32) -> Self {
+        self.config = std::mem::take(&mut self.config).whisker_width(width);
+        self
+    }
+
+    /// Set the median line width in points.
+    pub fn median_width(mut self, width: f32) -> Self {
+        self.config = std::mem::take(&mut self.config).median_width(width);
+        self
+    }
+
+    /// Set the whisker cap width as a fraction of the box width.
+    pub fn cap_width(mut self, width: f32) -> Self {
+        self.config = std::mem::take(&mut self.config).cap_width(width);
+        self
+    }
+
+    /// Set the outlier marker size in points.
+    pub fn flier_size(mut self, size: f32) -> Self {
+        self.config = std::mem::take(&mut self.config).flier_size(size);
+        self
+    }
+}
+
 /// Calculate box plot statistics from data
 pub fn calculate_box_plot<T, D: Data1D<T>>(data: &D, config: &BoxPlotConfig) -> Result<BoxPlotData>
 where
@@ -623,6 +817,7 @@ where
         n_samples,
         iqr,
         orientation: config.orientation,
+        x_center: config.x_center(),
         fill_alpha,
         edge_color,
         edge_width,
@@ -937,11 +1132,82 @@ mod tests {
         assert!(!boxplot.is_empty());
     }
 
+    // ------------------------------------------------------------------
+    // The style fields must reach pixels (plan item 2.4)
+    //
+    // These lock `BoxPlotData::render_styled` — the reference geometry — to the
+    // resolved config. A backend that hardcodes its own constants will not be
+    // caught here, but it now has an executable spec to match.
+    // ------------------------------------------------------------------
+
+    fn render_box(config: &BoxPlotConfig) -> Vec<u8> {
+        let data = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 40.0];
+        let boxplot = calculate_box_plot(&data, config).unwrap();
+        let theme = Theme::default();
+        let mut renderer = SkiaRenderer::new(160, 160, theme.clone()).unwrap();
+        // Use the plot's own declared bounds so both orientations get an area
+        // that actually contains their geometry.
+        let ((x_min, x_max), (y_min, y_max)) = boxplot.data_bounds();
+        let area = PlotArea::new(0.0, 0.0, 160.0, 160.0, x_min, x_max, y_min, y_max);
+        boxplot
+            .render(&mut renderer, &area, &theme, Color::from_rgb(0, 90, 200))
+            .unwrap();
+        renderer.into_image().pixels
+    }
+
+    #[test]
+    fn test_every_box_plot_style_field_changes_the_rendered_image() {
+        let baseline = render_box(&BoxPlotConfig::new());
+
+        let variants: [(&str, BoxPlotConfig); 8] = [
+            ("width_ratio", BoxPlotConfig::new().width_ratio(0.9)),
+            ("cap_width", BoxPlotConfig::new().cap_width(0.1)),
+            ("fill_alpha", BoxPlotConfig::new().fill_alpha(0.1)),
+            (
+                "edge_color",
+                BoxPlotConfig::new().edge_color(Color::from_rgb(255, 0, 0)),
+            ),
+            ("edge_width", BoxPlotConfig::new().edge_width(4.0)),
+            ("whisker_width", BoxPlotConfig::new().whisker_width(5.0)),
+            ("median_width", BoxPlotConfig::new().median_width(6.0)),
+            ("flier_size", BoxPlotConfig::new().flier_size(16.0)),
+        ];
+
+        for (name, config) in variants {
+            assert_ne!(
+                baseline,
+                render_box(&config),
+                "BoxPlotConfig::{name} produced a byte-identical image"
+            );
+        }
+    }
+
+    #[test]
+    fn test_box_plot_orientation_changes_the_rendered_image() {
+        let vertical = render_box(&BoxPlotConfig::new());
+        let horizontal = render_box(&BoxPlotConfig::new().orientation(BoxOrientation::Horizontal));
+        assert_ne!(vertical, horizontal);
+    }
+
+    #[test]
+    fn test_box_plot_defaults_resolve_to_the_documented_constants() {
+        let data = vec![1.0, 2.0, 3.0, 4.0, 5.0];
+        let boxplot = calculate_box_plot(&data, &BoxPlotConfig::new()).unwrap();
+
+        assert_eq!(boxplot.width_ratio, defaults::BOXPLOT_WIDTH_RATIO);
+        assert_eq!(boxplot.cap_width, defaults::BOXPLOT_CAP_WIDTH);
+        assert_eq!(boxplot.fill_alpha, defaults::BOXPLOT_FILL_ALPHA);
+        assert_eq!(boxplot.edge_width, defaults::PATCH_LINE_WIDTH);
+        assert_eq!(boxplot.flier_size, defaults::FLIER_SIZE);
+        assert_eq!(boxplot.whisker_width, None);
+        assert_eq!(boxplot.median_width, None);
+    }
+
     #[test]
     fn test_styling_fields() {
         let config = BoxPlotConfig::new()
             .fill_alpha(0.5)
-            .edge_color(Color::new(255, 0, 0))
+            .edge_color(Color::from_rgb(255, 0, 0))
             .edge_width(2.0)
             .width_ratio(0.8)
             .whisker_width(1.5)
@@ -966,5 +1232,48 @@ mod tests {
         assert!(boxplot.edge_color.is_some());
         assert_eq!(boxplot.edge_width, 2.0);
         assert_eq!(boxplot.width_ratio, 0.8);
+    }
+
+    #[test]
+    fn test_category_slot_span_is_one_unit_wide() {
+        assert_eq!(category_slot_span(0.0), (-0.5, 0.5));
+        assert_eq!(category_slot_span(1.0), (0.5, 1.5));
+        assert_eq!(category_slot_span(2.0), (1.5, 2.5));
+    }
+
+    #[test]
+    fn test_slot_position_reaches_the_computed_box() {
+        // `.boxplot(&d).category("b")` has to move the box, not just relabel
+        // the axis, so the resolved centre travels on `BoxPlotData`.
+        let data = vec![1.0, 2.0, 3.0, 4.0, 5.0];
+
+        let first = calculate_box_plot(&data, &BoxPlotConfig::new()).unwrap();
+        assert_eq!(first.x_center, 0.0);
+        assert_eq!(first.data_bounds().0, (-0.5, 0.5));
+
+        let second = calculate_box_plot(&data, &BoxPlotConfig::new().x_position(1.0)).unwrap();
+        assert_eq!(second.x_center, 1.0);
+        assert_eq!(second.data_bounds().0, (0.5, 1.5));
+    }
+
+    #[test]
+    fn test_horizontal_box_puts_its_slot_on_the_value_free_axis() {
+        let data = vec![1.0, 2.0, 3.0, 4.0, 5.0];
+        let config = BoxPlotConfig::new()
+            .orientation(BoxOrientation::Horizontal)
+            .x_position(2.0);
+        let boxplot = calculate_box_plot(&data, &config).unwrap();
+
+        assert_eq!(boxplot.data_bounds().1, (1.5, 2.5));
+    }
+
+    #[test]
+    fn test_category_survives_onto_the_config() {
+        let config = BoxPlotConfig::new().category("control");
+        assert_eq!(config.category.as_deref(), Some("control"));
+        // No explicit position: the plot assigns the slot when the series is
+        // added, so the config itself still reads as "unplaced".
+        assert_eq!(config.x_position, None);
+        assert_eq!(config.x_center(), 0.0);
     }
 }

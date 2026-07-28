@@ -25,13 +25,17 @@ pub(super) fn should_reduce_line_series(
         return false;
     }
 
-    if series.marker_style.is_some() || series.x_errors.is_some() || series.y_errors.is_some() {
+    if series.props.marker_style.value().is_some()
+        || series.x_errors.is_some()
+        || series.y_errors.is_some()
+    {
         return false;
     }
 
     if series
+        .props
         .line_style
-        .as_ref()
+        .value()
         .is_some_and(|style| !matches!(style, LineStyle::Solid))
     {
         return false;

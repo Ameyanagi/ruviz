@@ -375,10 +375,10 @@ impl InteractiveWindow {
             }
 
             WindowEvent::KeyboardInput { event, .. } => {
-                if event.state == ElementState::Pressed {
-                    if let Some(key_string) = self.key_event_to_string(&event) {
-                        self.handle_key_string(&key_string)?;
-                    }
+                if event.state == ElementState::Pressed
+                    && let Some(key_string) = self.key_event_to_string(&event)
+                {
+                    self.handle_key_string(&key_string)?;
                 }
             }
 
@@ -630,11 +630,11 @@ impl InteractiveWindow {
     }
 
     fn update_context_menu_hover(&mut self, hovered_index: Option<usize>) {
-        if let Some(menu) = self.context_menu.as_mut() {
-            if menu.hovered_index != hovered_index {
-                menu.hovered_index = hovered_index;
-                self.interaction_state.needs_redraw = true;
-            }
+        if let Some(menu) = self.context_menu.as_mut()
+            && menu.hovered_index != hovered_index
+        {
+            menu.hovered_index = hovered_index;
+            self.interaction_state.needs_redraw = true;
         }
     }
 
@@ -995,14 +995,14 @@ impl InteractiveWindow {
             width,
             height,
             menu.panel_bounds,
-            Color::new_rgba(28, 31, 36, 244),
+            Color::from_rgba(28, 31, 36, 244),
         );
         draw_rgba_rectangle_outline(
             pixel_data,
             width,
             height,
             menu.panel_bounds,
-            Color::new_rgba(116, 126, 140, 255),
+            Color::from_rgba(116, 126, 140, 255),
             1,
         );
 
@@ -1027,7 +1027,7 @@ impl InteractiveWindow {
                             menu.panel_bounds.max.x - MENU_PADDING_X_PX,
                             y + 1.0,
                         ),
-                        Color::new_rgba(74, 84, 96, 200),
+                        Color::from_rgba(74, 84, 96, 200),
                     );
                 }
                 _ => {
@@ -1045,7 +1045,7 @@ impl InteractiveWindow {
                                 bounds.max.x - 4.0,
                                 bounds.max.y - 2.0,
                             ),
-                            Color::new_rgba(56, 86, 120, 220),
+                            Color::from_rgba(56, 86, 120, 220),
                         );
                     }
                 }
@@ -1069,9 +1069,9 @@ impl InteractiveWindow {
                 continue;
             };
             let text_color = if entry.enabled {
-                Color::new_rgba(240, 244, 248, 255)
+                Color::from_rgba(240, 244, 248, 255)
             } else {
-                Color::new_rgba(126, 134, 144, 255)
+                Color::from_rgba(126, 134, 144, 255)
             };
             if let Err(err) = text_renderer.render_text_mut(
                 &mut pixmap,
@@ -1259,15 +1259,15 @@ impl InteractiveWindow {
             crossed_threshold,
             ..
         } = active_drag
+            && !crossed_threshold
+            && self.plot_area_contains(position)?
         {
-            if !crossed_threshold && self.plot_area_contains(position)? {
-                self.apply_plot_input(
-                    PlotInputEvent::SelectAt {
-                        position_px: ViewportPoint::new(position.x, position.y),
-                    },
-                    false,
-                )?;
-            }
+            self.apply_plot_input(
+                PlotInputEvent::SelectAt {
+                    position_px: ViewportPoint::new(position.x, position.y),
+                },
+                false,
+            )?;
         }
 
         Ok(())
@@ -1669,35 +1669,35 @@ impl InteractiveApp {
 
 impl ApplicationHandler<InteractiveAppEvent> for InteractiveApp {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if let Some(ref mut window_state) = self.window_state {
-            if window_state.window.is_none() {
-                let window_attrs = WindowAttributes::default()
-                    .with_title(window_state.title.clone())
-                    .with_inner_size(window_state.window_size)
-                    .with_resizable(window_state.resizable)
-                    .with_decorations(window_state.decorations)
-                    .with_visible(true)
-                    .with_active(true);
+        if let Some(ref mut window_state) = self.window_state
+            && window_state.window.is_none()
+        {
+            let window_attrs = WindowAttributes::default()
+                .with_title(window_state.title.clone())
+                .with_inner_size(window_state.window_size)
+                .with_resizable(window_state.resizable)
+                .with_decorations(window_state.decorations)
+                .with_visible(true)
+                .with_active(true);
 
-                match event_loop.create_window(window_attrs) {
-                    Ok(window) => {
-                        window.set_visible(true);
-                        window.focus_window();
-                        window.request_user_attention(Some(
-                            winit::window::UserAttentionType::Informational,
-                        ));
-                        window_state.window = Some(Arc::new(window));
-                        if let Err(err) = window_state.ensure_surface_initialized() {
-                            eprintln!("Failed to initialize window surface: {}", err);
-                            event_loop.exit();
-                        } else {
-                            window_state.request_redraw_if_needed();
-                        }
-                    }
-                    Err(e) => {
-                        eprintln!("Failed to create window: {}", e);
+            match event_loop.create_window(window_attrs) {
+                Ok(window) => {
+                    window.set_visible(true);
+                    window.focus_window();
+                    window.request_user_attention(Some(
+                        winit::window::UserAttentionType::Informational,
+                    ));
+                    window_state.window = Some(Arc::new(window));
+                    if let Err(err) = window_state.ensure_surface_initialized() {
+                        eprintln!("Failed to initialize window surface: {}", err);
                         event_loop.exit();
+                    } else {
+                        window_state.request_redraw_if_needed();
                     }
+                }
+                Err(e) => {
+                    eprintln!("Failed to create window: {}", e);
+                    event_loop.exit();
                 }
             }
         }

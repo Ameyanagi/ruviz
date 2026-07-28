@@ -59,9 +59,9 @@ fn builder_when_compiles_across_public_builder_families() {
         .line_width(2.0);
 
     let _series_builder = Plot::new()
-        .histogram(&data, None)
+        .histogram(&data)
         .when(true, |builder| builder.label("histogram"))
-        .width(2.0);
+        .line_width(2.0);
 
     let _grouped_plot = Plot::new().group(|group| {
         group
@@ -150,15 +150,14 @@ fn high_level_step_api_reports_length_mismatch() {
 }
 
 #[test]
-#[cfg(all(not(target_arch = "wasm32"), feature = "parallel"))]
-fn public_parallel_render_honors_pending_ingestion_errors() {
+#[cfg(not(target_arch = "wasm32"))]
+fn public_render_honors_pending_ingestion_errors() {
     let x: Vec<f64> = (0..5_000).map(|index| index as f64).collect();
     let y: Vec<f64> = x.iter().map(|value| value.sin()).collect();
     let bad_x = vec![0.0, 1.0];
     let bad_y = vec![0.0];
 
     let err = Plot::new()
-        .parallel_threshold(1)
         .scatter(&x, &y)
         .into_plot()
         .step(&bad_x, &bad_y, StepWhere::Post)
@@ -180,7 +179,7 @@ fn high_level_boxen_api_renders() {
     let boxen = Plot::new()
         .boxen(&data)
         .k_depth(4)
-        .width(0.7)
+        .box_width(0.7)
         .saturation(0.6)
         .edge_width(1.5)
         .outlier_size(3.0)
@@ -235,8 +234,8 @@ fn high_level_quiver_api_renders() {
 
     let quiver = Plot::new()
         .quiver(&x, &y, &u, &v)
-        .scale(0.25)
-        .width(1.2)
+        .arrow_scale(0.25)
+        .arrow_width(1.2)
         .pivot(QuiverPivot::Middle)
         .color_by_magnitude(true)
         .render();
@@ -260,15 +259,14 @@ fn high_level_quiver_api_reports_length_mismatch() {
 }
 
 #[test]
-#[cfg(all(not(target_arch = "wasm32"), feature = "parallel"))]
-fn high_level_quiver_api_stays_on_reference_renderer_with_parallel_available() {
+#[cfg(not(target_arch = "wasm32"))]
+fn high_level_quiver_api_stays_on_reference_renderer() {
     let x: Vec<f64> = (0..2_500).map(|index| (index % 50) as f64).collect();
     let y: Vec<f64> = (0..2_500).map(|index| (index / 50) as f64).collect();
     let u: Vec<f64> = x.iter().map(|value| (value * 0.1).sin()).collect();
     let v: Vec<f64> = y.iter().map(|value| (value * 0.1).cos()).collect();
 
     let (_, diagnostics) = Plot::new()
-        .parallel_threshold(1)
         .quiver(&x, &y, &u, &v)
         .color_by_magnitude(true)
         .into_plot()
@@ -520,15 +518,11 @@ fn explicit_parallel_backend_reports_truthful_fallback() {
 
     assert_eq!(resolution.requested_backend(), Some(BackendType::Parallel));
     assert_eq!(resolution.actual_backend(), BackendType::Skia);
-    #[cfg(feature = "parallel")]
+    // There is no 2D series-parallel raster path in any build configuration, so
+    // the reason is the same with and without the `parallel` cargo feature.
     assert_eq!(
         resolution.fallback_reason(),
         Some(BackendFallbackReason::UnsupportedOperation)
-    );
-    #[cfg(not(feature = "parallel"))]
-    assert_eq!(
-        resolution.fallback_reason(),
-        Some(BackendFallbackReason::FeatureDisabled)
     );
 }
 

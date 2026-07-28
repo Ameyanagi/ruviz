@@ -21,7 +21,7 @@ fn test_default_color_palette() {
         .label("Series 4")
         .line(&x_data, &vec![5.0, 6.0, 7.0, 8.0, 9.0])
         .label("Series 5")
-        .legend(ruviz::core::position::Position::TopRight)
+        .legend(ruviz::core::LegendPosition::UpperRight)
         .save("generated/tests/render/default_palette.png");
 
     assert!(result.is_ok(), "Default palette should work");
@@ -45,7 +45,7 @@ fn test_custom_color_sequence() {
         .line(&x_data, &vec![3.0, 4.0, 5.0, 6.0, 7.0])
         .color(Color::from_hex("#0080FF").unwrap()) // Blue
         .label("Blue Line")
-        .legend(ruviz::core::position::Position::TopRight)
+        .legend(ruviz::core::LegendPosition::UpperRight)
         .save("generated/tests/render/custom_colors.png");
 
     assert!(result.is_ok(), "Custom colors should work");
@@ -72,7 +72,7 @@ fn test_scatter_with_different_colors() {
         .color(Color::from_palette(1)) // Second palette color
         .marker_size(12.0)
         .label("Group B")
-        .legend(ruviz::core::position::Position::TopRight)
+        .legend(ruviz::core::LegendPosition::UpperRight)
         .save("generated/tests/render/scatter_colors.png");
 
     assert!(result.is_ok(), "Scatter with colors should work");
@@ -102,7 +102,7 @@ fn test_transparency_effects() {
         .color(Color::GREEN.with_alpha(0.4)) // Very transparent
         .line_width(3.0)
         .label("40% Green")
-        .legend(ruviz::core::position::Position::TopRight)
+        .legend(ruviz::core::LegendPosition::UpperRight)
         .save("generated/tests/render/transparency.png");
 
     assert!(result.is_ok(), "Transparency effects should work");
@@ -155,7 +155,7 @@ fn test_colormap_visualization() {
         .color(colormap.sample(1.0))
         .line_width(3.0)
         .label("Line 5 (t=1.0)")
-        .legend(ruviz::core::position::Position::TopRight)
+        .legend(ruviz::core::LegendPosition::UpperRight)
         .save("generated/tests/render/colormap_viridis.png");
 
     assert!(result.is_ok(), "Colormap visualization should work");
@@ -213,7 +213,7 @@ fn test_different_colormaps() {
             .color(colormap.sample(1.0))
             .line_width(2.0)
             .label("t=1.00")
-            .legend(ruviz::core::position::Position::TopRight)
+            .legend(ruviz::core::LegendPosition::UpperRight)
             .save(format!("generated/tests/render/colormap_{}.png", name));
 
         assert!(result.is_ok(), "{} colormap should work", name);
@@ -265,7 +265,7 @@ fn test_hex_color_parsing() {
         .color(Color::from_hex("#8040ff").unwrap())
         .line_width(2.0)
         .label("#8040ff")
-        .legend(ruviz::core::position::Position::TopRight)
+        .legend(ruviz::core::LegendPosition::UpperRight)
         .save("generated/tests/render/hex_colors.png");
 
     assert!(result.is_ok(), "Hex color parsing should work");
@@ -366,7 +366,7 @@ fn test_color_palette_cycling() {
         .color(Color::from_palette(11)) // Should cycle to palette[1]
         .line_width(1.5)
         .label("Series 12")
-        .legend(ruviz::core::position::Position::TopRight)
+        .legend(ruviz::core::LegendPosition::UpperRight)
         .save("generated/tests/render/palette_cycling.png");
 
     assert!(result.is_ok(), "Palette cycling should work");
@@ -461,7 +461,7 @@ fn test_scientific_colormaps() {
             .color(colormap.sample(1.0))
             .line_width(3.0)
             .label("1.0")
-            .legend(ruviz::core::position::Position::TopRight)
+            .legend(ruviz::core::LegendPosition::UpperRight)
             .save(format!("generated/tests/render/scientific_{}.png", name));
 
         assert!(result.is_ok(), "Scientific colormap {} should work", name);
@@ -486,7 +486,7 @@ fn test_grouped_fixed_color_behavior() {
                 .line(&x_data, &y1)
                 .line(&x_data, &y2)
         })
-        .legend(ruviz::core::position::Position::TopRight)
+        .legend(ruviz::core::LegendPosition::UpperRight)
         .save("generated/tests/render/grouped_fixed_color.png");
 
     assert!(result.is_ok(), "Grouped fixed color should work");
@@ -511,7 +511,7 @@ fn test_grouped_auto_palette_color_behavior() {
         })
         .line(&x_data, &y3)
         .label("Outside Group")
-        .legend(ruviz::core::position::Position::TopRight)
+        .legend(ruviz::core::LegendPosition::UpperRight)
         .save("generated/tests/render/grouped_auto_palette_color.png");
 
     assert!(result.is_ok(), "Grouped auto palette color should work");

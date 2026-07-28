@@ -80,18 +80,18 @@ fn mixed_radar_plot() -> Plot {
         .grid(true)
         .radar(&["Speed", "Power", "Skill", "Range", "Focus"])
         .add_series("Alpha", &[4.0, 3.0, 4.5, 3.5, 4.0])
-        .with_color(Color::from_hex("#1d4ed8").unwrap())
-        .with_fill_alpha(0.28)
+        .series_color(Color::from_hex("#1d4ed8").unwrap())
+        .series_fill_alpha(0.28)
         .add_series("Beta", &[2.8, 4.2, 3.2, 4.0, 3.6])
-        .with_color(Color::from_hex("#ea580c").unwrap())
-        .with_fill_alpha(0.20)
+        .series_color(Color::from_hex("#ea580c").unwrap())
+        .series_fill_alpha(0.20)
         .inset_anchor(InsetAnchor::TopLeft)
         .inset_size_frac(0.36, 0.36)
         .inset_margin_pt(12.0)
         .into()
 }
 
-fn save_plot(name: &str, plot: Plot, outputs: &mut Vec<PathBuf>) -> Result<()> {
+fn save_plot(name: &str, plot: Plot, outputs: &mut Vec<PathBuf>) -> PlotResult<()> {
     let png_path = util::example_output_path_in("mixed_coordinate_insets", &format!("{name}.png"));
     let svg_path = util::example_output_path_in("mixed_coordinate_insets", &format!("{name}.svg"));
 
@@ -103,7 +103,7 @@ fn save_plot(name: &str, plot: Plot, outputs: &mut Vec<PathBuf>) -> Result<()> {
     Ok(())
 }
 
-fn main() -> Result<()> {
+fn main() -> PlotResult<()> {
     let mut outputs = Vec::new();
 
     save_plot("mixed_polar_inset", mixed_polar_plot(), &mut outputs)?;

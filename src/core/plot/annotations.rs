@@ -1,13 +1,15 @@
 use super::*;
 
 impl Plot {
-    /// Configure legend with position
+    /// Enable the legend and place it.
     ///
-    /// For matplotlib-compatible position codes, use `legend_position()` with `LegendPosition`.
-    /// For automatic positioning (like matplotlib's `plt.legend()`), use `legend_best()`.
-    pub fn legend(mut self, position: Position) -> Self {
+    /// Accepts a [`LegendPosition`] (canonical) or the deprecated
+    /// [`Position`](crate::core::Position), which converts losslessly.
+    /// For automatic positioning (like matplotlib's `plt.legend()`), pass
+    /// [`LegendPosition::Best`] or use `legend_best()`.
+    pub fn legend(mut self, position: impl Into<LegendPosition>) -> Self {
         self.layout.legend.enabled = true;
-        self.layout.legend.position = LegendPosition::from_position(position);
+        self.layout.legend.position = position.into();
         self
     }
 
@@ -174,6 +176,17 @@ impl Plot {
     /// Set which plot borders render tick marks.
     pub fn tick_sides(mut self, sides: TickSides) -> Self {
         self.layout.tick_config.sides = sides;
+        self
+    }
+
+    /// How the x tick labels are oriented when they would collide.
+    ///
+    /// [`Auto`](crate::render::XTickRotation::Auto) — the default — keeps them
+    /// horizontal while they fit, turns the row a quarter turn when they stop
+    /// fitting, and draws every k-th label when even a rotated row will not fit
+    /// the bottom margin the margin configuration allows.
+    pub fn xtick_rotation(mut self, rotation: crate::render::XTickRotation) -> Self {
+        self.layout.tick_config.xtick_rotation = rotation;
         self
     }
 
@@ -410,6 +423,10 @@ impl Plot {
 
     /// Add an arrow annotation with custom styling
     ///
+    /// The arrow is drawn on top of the data series, including when both
+    /// [`ArrowHead::None`](crate::core::ArrowHead::None) ends are used to draw a
+    /// plain pointer line.
+    ///
     /// # Example
     ///
     /// ```rust,ignore
@@ -565,6 +582,34 @@ impl Plot {
             baseline,
         ));
         self
+    }
+
+    /// Add a fill between two curves that appears in the legend
+    ///
+    /// The band is drawn in `color` at 25% opacity, matching `area()`.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// Plot::new()
+    ///     .line(&x, &mean)
+    ///     .fill_between_labeled(&x, &lower, &upper, Color::BLUE, "95% CI")
+    ///     .legend(LegendPosition::UpperRight)
+    ///     .save("ci.png")?;
+    /// ```
+    pub fn fill_between_labeled(
+        self,
+        x: &[f64],
+        y1: &[f64],
+        y2: &[f64],
+        color: Color,
+        label: impl Into<String>,
+    ) -> Self {
+        let style = FillStyle::default()
+            .color(color)
+            .alpha(super::series_api::AREA_FILL_ALPHA)
+            .label(label);
+        self.fill_between_styled(x, y1, y2, style, false)
     }
 
     /// Add a fill between with custom styling

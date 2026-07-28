@@ -72,9 +72,11 @@ impl LogScale {
 }
 
 impl Scale for LogScale {
+    /// Returns `NaN` for values a log axis cannot represent (zero, negative, or
+    /// non-finite), matching [`AxisScale::normalized_position`].
     fn transform(&self, value: f64) -> f64 {
-        if value <= 0.0 {
-            return 0.0;
+        if !AxisScale::Log.is_valid_value(value) {
+            return f64::NAN;
         }
         let log_range = self.log_max - self.log_min;
         if log_range.abs() < f64::EPSILON {
@@ -182,7 +184,7 @@ impl Scale for SymLogScale {
 /// User-facing axis scale configuration
 ///
 /// This enum provides a simple API for setting axis scales on plots.
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum AxisScale {
     /// Linear scale (default)
     #[default]
@@ -265,6 +267,16 @@ fn log_ratio(value: f64, base: f64) -> f64 {
     }
 }
 
+/// The one wording for "a logarithmic axis cannot show non-positive data".
+///
+/// Every refusal that stems from a log axis meeting a zero or a negative value
+/// opens with this sentence — [`AxisScale::validate_range`] for an invalid axis
+/// range, and the pre-render check that refuses aggregate plot geometry. Sharing
+/// the string is what stops the two from drifting into different advice, and it
+/// is the reason both of them name `SymLog` as the fix.
+pub(crate) const LOG_SCALE_REQUIRES_POSITIVE: &str =
+    "Logarithmic scale requires positive values. Use SymLog for data with zero or negative values.";
+
 impl AxisScale {
     /// Create a logarithmic scale
     pub fn log() -> Self {
@@ -276,10 +288,74 @@ impl AxisScale {
         AxisScale::SymLog { linthresh }
     }
 
+    /// Can this scale represent `value` at all?
+    ///
+    /// A logarithmic axis has no position for zero or a negative sample. This
+    /// is the single predicate that decides that, and both
+    /// [`Self::normalized_position`] and [`Scale::transform`] for [`LogScale`]
+    /// are defined in terms of it — so a caller that filters samples up front
+    /// and a caller that just projects them cannot disagree about which samples
+    /// exist.
+    ///
+    /// ```
+    /// use ruviz::axes::AxisScale;
+    ///
+    /// assert!(AxisScale::Log.is_valid_value(10.0));
+    /// assert!(!AxisScale::Log.is_valid_value(0.0));
+    /// assert!(!AxisScale::Log.is_valid_value(-1.0));
+    /// assert!(AxisScale::Linear.is_valid_value(-1.0));
+    /// ```
+    #[inline]
+    pub fn is_valid_value(&self, value: f64) -> bool {
+        match self {
+            AxisScale::Linear | AxisScale::SymLog { .. } => value.is_finite(),
+            AxisScale::Log => value.is_finite() && value > 0.0,
+        }
+    }
+
+    /// The first finite value this scale has no position for, if any.
+    ///
+    /// Non-finite input is skipped: `NaN` and the infinities are not "data this
+    /// axis cannot show", they are broken data, and they already have their own
+    /// (better) diagnostic. What this finds is a real number the axis genuinely
+    /// cannot place — a zero or a negative on a logarithmic axis.
+    ///
+    /// Callers that build *aggregate* geometry (a bar, a histogram bin, a box
+    /// plot's quartiles) use this to refuse the figure up front, because such a
+    /// value does not make their shape shorter, it makes it meaningless.
+    /// Callers that draw independent samples must not: they drop the sample and
+    /// break the line at the gap instead.
+    ///
+    /// ```
+    /// use ruviz::axes::AxisScale;
+    ///
+    /// assert_eq!(AxisScale::Log.first_unplaceable([1.0, 10.0, 0.0]), Some(0.0));
+    /// assert_eq!(AxisScale::Log.first_unplaceable([1.0, 10.0]), None);
+    /// // A linear axis can place every finite number.
+    /// assert_eq!(AxisScale::Linear.first_unplaceable([-1.0, 0.0]), None);
+    /// // Broken data is not this function's business.
+    /// assert_eq!(AxisScale::Log.first_unplaceable([f64::NAN]), None);
+    /// ```
+    pub fn first_unplaceable(&self, values: impl IntoIterator<Item = f64>) -> Option<f64> {
+        if matches!(self, AxisScale::Linear | AxisScale::SymLog { .. }) {
+            // Every finite value has a position, so the scan cannot find one.
+            return None;
+        }
+        values
+            .into_iter()
+            .find(|value| value.is_finite() && !self.is_valid_value(*value))
+    }
+
     /// Normalize a value into `[0, 1]` for the provided range.
     ///
     /// This preserves range direction, so reversed ranges produce inverted
     /// normalized coordinates.
+    ///
+    /// Returns `NaN` when [`Self::is_valid_value`] rejects `value` — notably a
+    /// zero or negative sample on a [`AxisScale::Log`] axis. Renderers must
+    /// treat a `NaN` position as "no point here" and break the polyline, rather
+    /// than plotting it: previously such samples were clamped to `0.0` and drawn
+    /// directly on the axis spine, where they read as real data.
     pub fn normalized_position(&self, value: f64, min: f64, max: f64) -> f64 {
         match self {
             AxisScale::Linear => {
@@ -291,8 +367,8 @@ impl AxisScale {
                 }
             }
             AxisScale::Log => {
-                if value <= 0.0 {
-                    return 0.0;
+                if !self.is_valid_value(value) {
+                    return f64::NAN;
                 }
 
                 if min.is_finite() && min > 0.0 && max.is_finite() && max > 0.0 {
@@ -406,7 +482,7 @@ impl AxisScale {
             AxisScale::Linear => Ok(()),
             AxisScale::Log => {
                 if min <= 0.0 || max <= 0.0 {
-                    Err("Logarithmic scale requires positive values. Use SymLog for data with zero or negative values.".to_string())
+                    Err(LOG_SCALE_REQUIRES_POSITIVE.to_string())
                 } else {
                     Ok(())
                 }
@@ -618,12 +694,105 @@ mod tests {
         }
     }
 
+    /// Regression: non-positive samples used to normalize to `0.0`, which put
+    /// them exactly on the axis spine where they read as genuine data. They
+    /// must be `NaN` so renderers can break the line at the gap.
     #[test]
-    fn test_axis_scale_log_invalid_value_behavior_is_preserved() {
-        assert_eq!(AxisScale::Log.normalized_position(0.0, 1.0, 100.0), 0.0);
-        assert_eq!(AxisScale::Log.normalized_position(-1.0, 1.0, 100.0), 0.0);
+    fn test_axis_scale_log_invalid_values_are_not_clamped_onto_the_spine() {
+        for invalid in [0.0, -0.0, -1.0, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert!(
+                !AxisScale::Log.is_valid_value(invalid),
+                "{invalid} should be invalid on a log axis"
+            );
+            let normalized = AxisScale::Log.normalized_position(invalid, 1.0, 100.0);
+            assert!(
+                normalized.is_nan(),
+                "log axis mapped {invalid} to {normalized} instead of NaN"
+            );
+        }
+
+        // Valid samples are unaffected.
+        assert_eq!(AxisScale::Log.normalized_position(1.0, 1.0, 100.0), 0.0);
+        assert_eq!(AxisScale::Log.normalized_position(100.0, 1.0, 100.0), 1.0);
         assert!(AxisScale::Log.inverse_normalized_position(0.5, 1.0, 100.0) > 0.0);
         assert!(AxisScale::Log.validate_range(0.0, 100.0).is_err());
+    }
+
+    #[test]
+    fn test_first_unplaceable_reports_the_offending_value_on_a_log_axis() {
+        assert_eq!(
+            AxisScale::Log.first_unplaceable([5.0, 1.0, 0.0, -3.0]),
+            Some(0.0),
+            "the first offender is reported, not the last"
+        );
+        assert_eq!(AxisScale::Log.first_unplaceable([5.0, -3.0]), Some(-3.0));
+        assert_eq!(AxisScale::Log.first_unplaceable([1.0, 10.0, 100.0]), None);
+        assert_eq!(AxisScale::Log.first_unplaceable([0.0f64; 0]), None);
+    }
+
+    /// Broken data (`NaN`, infinities) is not what this predicate is about, and
+    /// reporting it here would hand the caller a "use SymLog" message for a
+    /// problem SymLog does not solve.
+    #[test]
+    fn test_first_unplaceable_ignores_non_finite_values() {
+        assert_eq!(
+            AxisScale::Log.first_unplaceable([f64::NAN, f64::INFINITY, f64::NEG_INFINITY]),
+            None
+        );
+        assert_eq!(
+            AxisScale::Log.first_unplaceable([f64::NAN, -1.0]),
+            Some(-1.0),
+            "a genuine offender after a NaN is still found"
+        );
+    }
+
+    /// A linear or symlog axis has a position for every finite number, so the
+    /// scan must never fire there — the aggregate-geometry refusal built on it
+    /// applies to log axes and nothing else.
+    #[test]
+    fn test_first_unplaceable_never_fires_on_non_log_scales() {
+        for scale in [AxisScale::Linear, AxisScale::symlog(1.0)] {
+            assert_eq!(
+                scale.first_unplaceable([-1e300, -1.0, 0.0, 1.0, f64::NAN]),
+                None,
+                "{scale:?} refused a value it can place"
+            );
+        }
+    }
+
+    /// `validate_range` and the aggregate-geometry refusal must give the same
+    /// advice, which is only guaranteed while they share one string.
+    #[test]
+    fn test_log_range_rejection_uses_the_shared_wording() {
+        let message = AxisScale::Log
+            .validate_range(0.0, 100.0)
+            .expect_err("a zero lower bound is not on a log axis");
+        assert_eq!(message, LOG_SCALE_REQUIRES_POSITIVE);
+        assert!(message.contains("SymLog"), "{message}");
+    }
+
+    #[test]
+    fn test_is_valid_value_accepts_everything_finite_on_non_log_scales() {
+        for scale in [AxisScale::Linear, AxisScale::symlog(1.0)] {
+            for value in [-1e300, -1.0, 0.0, 1.0, 1e300] {
+                assert!(scale.is_valid_value(value), "{scale:?} rejected {value}");
+            }
+            assert!(!scale.is_valid_value(f64::NAN));
+            assert!(!scale.is_valid_value(f64::INFINITY));
+        }
+    }
+
+    #[test]
+    fn test_log_scale_transform_agrees_with_axis_scale_on_invalid_values() {
+        let scale = LogScale::new(1.0, 1000.0);
+        for invalid in [0.0, -5.0, f64::NAN] {
+            assert!(scale.transform(invalid).is_nan());
+            assert!(
+                AxisScale::Log
+                    .normalized_position(invalid, 1.0, 1000.0)
+                    .is_nan()
+            );
+        }
     }
 
     #[test]

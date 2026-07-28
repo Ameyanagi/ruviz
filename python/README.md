@@ -86,6 +86,38 @@ y.replace(np.cos(x))
 `deepcopy(plot)` creates an independent live copy with fresh observables, while
 `plot.clone()` remains a static snapshot copy.
 
+## Experimental 3D Alpha
+
+The Python wheel includes the Rust crate's opt-in Cargo feature named exactly
+`3d`. The initial Python surface provides deterministic CPU export for opaque
+`scatter3d`, `line3d`, regular-grid `surface`, and `wireframe` plots:
+
+```python,check
+import numpy as np
+import ruviz
+
+x = np.linspace(-2.0, 2.0, 32)
+y = np.linspace(-2.0, 2.0, 24)
+grid_x, grid_y = np.meshgrid(x, y)
+z = np.sin(grid_x**2 + grid_y**2)
+
+(
+    ruviz.surface(x, y, z)
+    .size_px(720, 480)
+    .title("3D surface alpha")
+    .xlabel("x")
+    .ylabel("y")
+    .zlabel("z")
+    .save("surface.png")
+)
+```
+
+For surfaces and wireframes, rows of `z` correspond to `y` and columns
+correspond to `x`, so `z.shape == (len(y), len(x))`. Orthographic projection is
+the default; `.perspective_deg(45.0)` opts into perspective. This alpha is
+static-only in Python: interactive orbit widgets, transparency, volume plots,
+arbitrary meshes, and mixed 2D/3D axes are not yet exposed.
+
 ## Documentation
 
 - Python docs source: `python/docs/`
