@@ -19,7 +19,13 @@ gpu = ["ruviz/gpu"]
 "3d-gpu" = ["3d", "gpu"]
 
 [dependencies]
-iced = { version = "0.14", default-features = false, features = ["advanced", "image", "thread-pool"] }
+iced = { version = "0.14", default-features = false, features = [
+    "advanced",
+    "image",
+    "thread-pool",
+    "wayland",
+    "x11",
+] }
 futures = "0.3"
 async-channel = "2"
 ruviz = { version = "=0.6.0", path = "../../.." }
