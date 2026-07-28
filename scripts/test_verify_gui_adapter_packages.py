@@ -196,6 +196,19 @@ class WorkflowContractTests(unittest.TestCase):
         )[1].split("\n  publish-gui-adapters:", maxsplit=1)[0]
         self.assertIn(dependency_step, release_job)
 
+        publish_job = release.split(
+            "\n  publish-gui-adapters:", maxsplit=1
+        )[1].split("\n  publish-ruviz-web:", maxsplit=1)[0]
+        self.assertIn("- name: Install Linux desktop build dependencies", publish_job)
+        self.assertIn(
+            "uses: ./.github/actions/install-linux-desktop-build-deps",
+            publish_job,
+        )
+        self.assertIn(
+            "if: steps.adapter-version.outputs.published != 'true'",
+            publish_job,
+        )
+
     def test_pages_build_includes_adapter_and_gpui_rustdoc(self) -> None:
         workflow = (self.repository / ".github/workflows/docs.yml").read_text(
             encoding="utf-8"

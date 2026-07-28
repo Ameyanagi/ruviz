@@ -629,6 +629,10 @@ jobs:
             echo "published=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Install Linux desktop build dependencies
+        if: steps.adapter-version.outputs.published != 'true'
+        uses: ./.github/actions/install-linux-desktop-build-deps
+
       - name: Publish adapter to crates.io
         if: steps.adapter-version.outputs.published != 'true'
         run: >-
