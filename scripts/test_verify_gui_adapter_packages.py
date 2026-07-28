@@ -174,6 +174,28 @@ class WorkflowContractTests(unittest.TestCase):
             workflow,
         )
 
+    def test_packaged_adapter_jobs_install_native_linux_dependencies(self) -> None:
+        dependency_step = (
+            "- name: Install Linux desktop build dependencies\n"
+            "        uses: ./.github/actions/install-linux-desktop-build-deps"
+        )
+
+        ci = (self.repository / ".github/workflows/ci.yml").read_text(
+            encoding="utf-8"
+        )
+        ci_job = ci.split("\n  gui-adapter-packages:", maxsplit=1)[1].split(
+            "\n  native-gui-tests:", maxsplit=1
+        )[0]
+        self.assertIn(dependency_step, ci_job)
+
+        release = (self.repository / ".github/workflows/release.yml").read_text(
+            encoding="utf-8"
+        )
+        release_job = release.split(
+            "\n  verify-gui-adapter-packages:", maxsplit=1
+        )[1].split("\n  publish-gui-adapters:", maxsplit=1)[0]
+        self.assertIn(dependency_step, release_job)
+
     def test_pages_build_includes_adapter_and_gpui_rustdoc(self) -> None:
         workflow = (self.repository / ".github/workflows/docs.yml").read_text(
             encoding="utf-8"
