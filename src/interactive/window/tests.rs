@@ -231,6 +231,32 @@ fn test_blend_rgba_into_softbuffer() {
     assert_ne!(dst[0], 0x00ff0000);
 }
 
+#[test]
+fn test_blend_rgba_into_rgba_preserves_straight_alpha() {
+    let source = [255, 0, 0, 128];
+
+    let mut transparent = [0, 0, 255, 0];
+    blend_rgba_into_rgba(&source, &mut transparent);
+    assert_eq!(transparent, [255, 0, 0, 128]);
+
+    let mut translucent = [0, 0, 255, 128];
+    blend_rgba_into_rgba(&source, &mut translucent);
+    assert_eq!(translucent, [170, 0, 85, 192]);
+}
+
+#[test]
+fn test_fill_rgba_rectangle_writes_straight_alpha_on_transparent_canvas() {
+    let mut pixels = [0, 0, 0, 0];
+    fill_rgba_rectangle(
+        &mut pixels,
+        1,
+        1,
+        Rectangle::new(0.0, 0.0, 1.0, 1.0),
+        Color::from_rgba(200, 100, 50, 128),
+    );
+    assert_eq!(pixels, [200, 100, 50, 128]);
+}
+
 #[tokio::test]
 async fn test_primary_shortcut_maps_s_to_save_png() {
     let mut window = interactive_window_for_test().await;

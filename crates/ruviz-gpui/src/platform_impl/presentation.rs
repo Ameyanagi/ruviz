@@ -78,15 +78,6 @@ impl RuvizPlot {
             && self.session.displayed_frame_generation() == Some(generation)
     }
 
-    pub(super) fn retire_cached_frame(&mut self) {
-        if let Some(frame) = self.cached_frame.take() {
-            retire_primary_frame(&mut self.retired_images, frame.primary);
-            if let Some(overlay_image) = frame.overlay_image {
-                self.retired_images.push(overlay_image);
-            }
-        }
-    }
-
     pub(super) fn replace_cached_frame(
         &mut self,
         mut request: RenderRequest,
@@ -185,7 +176,9 @@ impl RuvizPlot {
                 let entity_for_notify = entity.clone();
                 let pending_for_notify = Arc::clone(&pending);
                 cx.on_next_frame(move |_, cx| {
-                    entity_for_notify.update(cx, |_, cx| {
+                    entity_for_notify.update(cx, |view, cx| {
+                        view.failed_request = None;
+                        view.last_error = None;
                         pending_for_notify.store(false, Ordering::Release);
                         cx.notify();
                     });
@@ -202,10 +195,7 @@ impl RuvizPlot {
 
     fn current_request(&self, bounds: Bounds<Pixels>, window: &Window) -> Option<RenderRequest> {
         let scale_factor = window.scale_factor();
-        let logical_size_px = (
-            u32::from(bounds.size.width.ceil()),
-            u32::from(bounds.size.height.ceil()),
-        );
+        let logical_size_px = (f64::from(bounds.size.width), f64::from(bounds.size.height));
         let frame_size_px = frame_size_px_for_policy(
             &self.session,
             &self.options.sizing_policy,
@@ -283,7 +273,7 @@ impl RuvizPlot {
         window: &mut Window,
         cx: &mut App,
     ) {
-        if self.cache_is_current(&request) {
+        if !self.should_start_render(&request) {
             return;
         }
 
@@ -292,6 +282,10 @@ impl RuvizPlot {
         };
 
         self.start_render(entity, scheduled, window, cx);
+    }
+
+    pub(super) fn should_start_render(&self, request: &RenderRequest) -> bool {
+        !self.cache_is_current(request) && self.failed_request.as_ref() != Some(request)
     }
 
     pub(super) fn cache_is_current(&self, request: &RenderRequest) -> bool {
@@ -331,20 +325,33 @@ impl RuvizPlot {
         self.in_flight_render = Some(task);
     }
 
-    fn finish_render(
+    pub(super) fn finish_render(
         &mut self,
         scheduled: ScheduledRender,
-        result: std::result::Result<RenderedFrame, String>,
+        result: Result<RenderedFrame>,
         cx: &mut Context<Self>,
     ) {
-        if !self.scheduler.finish(&scheduled) {
+        let Some(install) = self.scheduler.finish(&scheduled) else {
             return;
-        }
+        };
 
         self.in_flight_render = None;
 
-        if let Ok(frame) = result {
-            self.replace_cached_frame(scheduled.request.clone(), frame);
+        if install {
+            match result {
+                Ok(frame) => {
+                    self.failed_request = None;
+                    self.last_error = None;
+                    self.replace_cached_frame(scheduled.request.clone(), frame);
+                }
+                Err(PlottingError::RenderSuperseded) => {
+                    self.failed_request = None;
+                }
+                Err(error) => {
+                    self.failed_request = Some(scheduled.request.clone());
+                    self.report_error(error, cx);
+                }
+            }
         }
 
         if self.scheduler.take_queued().is_some() {
@@ -357,7 +364,9 @@ impl RuvizPlot {
         window_position: Point<Pixels>,
     ) -> Option<ViewportPoint> {
         let layout = self.last_layout.as_ref()?;
-        if !layout.content_bounds.contains(&window_position) {
+        if !layout.component_bounds.contains(&window_position)
+            || !layout.content_bounds.contains(&window_position)
+        {
             return None;
         }
 
@@ -534,7 +543,7 @@ impl RuvizPlot {
 pub(super) fn frame_size_px_for_policy(
     session: &InteractivePlotSession,
     sizing_policy: &SizingPolicy,
-    logical_size_px: (u32, u32),
+    logical_size_px: (f64, f64),
     scale_factor: f32,
 ) -> Option<(u32, u32)> {
     let size_px = match sizing_policy {
@@ -627,17 +636,6 @@ pub(super) fn resolve_presentation_mode(requested: PresentationMode) -> Presenta
                 PresentationMode::Image
             }
         }
-    }
-}
-
-pub(super) fn retire_primary_frame(
-    retired_images: &mut Vec<Arc<RenderImage>>,
-    primary: PrimaryFrame,
-) {
-    match primary {
-        PrimaryFrame::Image(image) => retired_images.push(image),
-        #[cfg(all(feature = "gpu", target_os = "macos"))]
-        PrimaryFrame::Surface(_) => {}
     }
 }
 
@@ -872,30 +870,26 @@ fn rgb_to_ycbcr_full_range(r: u8, g: u8, b: u8) -> (u8, u8, u8) {
 pub(super) fn render_frame_from_session(
     session: InteractivePlotSession,
     request: RenderRequest,
-) -> std::result::Result<RenderedFrame, String> {
+) -> Result<RenderedFrame> {
     let result = match request.presentation_mode {
-        PresentationMode::Image => session
-            .render_to_image_with_generation(ImageTarget {
-                size_px: request.size_px,
-                scale_factor: request.scale_factor(),
-                time_seconds: request.time_seconds(),
-            })
-            .map_err(|err| err.to_string())?,
-        PresentationMode::Hybrid => session
-            .render_to_surface_with_generation(SurfaceTarget {
-                size_px: request.size_px,
-                scale_factor: request.scale_factor(),
-                time_seconds: request.time_seconds(),
-            })
-            .map_err(|err| err.to_string())?,
+        PresentationMode::Image => session.render_to_image_with_generation(ImageTarget {
+            size_px: request.size_px,
+            scale_factor: request.scale_factor(),
+            time_seconds: request.time_seconds(),
+        })?,
+        PresentationMode::Hybrid => session.render_to_surface_with_generation(SurfaceTarget {
+            size_px: request.size_px,
+            scale_factor: request.scale_factor(),
+            time_seconds: request.time_seconds(),
+        })?,
         #[allow(deprecated)]
-        PresentationMode::SurfaceExperimental => session
-            .render_to_surface_with_generation(SurfaceTarget {
+        PresentationMode::SurfaceExperimental => {
+            session.render_to_surface_with_generation(SurfaceTarget {
                 size_px: request.size_px,
                 scale_factor: request.scale_factor(),
                 time_seconds: request.time_seconds(),
-            })
-            .map_err(|err| err.to_string())?,
+            })?
+        }
     };
 
     let base_generation = result.base_generation;
@@ -958,7 +952,10 @@ pub(super) fn render_frame_from_session(
 pub(super) fn render_image_from_ruviz(image: RuvizImage) -> Arc<RenderImage> {
     let width = image.width;
     let height = image.height;
-    let mut pixels = image.pixels;
+    // GPUI's `RenderImage` byte contract is straight-alpha BGRA. Normalize
+    // explicitly from ruviz's recorded alpha mode before swapping channels;
+    // translucent renderer output must never rely on a guessed convention.
+    let mut pixels = image.pixels_in_alpha_mode(AlphaMode::Straight).into_owned();
     rgba_to_bgra_in_place(&mut pixels);
     let actual_len = pixels.len();
     let expected_len = width as usize * height as usize * 4;
@@ -989,31 +986,8 @@ pub(super) fn rgba_to_bgra_in_place(pixels: &mut [u8]) {
 
 pub(super) fn blend_rgba_into_rgba(src_rgba: &[u8], dst_rgba: &mut [u8]) {
     for (src, dst) in src_rgba.chunks_exact(4).zip(dst_rgba.chunks_exact_mut(4)) {
-        let alpha = src[3];
-        if alpha == 0 {
-            continue;
-        }
-        if alpha == u8::MAX {
-            dst.copy_from_slice(src);
-            continue;
-        }
-
-        let alpha = alpha as f32 / 255.0;
-        dst[0] = blend_channel(dst[0], src[0], alpha);
-        dst[1] = blend_channel(dst[1], src[1], alpha);
-        dst[2] = blend_channel(dst[2], src[2], alpha);
-        dst[3] = alpha_blend_alpha(dst[3], src[3]);
+        let destination = [dst[0], dst[1], dst[2], dst[3]];
+        let source = [src[0], src[1], src[2], src[3]];
+        dst.copy_from_slice(&source_over_straight_rgba(destination, source));
     }
-}
-
-fn blend_channel(background: u8, foreground: u8, alpha: f32) -> u8 {
-    let bg = background as f32 / 255.0;
-    let fg = foreground as f32 / 255.0;
-    ((bg * (1.0 - alpha) + fg * alpha) * 255.0) as u8
-}
-
-fn alpha_blend_alpha(background: u8, foreground: u8) -> u8 {
-    let bg = background as f32 / 255.0;
-    let fg = foreground as f32 / 255.0;
-    ((fg + bg * (1.0 - fg)) * 255.0) as u8
 }

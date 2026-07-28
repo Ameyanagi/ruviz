@@ -327,7 +327,7 @@ pub(crate) fn render_scene(
     }
 
     Ok(SoftwareRenderOutput3D {
-        layer: Image::new(layout.canvas_width, layout.canvas_height, pixels),
+        layer: Image::from_straight_rgba(layout.canvas_width, layout.canvas_height, pixels),
         draw_calls,
         primitives_culled,
     })

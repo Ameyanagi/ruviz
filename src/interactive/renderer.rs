@@ -10,6 +10,7 @@ use crate::{
     core::{
         FramePacing, HitResult, InteractivePlotSession, Plot, PlotInputEvent, PlottingError,
         QualityPolicy, ReactiveSubscription, Result, SurfaceTarget, ViewportPoint,
+        source_over_straight_rgba,
     },
     interactive::{
         event::{Annotation, Point2D, Rectangle},
@@ -667,13 +668,7 @@ impl RealTimeRenderer {
                     if x >= 0 && x < width && y >= 0 && y < height {
                         let index = ((y * width + x) * 4) as usize;
                         if index + 3 < pixel_data.len() {
-                            // Alpha blend with existing pixel
-                            let alpha = color.a as f32 / 255.0;
-                            pixel_data[index] = blend_channel(pixel_data[index], color.r, alpha);
-                            pixel_data[index + 1] =
-                                blend_channel(pixel_data[index + 1], color.g, alpha);
-                            pixel_data[index + 2] =
-                                blend_channel(pixel_data[index + 2], color.b, alpha);
+                            blend_color_over_pixel(pixel_data, index, color);
                         }
                     }
                 }
@@ -698,16 +693,12 @@ impl RealTimeRenderer {
         let x2 = region.max.x as i32;
         let y2 = region.max.y as i32;
 
-        let alpha = color.a as f32 / 255.0;
-
         // Fill rectangle with alpha blending
         for y in y1.max(0)..=y2.min(height - 1) {
             for x in x1.max(0)..=x2.min(width - 1) {
                 let index = ((y * width + x) * 4) as usize;
                 if index + 3 < pixel_data.len() {
-                    pixel_data[index] = blend_channel(pixel_data[index], color.r, alpha);
-                    pixel_data[index + 1] = blend_channel(pixel_data[index + 1], color.g, alpha);
-                    pixel_data[index + 2] = blend_channel(pixel_data[index + 2], color.b, alpha);
+                    blend_color_over_pixel(pixel_data, index, color);
                 }
             }
         }
@@ -734,8 +725,6 @@ impl RealTimeRenderer {
         let x2 = region.max.x.round() as i32;
         let y2 = region.max.y.round() as i32;
         let thickness = thickness.max(1);
-        let alpha = color.a as f32 / 255.0;
-
         for y in y1.max(0)..=y2.min(height - 1) {
             for x in x1.max(0)..=x2.min(width - 1) {
                 let on_border = x - x1 < thickness
@@ -747,10 +736,7 @@ impl RealTimeRenderer {
                 }
                 let index = ((y * width + x) * 4) as usize;
                 if index + 3 < pixel_data.len() {
-                    pixel_data[index] = blend_channel(pixel_data[index], color.r, alpha);
-                    pixel_data[index + 1] = blend_channel(pixel_data[index + 1], color.g, alpha);
-                    pixel_data[index + 2] = blend_channel(pixel_data[index + 2], color.b, alpha);
-                    pixel_data[index + 3] = color.a;
+                    blend_color_over_pixel(pixel_data, index, color);
                 }
             }
         }
@@ -807,14 +793,18 @@ impl RealTimeRenderer {
             log::debug!("Skipping legacy tooltip text render because frame size is invalid");
             return Ok(());
         };
-        let Some(mut pixmap) =
-            tiny_skia::PixmapMut::from_bytes(pixel_data, size.width(), size.height())
-        else {
+        let mut premultiplied = pixel_data.to_vec();
+        crate::core::plot::convert_rgba_alpha_mode(
+            &mut premultiplied,
+            crate::core::AlphaMode::Straight,
+            crate::core::AlphaMode::Premultiplied,
+        );
+        let Some(mut pixmap) = tiny_skia::Pixmap::from_vec(premultiplied, size) else {
             log::debug!("Skipping legacy tooltip text render because pixmap creation failed");
             return Ok(());
         };
 
-        if let Err(err) = text_renderer.render_text_mut(
+        if let Err(err) = text_renderer.render_text(
             &mut pixmap,
             content,
             (left + TOOLTIP_PADDING_X) as f32,
@@ -827,6 +817,7 @@ impl RealTimeRenderer {
             );
             return Ok(());
         }
+        pixel_data.copy_from_slice(&pixmap.take_demultiplied());
 
         Ok(())
     }
@@ -845,12 +836,17 @@ impl RealTimeRenderer {
     }
 }
 
-/// Alpha blend two color channels
-fn blend_channel(background: u8, foreground: u8, alpha: f32) -> u8 {
-    let bg = background as f32 / 255.0;
-    let fg = foreground as f32 / 255.0;
-    let result = bg * (1.0 - alpha) + fg * alpha;
-    (result * 255.0) as u8
+fn blend_color_over_pixel(pixel_data: &mut [u8], index: usize, color: Color) {
+    let destination = [
+        pixel_data[index],
+        pixel_data[index + 1],
+        pixel_data[index + 2],
+        pixel_data[index + 3],
+    ];
+    pixel_data[index..index + 4].copy_from_slice(&source_over_straight_rgba(
+        destination,
+        [color.r, color.g, color.b, color.a],
+    ));
 }
 
 /// Render cache for performance optimization
@@ -1077,15 +1073,17 @@ mod tests {
     }
 
     #[test]
-    fn test_alpha_blending() {
-        let background = 100u8;
-        let foreground = 200u8;
-        let alpha = 0.5;
+    fn test_alpha_blending_over_transparent_pixel_stays_straight() {
+        let mut pixel = [0, 0, 0, 0];
+        blend_color_over_pixel(&mut pixel, 0, Color::from_rgba(200, 100, 50, 128));
+        assert_eq!(pixel, [200, 100, 50, 128]);
+    }
 
-        let result = blend_channel(background, foreground, alpha);
-        let expected = (100.0 * 0.5 + 200.0 * 0.5) as u8;
-
-        assert_eq!(result, expected);
+    #[test]
+    fn test_alpha_blending_includes_translucent_destination() {
+        let mut pixel = [0, 0, 255, 128];
+        blend_color_over_pixel(&mut pixel, 0, Color::from_rgba(255, 0, 0, 128));
+        assert_eq!(pixel, [170, 0, 85, 192]);
     }
 
     #[test]

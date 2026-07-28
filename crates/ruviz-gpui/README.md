@@ -10,8 +10,8 @@ own the window, layout tree, and surrounding application shell.
 
 ```toml
 [dependencies]
-ruviz = "0.5.0"
-ruviz-gpui = "0.5.0"
+ruviz = { version = "0.6.0", features = ["3d"] }
+ruviz-gpui = { version = "0.6.0", features = ["3d"] }
 ```
 
 ## What This Crate Provides
@@ -21,6 +21,45 @@ ruviz-gpui = "0.5.0"
 - pan, zoom, hover, selection, and context-menu integration
 - absolute-window coordinate conversion and frame-aware click/hover callbacks
 - PNG save and clipboard-copy actions routed through the host platform
+- static and interactive image-backed 3D views with background rendering
+
+## 3D plots
+
+The 3D builder accepts a normal ruviz 3D builder or an existing
+`InteractivePlot3DSession`:
+
+```rust,ignore,reason=requires-a-gpui-view-context
+let plot = ruviz_gpui::plot3d_builder(
+    ruviz::surface(&x, &y, &z)
+        .title("Surface")
+        .xlabel("x")
+        .ylabel("y")
+        .zlabel("z"),
+)
+.interactive()
+.fill()
+.on_pick(|hit| println!("picked {hit:?}"))
+.on_error(|error| eprintln!("render failed: {error}"))
+.build(cx);
+```
+
+Primary-button drag orbits, secondary/middle drag pans, the wheel zooms, and a
+double-click or Escape resets the camera. Use `.static_view()` to keep
+responsive resize and replacement while ignoring user input. Rendering runs on
+GPUI's background executor with latest-request-wins scheduling, and the last
+good frame remains visible while a newer frame is pending.
+
+Use `RuvizPlot3D::set_plot` to replace the scene and reset its camera, or
+`RuvizPlot3D::set_plot_keep_view` to replace the scene while retaining the
+current camera. The older `set_plot_keep_camera` spelling remains as a
+deprecated compatibility alias. Direct `session_mut()` access is also
+deprecated because GPUI cannot automatically observe mutations made through
+the returned core session.
+
+The adapter is image-backed. With `3d-gpu`, a worker-owned GPU renderer is
+created lazily and retained across frames, but each completed frame is read back
+and uploaded as a GPUI image. The feature does not imply zero-copy or direct
+GPUI texture presentation. Without `3d-gpu`, the worker uses CPU rendering.
 
 ## Coordinates and pointer callbacks
 
@@ -51,14 +90,26 @@ handler receives a usable GPUI context:
 
 ```rust,ignore,reason=gpui-host-subscription
 let plot = plot_builder(plot).build(cx);
-let subscription = cx.subscribe(&plot, |this, _plot, event, cx| {
-    this.last_pointer_event = Some(event.clone());
-    cx.notify();
-});
+let subscription = cx.subscribe(
+    &plot,
+    |this, _plot, event: &ruviz_gpui::PlotPointerEvent, cx| {
+        this.last_pointer_event = Some(event.clone());
+        cx.notify();
+    },
+);
 ```
 
-Keep the returned subscription alive with the host view. `RuvizPlot` emits click
-and hover events to GPUI subscribers in addition to invoking builder callbacks.
+Keep the returned subscription alive with the host view. Existing
+`PlotPointerEvent` subscriptions remain supported. Render failures use a
+dedicated API so pointer-event subscription inference remains source
+compatible: use `.on_error(...)` for a thread-safe observer and inspect
+`RuvizPlot::last_error()` from host state.
+
+The adapter keeps the last good frame visible after a current render error and
+suppresses errors from superseded work. An identical failed request is latched
+instead of being rescheduled on every GPUI notification. Resize, replacement,
+reactive changes, and accepted interaction clear that latch automatically; call
+`RuvizPlot::retry_render` to clear the reported error and retry explicitly.
 
 Click events run on a primary-button release for a non-drag gesture. With normal
 platform double-click delivery, the completed click-count 1 release may emit
@@ -87,6 +138,7 @@ cargo run --example static_embed
 cargo run --example observable_embed
 cargo run --example streaming_embed
 cargo run --example coordinate_events
+cargo run --example plot3d_embed --features 3d
 ```
 
 ## Updating Data and Replacing Plots
@@ -121,12 +173,14 @@ readers can observe the two objects independently.
 
 Use `RuvizPlot::set_plot` only when the plot definition itself must change. It
 replaces the whole interactive session and resets the visible and home views,
-pointer, drag, hover, selection, cached frames, scheduler and in-flight work,
-and reactive subscriptions. `RuvizPlot::set_plot_keep_view` performs the same
-replacement but queues old visible data bounds for restoration when the old view
-was customized. Restoration happens during the replacement's next render, after
-its data bounds have been resolved for the configured time. Incompatible bounds
-are discarded and the replacement keeps its natural view.
+pointer, drag, hover, selection, and reactive subscriptions. The last good frame
+stays visible while the replacement renders or if that render fails. Existing
+in-flight work remains the sole physical render and is superseded; the newest
+replacement request is coalesced behind it. `RuvizPlot::set_plot_keep_view`
+performs the same replacement but queues old visible data bounds for restoration
+when the old view was customized. Restoration happens during the replacement's
+next render, after its data bounds have been resolved for the configured time.
+Incompatible bounds are discarded and the replacement keeps its natural view.
 
 ## Related Docs
 

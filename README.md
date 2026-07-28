@@ -209,6 +209,23 @@ Use release builds and benchmark your actual workload before adding optional
 performance features. See [Backend Selection](docs/guide/07_backends.md) and
 [Performance Optimization](docs/guide/08_performance.md).
 
+## Native GUI Integration
+
+Ruviz provides image-backed adapters for the major native Rust GUI frameworks.
+Each adapter supports static and interactive 2D plots, and forwards the `3d`,
+`gpu`, and `3d-gpu` feature surfaces without selecting an application shell:
+
+| Framework | Crate and guide |
+|-----------|-----------------|
+| egui | [`ruviz-egui`](crates/gui-adapters/ruviz-egui/README.md) |
+| Iced | [`ruviz-iced`](crates/gui-adapters/ruviz-iced/README.md) |
+| Slint | [`ruviz-slint`](crates/gui-adapters/ruviz-slint/README.md) |
+| GPUI | [`ruviz-gpui`](crates/ruviz-gpui/README.md) |
+
+The adapters retain the last successful image while rendering newer requests
+in the background. GPU presentation remains image-backed: `3d-gpu` renders on
+the GPU and reads the completed frame back for the GUI framework to upload.
+
 ## Typst Text Mode
 
 Enable Typst-backed text rendering with:
@@ -308,6 +325,7 @@ cargo run --features animation --example animation_wave
 - [User Guide](docs/guide/README.md)
 - [API Documentation](https://docs.rs/ruviz)
 - [Gallery](docs/gallery/README.md)
+- [Native GUI Adapters](crates/gui-adapters/README.md)
 
 ## Development
 

@@ -1,0 +1,53 @@
+[package]
+name = "ruviz-slint"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Slint component adapter for ruviz"
+readme = "README.md"
+build = "build.rs"
+links = "Ruviz"
+include = [
+    "build.rs",
+    "src/**",
+    "ui/**",
+    "examples/**",
+    "tests/**",
+    "README.md",
+    "LICENSE-*",
+]
+
+[package.metadata.docs.rs]
+all-features = true
+
+[features]
+default = []
+"3d" = ["ruviz/3d"]
+gpu = ["ruviz/gpu"]
+"3d-gpu" = ["3d", "gpu"]
+
+[dependencies]
+ruviz = { version = "=0.6.0", path = "../../.." }
+slint = { version = "~1.17", default-features = false, features = ["std", "compat-1-2"] }
+
+[build-dependencies]
+slint-build = { version = "~1.17", features = ["experimental-module-builds"] }
+
+[dev-dependencies]
+i-slint-backend-testing = { version = "~1.17", features = ["renderer-software"] }
+slint = { version = "~1.17", default-features = false, features = [
+    "std",
+    "compat-1-2",
+    "backend-winit",
+    "renderer-software",
+] }
+
+[[example]]
+name = "dashboard"
+required-features = []
+
+[[example]]
+name = "mixed_3d_dashboard"
+required-features = ["3d"]

@@ -8,7 +8,7 @@
 //! The PDF export uses an SVG -> PDF pipeline for high-quality vector output.
 
 use crate::{
-    core::plot::Image,
+    core::plot::{AlphaMode, Image},
     core::{PlottingError, Result},
 };
 use image::{
@@ -63,11 +63,12 @@ fn validate_rgba_image(image: &Image) -> Result<()> {
 /// Encode an in-memory RGBA image as PNG bytes.
 pub fn encode_rgba_png(image: &Image) -> Result<Vec<u8>> {
     validate_rgba_image(image)?;
+    let pixels = image.pixels_in_alpha_mode(AlphaMode::Straight);
 
     let mut bytes = Vec::new();
     PngEncoder::new_with_quality(&mut bytes, CompressionType::Fast, FilterType::Adaptive)
         .write_image(
-            &image.pixels,
+            pixels.as_ref(),
             image.width,
             image.height,
             ColorType::Rgba8.into(),
@@ -270,6 +271,7 @@ pub(crate) fn write_bytes_atomic<P: AsRef<Path>>(path: P, bytes: &[u8]) -> Resul
 /// Atomically writes an RGBA image as a PNG file.
 pub fn write_rgba_png_atomic<P: AsRef<Path>>(path: P, image: &Image) -> Result<()> {
     validate_rgba_image(image)?;
+    let pixels = image.pixels_in_alpha_mode(AlphaMode::Straight);
 
     write_with_atomic_writer(path, |writer| {
         // Explicit settings keep encoder output stable across `image` crate
@@ -278,7 +280,7 @@ pub fn write_rgba_png_atomic<P: AsRef<Path>>(path: P, image: &Image) -> Result<(
         // per-scanline filtering step.
         PngEncoder::new_with_quality(writer, CompressionType::Fast, FilterType::Adaptive)
             .write_image(
-                &image.pixels,
+                pixels.as_ref(),
                 image.width,
                 image.height,
                 ColorType::Rgba8.into(),

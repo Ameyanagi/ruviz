@@ -3,9 +3,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use glam::Vec3;
 
-use crate::core::{Image, PlottingError, Result};
+use crate::core::{Bounds3D, FigureConfig, Image, PlottingError, Point3D, Result};
+use crate::render::Theme;
 use crate::render::three_d::overlay::compose_image;
-use crate::render::three_d::scene::Scene3D;
+use crate::render::three_d::scene::{Scene3D, SceneGeometry3D};
 use crate::render::three_d::software::raster::{SoftwareRenderOptions3D, render_scene};
 
 #[cfg(feature = "gpu")]
@@ -16,13 +17,12 @@ use crate::render::three_d::gpu::{
 use crate::render::three_d::gpu::{SurfacePresentOutcome3D, SurfacePresenter3D};
 
 use super::Camera3D;
-#[cfg(feature = "gpu")]
 use super::RenderDiagnostics3D;
 use super::builder::Plot3D;
 use super::layout::Axis3Layout;
 use super::picking::{Bvh3D, PickHit3D, pick_scene};
 use super::prepared::PreparedSceneCache3D;
-use super::resolve::ResolvedFrame3D;
+use super::resolve::{CacheKey3D, FrameKeys3D, ResolvedFrame3D};
 
 const DRAG_THRESHOLD_PX: f32 = 3.0;
 const ORBIT_DEGREES_PER_PIXEL: f32 = 0.25;
@@ -85,6 +85,249 @@ pub struct CameraSnapshot3D {
     pub camera_generation: u64,
 }
 
+/// Opaque identity of one resolved 3d view.
+///
+/// Scene, camera, and render-target changes advance independently. Adapter
+/// code can compare the whole value without coupling itself to generation
+/// counters or assuming that a resize changed the camera.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ViewStamp3D {
+    scene_generation: u64,
+    camera_generation: u64,
+    target_generation: u64,
+}
+
+impl ViewStamp3D {
+    /// Whether both stamps refer to the same compiled scene.
+    pub const fn same_scene(self, other: Self) -> bool {
+        self.scene_generation == other.scene_generation
+    }
+
+    /// Whether both stamps refer to the same camera.
+    pub const fn same_camera(self, other: Self) -> bool {
+        self.camera_generation == other.camera_generation
+    }
+
+    /// Whether both stamps refer to the same physical render target.
+    pub const fn same_target(self, other: Self) -> bool {
+        self.target_generation == other.target_generation
+    }
+}
+
+/// Opaque identity of one background image-render request.
+///
+/// In addition to the view identity, this contains a monotonically increasing
+/// request identity. Requesting the same unchanged view twice therefore makes
+/// the first request superseded, which gives adapters deterministic
+/// latest-request-wins behavior.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct RenderStamp3D {
+    view: ViewStamp3D,
+    request_generation: u64,
+}
+
+impl RenderStamp3D {
+    /// View that this render request captured.
+    pub const fn view(self) -> ViewStamp3D {
+        self.view
+    }
+}
+
+/// A pick paired with the exact view that produced it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct StampedPick3D {
+    /// Pick result produced by the stamped view.
+    pub hit: PickHit3D,
+    /// Complete scene, camera, and target identity used for the pick.
+    pub view: ViewStamp3D,
+}
+
+/// Completed image from a [`BackgroundRenderJob3D`].
+#[derive(Clone, Debug)]
+pub struct RenderedImage3D {
+    /// Completed straight-alpha RGBA frame.
+    pub image: Image,
+    /// Request and view identity captured by the render job.
+    pub stamp: RenderStamp3D,
+}
+
+/// Latest-wins classification of one completed background render.
+#[derive(Clone, Debug)]
+pub enum BackgroundRenderOutcome3D {
+    /// The completed image is still the latest requested view.
+    Current(RenderedImage3D),
+    /// The completed image was superseded and must not be installed.
+    Superseded {
+        /// Identity of the completed obsolete render.
+        rendered: RenderStamp3D,
+        /// Identity representing the session's current requested view.
+        current: RenderStamp3D,
+    },
+}
+
+/// Owned, native-thread-safe snapshot for one image render.
+///
+/// Construct this on the UI thread with
+/// [`InteractivePlot3DSession::background_render_job`], then move it to a
+/// worker. It retains the already compiled scene and never borrows session or
+/// frontend state.
+#[derive(Clone)]
+pub struct BackgroundRenderJob3D {
+    frame: Arc<ResolvedFrame3D>,
+    scene: Arc<Scene3D>,
+    stamp: RenderStamp3D,
+}
+
+impl BackgroundRenderJob3D {
+    /// Identity used to reject a superseded result.
+    pub const fn stamp(&self) -> RenderStamp3D {
+        self.stamp
+    }
+
+    /// Render this immutable snapshot to an image.
+    pub fn render(self) -> Result<RenderedImage3D> {
+        BackgroundRenderer3D::default().render(self)
+    }
+}
+
+/// Worker-owned backend used to execute immutable 3d image jobs.
+///
+/// CPU rendering is the default. With native `gpu` support, selecting
+/// [`BackgroundRenderBackend3D::GpuReadback`] retains one wgpu renderer across
+/// jobs on the worker. GPU output is explicitly read back and composed into a
+/// CPU image; this API does not claim or provide zero-copy presentation.
+pub struct BackgroundRenderer3D {
+    backend: BackgroundRenderBackend3D,
+    #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
+    gpu_renderer: Option<Wgpu3DRenderer>,
+}
+
+/// Backend preference for worker-owned 3d image rendering.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum BackgroundRenderBackend3D {
+    /// Software rasterization and CPU image composition.
+    #[default]
+    Cpu,
+    /// Retained GPU rendering followed by readback into a CPU image.
+    #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
+    GpuReadback,
+}
+
+impl Default for BackgroundRenderer3D {
+    fn default() -> Self {
+        Self::new(BackgroundRenderBackend3D::Cpu)
+    }
+}
+
+impl BackgroundRenderer3D {
+    /// Create a worker renderer with the requested backend preference.
+    ///
+    /// GPU initialization is lazy and therefore occurs on the worker's first
+    /// [`Self::render`] call rather than in the UI callback that queues a job.
+    pub const fn new(backend: BackgroundRenderBackend3D) -> Self {
+        Self {
+            backend,
+            #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
+            gpu_renderer: None,
+        }
+    }
+
+    /// Configured image-rendering backend.
+    pub const fn backend(&self) -> BackgroundRenderBackend3D {
+        self.backend
+    }
+
+    /// Execute one immutable job, retaining backend resources for later jobs.
+    pub fn render(&mut self, job: BackgroundRenderJob3D) -> Result<RenderedImage3D> {
+        self.render_with_diagnostics(job)
+            .map(|(rendered, _)| rendered)
+    }
+
+    /// Execute one job and report the backend/readback behavior used.
+    pub fn render_with_diagnostics(
+        &mut self,
+        job: BackgroundRenderJob3D,
+    ) -> Result<(RenderedImage3D, RenderDiagnostics3D)> {
+        match self.backend {
+            BackgroundRenderBackend3D::Cpu => render_background_cpu(job),
+            #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
+            BackgroundRenderBackend3D::GpuReadback => {
+                let renderer = match &mut self.gpu_renderer {
+                    Some(renderer) => renderer,
+                    None => self.gpu_renderer.insert(Wgpu3DRenderer::new()?),
+                };
+                render_background_gpu_readback(job, renderer)
+            }
+        }
+    }
+}
+
+fn render_background_cpu(
+    job: BackgroundRenderJob3D,
+) -> Result<(RenderedImage3D, RenderDiagnostics3D)> {
+    let layout = Axis3Layout::resolve(&job.frame)?;
+    let output = render_scene(
+        &job.scene,
+        &layout,
+        job.frame.figure.dpi,
+        SoftwareRenderOptions3D::interactive(),
+    )?;
+    let image = compose_image(&layout, &job.frame.figure, &job.frame.theme, &output.layer)?;
+    let diagnostics = RenderDiagnostics3D {
+        draw_calls: output.draw_calls,
+        points_submitted: job.scene.point_count() as u64,
+        triangles_submitted: job.scene.triangle_count() as u64,
+        primitives_culled: output.primitives_culled,
+        actual_backend: "cpu3d-background".to_string(),
+        ..RenderDiagnostics3D::default()
+    };
+    Ok((
+        RenderedImage3D {
+            image,
+            stamp: job.stamp,
+        },
+        diagnostics,
+    ))
+}
+
+#[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
+fn render_background_gpu_readback(
+    job: BackgroundRenderJob3D,
+    renderer: &mut Wgpu3DRenderer,
+) -> Result<(RenderedImage3D, RenderDiagnostics3D)> {
+    let layout = Axis3Layout::resolve(&job.frame)?;
+    let output = renderer.render_to_image(&job.scene, &layout, job.frame.figure.dpi)?;
+    let image = compose_image(&layout, &job.frame.figure, &job.frame.theme, &output.layer)?;
+    let mut diagnostics = RenderDiagnostics3D {
+        points_submitted: job.scene.point_count() as u64,
+        triangles_submitted: job.scene.triangle_count() as u64,
+        actual_backend: "gpu3d-background-readback".to_string(),
+        adapter_name: Some(output.adapter_name),
+        sample_count: output.sample_count,
+        fallback_reason: Some(
+            "background image presentation requires GPU readback; zero-copy was not used"
+                .to_string(),
+        ),
+        ..RenderDiagnostics3D::default()
+    };
+    diagnostics.vertex_upload_bytes = output.resource_update.vertex_upload_bytes;
+    diagnostics.index_upload_bytes = output.resource_update.index_upload_bytes;
+    diagnostics.texture_upload_bytes = output.resource_update.texture_upload_bytes;
+    diagnostics.buffer_creations = output.resource_update.buffer_creations;
+    diagnostics.buffer_evictions = output.resource_update.evictions;
+    diagnostics.camera_uniform_writes = output.camera_uniform_writes;
+    diagnostics.draw_calls = output.draw_calls;
+    diagnostics.readback_bytes = output.readback_bytes;
+    diagnostics.queue_waits = 1;
+    Ok((
+        RenderedImage3D {
+            image,
+            stamp: job.stamp,
+        },
+        diagnostics,
+    ))
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct ActiveDrag3D {
     button: PointerButton3D,
@@ -98,13 +341,20 @@ struct ActiveDrag3D {
 /// Frontends translate their native events into [`InputEvent3D`]. The camera
 /// lives only here, so native and web adapters cannot drift from each other.
 pub struct InteractivePlot3DSession {
-    frame: ResolvedFrame3D,
+    // `ResolvedFrame3D` owns only small plot metadata plus Arc-backed series
+    // data. Retaining it behind an Arc makes render-job construction strictly
+    // O(1): interaction mutations use `Arc::make_mut`, whose shallow clone
+    // retains the underlying datasets instead of copying their values.
+    frame: Arc<ResolvedFrame3D>,
     scene: Arc<Scene3D>,
-    bvh: Option<Arc<Bvh3D>>,
+    bvh: Arc<Bvh3D>,
     initial_camera: Camera3D,
     scene_generation: u64,
     camera_generation: u64,
+    target_generation: u64,
+    request_generation: u64,
     active_drag: Option<ActiveDrag3D>,
+    current_pick: Option<StampedPick3D>,
     #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
     gpu_renderer: Option<Wgpu3DRenderer>,
 }
@@ -113,6 +363,12 @@ impl InteractivePlot3DSession {
     pub(super) fn new(plot: Plot3D) -> Result<Self> {
         let frame = plot.resolve()?;
         let (scene, _) = PreparedSceneCache3D::default().prepare(&frame)?;
+        // Picking runs from GUI input callbacks, so all topology acceleration
+        // must be built during this already-fallible construction phase.
+        // Retaining it here guarantees the first click performs only layout
+        // and traversal work rather than an unbounded scene-wide BVH build.
+        let bvh = Arc::new(Bvh3D::build(&scene.geometry)?);
+        let frame = Arc::new(frame);
         let scene_generation = NEXT_SCENE_GENERATION
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
                 value.checked_add(1)
@@ -124,22 +380,77 @@ impl InteractivePlot3DSession {
             initial_camera: frame.camera,
             frame,
             scene,
-            bvh: None,
+            bvh,
             scene_generation,
             camera_generation: 0,
+            target_generation: 0,
+            request_generation: 0,
             active_drag: None,
+            current_pick: None,
             #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
             gpu_renderer: None,
         })
     }
 
+    /// Construct a non-rendering placeholder for adapters whose infallible
+    /// compatibility builder could not resolve the supplied plot.
+    ///
+    /// Adapters must retain and report the original construction error and
+    /// must not schedule render jobs for this placeholder. The reserved zero
+    /// scene generation keeps it distinct from normally constructed sessions.
+    #[doc(hidden)]
+    pub fn error_placeholder() -> Self {
+        let camera = Camera3D::default();
+        let frame = Arc::new(ResolvedFrame3D {
+            series: Vec::new(),
+            bounds: Bounds3D {
+                min: Point3D::new(-1.0, -1.0, -1.0),
+                max: Point3D::new(1.0, 1.0, 1.0),
+            },
+            camera,
+            figure: FigureConfig::default(),
+            theme: Theme::default(),
+            title: None,
+            xlabel: None,
+            ylabel: None,
+            zlabel: None,
+            legend: None,
+            keys: FrameKeys3D {
+                geometry: CacheKey3D(0),
+                appearance: CacheKey3D(0),
+                layout: CacheKey3D(0),
+                view: CacheKey3D(0),
+            },
+        });
+        let geometry = Arc::new(SceneGeometry3D::default());
+        Self {
+            frame,
+            scene: Arc::new(Scene3D {
+                geometry,
+                points: Vec::new(),
+                lines: Vec::new(),
+                meshes: Vec::new(),
+            }),
+            bvh: Arc::new(Bvh3D::default()),
+            initial_camera: camera,
+            scene_generation: 0,
+            camera_generation: 0,
+            target_generation: 0,
+            request_generation: 0,
+            active_drag: None,
+            current_pick: None,
+            #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
+            gpu_renderer: None,
+        }
+    }
+
     /// Current authoritative camera.
-    pub const fn camera(&self) -> Camera3D {
+    pub fn camera(&self) -> Camera3D {
         self.frame.camera
     }
 
     /// Current camera and generation counters.
-    pub const fn camera_snapshot(&self) -> CameraSnapshot3D {
+    pub fn camera_snapshot(&self) -> CameraSnapshot3D {
         CameraSnapshot3D {
             camera: self.frame.camera,
             scene_generation: self.scene_generation,
@@ -147,12 +458,32 @@ impl InteractivePlot3DSession {
         }
     }
 
+    /// Identity of the current scene, camera, and physical render target.
+    pub fn view_stamp(&self) -> ViewStamp3D {
+        ViewStamp3D {
+            scene_generation: self.scene_generation,
+            camera_generation: self.camera_generation,
+            target_generation: self.target_generation,
+        }
+    }
+
+    /// Whether a view identity still matches all authoritative session state.
+    pub fn is_view_current(&self, stamp: ViewStamp3D) -> bool {
+        self.view_stamp().scene_generation == stamp.scene_generation
+            && self.view_stamp().camera_generation == stamp.camera_generation
+            && self.view_stamp().target_generation == stamp.target_generation
+    }
+
     /// Replace the current camera without rebuilding scene geometry.
     pub fn set_camera(&mut self, camera: Camera3D) -> Result<()> {
         camera.validate()?;
         if camera != self.frame.camera {
-            self.frame.camera = camera;
-            self.advance_camera_generation()?;
+            let next_generation = self.camera_generation.checked_add(1).ok_or_else(|| {
+                PlottingError::RenderError("3D camera generation space was exhausted".to_string())
+            })?;
+            Arc::make_mut(&mut self.frame).camera = camera;
+            self.camera_generation = next_generation;
+            self.current_pick = None;
         }
         Ok(())
     }
@@ -238,10 +569,17 @@ impl InteractivePlot3DSession {
         let changed = current_size != (width_px, height_px)
             || self.frame.figure.dpi.to_bits() != dpi.to_bits();
         if changed {
-            self.frame.figure.width = width_px as f32 / dpi;
-            self.frame.figure.height = height_px as f32 / dpi;
-            self.frame.figure.dpi = dpi;
-            self.advance_camera_generation()?;
+            let next_generation = self.target_generation.checked_add(1).ok_or_else(|| {
+                PlottingError::RenderError(
+                    "3D render target generation space was exhausted".to_string(),
+                )
+            })?;
+            let frame = Arc::make_mut(&mut self.frame);
+            frame.figure.width = width_px as f32 / dpi;
+            frame.figure.height = height_px as f32 / dpi;
+            frame.figure.dpi = dpi;
+            self.target_generation = next_generation;
+            self.current_pick = None;
         }
         Ok(())
     }
@@ -254,6 +592,20 @@ impl InteractivePlot3DSession {
     /// Resolved plot title, if one was supplied.
     pub fn title(&self) -> Option<&str> {
         self.frame.title.as_deref()
+    }
+
+    /// Cancel an in-progress pointer drag, including release-outside drags.
+    ///
+    /// Returns `true` when an active drag was cleared. Frontends should call
+    /// this on pointer-capture loss, focus loss, or pointer leave when they
+    /// cannot guarantee delivery of the matching pointer-up event.
+    pub fn cancel_drag(&mut self) -> bool {
+        self.active_drag.take().is_some()
+    }
+
+    /// Whether a pointer drag is currently retained.
+    pub const fn is_drag_active(&self) -> bool {
+        self.active_drag.is_some()
     }
 
     /// Apply one frontend event.
@@ -284,15 +636,17 @@ impl InteractivePlot3DSession {
                 if !drag.crossed_threshold || (delta_x == 0.0 && delta_y == 0.0) {
                     return Ok(InteractionResult3D::default());
                 }
+                let generation = self.camera_generation;
                 match drag.button {
                     PointerButton3D::Left => self.orbit(delta_x, delta_y)?,
                     PointerButton3D::Middle | PointerButton3D::Right => {
                         self.pan(delta_x, delta_y)?
                     }
                 }
+                let changed = self.camera_generation != generation;
                 Ok(InteractionResult3D {
-                    camera_changed: true,
-                    request_redraw: true,
+                    camera_changed: changed,
+                    request_redraw: changed,
                     picked: None,
                 })
             }
@@ -348,6 +702,7 @@ impl InteractivePlot3DSession {
                 }
             }
             InputEvent3D::Escape => {
+                self.cancel_drag();
                 let generation = self.camera_generation;
                 self.reset_view()?;
                 let changed = self.camera_generation != generation;
@@ -363,31 +718,131 @@ impl InteractivePlot3DSession {
     /// Pick the nearest visible point, line segment, or surface triangle.
     pub fn pick(&mut self, x: f32, y: f32) -> Result<Option<PickHit3D>> {
         let layout = Axis3Layout::resolve(&self.frame)?;
-        if self.bvh.is_none() {
-            self.bvh = Some(Arc::new(Bvh3D::build(&self.scene.geometry)?));
-        }
-        let bvh = self
-            .bvh
-            .as_ref()
-            .ok_or_else(|| PlottingError::InvalidTopology3D {
-                reason: "3D pick BVH was not retained".to_string(),
-            })?;
-        pick_scene(
+        let hit = pick_scene(
             &self.frame,
             &layout,
             &self.scene,
-            bvh,
+            &self.bvh,
             x,
             y,
             self.scene_generation,
             self.camera_generation,
-        )
+        )?;
+        self.current_pick = hit.map(|hit| StampedPick3D {
+            hit,
+            view: self.view_stamp(),
+        });
+        Ok(hit)
+    }
+
+    /// Current retained pick paired with its complete view identity.
+    pub const fn current_pick(&self) -> Option<StampedPick3D> {
+        self.current_pick
+    }
+
+    /// Clear the retained pick.
+    ///
+    /// Returns `true` when a pick was present.
+    pub fn clear_pick(&mut self) -> bool {
+        self.current_pick.take().is_some()
+    }
+
+    /// Whether a stamped pick still matches scene, camera, and target.
+    pub fn is_stamped_pick_current(&self, pick: &StampedPick3D) -> bool {
+        self.is_view_current(pick.view) && self.current_pick.is_some_and(|current| current == *pick)
     }
 
     /// Whether a previously returned pick still matches this scene and camera.
-    pub const fn is_pick_current(&self, hit: &PickHit3D) -> bool {
+    ///
+    /// New adapters should retain [`StampedPick3D`] from [`Self::current_pick`]
+    /// and use [`Self::is_stamped_pick_current`] so target resizes are included.
+    pub fn is_pick_current(&self, hit: &PickHit3D) -> bool {
         hit.scene_generation == self.scene_generation
             && hit.camera_generation == self.camera_generation
+            && match self.current_pick {
+                Some(current) => current.hit == *hit && self.is_view_current(current.view),
+                None => false,
+            }
+    }
+
+    /// Create an owned image render job for a background worker.
+    ///
+    /// Calling this again supersedes all previously created jobs, even when
+    /// the view did not change.
+    pub fn background_render_job(&mut self) -> Result<BackgroundRenderJob3D> {
+        self.request_generation = self.request_generation.checked_add(1).ok_or_else(|| {
+            PlottingError::RenderError("3D render request space was exhausted".to_string())
+        })?;
+        Ok(BackgroundRenderJob3D {
+            frame: Arc::clone(&self.frame),
+            scene: Arc::clone(&self.scene),
+            stamp: RenderStamp3D {
+                view: self.view_stamp(),
+                request_generation: self.request_generation,
+            },
+        })
+    }
+
+    /// Whether a background render request is still the latest current view.
+    pub fn is_render_current(&self, stamp: RenderStamp3D) -> bool {
+        self.is_view_current(stamp.view) && stamp.request_generation == self.request_generation
+    }
+
+    /// Classify a completed background render without presenting stale pixels.
+    pub fn classify_render(&self, rendered: RenderedImage3D) -> BackgroundRenderOutcome3D {
+        if self.is_render_current(rendered.stamp) {
+            BackgroundRenderOutcome3D::Current(rendered)
+        } else {
+            BackgroundRenderOutcome3D::Superseded {
+                rendered: rendered.stamp,
+                current: RenderStamp3D {
+                    view: self.view_stamp(),
+                    request_generation: self.request_generation,
+                },
+            }
+        }
+    }
+
+    /// Replace the retained scene and reset to the replacement's own camera.
+    ///
+    /// Any retained GPU renderer is moved into the replacement session so
+    /// adapters do not recreate a device for every plot replacement.
+    pub fn replace(&mut self, replacement: Self) {
+        // This compatibility API predates fallible replacement. If the
+        // request counter is exhausted, retain the complete old session
+        // instead of partially installing a replacement that cannot
+        // invalidate its previously-created jobs.
+        let _ = self.replace_inner(replacement);
+    }
+
+    /// Fallibly replace the retained scene and reset to its own camera.
+    ///
+    /// Unlike [`Self::replace`], this reports request-generation exhaustion.
+    /// Failure is atomic: the current session and retained renderer are left
+    /// unchanged.
+    pub fn try_replace(&mut self, replacement: Self) -> Result<()> {
+        self.replace_inner(replacement)
+    }
+
+    /// Replace the retained scene while keeping the current camera.
+    pub fn replace_keep_camera(&mut self, mut replacement: Self) -> Result<()> {
+        let camera = self.camera();
+        camera.validate()?;
+        if replacement.camera() != camera {
+            let next_generation =
+                replacement
+                    .camera_generation
+                    .checked_add(1)
+                    .ok_or_else(|| {
+                        PlottingError::RenderError(
+                            "3D camera generation space was exhausted".to_string(),
+                        )
+                    })?;
+            Arc::make_mut(&mut replacement.frame).camera = camera;
+            replacement.camera_generation = next_generation;
+            replacement.current_pick = None;
+        }
+        self.replace_inner(replacement)
     }
 
     /// Render one retained interactive-quality CPU frame.
@@ -444,6 +899,7 @@ impl InteractivePlot3DSession {
         diagnostics.camera_uniform_writes = output.camera_uniform_writes;
         diagnostics.draw_calls = output.draw_calls;
         diagnostics.readback_bytes = output.readback_bytes;
+        diagnostics.queue_waits = 1;
         Ok((image, diagnostics))
     }
 
@@ -494,10 +950,26 @@ impl InteractivePlot3DSession {
         Ok(Some(diagnostics))
     }
 
-    fn advance_camera_generation(&mut self) -> Result<()> {
-        self.camera_generation = self.camera_generation.checked_add(1).ok_or_else(|| {
-            PlottingError::RenderError("3D camera generation space was exhausted".to_string())
-        })?;
+    fn replace_inner(&mut self, mut replacement: Self) -> Result<()> {
+        // A replacement session may already have produced jobs, a selection,
+        // or an in-progress drag before it is installed. None of that
+        // frontend state is valid across the replacement boundary.
+        replacement.request_generation =
+            replacement
+                .request_generation
+                .checked_add(1)
+                .ok_or_else(|| {
+                    PlottingError::RenderError(
+                        "3D render request space was exhausted during replacement".to_string(),
+                    )
+                })?;
+        replacement.active_drag = None;
+        replacement.current_pick = None;
+        #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
+        {
+            replacement.gpu_renderer = self.gpu_renderer.take();
+        }
+        *self = replacement;
         Ok(())
     }
 }
@@ -818,6 +1290,135 @@ mod tests {
     }
 
     #[test]
+    fn cancel_drag_handles_release_outside_without_a_synthetic_event() {
+        let mut session = scatter3d(&[0.0], &[0.0], &[0.0])
+            .interactive_session()
+            .expect("session");
+        let initial = session.camera();
+        session
+            .handle_input(InputEvent3D::PointerDown {
+                x: 10.0,
+                y: 10.0,
+                button: PointerButton3D::Left,
+            })
+            .expect("down");
+        assert!(session.is_drag_active());
+        assert!(session.cancel_drag());
+        assert!(!session.is_drag_active());
+        assert!(!session.cancel_drag());
+
+        let moved = session
+            .handle_input(InputEvent3D::PointerMove { x: 80.0, y: 30.0 })
+            .expect("move after cancellation");
+        assert_eq!(moved, InteractionResult3D::default());
+        assert_eq!(session.camera(), initial);
+    }
+
+    #[test]
+    fn clamped_drag_reports_no_camera_change_and_escape_cancels_drag() {
+        let mut session = scatter3d(&[0.0], &[0.0], &[0.0])
+            .interactive_session()
+            .expect("session");
+        session
+            .set_camera(session.camera().elevation_deg(89.9))
+            .expect("set clamped elevation");
+        session
+            .handle_input(InputEvent3D::PointerDown {
+                x: 10.0,
+                y: 10.0,
+                button: PointerButton3D::Left,
+            })
+            .expect("down");
+        let clamped = session
+            .handle_input(InputEvent3D::PointerMove { x: 10.0, y: -10.0 })
+            .expect("clamped move");
+        assert!(!clamped.camera_changed);
+        assert!(!clamped.request_redraw);
+        assert!(session.is_drag_active());
+
+        session
+            .handle_input(InputEvent3D::Escape)
+            .expect("escape should reset and cancel");
+        assert!(!session.is_drag_active());
+    }
+
+    #[test]
+    fn view_stamp_distinguishes_scene_camera_and_target_changes() {
+        let mut session = scatter3d(&[0.0], &[0.0], &[0.0])
+            .interactive_session()
+            .expect("session");
+        let initial = session.view_stamp();
+        session.orbit(4.0, 0.0).expect("orbit");
+        let camera_changed = session.view_stamp();
+        assert!(initial.same_scene(camera_changed));
+        assert!(!initial.same_camera(camera_changed));
+        assert!(initial.same_target(camera_changed));
+
+        let (width, height) = session.size_px();
+        session
+            .resize(width + 1, height, 1.25)
+            .expect("target resize");
+        let target_changed = session.view_stamp();
+        assert!(camera_changed.same_scene(target_changed));
+        assert!(camera_changed.same_camera(target_changed));
+        assert!(!camera_changed.same_target(target_changed));
+        assert!(!session.is_view_current(initial));
+        assert!(session.is_view_current(target_changed));
+    }
+
+    #[test]
+    fn camera_generation_exhaustion_leaves_state_and_pick_unchanged() {
+        let mut session = scatter3d(&[0.0], &[0.0], &[0.0])
+            .interactive_session()
+            .expect("session");
+        session.camera_generation = u64::MAX;
+        let layout = Axis3Layout::resolve(&session.frame).expect("layout");
+        let center = layout.project_local(Vec3::ZERO).expect("center");
+        session
+            .pick(center.x, center.y)
+            .expect("pick before exhaustion");
+
+        let camera = session.camera();
+        let stamp = session.view_stamp();
+        let pick = session.current_pick();
+        let error = session
+            .set_camera(camera.azimuth_deg(camera.get_azimuth_deg() + 1.0))
+            .expect_err("camera generation exhaustion must fail");
+
+        assert!(matches!(error, PlottingError::RenderError(_)));
+        assert_eq!(session.camera(), camera);
+        assert_eq!(session.view_stamp(), stamp);
+        assert_eq!(session.current_pick(), pick);
+    }
+
+    #[test]
+    fn target_generation_exhaustion_leaves_state_and_pick_unchanged() {
+        let mut session = scatter3d(&[0.0], &[0.0], &[0.0])
+            .interactive_session()
+            .expect("session");
+        session.target_generation = u64::MAX;
+        let layout = Axis3Layout::resolve(&session.frame).expect("layout");
+        let center = layout.project_local(Vec3::ZERO).expect("center");
+        session
+            .pick(center.x, center.y)
+            .expect("pick before exhaustion");
+
+        let size = session.size_px();
+        let dpi = session.frame.figure.dpi;
+        let stamp = session.view_stamp();
+        let pick = session.current_pick();
+        let error = session
+            .resize(size.0 + 1, size.1, dpi / 72.0)
+            .expect_err("target generation exhaustion must fail");
+
+        assert!(matches!(error, PlottingError::RenderError(_)));
+        assert_eq!(session.size_px(), size);
+        assert_eq!(session.frame.figure.dpi, dpi);
+        assert_eq!(session.view_stamp(), stamp);
+        assert_eq!(session.current_pick(), pick);
+    }
+
+    #[test]
     fn point_line_and_surface_picks_carry_current_generations() {
         let mut point = scatter3d(&[0.0], &[0.0], &[0.0])
             .interactive_session()
@@ -828,11 +1429,15 @@ mod tests {
             .pick(center.x, center.y)
             .expect("point pick")
             .expect("point hit");
+        let stamped = point.current_pick().expect("retained stamped pick");
         assert_eq!(hit.primitive, super::super::PickPrimitive3D::Point);
         assert_eq!(hit.sources(), &[0]);
         assert!(point.is_pick_current(&hit));
+        assert!(point.is_stamped_pick_current(&stamped));
         point.orbit(4.0, 0.0).expect("orbit");
         assert!(!point.is_pick_current(&hit));
+        assert!(!point.is_stamped_pick_current(&stamped));
+        assert!(point.current_pick().is_none());
 
         let mut line = line3d(&[-1.0, 1.0], &[0.0, 0.0], &[0.0, 0.0])
             .interactive_session()
@@ -848,6 +1453,47 @@ mod tests {
     }
 
     #[test]
+    fn session_construction_prebuilds_and_first_pick_reuses_the_bvh() {
+        let mut session = scatter3d(&[0.0, 1.0], &[0.0, 1.0], &[0.0, 1.0])
+            .interactive_session()
+            .expect("session construction includes BVH preparation");
+        let retained_bvh = Arc::clone(&session.bvh);
+        let layout = Axis3Layout::resolve(&session.frame).expect("layout");
+        let center = layout.project_local(Vec3::ZERO).expect("center");
+
+        let _ = session.pick(center.x, center.y).expect("first pick");
+
+        assert!(
+            Arc::ptr_eq(&retained_bvh, &session.bvh),
+            "the input path must reuse the BVH built by session construction"
+        );
+    }
+
+    #[test]
+    fn resize_clears_a_pick_without_claiming_the_camera_changed() {
+        let mut session = scatter3d(&[0.0], &[0.0], &[0.0])
+            .interactive_session()
+            .expect("session");
+        let layout = Axis3Layout::resolve(&session.frame).expect("layout");
+        let center = layout.project_local(Vec3::ZERO).expect("center");
+        session
+            .pick(center.x, center.y)
+            .expect("pick")
+            .expect("hit");
+        let pick = session.current_pick().expect("stamped pick");
+        let before = session.view_stamp();
+        let (width, height) = session.size_px();
+
+        session.resize(width + 7, height + 5, 1.0).expect("resize");
+
+        let after = session.view_stamp();
+        assert!(before.same_camera(after));
+        assert!(!before.same_target(after));
+        assert!(session.current_pick().is_none());
+        assert!(!session.is_stamped_pick_current(&pick));
+    }
+
+    #[test]
     fn cpu_interactive_render_reuses_the_compiled_scene() {
         let session = scatter3d(&[0.0, 1.0], &[0.0, 1.0], &[0.0, 1.0])
             .interactive_session()
@@ -856,6 +1502,58 @@ mod tests {
         let second = session.render().expect("second");
         assert_eq!((first.width, first.height), (second.width, second.height));
         assert_eq!(first.pixels, second.pixels);
+    }
+
+    #[test]
+    fn background_jobs_are_send_and_use_latest_request_wins() {
+        fn assert_send<T: Send>() {}
+        assert_send::<BackgroundRenderJob3D>();
+        assert_send::<RenderedImage3D>();
+        assert_send::<BackgroundRenderer3D>();
+
+        let mut session = scatter3d(&[0.0], &[0.0], &[0.0])
+            .size_px(48, 40)
+            .interactive_session()
+            .expect("session");
+        let first = session.background_render_job().expect("first job");
+        let second = session.background_render_job().expect("second job");
+        assert!(Arc::ptr_eq(&first.frame, &session.frame));
+        assert!(Arc::ptr_eq(&second.frame, &session.frame));
+        assert!(!session.is_render_current(first.stamp()));
+        assert!(session.is_render_current(second.stamp()));
+
+        let first_frame = std::thread::spawn(move || first.render())
+            .join()
+            .expect("worker")
+            .expect("first render");
+        assert!(matches!(
+            session.classify_render(first_frame),
+            BackgroundRenderOutcome3D::Superseded { .. }
+        ));
+
+        let second_frame = second.render().expect("second render");
+        let image_size = (second_frame.image.width, second_frame.image.height);
+        assert!(matches!(
+            session.classify_render(second_frame),
+            BackgroundRenderOutcome3D::Current(_)
+        ));
+        assert_eq!(image_size, (48, 40));
+    }
+
+    #[test]
+    fn a_view_change_supersedes_an_outstanding_background_job() {
+        let mut session = scatter3d(&[0.0], &[0.0], &[0.0])
+            .size_px(32, 32)
+            .interactive_session()
+            .expect("session");
+        let job = session.background_render_job().expect("job");
+        session.orbit(1.0, 0.0).expect("orbit");
+        assert!(!session.is_render_current(job.stamp()));
+        let rendered = job.render().expect("render");
+        assert!(matches!(
+            session.classify_render(rendered),
+            BackgroundRenderOutcome3D::Superseded { .. }
+        ));
     }
 
     #[test]
@@ -873,5 +1571,150 @@ mod tests {
             second.camera_snapshot().scene_generation,
             snapshot.scene_generation
         );
+    }
+
+    #[test]
+    fn in_place_replacement_can_reset_or_keep_the_camera() {
+        let mut session = scatter3d(&[0.0], &[0.0], &[0.0])
+            .interactive_session()
+            .expect("first");
+        session.orbit(15.0, -4.0).expect("orbit");
+        let kept_camera = session.camera();
+        let first_scene = session.view_stamp();
+        let replacement = scatter3d(&[1.0], &[2.0], &[3.0])
+            .interactive_session()
+            .expect("replacement");
+        let replacement_default = replacement.camera();
+
+        session
+            .replace_keep_camera(replacement)
+            .expect("keep-camera replacement");
+        assert_eq!(session.camera(), kept_camera);
+        assert!(!first_scene.same_scene(session.view_stamp()));
+
+        let reset_replacement = scatter3d(&[4.0], &[5.0], &[6.0])
+            .interactive_session()
+            .expect("reset replacement");
+        session.replace(reset_replacement);
+        assert_eq!(session.camera(), replacement_default);
+    }
+
+    #[test]
+    fn keep_camera_replacement_invalidates_replacement_frontend_state() {
+        let mut current = scatter3d(&[0.0], &[0.0], &[0.0])
+            .interactive_session()
+            .expect("current");
+        current.orbit(12.0, -3.0).expect("orbit");
+        let kept_camera = current.camera();
+
+        let mut replacement = scatter3d(&[1.0], &[2.0], &[3.0])
+            .size_px(40, 32)
+            .interactive_session()
+            .expect("replacement");
+        let layout = Axis3Layout::resolve(&replacement.frame).expect("layout");
+        let center = layout.project_local(Vec3::ZERO).expect("center");
+        replacement
+            .pick(center.x, center.y)
+            .expect("pick replacement");
+        replacement
+            .handle_input(InputEvent3D::PointerDown {
+                x: center.x,
+                y: center.y,
+                button: PointerButton3D::Left,
+            })
+            .expect("start replacement drag");
+        let stale_job = replacement
+            .background_render_job()
+            .expect("replacement job");
+        assert!(replacement.current_pick().is_some());
+        assert!(replacement.is_drag_active());
+        assert!(replacement.is_render_current(stale_job.stamp()));
+
+        current
+            .replace_keep_camera(replacement)
+            .expect("replace and keep camera");
+
+        assert_eq!(current.camera(), kept_camera);
+        assert!(current.current_pick().is_none());
+        assert!(!current.is_drag_active());
+        assert!(!current.is_render_current(stale_job.stamp()));
+        let rendered = stale_job.render().expect("stale render remains executable");
+        assert!(matches!(
+            current.classify_render(rendered),
+            BackgroundRenderOutcome3D::Superseded { .. }
+        ));
+    }
+
+    #[test]
+    fn replacement_invalidates_jobs_even_when_kept_camera_is_unchanged() {
+        let mut current = scatter3d(&[0.0], &[0.0], &[0.0])
+            .interactive_session()
+            .expect("current");
+        let mut replacement = scatter3d(&[1.0], &[1.0], &[1.0])
+            .interactive_session()
+            .expect("replacement");
+        assert_eq!(current.camera(), replacement.camera());
+        let layout = Axis3Layout::resolve(&replacement.frame).expect("layout");
+        let center = layout.project_local(Vec3::ZERO).expect("center");
+        replacement
+            .pick(center.x, center.y)
+            .expect("pick")
+            .expect("replacement hit");
+        let stale_pick = replacement.current_pick().expect("stamped pick");
+        let stale_job = replacement.background_render_job().expect("job");
+
+        current
+            .replace_keep_camera(replacement)
+            .expect("same-camera replacement");
+
+        assert!(!current.is_render_current(stale_job.stamp()));
+        assert!(!current.is_stamped_pick_current(&stale_pick));
+    }
+
+    #[test]
+    fn replacement_generation_exhaustion_is_atomic_and_never_panics() {
+        let mut current = scatter3d(&[0.0], &[0.0], &[0.0])
+            .interactive_session()
+            .expect("current");
+        current.orbit(8.0, -2.0).expect("orbit");
+        let original_view = current.view_stamp();
+        let original_camera = current.camera();
+
+        let mut replacement = scatter3d(&[1.0], &[1.0], &[1.0])
+            .interactive_session()
+            .expect("replacement");
+        replacement.request_generation = u64::MAX;
+        let error = current
+            .try_replace(replacement)
+            .expect_err("exhausted replacement must fail");
+        assert!(error.to_string().contains("request space was exhausted"));
+        assert_eq!(current.view_stamp(), original_view);
+        assert_eq!(current.camera(), original_camera);
+
+        let mut compatibility_replacement = scatter3d(&[2.0], &[2.0], &[2.0])
+            .interactive_session()
+            .expect("compatibility replacement");
+        compatibility_replacement.request_generation = u64::MAX;
+        current.replace(compatibility_replacement);
+        assert_eq!(current.view_stamp(), original_view);
+        assert_eq!(current.camera(), original_camera);
+    }
+
+    #[test]
+    fn worker_renderer_defaults_to_cpu_and_reports_readback_truthfully() {
+        let mut session = scatter3d(&[0.0], &[0.0], &[0.0])
+            .size_px(24, 20)
+            .interactive_session()
+            .expect("session");
+        let job = session.background_render_job().expect("job");
+        let mut renderer = BackgroundRenderer3D::default();
+        assert_eq!(renderer.backend(), BackgroundRenderBackend3D::Cpu);
+        let (rendered, diagnostics) = renderer
+            .render_with_diagnostics(job)
+            .expect("background render");
+        assert_eq!((rendered.image.width, rendered.image.height), (24, 20));
+        assert_eq!(diagnostics.actual_backend, "cpu3d-background");
+        assert_eq!(diagnostics.readback_bytes, 0);
+        assert!(diagnostics.fallback_reason.is_none());
     }
 }

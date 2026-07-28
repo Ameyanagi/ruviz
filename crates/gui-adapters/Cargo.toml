@@ -1,0 +1,12 @@
+# The native GUI adapters live in their own workspace so their framework
+# dependencies do not enter the core ruviz lockfile or feature graph.
+[workspace]
+members = ["ruviz-egui", "ruviz-iced", "ruviz-slint"]
+resolver = "2"
+
+[workspace.package]
+version = "0.6.0"
+edition = "2024"
+rust-version = "1.92"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/Ameyanagi/ruviz"

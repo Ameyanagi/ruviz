@@ -853,22 +853,27 @@ pub mod prelude {
     // prelude so existing `use ruviz::prelude::*` code keeps resolving it.
     #[allow(deprecated)]
     pub use crate::core::{
-        Annotation, AnnotationId, ArrowHead, ArrowStyle, BackendType, BuilderWhen, FigureRect,
-        FillStyle, FramePacing, FrameStats, GridSpec, HatchPattern, HitResult, Image, ImageTarget,
-        InsetAnchor, InsetLayout, InteractiveFrame, InteractivePlotSession,
-        InteractiveViewportSnapshot, IntoPlot, LayerRenderState, Legend, LegendAnchor, LegendItem,
-        LegendItemType, LegendPosition, Plot, PlotBuilder, PlotInputEvent, PlotResult, PlotSource,
-        PlottingError, Position, PreparedPlot, QualityPolicy, ReactiveSubscription, ReactiveValue,
-        RenderTargetKind, ShapeStyle, SubplotFigure, SurfaceCapability, SurfaceTarget, TextAlign,
-        TextStyle, TextVAlign, TickDirection, TickSides, ViewportPoint, ViewportRect, figure,
-        subplots, subplots_default,
+        AlphaMode, Annotation, AnnotationId, ArrowHead, ArrowStyle, BackendType, BuilderWhen,
+        FigureRect, FillStyle, FramePacing, FrameStats, GridSpec, HatchPattern, HitResult, Image,
+        ImageTarget, InsetAnchor, InsetLayout, InteractiveChangeRevision,
+        InteractiveChangeSubscription, InteractiveFrame, InteractivePlotSession,
+        InteractiveRenderStamp, InteractiveViewportSnapshot, IntoPlot, IntoPlotSession,
+        LayerRenderState, Legend, LegendAnchor, LegendItem, LegendItemType, LegendPosition, Plot,
+        PlotBuilder, PlotInputEvent, PlotResult, PlotSource, PlottingError, Position, PreparedPlot,
+        QualityPolicy, ReactiveSubscription, ReactiveValue, RenderTargetKind, ScheduledRequestId,
+        ShapeStyle, StampedInteractiveFrame, SubplotFigure, SurfaceCapability, SurfaceTarget,
+        TextAlign, TextStyle, TextVAlign, TickDirection, TickSides, ViewportPoint, ViewportRect,
+        figure, subplots, subplots_default,
     };
     #[cfg(feature = "3d")]
     pub use crate::core::{
-        AxisAspect3D, Bounds3D, Camera3D, CameraSnapshot3D, InputEvent3D, InteractionResult3D,
-        InteractivePlot3DSession, Line3DBuilder, PickHit3D, PickPrimitive3D, Point3D,
-        PointerButton3D, ProjectedPoint3D, Projection3D, RenderDiagnostics3D, Scatter3DBuilder,
-        ScreenRay3D, Surface3DBuilder, Wireframe3DBuilder, release_3d_gpu_resources,
+        AxisAspect3D, BackgroundRenderBackend3D, BackgroundRenderJob3D, BackgroundRenderOutcome3D,
+        BackgroundRenderer3D, Bounds3D, Camera3D, CameraSnapshot3D, InputEvent3D,
+        InteractionResult3D, InteractivePlot3DSession, Line3DBuilder, PickHit3D, PickPrimitive3D,
+        Point3D, PointerButton3D, ProjectedPoint3D, Projection3D, RenderDiagnostics3D,
+        RenderStamp3D, RenderedImage3D, Scatter3DBuilder, ScreenRay3D, StampedPick3D,
+        Surface3DBuilder, TryIntoPlot3DSession, ViewStamp3D, Wireframe3DBuilder,
+        release_3d_gpu_resources,
     };
     pub use crate::data::{
         Data1D, DataShader, DataShaderCanvas, NullPolicy, NumericData1D, NumericData2D,

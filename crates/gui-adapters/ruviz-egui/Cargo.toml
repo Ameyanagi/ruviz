@@ -1,0 +1,37 @@
+[package]
+name = "ruviz-egui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "egui widget adapter for ruviz"
+readme = "README.md"
+include = ["src/**", "examples/**", "README.md", "LICENSE-*"]
+
+[package.metadata.docs.rs]
+all-features = true
+
+[features]
+default = []
+"3d" = ["ruviz/3d"]
+gpu = ["ruviz/gpu"]
+"3d-gpu" = ["3d", "gpu"]
+
+[dependencies]
+egui = { version = "0.35", default-features = false, features = ["default_fonts"] }
+ruviz = { version = "=0.6.0", path = "../../.." }
+
+[dev-dependencies]
+eframe = { version = "0.35", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
+
+[[example]]
+name = "dashboard"
+
+[[example]]
+name = "three_d"
+required-features = ["3d"]
+
+[[example]]
+name = "mixed_dashboard"
+required-features = ["3d"]

@@ -129,6 +129,18 @@ jobs:
           with Path("crates/ruviz-gpui/Cargo.toml").open("rb") as fh:
               gpui_version = tomllib.load(fh)["package"]["version"]
 
+          with Path("crates/gui-adapters/Cargo.toml").open("rb") as fh:
+              gui_workspace_version = tomllib.load(fh)["workspace"]["package"]["version"]
+
+          gui_adapter_versions = {}
+          for adapter in ("ruviz-egui", "ruviz-iced", "ruviz-slint"):
+              with Path(f"crates/gui-adapters/{adapter}/Cargo.toml").open("rb") as fh:
+                  manifest = tomllib.load(fh)
+              package_version = manifest["package"].get("version")
+              if package_version == {"workspace": True}:
+                  package_version = gui_workspace_version
+              gui_adapter_versions[f"{adapter} crate"] = package_version
+
           with Path("python/pyproject.toml").open("rb") as fh:
               python_package_version = tomllib.load(fh)["project"]["version"]
 
@@ -141,6 +153,7 @@ jobs:
               "ruviz-gpui crate": gpui_version,
               "ruviz npm package": npm_web_version,
               "ruviz-py crate": python_crate_version,
+              **gui_adapter_versions,
           }
 
           for name, version in versions.items():
@@ -168,7 +181,9 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-release-${{ hashFiles('**/Cargo.lock') }}
+            crates/gui-adapters/target
+            crates/ruviz-gpui/target
+          key: ${{ runner.os }}-cargo-release-${{ hashFiles('Cargo.lock', 'crates/gui-adapters/Cargo.lock', 'crates/ruviz-gpui/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-release-
 
       - name: Cache Bun
@@ -202,10 +217,30 @@ jobs:
       # [patch.crates-io] gpui override stops applying to every root cargo
       # command. It is not a root member: reach it by manifest path.
       - name: Verify ruviz-gpui compiles
-        run: cargo check --manifest-path crates/ruviz-gpui/Cargo.toml
+        run: cargo check --manifest-path crates/ruviz-gpui/Cargo.toml --locked
 
       - name: Verify ruviz-gpui examples compile
-        run: cargo check --manifest-path crates/ruviz-gpui/Cargo.toml --examples
+        run: |
+          cargo check --manifest-path crates/ruviz-gpui/Cargo.toml --examples --locked
+          cargo check --manifest-path crates/ruviz-gpui/Cargo.toml --example plot3d_embed --all-features --locked
+
+      - name: Test and build ruviz-gpui documentation
+        run: |
+          cargo test --manifest-path crates/ruviz-gpui/Cargo.toml --doc --locked
+          cargo test --manifest-path crates/ruviz-gpui/Cargo.toml --doc --all-features --locked
+          cargo doc --manifest-path crates/ruviz-gpui/Cargo.toml --all-features --no-deps --locked
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+      - name: Verify native GUI adapters and examples compile
+        run: |
+          cargo check --manifest-path crates/gui-adapters/Cargo.toml --workspace --all-features --locked
+          cargo check --manifest-path crates/gui-adapters/Cargo.toml --workspace --examples --all-features --locked
+
+      - name: Build native GUI adapter documentation
+        run: cargo doc --manifest-path crates/gui-adapters/Cargo.toml --workspace --all-features --no-deps --locked
+        env:
+          RUSTDOCFLAGS: -D warnings
 
       - name: Validate npm tarball
         run: bun run --cwd packages/ruviz-web verify:pack
@@ -520,6 +555,92 @@ jobs:
           --registry-attempts 60
           --registry-delay 20
 
+  verify-gui-adapter-packages:
+    name: Verify packaged native GUI adapters
+    runs-on: ubuntu-latest
+    needs: [check-ci, build-release, publish-ruviz]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.check-ci.outputs.release_sha }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v8.0.0
+
+      - name: Install Linux desktop build dependencies
+        uses: ./.github/actions/install-linux-desktop-build-deps
+
+      - name: Cache GUI adapter package sources
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            crates/gui-adapters/target
+          key: ${{ runner.os }}-cargo-release-gui-adapters-${{ hashFiles('crates/gui-adapters/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-release-gui-adapters-
+
+      - name: Verify packaged adapters against crates.io
+        run: >-
+          uv run python scripts/verify_gui_adapter_packages.py
+          --mode release
+          --expected-vcs-sha ${{ needs.check-ci.outputs.release_sha }}
+          --registry-attempts 60
+          --registry-delay 20
+
+  publish-gui-adapters:
+    name: Publish ${{ matrix.crate }} to crates.io
+    runs-on: ubuntu-latest
+    needs: [check-ci, verify-gui-adapter-packages]
+    strategy:
+      fail-fast: false
+      matrix:
+        crate: [ruviz-egui, ruviz-iced, ruviz-slint]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.check-ci.outputs.release_sha }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Detect published adapter version
+        id: adapter-version
+        shell: bash
+        run: |
+          manifest="crates/gui-adapters/${{ matrix.crate }}/Cargo.toml"
+          version="$(cargo pkgid --manifest-path "${manifest}" --package "${{ matrix.crate }}" | sed 's/.*[#@]//')"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+          if curl --silent --fail \
+              --header "User-Agent: ${CRATES_IO_USER_AGENT}" \
+              "https://crates.io/api/v1/crates/${{ matrix.crate }}/${version}" >/dev/null; then
+            echo "published=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "published=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish adapter to crates.io
+        if: steps.adapter-version.outputs.published != 'true'
+        run: >-
+          cargo publish
+          --manifest-path crates/gui-adapters/${{ matrix.crate }}/Cargo.toml
+          --locked
+          --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+      - name: Skip adapter publish
+        if: steps.adapter-version.outputs.published == 'true'
+        run: echo "${{ matrix.crate }} v${{ steps.adapter-version.outputs.version }} is already published on crates.io"
+
   publish-ruviz-web:
     name: Publish ruviz-web to crates.io
     runs-on: ubuntu-latest
@@ -798,8 +919,8 @@ jobs:
   create-github-release:
     name: Create GitHub Release
     runs-on: ubuntu-latest
-    needs: [check-ci, build-release, publish-ruviz, verify-packaged-crates, publish-ruviz-web, publish-ruviz-gpui, publish-npm-web, publish-python]
-    if: ${{ always() && needs.build-release.result == 'success' && needs.publish-ruviz.result == 'success' && needs.verify-packaged-crates.result == 'success' && needs.publish-ruviz-web.result == 'success' && needs.publish-ruviz-gpui.result == 'success' && needs.publish-npm-web.result == 'success' && needs.publish-python.result == 'success' }}
+    needs: [check-ci, build-release, publish-ruviz, verify-packaged-crates, verify-gui-adapter-packages, publish-gui-adapters, publish-ruviz-web, publish-ruviz-gpui, publish-npm-web, publish-python]
+    if: ${{ always() && needs.build-release.result == 'success' && needs.publish-ruviz.result == 'success' && needs.verify-packaged-crates.result == 'success' && needs.verify-gui-adapter-packages.result == 'success' && needs.publish-gui-adapters.result == 'success' && needs.publish-ruviz-web.result == 'success' && needs.publish-ruviz-gpui.result == 'success' && needs.publish-npm-web.result == 'success' && needs.publish-python.result == 'success' }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -828,7 +949,7 @@ jobs:
           fi
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
           body_path: RELEASE_NOTES.md

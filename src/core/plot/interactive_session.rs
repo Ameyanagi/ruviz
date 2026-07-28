@@ -15,10 +15,11 @@ use crate::{
 };
 use std::{
     cell::RefCell,
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
+    fmt,
     sync::{
-        Arc, Mutex, OnceLock,
-        atomic::{AtomicU64, Ordering},
+        Arc, Mutex, MutexGuard, OnceLock, Weak,
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::Duration,
 };
@@ -28,6 +29,245 @@ thread_local! {
 }
 
 static NEXT_ANNOTATION_SESSION_TOKEN: AtomicU64 = AtomicU64::new(1);
+static NEXT_INTERACTIVE_SESSION_TOKEN: AtomicU64 = AtomicU64::new(1);
+
+fn lock_recover<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    match mutex.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    }
+}
+
+/// Opaque, monotonically increasing revision of an interactive session.
+///
+/// Revisions may be compared for equality and ordering, but their numeric
+/// representation is intentionally private. A revision is meaningful only for
+/// the session that produced it.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct InteractiveChangeRevision {
+    era: u64,
+    sequence: u64,
+}
+
+impl InteractiveChangeRevision {
+    fn checked_next(self) -> Option<Self> {
+        if self.sequence == u64::MAX {
+            Some(Self {
+                era: self.era.checked_add(1)?,
+                sequence: 0,
+            })
+        } else {
+            Some(Self {
+                era: self.era,
+                sequence: self.sequence + 1,
+            })
+        }
+    }
+}
+
+type ChangeCallback = Arc<dyn Fn(InteractiveChangeRevision) + Send + Sync + 'static>;
+
+struct ChangeHubState {
+    next_subscription_id: u64,
+    revision: InteractiveChangeRevision,
+    exhausted: bool,
+    dispatching: bool,
+    pending: VecDeque<PendingChange>,
+    callbacks: HashMap<u64, ChangeCallback>,
+}
+
+struct PendingChange {
+    revision: InteractiveChangeRevision,
+    callbacks: Vec<ChangeCallback>,
+}
+
+impl Default for ChangeHubState {
+    fn default() -> Self {
+        Self {
+            next_subscription_id: 0,
+            revision: InteractiveChangeRevision {
+                era: 0,
+                sequence: 0,
+            },
+            exhausted: false,
+            dispatching: false,
+            pending: VecDeque::new(),
+            callbacks: HashMap::new(),
+        }
+    }
+}
+
+#[derive(Default)]
+struct ChangeHub {
+    state: Mutex<ChangeHubState>,
+}
+
+impl fmt::Debug for ChangeHub {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let state = lock_recover(&self.state);
+        formatter
+            .debug_struct("ChangeHub")
+            .field("revision", &state.revision)
+            .field("pending_count", &state.pending.len())
+            .field("dispatching", &state.dispatching)
+            .field("subscription_count", &state.callbacks.len())
+            .finish()
+    }
+}
+
+impl ChangeHub {
+    fn revision(&self) -> InteractiveChangeRevision {
+        lock_recover(&self.state).revision
+    }
+
+    fn is_exhausted(&self) -> bool {
+        lock_recover(&self.state).exhausted
+    }
+
+    fn subscribe<F>(self: &Arc<Self>, callback: F) -> InteractiveChangeSubscription
+    where
+        F: Fn(InteractiveChangeRevision) + Send + Sync + 'static,
+    {
+        let mut state = lock_recover(&self.state);
+        let mut id = state.next_subscription_id.wrapping_add(1).max(1);
+        while state.callbacks.contains_key(&id) {
+            id = id.wrapping_add(1).max(1);
+        }
+        state.next_subscription_id = id;
+        state.callbacks.insert(id, Arc::new(callback));
+        InteractiveChangeSubscription {
+            hub: Arc::downgrade(self),
+            id,
+        }
+    }
+
+    fn notify(&self) -> InteractiveChangeRevision {
+        let (revision, should_dispatch) = {
+            let mut state = lock_recover(&self.state);
+            let Some(revision) = state.revision.checked_next() else {
+                state.exhausted = true;
+                return state.revision;
+            };
+            state.revision = revision;
+            let mut callbacks = state
+                .callbacks
+                .iter()
+                .map(|(&id, callback)| (id, Arc::clone(callback)))
+                .collect::<Vec<_>>();
+            callbacks.sort_unstable_by_key(|(id, _)| *id);
+            state.pending.push_back(PendingChange {
+                revision,
+                callbacks: callbacks
+                    .into_iter()
+                    .map(|(_, callback)| callback)
+                    .collect(),
+            });
+            let should_dispatch = !state.dispatching;
+            if should_dispatch {
+                state.dispatching = true;
+            }
+            (revision, should_dispatch)
+        };
+
+        if !should_dispatch {
+            return revision;
+        }
+
+        let mut dispatch_guard = ChangeDispatchGuard {
+            hub: self,
+            armed: true,
+        };
+        let mut first_panic = None;
+        loop {
+            let pending = {
+                let mut state = lock_recover(&self.state);
+                match state.pending.pop_front() {
+                    Some(pending) => Some(pending),
+                    None => {
+                        state.dispatching = false;
+                        dispatch_guard.armed = false;
+                        None
+                    }
+                }
+            };
+            let Some(pending) = pending else {
+                break;
+            };
+            for callback in pending.callbacks {
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    callback(pending.revision);
+                }));
+                if first_panic.is_none()
+                    && let Err(payload) = result
+                {
+                    first_panic = Some(payload);
+                }
+            }
+        }
+        if let Some(payload) = first_panic {
+            std::panic::resume_unwind(payload);
+        }
+        revision
+    }
+
+    fn unsubscribe(&self, id: u64) {
+        lock_recover(&self.state).callbacks.remove(&id);
+    }
+}
+
+struct ChangeDispatchGuard<'a> {
+    hub: &'a ChangeHub,
+    armed: bool,
+}
+
+impl Drop for ChangeDispatchGuard<'_> {
+    fn drop(&mut self) {
+        if self.armed {
+            lock_recover(&self.hub.state).dispatching = false;
+        }
+    }
+}
+
+/// Active subscription to all changes that can require an interactive redraw.
+///
+/// Dropping the subscription unregisters its callback. Callbacks always run
+/// after session locks have been released and may safely query or mutate the
+/// session.
+pub struct InteractiveChangeSubscription {
+    hub: Weak<ChangeHub>,
+    id: u64,
+}
+
+impl fmt::Debug for InteractiveChangeSubscription {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("InteractiveChangeSubscription")
+            .field("active", &(self.hub.strong_count() > 0))
+            .finish_non_exhaustive()
+    }
+}
+
+impl Drop for InteractiveChangeSubscription {
+    fn drop(&mut self) {
+        if let Some(hub) = self.hub.upgrade() {
+            hub.unsubscribe(self.id);
+        }
+    }
+}
+
+/// Opaque identity of a fully committed interactive frame.
+///
+/// A stamp binds the frame to its originating session, published base image,
+/// and change revision. Use [`InteractivePlotSession::is_render_stamp_current`]
+/// rather than interpreting the stamp.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct InteractiveRenderStamp {
+    session_token: u64,
+    base_generation: u64,
+    change_revision: InteractiveChangeRevision,
+    mutation_epoch: u64,
+    dirty_epoch: u64,
+}
 
 /// Opaque identifier for a dynamic annotation owned by one interactive session.
 ///
@@ -358,6 +598,28 @@ pub struct InteractiveFrameWithGeneration {
     pub base_generation: u64,
 }
 
+/// A committed interactive frame and its opaque currentness stamp.
+///
+/// Presentation adapters should retain the stamp alongside the displayed
+/// frame and validate it with
+/// [`InteractivePlotSession::is_render_stamp_current`] before using geometry
+/// derived from that frame.
+#[derive(Clone, Debug)]
+pub struct StampedInteractiveFrame {
+    /// Rendered frame associated with the stamp.
+    pub frame: InteractiveFrame,
+    /// Base-image generation used by the frame's interaction geometry.
+    pub base_generation: u64,
+    render_stamp: InteractiveRenderStamp,
+}
+
+impl StampedInteractiveFrame {
+    /// Returns the opaque identity of this committed frame.
+    pub fn render_stamp(&self) -> InteractiveRenderStamp {
+        self.render_stamp
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct ImageTarget {
     pub size_px: (u32, u32),
@@ -442,6 +704,7 @@ pub struct InteractivePlotSession {
 
 #[derive(Debug)]
 struct InteractivePlotSessionInner {
+    session_token: Option<u64>,
     prepared: PreparedPlot,
     annotations: Mutex<DynamicAnnotations>,
     frame_pacing: Mutex<FramePacing>,
@@ -453,8 +716,10 @@ struct InteractivePlotSessionInner {
     dirty: Arc<Mutex<DirtyDomains>>,
     dirty_epoch: Arc<AtomicU64>,
     mutation_epoch: Arc<AtomicU64>,
+    epoch_exhausted: Arc<AtomicBool>,
     stats: Mutex<FrameStats>,
     reactive_epoch: Arc<AtomicU64>,
+    change_hub: Arc<ChangeHub>,
     #[cfg(test)]
     render_test_hook: Mutex<Option<RenderTestHook>>,
 }
@@ -1251,18 +1516,23 @@ impl InteractivePlotSession {
         let dirty_epoch = Arc::new(AtomicU64::new(0));
         let mutation_epoch = Arc::new(AtomicU64::new(0));
         let reactive_epoch = Arc::new(AtomicU64::new(0));
+        let epoch_exhausted = Arc::new(AtomicBool::new(false));
+        let change_hub = Arc::new(ChangeHub::default());
         let dirty_for_callback = Arc::clone(&dirty);
         let dirty_epoch_for_callback = Arc::clone(&dirty_epoch);
         let mutation_epoch_for_callback = Arc::clone(&mutation_epoch);
+        let epoch_exhausted_for_callback = Arc::clone(&epoch_exhausted);
         let epoch_for_callback = Arc::clone(&reactive_epoch);
+        let change_hub_for_callback = Arc::clone(&change_hub);
         let reactive_subscription = prepared.subscribe_reactive(move || {
-            mutation_epoch_for_callback.fetch_add(1, Ordering::AcqRel);
-            if let Ok(mut domains) = dirty_for_callback.lock() {
-                dirty_epoch_for_callback.fetch_add(1, Ordering::AcqRel);
-                domains.mark(DirtyDomain::Data);
-                domains.mark(DirtyDomain::Overlay);
-            }
-            epoch_for_callback.fetch_add(1, Ordering::AcqRel);
+            let mut domains = lock_recover(&dirty_for_callback);
+            advance_atomic_epoch(&mutation_epoch_for_callback, &epoch_exhausted_for_callback);
+            advance_atomic_epoch(&dirty_epoch_for_callback, &epoch_exhausted_for_callback);
+            domains.mark(DirtyDomain::Data);
+            domains.mark(DirtyDomain::Overlay);
+            drop(domains);
+            advance_atomic_epoch(&epoch_for_callback, &epoch_exhausted_for_callback);
+            change_hub_for_callback.notify();
         });
 
         let mut state = SessionState {
@@ -1279,6 +1549,7 @@ impl InteractivePlotSession {
 
         Self {
             inner: Arc::new(InteractivePlotSessionInner {
+                session_token: reserve_atomic_id(&NEXT_INTERACTIVE_SESSION_TOKEN),
                 prepared,
                 annotations: Mutex::new(DynamicAnnotations::new()),
                 frame_pacing: Mutex::new(FramePacing::Display),
@@ -1290,8 +1561,10 @@ impl InteractivePlotSession {
                 dirty,
                 dirty_epoch,
                 mutation_epoch,
+                epoch_exhausted,
                 stats: Mutex::new(FrameStats::default()),
                 reactive_epoch,
+                change_hub,
                 #[cfg(test)]
                 render_test_hook: Mutex::new(None),
             }),
@@ -1304,6 +1577,7 @@ impl InteractivePlotSession {
 
     /// Adds a session-owned annotation to the interactive overlay.
     pub fn add_annotation(&self, annotation: Annotation) -> Result<AnnotationId> {
+        self.repair_poisoned_session();
         {
             let layout = &self.inner.prepared.plot().layout;
             validate_dynamic_annotation(&annotation, &layout.x_scale, &layout.y_scale)?;
@@ -1325,8 +1599,9 @@ impl InteractivePlotSession {
         annotations.entries.insert(value, annotation);
         annotations.next_id = next_id;
         annotations.revision = revision;
-        self.begin_mutation();
-        self.mark_dirty(DirtyDomain::Overlay);
+        self.record_mutation(&[DirtyDomain::Overlay]);
+        drop(annotations);
+        self.inner.change_hub.notify();
         Ok(id)
     }
 
@@ -1343,6 +1618,7 @@ impl InteractivePlotSession {
 
     /// Replaces a session-owned annotation, including all geometry and style.
     pub fn update_annotation(&self, id: AnnotationId, annotation: Annotation) -> Result<()> {
+        self.repair_poisoned_session();
         {
             let layout = &self.inner.prepared.plot().layout;
             validate_dynamic_annotation(&annotation, &layout.x_scale, &layout.y_scale)?;
@@ -1356,8 +1632,9 @@ impl InteractivePlotSession {
         let revision = annotations.next_revision()?;
         annotations.entries.insert(value, annotation);
         annotations.revision = revision;
-        self.begin_mutation();
-        self.mark_dirty(DirtyDomain::Overlay);
+        self.record_mutation(&[DirtyDomain::Overlay]);
+        drop(annotations);
+        self.inner.change_hub.notify();
         Ok(())
     }
 
@@ -1365,6 +1642,7 @@ impl InteractivePlotSession {
     ///
     /// Foreign and stale IDs return [`PlottingError::UnknownAnnotationId`].
     pub fn remove_annotation(&self, id: AnnotationId) -> Result<bool> {
+        self.repair_poisoned_session();
         let mut annotations = self
             .inner
             .annotations
@@ -1374,8 +1652,9 @@ impl InteractivePlotSession {
         let revision = annotations.next_revision()?;
         let removed = annotations.entries.remove(&value).is_some();
         annotations.revision = revision;
-        self.begin_mutation();
-        self.mark_dirty(DirtyDomain::Overlay);
+        self.record_mutation(&[DirtyDomain::Overlay]);
+        drop(annotations);
+        self.inner.change_hub.notify();
         Ok(removed)
     }
 
@@ -1384,6 +1663,32 @@ impl InteractivePlotSession {
         F: Fn() + Send + Sync + 'static,
     {
         self.inner.prepared.subscribe_reactive(callback)
+    }
+
+    /// Subscribes to every session change that can require presentation work.
+    ///
+    /// This combines declarative reactive-source notifications with imperative
+    /// input, invalidation, configuration, annotation, and dirty-domain
+    /// changes. Each callback receives a session-local monotonically increasing
+    /// revision. The callback runs outside all session locks and may safely
+    /// query or mutate the session.
+    pub fn subscribe_changes<F>(&self, callback: F) -> InteractiveChangeSubscription
+    where
+        F: Fn(InteractiveChangeRevision) + Send + Sync + 'static,
+    {
+        let subscription = self.inner.change_hub.subscribe(callback);
+        self.repair_poisoned_session();
+        subscription
+    }
+
+    /// Returns the latest session-local change revision.
+    pub fn change_revision(&self) -> InteractiveChangeRevision {
+        self.repair_poisoned_session();
+        self.change_revision_raw()
+    }
+
+    fn change_revision_raw(&self) -> InteractiveChangeRevision {
+        self.inner.change_hub.revision()
     }
 
     pub fn stats(&self) -> FrameStats {
@@ -1401,87 +1706,100 @@ impl InteractivePlotSession {
     /// by [`InteractiveFrameWithGeneration`] and reject coordinate queries while it differs from
     /// this value.
     pub fn displayed_frame_generation(&self) -> Option<u64> {
-        self.inner
-            .state
-            .lock()
-            .expect("InteractivePlotSession state lock poisoned")
+        self.repair_poisoned_session();
+        lock_recover(&self.inner.state)
             .base_cache
             .as_ref()
             .map(|cache| cache.generation)
     }
 
+    /// Returns whether a stamped frame still represents the session's current
+    /// displayed state.
+    ///
+    /// Stamps from another session and stamps invalidated by any newer change
+    /// are rejected. This remains safe across generation reuse and avoids
+    /// presentation adapters comparing raw counters.
+    pub fn is_render_stamp_current(&self, stamp: InteractiveRenderStamp) -> bool {
+        self.repair_poisoned_session();
+        let state = lock_recover(&self.inner.state);
+        let _dirty = lock_recover(&self.inner.dirty);
+        !self.inner.epoch_exhausted.load(Ordering::Acquire)
+            && !self.inner.change_hub.is_exhausted()
+            && Some(stamp.session_token) == self.inner.session_token
+            && stamp.change_revision == self.change_revision_raw()
+            && stamp.mutation_epoch == self.inner.mutation_epoch.load(Ordering::Acquire)
+            && stamp.dirty_epoch == self.inner.dirty_epoch.load(Ordering::Acquire)
+            && state.base_cache.as_ref().map(|cache| cache.generation)
+                == Some(stamp.base_generation)
+    }
+
     /// Drop cached geometry and layer images so the next frame rebuilds them.
     pub fn invalidate(&self) {
-        self.begin_mutation();
-        self.inner.prepared.invalidate();
+        self.repair_poisoned_session();
         let mut state = self
             .inner
             .state
             .lock()
             .expect("InteractivePlotSession state lock poisoned");
-        let mut dirty = self
-            .inner
-            .dirty
-            .lock()
-            .expect("InteractivePlotSession dirty lock poisoned");
-        self.inner.dirty_epoch.fetch_add(1, Ordering::AcqRel);
+        self.inner.prepared.invalidate();
+        let mut dirty = lock_recover(&self.inner.dirty);
+        advance_atomic_epoch(&self.inner.mutation_epoch, &self.inner.epoch_exhausted);
+        advance_atomic_epoch(&self.inner.dirty_epoch, &self.inner.epoch_exhausted);
         state.base_cache = None;
         state.overlay_cache = None;
         state.geometry = None;
         *dirty = DirtyDomains::with_all();
+        drop(dirty);
+        drop(state);
+        self.inner.change_hub.notify();
     }
 
     pub fn frame_pacing(&self) -> FramePacing {
-        *self
-            .inner
-            .frame_pacing
-            .lock()
-            .expect("InteractivePlotSession frame pacing lock poisoned")
+        *lock_recover(&self.inner.frame_pacing)
     }
 
     pub fn set_frame_pacing(&self, pacing: FramePacing) {
-        *self
-            .inner
-            .frame_pacing
-            .lock()
-            .expect("InteractivePlotSession frame pacing lock poisoned") = pacing;
-        self.mark_dirty(DirtyDomain::Interaction);
+        self.repair_poisoned_session();
+        let mut current = lock_recover(&self.inner.frame_pacing);
+        if *current == pacing {
+            return;
+        }
+        *current = pacing;
+        self.record_mutation(&[DirtyDomain::Interaction]);
+        drop(current);
+        self.inner.change_hub.notify();
     }
 
     pub fn quality_policy(&self) -> QualityPolicy {
-        *self
-            .inner
-            .quality_policy
-            .lock()
-            .expect("InteractivePlotSession quality policy lock poisoned")
+        *lock_recover(&self.inner.quality_policy)
     }
 
     pub fn set_quality_policy(&self, quality: QualityPolicy) {
-        self.begin_mutation();
-        *self
-            .inner
-            .quality_policy
-            .lock()
-            .expect("InteractivePlotSession quality policy lock poisoned") = quality;
-        self.mark_dirty(DirtyDomain::Interaction);
+        self.repair_poisoned_session();
+        let mut current = lock_recover(&self.inner.quality_policy);
+        if *current == quality {
+            return;
+        }
+        *current = quality;
+        self.record_mutation(&[DirtyDomain::Interaction]);
+        drop(current);
+        self.inner.change_hub.notify();
     }
 
     pub fn prefer_gpu(&self) -> bool {
-        *self
-            .inner
-            .prefer_gpu
-            .lock()
-            .expect("InteractivePlotSession prefer_gpu lock poisoned")
+        *lock_recover(&self.inner.prefer_gpu)
     }
 
     pub fn set_prefer_gpu(&self, prefer_gpu: bool) {
-        self.begin_mutation();
-        *self
-            .inner
-            .prefer_gpu
-            .lock()
-            .expect("InteractivePlotSession prefer_gpu lock poisoned") = prefer_gpu;
-        self.mark_dirty(DirtyDomain::Interaction);
+        self.repair_poisoned_session();
+        let mut current = lock_recover(&self.inner.prefer_gpu);
+        if *current == prefer_gpu {
+            return;
+        }
+        *current = prefer_gpu;
+        self.record_mutation(&[DirtyDomain::Interaction]);
+        drop(current);
+        self.inner.change_hub.notify();
     }
 
     pub fn fitted_frame_size_px(&self, max_size_px: (u32, u32)) -> (u32, u32) {
@@ -1492,26 +1810,29 @@ impl InteractivePlotSession {
     }
 
     pub fn resize(&self, size_px: (u32, u32), scale_factor: f32) {
+        self.repair_poisoned_session();
         let mut state = self
             .inner
             .state
             .lock()
             .expect("InteractivePlotSession state lock poisoned");
-        self.begin_mutation();
         let changed = Self::update_resize_state(&mut state, size_px, scale_factor);
+        if changed {
+            self.record_mutation(&[DirtyDomain::Layout]);
+        }
         drop(state);
         if changed {
-            self.mark_dirty(DirtyDomain::Layout);
+            self.inner.change_hub.notify();
         }
     }
 
     pub fn apply_input(&self, event: PlotInputEvent) {
+        self.repair_poisoned_session();
         let mut state = self
             .inner
             .state
             .lock()
             .expect("InteractivePlotSession state lock poisoned");
-        self.begin_mutation();
 
         match event {
             PlotInputEvent::Resize {
@@ -1519,16 +1840,20 @@ impl InteractivePlotSession {
                 scale_factor,
             } => {
                 let changed = Self::update_resize_state(&mut state, size_px, scale_factor);
+                if changed {
+                    self.record_mutation(&[DirtyDomain::Layout]);
+                }
                 drop(state);
                 if changed {
-                    self.mark_dirty(DirtyDomain::Layout);
+                    self.inner.change_hub.notify();
                 }
             }
             PlotInputEvent::SetTime { time_seconds } => {
                 if state.time_seconds.to_bits() != time_seconds.to_bits() {
                     state.time_seconds = time_seconds;
+                    self.record_mutation(&[DirtyDomain::Temporal]);
                     drop(state);
-                    self.mark_dirty(DirtyDomain::Temporal);
+                    self.inner.change_hub.notify();
                 }
             }
             PlotInputEvent::Zoom { factor, center_px } => {
@@ -1558,26 +1883,29 @@ impl InteractivePlotSession {
                     .state
                     .lock()
                     .expect("InteractivePlotSession state lock poisoned");
-                self.begin_mutation();
                 set_visible_bounds(
                     &mut state,
                     next_visible,
                     &current_geometry.x_scale,
                     &current_geometry.y_scale,
                 );
+                self.record_mutation(&[DirtyDomain::Data, DirtyDomain::Overlay]);
                 drop(state);
-                self.mark_dirty(DirtyDomain::Data);
-                self.mark_dirty(DirtyDomain::Overlay);
+                self.inner.change_hub.notify();
             }
             PlotInputEvent::ZoomRect { region_px } => {
-                let had_brush =
-                    state.brush_anchor.take().is_some() || state.brushed_region.take().is_some();
+                let had_brush_anchor = state.brush_anchor.take().is_some();
+                let had_brushed_region = state.brushed_region.take().is_some();
+                let had_brush = had_brush_anchor || had_brushed_region;
+                if had_brush {
+                    self.record_mutation(&[DirtyDomain::Overlay]);
+                }
                 drop(state);
+                if had_brush {
+                    self.inner.change_hub.notify();
+                }
 
                 if region_px.width() <= 1.0 || region_px.height() <= 1.0 {
-                    if had_brush {
-                        self.mark_dirty(DirtyDomain::Overlay);
-                    }
                     return;
                 }
 
@@ -1591,9 +1919,6 @@ impl InteractivePlotSession {
                     current_geometry.screen_to_data(current_geometry.clamp_screen(region_px.max));
                 let next_visible = DataBounds::from_screen_corners(data_min, data_max);
                 if !bounds_have_extent(next_visible) {
-                    if had_brush {
-                        self.mark_dirty(DirtyDomain::Overlay);
-                    }
                     return;
                 }
 
@@ -1602,21 +1927,22 @@ impl InteractivePlotSession {
                     .state
                     .lock()
                     .expect("InteractivePlotSession state lock poisoned");
-                self.begin_mutation();
                 let viewport_changed = !bounds_close(state.visible_bounds, next_visible);
                 state.brush_anchor = None;
                 state.brushed_region = None;
-                set_visible_bounds(
-                    &mut state,
-                    next_visible,
-                    &current_geometry.x_scale,
-                    &current_geometry.y_scale,
-                );
+                if viewport_changed {
+                    set_visible_bounds(
+                        &mut state,
+                        next_visible,
+                        &current_geometry.x_scale,
+                        &current_geometry.y_scale,
+                    );
+                    self.record_mutation(&[DirtyDomain::Data, DirtyDomain::Overlay]);
+                }
                 drop(state);
                 if viewport_changed {
-                    self.mark_dirty(DirtyDomain::Data);
+                    self.inner.change_hub.notify();
                 }
-                self.mark_dirty(DirtyDomain::Overlay);
             }
             PlotInputEvent::Pan { delta_px } => {
                 drop(state);
@@ -1636,16 +1962,18 @@ impl InteractivePlotSession {
                     .state
                     .lock()
                     .expect("InteractivePlotSession state lock poisoned");
-                self.begin_mutation();
+                if bounds_close(state.visible_bounds, next_visible) {
+                    return;
+                }
                 set_visible_bounds(
                     &mut state,
                     next_visible,
                     &current_geometry.x_scale,
                     &current_geometry.y_scale,
                 );
+                self.record_mutation(&[DirtyDomain::Data, DirtyDomain::Overlay]);
                 drop(state);
-                self.mark_dirty(DirtyDomain::Data);
-                self.mark_dirty(DirtyDomain::Overlay);
+                self.inner.change_hub.notify();
             }
             PlotInputEvent::Hover { position_px } => {
                 drop(state);
@@ -1655,7 +1983,6 @@ impl InteractivePlotSession {
                     .state
                     .lock()
                     .expect("InteractivePlotSession state lock poisoned");
-                self.begin_mutation();
                 let next_hovered = match hit {
                     HitResult::None => None,
                     other => Some(other),
@@ -1664,12 +1991,13 @@ impl InteractivePlotSession {
                 let changed = state.hovered != next_hovered
                     || state.tooltip != next_tooltip
                     || state.tooltip_source != next_hovered.as_ref().map(|_| TooltipSource::Hover);
-                state.hovered = next_hovered;
-                state.tooltip = next_tooltip;
-                state.tooltip_source = state.hovered.as_ref().map(|_| TooltipSource::Hover);
                 if changed {
+                    state.hovered = next_hovered;
+                    state.tooltip = next_tooltip;
+                    state.tooltip_source = state.hovered.as_ref().map(|_| TooltipSource::Hover);
+                    self.record_mutation(&[DirtyDomain::Overlay]);
                     drop(state);
-                    self.mark_dirty(DirtyDomain::Overlay);
+                    self.inner.change_hub.notify();
                 }
             }
             PlotInputEvent::ClearHover => {
@@ -1681,11 +2009,19 @@ impl InteractivePlotSession {
                     false
                 };
                 if hover_changed || tooltip_changed {
+                    self.record_mutation(&[DirtyDomain::Overlay]);
                     drop(state);
-                    self.mark_dirty(DirtyDomain::Overlay);
+                    self.inner.change_hub.notify();
                 }
             }
             PlotInputEvent::ResetView => {
+                let changed = state.brush_anchor.is_some()
+                    || state.brushed_region.is_some()
+                    || state.pending_visible_restore.is_some()
+                    || !bounds_close(state.visible_bounds, state.base_bounds);
+                if !changed {
+                    return;
+                }
                 state.brush_anchor = None;
                 state.brushed_region = None;
                 state.pending_visible_restore = None;
@@ -1695,9 +2031,9 @@ impl InteractivePlotSession {
                     &self.inner.prepared.plot().layout.x_scale,
                     &self.inner.prepared.plot().layout.y_scale,
                 );
+                self.record_mutation(&[DirtyDomain::Data, DirtyDomain::Overlay]);
                 drop(state);
-                self.mark_dirty(DirtyDomain::Data);
-                self.mark_dirty(DirtyDomain::Overlay);
+                self.inner.change_hub.notify();
             }
             PlotInputEvent::SelectAt { position_px } => {
                 drop(state);
@@ -1707,64 +2043,112 @@ impl InteractivePlotSession {
                     .state
                     .lock()
                     .expect("InteractivePlotSession state lock poisoned");
-                self.begin_mutation();
-                state.selected.clear();
-                if !matches!(hit, HitResult::None) {
-                    state.selected.push(hit);
+                let next_selected = if matches!(hit, HitResult::None) {
+                    Vec::new()
+                } else {
+                    vec![hit]
+                };
+                if state.selected != next_selected {
+                    state.selected = next_selected;
+                    self.record_mutation(&[DirtyDomain::Overlay]);
+                    drop(state);
+                    self.inner.change_hub.notify();
                 }
-                drop(state);
-                self.mark_dirty(DirtyDomain::Overlay);
             }
             PlotInputEvent::ClearSelection => {
                 if !state.selected.is_empty() {
                     state.selected.clear();
+                    self.record_mutation(&[DirtyDomain::Overlay]);
                     drop(state);
-                    self.mark_dirty(DirtyDomain::Overlay);
+                    self.inner.change_hub.notify();
                 }
             }
             PlotInputEvent::BrushStart { position_px } => {
+                let next_region = ViewportRect::from_points(position_px, position_px);
+                if state.brush_anchor == Some(position_px)
+                    && state.brushed_region == Some(next_region)
+                {
+                    return;
+                }
                 state.brush_anchor = Some(position_px);
-                state.brushed_region = Some(ViewportRect::from_points(position_px, position_px));
+                state.brushed_region = Some(next_region);
+                self.record_mutation(&[DirtyDomain::Overlay]);
                 drop(state);
-                self.mark_dirty(DirtyDomain::Overlay);
+                self.inner.change_hub.notify();
             }
             PlotInputEvent::BrushMove { position_px } => {
                 if let Some(anchor) = state.brush_anchor {
-                    state.brushed_region = Some(ViewportRect::from_points(anchor, position_px));
-                    drop(state);
-                    self.mark_dirty(DirtyDomain::Overlay);
+                    let next = ViewportRect::from_points(anchor, position_px);
+                    if state.brushed_region != Some(next) {
+                        state.brushed_region = Some(next);
+                        self.record_mutation(&[DirtyDomain::Overlay]);
+                        drop(state);
+                        self.inner.change_hub.notify();
+                    }
                 }
             }
             PlotInputEvent::BrushEnd { position_px } => {
                 if let Some(anchor) = state.brush_anchor.take() {
                     state.brushed_region = Some(ViewportRect::from_points(anchor, position_px));
+                    self.record_mutation(&[DirtyDomain::Overlay]);
                     drop(state);
-                    self.mark_dirty(DirtyDomain::Overlay);
+                    self.inner.change_hub.notify();
                 }
             }
             PlotInputEvent::ShowTooltip {
                 content,
                 position_px,
             } => {
-                state.tooltip = Some(TooltipState {
+                let next = TooltipState {
                     content,
                     position_px,
-                });
-                state.tooltip_source = Some(TooltipSource::Manual);
-                drop(state);
-                self.mark_dirty(DirtyDomain::Overlay);
+                };
+                if state.tooltip.as_ref() != Some(&next)
+                    || state.tooltip_source != Some(TooltipSource::Manual)
+                {
+                    state.tooltip = Some(next);
+                    state.tooltip_source = Some(TooltipSource::Manual);
+                    self.record_mutation(&[DirtyDomain::Overlay]);
+                    drop(state);
+                    self.inner.change_hub.notify();
+                }
             }
             PlotInputEvent::HideTooltip => {
                 if state.tooltip.take().is_some() {
                     state.tooltip_source = None;
+                    self.record_mutation(&[DirtyDomain::Overlay]);
                     drop(state);
-                    self.mark_dirty(DirtyDomain::Overlay);
+                    self.inner.change_hub.notify();
                 }
             }
         }
     }
 
+    /// Cancels an in-progress pointer interaction without committing it.
+    ///
+    /// Native adapters should call this on focus loss, pointer release outside
+    /// the widget, or interaction-mode changes. Existing selection is
+    /// preserved. Returns `true` only when transient brush state was cleared.
+    pub fn cancel_interaction(&self) -> bool {
+        self.repair_poisoned_session();
+        let changed = {
+            let mut state = lock_recover(&self.inner.state);
+            let had_anchor = state.brush_anchor.take().is_some();
+            let had_region = state.brushed_region.take().is_some();
+            let changed = had_anchor || had_region;
+            if changed {
+                self.record_mutation(&[DirtyDomain::Overlay]);
+            }
+            changed
+        };
+        if changed {
+            self.inner.change_hub.notify();
+        }
+        changed
+    }
+
     pub fn hit_test(&self, position_px: ViewportPoint) -> HitResult {
+        self.repair_poisoned_session();
         let Some((geometry, displayed_data, point_hit_index)) = self.displayed_hit_test_data()
         else {
             return HitResult::None;
@@ -1869,6 +2253,7 @@ impl InteractivePlotSession {
     /// displayed plot area. An error is returned until a base frame has been
     /// rendered and its geometry is available.
     pub fn screen_to_data(&self, position_px: ViewportPoint) -> Result<Option<ViewportPoint>> {
+        self.repair_poisoned_session();
         let geometry = self.displayed_geometry()?;
         if !geometry.contains_screen(position_px) {
             return Ok(None);
@@ -1883,6 +2268,7 @@ impl InteractivePlotSession {
     /// An error is returned for non-finite input or until displayed geometry is
     /// available.
     pub fn screen_to_data_clamped(&self, position_px: ViewportPoint) -> Result<ViewportPoint> {
+        self.repair_poisoned_session();
         require_finite_point(position_px, "screen position")?;
         let geometry = self.displayed_geometry()?;
         let data = geometry.screen_to_data(geometry.clamp_screen(position_px));
@@ -1896,6 +2282,7 @@ impl InteractivePlotSession {
     /// displayed data bounds. An error is returned until displayed geometry is
     /// available.
     pub fn data_to_screen(&self, data_position: ViewportPoint) -> Result<Option<ViewportPoint>> {
+        self.repair_poisoned_session();
         let geometry = self.displayed_geometry()?;
         if !geometry.contains_data(data_position) {
             return Ok(None);
@@ -1910,6 +2297,7 @@ impl InteractivePlotSession {
     /// An error is returned for non-finite input or until displayed geometry is
     /// available.
     pub fn data_to_screen_clamped(&self, data_position: ViewportPoint) -> Result<ViewportPoint> {
+        self.repair_poisoned_session();
         require_finite_point(data_position, "data position")?;
         let geometry = self.displayed_geometry()?;
         let screen = geometry.data_to_screen(geometry.clamp_data(data_position));
@@ -1918,7 +2306,7 @@ impl InteractivePlotSession {
     }
 
     pub fn render_to_image(&self, target: ImageTarget) -> Result<InteractiveFrame> {
-        self.render_to_image_with_generation(target)
+        self.render_to_image_stamped(target)
             .map(|result| result.frame)
     }
 
@@ -1927,6 +2315,15 @@ impl InteractivePlotSession {
         &self,
         target: ImageTarget,
     ) -> Result<InteractiveFrameWithGeneration> {
+        self.render_to_image_stamped(target)
+            .map(|result| InteractiveFrameWithGeneration {
+                frame: result.frame,
+                base_generation: result.base_generation,
+            })
+    }
+
+    /// Renders an image frame with an opaque currentness stamp.
+    pub fn render_to_image_stamped(&self, target: ImageTarget) -> Result<StampedInteractiveFrame> {
         self.render_to_target(
             RenderTargetKind::Image,
             target.size_px,
@@ -1936,7 +2333,7 @@ impl InteractivePlotSession {
     }
 
     pub fn render_to_surface(&self, target: SurfaceTarget) -> Result<InteractiveFrame> {
-        self.render_to_surface_with_generation(target)
+        self.render_to_surface_stamped(target)
             .map(|result| result.frame)
     }
 
@@ -1945,6 +2342,18 @@ impl InteractivePlotSession {
         &self,
         target: SurfaceTarget,
     ) -> Result<InteractiveFrameWithGeneration> {
+        self.render_to_surface_stamped(target)
+            .map(|result| InteractiveFrameWithGeneration {
+                frame: result.frame,
+                base_generation: result.base_generation,
+            })
+    }
+
+    /// Renders a surface frame with an opaque currentness stamp.
+    pub fn render_to_surface_stamped(
+        &self,
+        target: SurfaceTarget,
+    ) -> Result<StampedInteractiveFrame> {
         self.render_to_target(
             RenderTargetKind::Surface,
             target.size_px,
@@ -1954,6 +2363,7 @@ impl InteractivePlotSession {
     }
 
     pub fn dirty_domains(&self) -> DirtyDomains {
+        self.repair_poisoned_session();
         *self
             .inner
             .dirty
@@ -1962,11 +2372,7 @@ impl InteractivePlotSession {
     }
 
     fn render_snapshot(&self) -> (SessionState, DirtyDomains, RenderEpoch) {
-        let state = self
-            .inner
-            .state
-            .lock()
-            .expect("InteractivePlotSession state lock poisoned");
+        let state = lock_recover(&self.inner.state);
         let dirty = self
             .inner
             .dirty
@@ -1982,8 +2388,26 @@ impl InteractivePlotSession {
         )
     }
 
+    fn sync_reactive_epoch(&self) {
+        let reactive_epoch = self.inner.reactive_epoch.load(Ordering::Acquire);
+        let changed = {
+            let mut state = lock_recover(&self.inner.state);
+            if state.last_reactive_epoch == reactive_epoch {
+                false
+            } else {
+                state.last_reactive_epoch = reactive_epoch;
+                true
+            }
+        };
+        if changed {
+            self.mark_dirty(DirtyDomain::Data);
+            self.mark_dirty(DirtyDomain::Overlay);
+        }
+    }
+
     /// Returns the current interactive viewport state.
     pub fn viewport_snapshot(&self) -> Result<InteractiveViewportSnapshot> {
+        self.repair_poisoned_session();
         let geometry = self
             .displayed_geometry()
             .or_else(|_| self.geometry_snapshot())?;
@@ -2022,6 +2446,7 @@ impl InteractivePlotSession {
     /// bounds reflect input and restoration changes immediately, even when the
     /// latest displayed frame still uses older bounds.
     pub fn view_bounds_snapshot(&self) -> InteractiveViewBoundsSnapshot {
+        self.repair_poisoned_session();
         let state = self
             .inner
             .state
@@ -2038,6 +2463,7 @@ impl InteractivePlotSession {
 
     /// Restores the visible bounds for the interactive viewport.
     pub fn restore_visible_bounds(&self, bounds: ViewportRect) -> bool {
+        self.repair_poisoned_session();
         let next_visible = DataBounds::from_viewport_rect(bounds);
         if !bounds_have_extent(next_visible) {
             return false;
@@ -2063,7 +2489,6 @@ impl InteractivePlotSession {
             .state
             .lock()
             .expect("InteractivePlotSession state lock poisoned");
-        self.begin_mutation();
         let Some(next_visible) = normalize_visible_bounds(
             next_visible,
             state.base_bounds,
@@ -2099,9 +2524,9 @@ impl InteractivePlotSession {
         state.pending_visible_restore = None;
         state.visible_bounds = next_visible;
         sync_legacy_viewport_fields(&mut state, &plot.layout.x_scale, &plot.layout.y_scale);
+        self.record_mutation(&[DirtyDomain::Data, DirtyDomain::Overlay]);
         drop(state);
-        self.mark_dirty(DirtyDomain::Data);
-        self.mark_dirty(DirtyDomain::Overlay);
+        self.inner.change_hub.notify();
         true
     }
 
@@ -2111,6 +2536,7 @@ impl InteractivePlotSession {
     /// plot's current-time data bounds to be resolved before normalization.
     #[doc(hidden)]
     pub fn defer_visible_bounds_restore(&self, bounds: ViewportRect) -> bool {
+        self.repair_poisoned_session();
         let requested = DataBounds::from_viewport_rect(bounds);
         if !bounds_have_extent(requested) {
             return false;
@@ -2126,11 +2552,13 @@ impl InteractivePlotSession {
             .state
             .lock()
             .expect("InteractivePlotSession state lock poisoned");
-        self.begin_mutation();
+        if state.pending_visible_restore == Some(requested) {
+            return false;
+        }
         state.pending_visible_restore = Some(requested);
+        self.record_mutation(&[DirtyDomain::Data, DirtyDomain::Overlay]);
         drop(state);
-        self.mark_dirty(DirtyDomain::Data);
-        self.mark_dirty(DirtyDomain::Overlay);
+        self.inner.change_hub.notify();
         true
     }
 
@@ -2140,7 +2568,16 @@ impl InteractivePlotSession {
         size_px: (u32, u32),
         scale_factor: f32,
         time_seconds: f64,
-    ) -> Result<InteractiveFrameWithGeneration> {
+    ) -> Result<StampedInteractiveFrame> {
+        self.repair_poisoned_session();
+        self.ensure_epochs_available()?;
+        // Synchronizing the request can emit change notifications. It must
+        // happen before both the reentrancy guard and render gate so callbacks
+        // may safely trigger a render of the latest state.
+        self.resize(size_px, scale_factor);
+        self.apply_input(PlotInputEvent::SetTime { time_seconds });
+        self.sync_reactive_epoch();
+
         let _active_render = ActiveRenderGuard::enter(Arc::as_ptr(&self.inner) as usize)?;
         let _render_guard = self
             .inner
@@ -2149,30 +2586,10 @@ impl InteractivePlotSession {
             .expect("InteractivePlotSession render gate poisoned");
         #[allow(clippy::let_unit_value)]
         let frame_start = start_frame_timer();
-        self.resize(size_px, scale_factor);
-        self.apply_input(PlotInputEvent::SetTime { time_seconds });
 
         let mut state_before_render = None;
         let mut render_epoch = None;
-        let render_result = (|| -> Result<InteractiveFrameWithGeneration> {
-            let reactive_epoch = self.inner.reactive_epoch.load(Ordering::Acquire);
-            let mut mark_data_dirty = false;
-            {
-                let mut state = self
-                    .inner
-                    .state
-                    .lock()
-                    .expect("InteractivePlotSession state lock poisoned");
-                if state.last_reactive_epoch != reactive_epoch {
-                    state.last_reactive_epoch = reactive_epoch;
-                    mark_data_dirty = true;
-                }
-            }
-            if mark_data_dirty {
-                self.mark_dirty(DirtyDomain::Data);
-                self.mark_dirty(DirtyDomain::Overlay);
-            }
-
+        let render_result = (|| -> Result<StampedInteractiveFrame> {
             let (state_snapshot, dirty_before_render, epoch_before_render) = self.render_snapshot();
             state_before_render = Some(state_snapshot);
             render_epoch = Some(epoch_before_render);
@@ -2285,7 +2702,8 @@ impl InteractivePlotSession {
             };
 
             self.run_render_test_hook(RenderTestPoint::BeforeFinalCommit);
-            self.commit_frame_if_current(epoch_before_render, base_result.generation)?;
+            let render_stamp =
+                self.commit_frame_if_current(epoch_before_render, base_result.generation)?;
             if base_result.updated
                 && let Some(frame) = resolved_frame.as_ref()
             {
@@ -2308,8 +2726,9 @@ impl InteractivePlotSession {
                 target,
                 surface_capability,
             );
-            Ok(InteractiveFrameWithGeneration {
+            Ok(StampedInteractiveFrame {
                 base_generation: base_result.generation,
+                render_stamp,
                 frame: InteractiveFrame {
                     image: composed,
                     layers: LayerImages {
@@ -2800,13 +3219,80 @@ impl InteractivePlotSession {
         }
     }
 
-    fn begin_mutation(&self) {
-        self.inner.mutation_epoch.fetch_add(1, Ordering::AcqRel);
+    /// Repairs invariant-bearing session state after a panic while holding the
+    /// state or dirty mutex.
+    ///
+    /// The canonical state-then-dirty lock order matches render snapshots.
+    /// Cached output is discarded and both epochs advance before poison is
+    /// cleared, so a stamp created before the panic cannot remain current.
+    /// Notification is deliberately delayed until both guards are released.
+    fn repair_poisoned_session(&self) -> bool {
+        if !self.inner.state.is_poisoned() && !self.inner.dirty.is_poisoned() {
+            return false;
+        }
+
+        let mut state = match self.inner.state.lock() {
+            Ok(state) => state,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        let mut dirty = match self.inner.dirty.lock() {
+            Ok(dirty) => dirty,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        let needs_repair = self.inner.state.is_poisoned() || self.inner.dirty.is_poisoned();
+        if !needs_repair {
+            return false;
+        }
+
+        state.base_cache = None;
+        state.overlay_cache = None;
+        state.geometry = None;
+        *dirty = DirtyDomains::with_all();
+        advance_atomic_epoch(&self.inner.mutation_epoch, &self.inner.epoch_exhausted);
+        advance_atomic_epoch(&self.inner.dirty_epoch, &self.inner.epoch_exhausted);
+        self.inner.state.clear_poison();
+        self.inner.dirty.clear_poison();
+        drop(dirty);
+        drop(state);
+
+        self.inner.prepared.invalidate();
+        self.inner.change_hub.notify();
+        true
+    }
+
+    /// Records a state/configuration mutation while the caller still holds
+    /// the lock that protects the mutated value.
+    ///
+    /// Render snapshots take the state lock followed by the dirty lock. Keeping
+    /// the mutated value locked until both epochs and dirty domains advance
+    /// prevents a renderer from observing new state with old clean flags.
+    fn record_mutation(&self, domains: &[DirtyDomain]) {
+        self.run_render_test_hook(RenderTestPoint::BeforeDirtyMark);
+        let mut dirty = lock_recover(&self.inner.dirty);
+        advance_atomic_epoch(&self.inner.mutation_epoch, &self.inner.epoch_exhausted);
+        advance_atomic_epoch(&self.inner.dirty_epoch, &self.inner.epoch_exhausted);
+        for &domain in domains {
+            dirty.mark(domain);
+        }
     }
 
     fn epochs_match(&self, expected: RenderEpoch) -> bool {
-        self.inner.mutation_epoch.load(Ordering::Acquire) == expected.mutation
+        !self.inner.epoch_exhausted.load(Ordering::Acquire)
+            && !self.inner.change_hub.is_exhausted()
+            && self.inner.mutation_epoch.load(Ordering::Acquire) == expected.mutation
             && self.inner.dirty_epoch.load(Ordering::Acquire) == expected.dirty
+    }
+
+    fn ensure_epochs_available(&self) -> Result<()> {
+        if self.inner.epoch_exhausted.load(Ordering::Acquire)
+            || self.inner.change_hub.is_exhausted()
+        {
+            Err(PlottingError::RenderError(
+                "interactive session revision space exhausted".to_string(),
+            ))
+        } else {
+            Ok(())
+        }
     }
 
     #[cfg(test)]
@@ -2837,8 +3323,10 @@ impl InteractivePlotSession {
             .dirty
             .lock()
             .expect("InteractivePlotSession dirty lock poisoned");
-        self.inner.dirty_epoch.fetch_add(1, Ordering::AcqRel);
+        advance_atomic_epoch(&self.inner.dirty_epoch, &self.inner.epoch_exhausted);
         dirty.mark(domain);
+        drop(dirty);
+        self.inner.change_hub.notify();
     }
 
     fn update_resize_state(
@@ -2861,7 +3349,11 @@ impl InteractivePlotSession {
         size_changed || scale_changed
     }
 
-    fn commit_frame_if_current(&self, expected_epoch: RenderEpoch, generation: u64) -> Result<()> {
+    fn commit_frame_if_current(
+        &self,
+        expected_epoch: RenderEpoch,
+        generation: u64,
+    ) -> Result<InteractiveRenderStamp> {
         let state = self
             .inner
             .state
@@ -2879,7 +3371,16 @@ impl InteractivePlotSession {
         }
         dirty.clear_base();
         dirty.clear_overlay();
-        Ok(())
+        let session_token = self.inner.session_token.ok_or_else(|| {
+            PlottingError::RenderError("interactive session identity space exhausted".to_string())
+        })?;
+        Ok(InteractiveRenderStamp {
+            session_token,
+            base_generation: generation,
+            change_revision: self.change_revision_raw(),
+            mutation_epoch: expected_epoch.mutation,
+            dirty_epoch: expected_epoch.dirty,
+        })
     }
 
     fn try_incremental_stream_render(
@@ -2987,6 +3488,7 @@ impl InteractivePlotSession {
     }
 
     pub(crate) fn sync_legacy_viewport(&self, zoom_level: f64, pan_x: f64, pan_y: f64) {
+        self.repair_poisoned_session();
         let mut state = self
             .inner
             .state
@@ -3029,12 +3531,13 @@ impl InteractivePlotSession {
             &plot.layout.x_scale,
             &plot.layout.y_scale,
         );
+        self.record_mutation(&[DirtyDomain::Data, DirtyDomain::Overlay]);
         drop(state);
-        self.mark_dirty(DirtyDomain::Data);
-        self.mark_dirty(DirtyDomain::Overlay);
+        self.inner.change_hub.notify();
     }
 
     pub(crate) fn sync_legacy_hover(&self, data_position: Option<ViewportPoint>) {
+        self.repair_poisoned_session();
         let mut state = self
             .inner
             .state
@@ -3049,8 +3552,9 @@ impl InteractivePlotSession {
         });
         state.tooltip = state.hovered.as_ref().map(tooltip_from_hit);
         state.tooltip_source = state.hovered.as_ref().map(|_| TooltipSource::Hover);
+        self.record_mutation(&[DirtyDomain::Overlay]);
         drop(state);
-        self.mark_dirty(DirtyDomain::Overlay);
+        self.inner.change_hub.notify();
     }
 }
 
@@ -3755,10 +4259,33 @@ fn displayed_geometry_unavailable() -> PlottingError {
 }
 
 fn render_superseded_error() -> PlottingError {
-    PlottingError::RenderError(
-        "interactive render superseded by a newer mutation, invalidation, or dirty update"
-            .to_string(),
-    )
+    PlottingError::RenderSuperseded
+}
+
+fn advance_atomic_epoch(epoch: &AtomicU64, exhausted: &AtomicBool) -> bool {
+    if exhausted.load(Ordering::Acquire) {
+        return false;
+    }
+    let mut current = epoch.load(Ordering::Acquire);
+    loop {
+        let Some(next) = current.checked_add(1) else {
+            exhausted.store(true, Ordering::Release);
+            return false;
+        };
+        match epoch.compare_exchange_weak(current, next, Ordering::AcqRel, Ordering::Acquire) {
+            Ok(_) => return true,
+            Err(observed) => current = observed,
+        }
+    }
+}
+
+fn reserve_atomic_id(counter: &AtomicU64) -> Option<u64> {
+    counter
+        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+            current.checked_add(1)
+        })
+        .ok()
+        .filter(|&identity| identity != 0)
 }
 
 fn build_frame_key(plot: &Plot, state: &SessionState) -> InteractiveFrameKey {

@@ -1,0 +1,14 @@
+[package]
+name = "ruviz-slint-package-consumer"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+ruviz-slint = { path = "../.." }
+slint = { version = "~1.17", default-features = false, features = ["std", "compat-1-2"] }
+
+[build-dependencies]
+slint-build = { version = "~1.17", features = ["experimental-module-builds"] }

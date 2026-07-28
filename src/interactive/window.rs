@@ -7,7 +7,7 @@ use crate::{
     core::plot::Image,
     core::{
         Plot, PlotInputEvent, PlottingError, ReactiveSubscription, Result, ViewportPoint,
-        ViewportRect,
+        ViewportRect, source_over_straight_rgba,
     },
     export::write_rgba_png_atomic,
     interactive::{
@@ -1805,27 +1805,10 @@ fn render_output_to_image(frame: &InteractiveRenderOutput, width: u32, height: u
 
 fn blend_rgba_into_rgba(src_rgba: &[u8], dst_rgba: &mut [u8]) {
     for (src, dst) in src_rgba.chunks_exact(4).zip(dst_rgba.chunks_exact_mut(4)) {
-        let alpha = src[3];
-        if alpha == 0 {
-            continue;
-        }
-        if alpha == u8::MAX {
-            dst.copy_from_slice(src);
-            continue;
-        }
-
-        let alpha = alpha as f32 / 255.0;
-        dst[0] = blend_channel(dst[0], src[0], alpha);
-        dst[1] = blend_channel(dst[1], src[1], alpha);
-        dst[2] = blend_channel(dst[2], src[2], alpha);
-        dst[3] = alpha_blend_alpha(dst[3], src[3]);
+        let destination = [dst[0], dst[1], dst[2], dst[3]];
+        let source = [src[0], src[1], src[2], src[3]];
+        dst.copy_from_slice(&source_over_straight_rgba(destination, source));
     }
-}
-
-fn alpha_blend_alpha(background: u8, foreground: u8) -> u8 {
-    let bg = background as f32 / 255.0;
-    let fg = foreground as f32 / 255.0;
-    ((fg + bg * (1.0 - fg)) * 255.0) as u8
 }
 
 fn fill_rgba_rectangle(
@@ -1843,16 +1826,21 @@ fn fill_rgba_rectangle(
         return;
     }
 
-    let alpha = color.a as f32 / 255.0;
     let width = width as i32;
     let height = height as i32;
     for y in y1.max(0)..y2.min(height) {
         for x in x1.max(0)..x2.min(width) {
             let index = ((y * width + x) * 4) as usize;
-            pixel_data[index] = blend_channel(pixel_data[index], color.r, alpha);
-            pixel_data[index + 1] = blend_channel(pixel_data[index + 1], color.g, alpha);
-            pixel_data[index + 2] = blend_channel(pixel_data[index + 2], color.b, alpha);
-            pixel_data[index + 3] = alpha_blend_alpha(pixel_data[index + 3], color.a);
+            let destination = [
+                pixel_data[index],
+                pixel_data[index + 1],
+                pixel_data[index + 2],
+                pixel_data[index + 3],
+            ];
+            pixel_data[index..index + 4].copy_from_slice(&source_over_straight_rgba(
+                destination,
+                [color.r, color.g, color.b, color.a],
+            ));
         }
     }
 }

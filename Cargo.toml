@@ -12,7 +12,7 @@ members = ["crates/ruviz-web", "python"]
 # source reappears in it.
 #
 # Build the adapter with `--manifest-path crates/ruviz-gpui/Cargo.toml`.
-exclude = ["crates/ruviz-gpui"]
+exclude = ["crates/ruviz-gpui", "crates/gui-adapters"]
 # Keep plain root cargo commands focused on the cross-platform core crate.
 default-members = ["."]
 resolver = "2"

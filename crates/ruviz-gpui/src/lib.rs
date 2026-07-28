@@ -10,12 +10,14 @@
 //! - `RuvizPlot` for embedding static or interactive plots in GPUI views
 //! - configurable presentation modes for image-backed and hybrid rendering
 //! - built-in pan, zoom, hover, selection, and context-menu behavior
+//! - background-rendered static and interactive 3D views behind the `3d` feature
 //! - absolute-window coordinate mapping and frame-aware click/hover callbacks
 //! - clipboard and PNG save helpers routed through the host platform
 //!
 //! # Coordinates And Pointer Events
 //!
-//! [`RuvizPlot::data_at`] accepts an absolute GPUI window [`Point<Pixels>`], while
+//! [`RuvizPlot::data_at`] accepts an absolute GPUI window
+//! [`Point<Pixels>`](gpui::Point), while
 //! [`RuvizPlot::screen_at`] returns one. Both methods use the currently displayed
 //! backing frame and return `Ok(None)` when layout or a valid in-bounds mapping is
 //! unavailable. Click and hover callbacks share [`PlotPointerEvent`]:
@@ -47,8 +49,8 @@
 //!
 //! ```toml
 //! [dependencies]
-//! ruviz = "0.5.0"
-//! ruviz-gpui = "0.5.0"
+//! ruviz = "0.6.0"
+//! ruviz-gpui = "0.6.0"
 //! ```
 //!
 //! Then build a normal `ruviz::Plot` or `PreparedPlot` and hand it to the GPUI
@@ -107,10 +109,11 @@ mod platform_impl {
         axes::AxisScale,
         core::plot::Image as RuvizImage,
         core::{
-            Annotation, AnnotationId, FramePacing, FrameStats, HitResult, ImageTarget,
-            InteractivePlotSession, InteractiveViewportSnapshot, Plot, PlotInputEvent, PlotResult,
+            AlphaMode, Annotation, AnnotationId, FramePacing, FrameStats, HitResult, ImageTarget,
+            InteractivePlotSession, InteractiveViewportSnapshot, PlotInputEvent, PlotResult,
             PlottingError, PreparedPlot, QualityPolicy, ReactiveSubscription, RenderTargetKind,
             Result, SurfaceCapability, SurfaceTarget, ViewportPoint, ViewportRect,
+            source_over_straight_rgba,
         },
         export::write_rgba_png_atomic,
     };
@@ -144,34 +147,20 @@ mod platform_impl {
     type ContextMenuActionHandler =
         Arc<dyn Fn(GpuiContextMenuActionContext) -> PlotResult<()> + Send + Sync>;
     type PlotPointerEventHandler = Arc<dyn Fn(PlotPointerEvent) + Send + Sync>;
+    type PlotErrorHandler = Arc<dyn Fn(PlottingError) + Send + Sync>;
 
     #[derive(Clone, Default)]
     struct PlotPointerEventHandlers {
         click: Option<PlotPointerEventHandler>,
         hover: Option<PlotPointerEventHandler>,
+        error: Option<PlotErrorHandler>,
     }
 
-    pub trait IntoPlotSession {
-        fn into_plot_session(self) -> InteractivePlotSession;
-    }
-
-    impl IntoPlotSession for InteractivePlotSession {
-        fn into_plot_session(self) -> InteractivePlotSession {
-            self
-        }
-    }
-
-    impl IntoPlotSession for PreparedPlot {
-        fn into_plot_session(self) -> InteractivePlotSession {
-            self.into_interactive()
-        }
-    }
-
-    impl IntoPlotSession for Plot {
-        fn into_plot_session(self) -> InteractivePlotSession {
-            self.prepare_interactive()
-        }
-    }
+    /// Shared framework-neutral plot-to-session conversion contract.
+    ///
+    /// Re-exported here for source compatibility with earlier `ruviz-gpui`
+    /// releases; the trait itself is defined by `ruviz::core`.
+    pub use ruviz::core::IntoPlotSession;
 
     #[deprecated(note = "Use IntoPlotSession instead.")]
     pub trait IntoRuvizSession {
@@ -343,8 +332,7 @@ mod platform_impl {
     /// [`Self::window_position`] is an absolute GPUI window coordinate. The
     /// viewport coordinate, data coordinate, snapshot, and hit result all use
     /// the interactive session's currently displayed backing frame.
-    /// [`RuvizPlot`] emits this type through [`gpui::EventEmitter`], so host views can use
-    /// `cx.subscribe(&plot, ...)` and update UI state with their normal GPUI context.
+    /// [`RuvizPlot`] emits this payload directly for pointer subscriptions.
     #[derive(Clone, Debug, PartialEq)]
     pub struct PlotPointerEvent {
         pub kind: PlotPointerEventKind,
@@ -538,12 +526,14 @@ mod platform_impl {
         }
     }
 
-    fn fill_backing_dimension_px(logical_px: u32, scale_factor: f32) -> u32 {
-        if logical_px == 0 {
+    fn fill_backing_dimension_px(logical_px: f64, scale_factor: f32) -> u32 {
+        if !logical_px.is_finite() || logical_px <= 0.0 {
             return 0;
         }
-        let backing_scale = sanitize_scale_factor(scale_factor).max(1.0);
-        ((logical_px as f32) * backing_scale).ceil().max(1.0) as u32
+        let backing_scale = f64::from(sanitize_scale_factor(scale_factor).max(1.0));
+        (logical_px * backing_scale)
+            .ceil()
+            .clamp(1.0, f64::from(u32::MAX)) as u32
     }
 
     #[derive(Clone)]
@@ -583,25 +573,63 @@ mod platform_impl {
         Replace(Option<Arc<RenderImage>>),
     }
 
-    #[derive(Clone, Debug, Eq, PartialEq)]
+    #[derive(Debug)]
+    struct RenderSchedulerIncarnation;
+
+    #[derive(Clone, Debug)]
     struct ScheduledRender {
+        scheduler_incarnation: Arc<RenderSchedulerIncarnation>,
         generation: u64,
         request: RenderRequest,
     }
 
-    #[derive(Debug, Default)]
+    impl PartialEq for ScheduledRender {
+        fn eq(&self, other: &Self) -> bool {
+            Arc::ptr_eq(&self.scheduler_incarnation, &other.scheduler_incarnation)
+                && self.generation == other.generation
+                && self.request == other.request
+        }
+    }
+
+    impl Eq for ScheduledRender {}
+
+    #[derive(Debug)]
     struct RenderScheduler {
+        scheduler_incarnation: Arc<RenderSchedulerIncarnation>,
         latest_requested_generation: u64,
         in_flight: Option<ScheduledRender>,
         queued: Option<ScheduledRender>,
         dropped_frames: u64,
     }
 
+    impl Default for RenderScheduler {
+        fn default() -> Self {
+            Self {
+                scheduler_incarnation: Arc::new(RenderSchedulerIncarnation),
+                latest_requested_generation: 0,
+                in_flight: None,
+                queued: None,
+                dropped_frames: 0,
+            }
+        }
+    }
+
     impl RenderScheduler {
+        fn advance_generation(&mut self) -> u64 {
+            if self.latest_requested_generation == u64::MAX {
+                self.scheduler_incarnation = Arc::new(RenderSchedulerIncarnation);
+                self.latest_requested_generation = 1;
+            } else {
+                self.latest_requested_generation += 1;
+            }
+            self.latest_requested_generation
+        }
+
         fn schedule(&mut self, request: RenderRequest) -> Option<ScheduledRender> {
-            self.latest_requested_generation = self.latest_requested_generation.saturating_add(1);
+            let generation = self.advance_generation();
             let scheduled = ScheduledRender {
-                generation: self.latest_requested_generation,
+                scheduler_incarnation: Arc::clone(&self.scheduler_incarnation),
+                generation,
                 request,
             };
 
@@ -619,26 +647,32 @@ mod platform_impl {
             self.in_flight = Some(scheduled);
         }
 
-        fn finish(&mut self, scheduled: &ScheduledRender) -> bool {
+        fn finish(&mut self, scheduled: &ScheduledRender) -> Option<bool> {
             if self.in_flight.as_ref() != Some(scheduled) {
-                return false;
+                return None;
             }
             self.in_flight = None;
-            true
+            Some(
+                Arc::ptr_eq(
+                    &scheduled.scheduler_incarnation,
+                    &self.scheduler_incarnation,
+                ) && scheduled.generation == self.latest_requested_generation,
+            )
         }
 
         fn take_queued(&mut self) -> Option<ScheduledRender> {
             self.queued.take()
         }
 
-        fn reset(&mut self) {
-            *self = Self::default();
+        fn supersede_in_flight(&mut self) {
+            self.advance_generation();
         }
     }
 
     pub struct RuvizPlotBuilder<P> {
         plot: P,
         options: RuvizPlotOptions,
+        accepts_user_input: bool,
         context_menu_action_handler: Option<ContextMenuActionHandler>,
         pointer_event_handlers: PlotPointerEventHandlers,
     }
@@ -651,17 +685,26 @@ mod platform_impl {
             Self {
                 plot,
                 options: RuvizPlotOptions::default(),
+                accepts_user_input: true,
                 context_menu_action_handler: None,
                 pointer_event_handlers: PlotPointerEventHandlers::default(),
             }
         }
 
         pub fn interactive(mut self) -> Self {
+            self.accepts_user_input = true;
             self.options.interaction = InteractionOptions::default();
             self
         }
 
+        /// Builds a rendering-only plot that ignores every GPUI user-input event.
+        ///
+        /// Static views do not focus on pointer input, mutate the interactive
+        /// session, open context menus, consume shortcuts, or emit click, hover,
+        /// context-menu, or input-error callbacks. Programmatic APIs and normal
+        /// rendering remain available. Call [`Self::interactive`] to opt back in.
         pub fn static_view(mut self) -> Self {
+            self.accepts_user_input = false;
             self.options.interaction = InteractionOptions {
                 time_seconds: self.options.interaction.time_seconds,
                 image_fit: self.options.interaction.image_fit,
@@ -743,8 +786,23 @@ mod platform_impl {
             self
         }
 
+        /// Observe current asynchronous rendering failures.
+        ///
+        /// Superseded render errors are intentionally suppressed. The last
+        /// successfully rendered frame remains visible after a reported error.
+        /// Stateful hosts can inspect [`RuvizPlot::last_error`] and call
+        /// [`RuvizPlot::retry_render`] after presenting the failure.
+        pub fn on_error<F>(mut self, handler: F) -> Self
+        where
+            F: Fn(PlottingError) + Send + Sync + 'static,
+        {
+            self.pointer_event_handlers.error = Some(Arc::new(handler));
+            self
+        }
+
         fn validate(&self) -> PlotResult<()> {
-            if self.options.context_menu.enabled
+            if self.accepts_user_input
+                && self.options.context_menu.enabled
                 && !self.options.context_menu.custom_items.is_empty()
                 && self.context_menu_action_handler.is_none()
             {
@@ -763,12 +821,14 @@ mod platform_impl {
             self.validate()?;
             let options = self.options;
             let plot = self.plot;
+            let accepts_user_input = self.accepts_user_input;
             let context_menu_action_handler = self.context_menu_action_handler;
             let pointer_event_handlers = self.pointer_event_handlers;
             Ok(cx.new(move |cx| {
-                RuvizPlot::from_options_impl(
+                RuvizPlot::from_options_and_input_mode_impl(
                     plot,
                     options,
+                    accepts_user_input,
                     context_menu_action_handler,
                     pointer_event_handlers,
                     cx,
@@ -842,8 +902,11 @@ mod platform_impl {
         surface_upload: SurfaceUploadState,
         scheduler: RenderScheduler,
         in_flight_render: Option<Task<()>>,
+        failed_request: Option<RenderRequest>,
+        last_error: Option<PlottingError>,
         last_layout: Option<InteractionLayout>,
         focus_handle: FocusHandle,
+        accepts_user_input: bool,
         interaction_state: InteractionState,
         context_menu_action_handler: Option<ContextMenuActionHandler>,
         pointer_event_handlers: PlotPointerEventHandlers,
@@ -853,6 +916,27 @@ mod platform_impl {
         fn from_options_impl<P>(
             plot: P,
             options: RuvizPlotOptions,
+            context_menu_action_handler: Option<ContextMenuActionHandler>,
+            pointer_event_handlers: PlotPointerEventHandlers,
+            cx: &mut Context<Self>,
+        ) -> Self
+        where
+            P: IntoPlotSession,
+        {
+            Self::from_options_and_input_mode_impl(
+                plot,
+                options,
+                true,
+                context_menu_action_handler,
+                pointer_event_handlers,
+                cx,
+            )
+        }
+
+        fn from_options_and_input_mode_impl<P>(
+            plot: P,
+            options: RuvizPlotOptions,
+            accepts_user_input: bool,
             context_menu_action_handler: Option<ContextMenuActionHandler>,
             pointer_event_handlers: PlotPointerEventHandlers,
             cx: &mut Context<Self>,
@@ -878,8 +962,11 @@ mod platform_impl {
                 surface_upload: SurfaceUploadState::default(),
                 scheduler: RenderScheduler::default(),
                 in_flight_render: None,
+                failed_request: None,
+                last_error: None,
                 last_layout: None,
                 focus_handle: cx.focus_handle(),
+                accepts_user_input,
                 interaction_state: InteractionState::default(),
                 context_menu_action_handler,
                 pointer_event_handlers,
@@ -981,6 +1068,30 @@ mod platform_impl {
             &self.options.context_menu
         }
 
+        /// Explicitly retry a render request that most recently failed.
+        ///
+        /// Identical failed requests are latched to prevent a notify/render
+        /// loop. Resize, replacement, reactive changes, and accepted input also
+        /// clear the latch automatically.
+        pub fn retry_render(&mut self, cx: &mut Context<Self>) {
+            self.failed_request = None;
+            self.last_error = None;
+            cx.notify();
+        }
+
+        /// Most recent current render failure, until a retry, invalidation,
+        /// replacement, or successful current render clears it.
+        pub const fn last_error(&self) -> Option<&PlottingError> {
+            self.last_error.as_ref()
+        }
+
+        fn report_error(&mut self, error: PlottingError, _cx: &mut Context<Self>) {
+            self.last_error = Some(error.clone());
+            if let Some(handler) = &self.pointer_event_handlers.error {
+                handler(error);
+            }
+        }
+
         pub fn stats(&self) -> PlotStats {
             PlotStats {
                 render: self.frame_stats(),
@@ -1013,8 +1124,11 @@ mod platform_impl {
         /// This is a destructive replacement. The previous visible view is
         /// discarded (a session created from a plot starts at its natural/base
         /// bounds), any custom home view is cleared, and pointer, drag, hover,
-        /// selection, cached frames, scheduler and in-flight work, and reactive
-        /// subscriptions from the previous session are discarded.
+        /// selection and reactive subscriptions from the previous session are
+        /// discarded. The last good frame remains visible while replacement
+        /// work is pending or if it fails. An already-running render is allowed
+        /// to finish as the sole in-flight render, but its result is superseded
+        /// and the next prepaint coalesces the replacement request.
         ///
         /// For a replacement that retains only a user-customized visible view,
         /// use [`Self::set_plot_keep_view`]. For data-only changes, prefer
@@ -1038,8 +1152,11 @@ mod platform_impl {
         ///
         /// Like [`Self::set_plot`], this still replaces the entire interactive
         /// session. It does not preserve the home view, pointer, drag, hover,
-        /// selection, cached frames, scheduler or in-flight work, or reactive
-        /// subscriptions.
+        /// selection or reactive subscriptions. The last good frame remains
+        /// visible while replacement work is pending or if it fails. An
+        /// already-running render remains the sole in-flight render until it
+        /// finishes; its result is superseded and replacement work is coalesced
+        /// behind it.
         ///
         /// Restoration is applied during the replacement session's next render,
         /// after its data bounds have been resolved for the configured time. If the
@@ -1195,13 +1312,15 @@ mod platform_impl {
         }
 
         fn invalidate_frame_state(&mut self) {
-            self.retire_cached_frame();
+            self.failed_request = None;
+            self.last_error = None;
             self.session.invalidate();
-            self.scheduler.reset();
-            self.in_flight_render = None;
+            self.scheduler.supersede_in_flight();
         }
 
         fn replace_session(&mut self, session: InteractivePlotSession) {
+            self.failed_request = None;
+            self.last_error = None;
             self.session = session;
             apply_performance_options(&self.session, self.options.performance);
             let (reactive_notify_pending, reactive_receiver, subscription) =
@@ -1215,9 +1334,7 @@ mod platform_impl {
                 .expect("RuvizPlot presentation clock lock poisoned")
                 .reset();
             self.reset_pointer_state();
-            self.retire_cached_frame();
-            self.scheduler.reset();
-            self.in_flight_render = None;
+            self.scheduler.supersede_in_flight();
             self.last_layout = None;
             self.interaction_state.reset();
         }
@@ -1638,6 +1755,37 @@ mod platform_impl {
         }
 
         #[test]
+        fn test_builder_on_error_registers_render_error_observer() {
+            struct TestHost {
+                plot: Entity<RuvizPlot>,
+            }
+
+            let cx = TestAppContext::single();
+            let host = cx.update(|app| {
+                app.new(|cx| {
+                    let plot: Plot = Plot::new().line(&[0.0, 1.0], &[0.0, 1.0]).into();
+                    TestHost {
+                        plot: plot_builder(plot).on_error(|_| {}).build(cx),
+                    }
+                })
+            });
+            cx.read(|app| {
+                app.read_entity(&host, |host, app| {
+                    app.read_entity(&host.plot, |plot, _| {
+                        assert!(plot.pointer_event_handlers.error.is_some());
+                    });
+                })
+            });
+        }
+
+        #[test]
+        fn test_plot_preserves_pointer_event_emitter_source_compatibility() {
+            fn assert_emitter<T: gpui::EventEmitter<PlotPointerEvent>>() {}
+
+            assert_emitter::<RuvizPlot>();
+        }
+
+        #[test]
         fn test_rgba_to_bgra_conversion() {
             let mut pixels = vec![1, 2, 3, 255, 10, 20, 30, 128];
             rgba_to_bgra_in_place(&mut pixels);
@@ -1653,6 +1801,33 @@ mod platform_impl {
             assert_eq!(restored.width, original.width);
             assert_eq!(restored.height, original.height);
             assert_eq!(restored.pixels, original.pixels);
+        }
+
+        #[test]
+        fn test_render_image_normalizes_recorded_premultiplied_alpha() {
+            let original =
+                ruviz::core::plot::Image::from_premultiplied_rgba(1, 1, vec![64, 32, 16, 128]);
+            let render = render_image_from_ruviz(original);
+            assert_eq!(
+                render.as_bytes(0).expect("render bytes"),
+                &[32, 64, 128, 128]
+            );
+            let restored = render_image_to_ruviz(render.as_ref()).expect("straight RGBA image");
+            assert_eq!(restored.alpha_mode(), AlphaMode::Straight);
+            assert_eq!(restored.pixels, vec![128, 64, 32, 128]);
+        }
+
+        #[test]
+        fn test_rgba_compositor_handles_transparent_and_translucent_destinations() {
+            let source = [255, 0, 0, 128];
+
+            let mut transparent = [0, 0, 255, 0];
+            blend_rgba_into_rgba(&source, &mut transparent);
+            assert_eq!(transparent, [255, 0, 0, 128]);
+
+            let mut translucent = [0, 0, 255, 128];
+            blend_rgba_into_rgba(&source, &mut translucent);
+            assert_eq!(translucent, [170, 0, 85, 192]);
         }
 
         #[test]
@@ -1689,8 +1864,11 @@ mod platform_impl {
                 surface_upload: SurfaceUploadState::default(),
                 scheduler: RenderScheduler::default(),
                 in_flight_render: None,
+                failed_request: None,
+                last_error: None,
                 last_layout: None,
                 focus_handle,
+                accepts_user_input: true,
                 interaction_state: InteractionState::default(),
                 context_menu_action_handler: None,
                 pointer_event_handlers: PlotPointerEventHandlers::default(),
@@ -1747,12 +1925,50 @@ mod platform_impl {
         }
 
         #[test]
-        fn test_fill_backing_dimension_uses_display_scale_without_shrinking() {
-            assert_eq!(fill_backing_dimension_px(320, 1.0), 320);
-            assert_eq!(fill_backing_dimension_px(320, 2.0), 640);
-            assert_eq!(fill_backing_dimension_px(320, 1.5), 480);
-            assert_eq!(fill_backing_dimension_px(320, 0.5), 320);
-            assert_eq!(fill_backing_dimension_px(0, 2.0), 0);
+        fn test_fill_backing_dimension_scales_fractional_logical_size_before_ceiling() {
+            let expected = [
+                (1.0, (321, 181)),
+                (1.25, (401, 226)),
+                (1.5, (481, 271)),
+                (2.0, (641, 361)),
+            ];
+
+            for (scale_factor, expected_size) in expected {
+                assert_eq!(
+                    (
+                        fill_backing_dimension_px(320.25, scale_factor),
+                        fill_backing_dimension_px(180.25, scale_factor),
+                    ),
+                    expected_size,
+                );
+            }
+
+            assert_eq!(fill_backing_dimension_px(320.25, 0.5), 321);
+            assert_eq!(fill_backing_dimension_px(0.0, 2.0), 0);
+        }
+
+        #[test]
+        fn test_fill_policy_preserves_fractional_bounds_until_display_scaling() {
+            let plot = Plot::new().size(320.25, 180.25);
+            let session = plot.prepare_interactive();
+            let expected = [
+                (1.0, (321, 180)),
+                (1.25, (401, 225)),
+                (1.5, (481, 270)),
+                (2.0, (641, 360)),
+            ];
+
+            for (scale_factor, expected_size) in expected {
+                assert_eq!(
+                    frame_size_px_for_policy(
+                        &session,
+                        &SizingPolicy::Fill,
+                        (320.25, 180.25),
+                        scale_factor,
+                    ),
+                    Some(expected_size),
+                );
+            }
         }
 
         #[test]
@@ -1822,6 +2038,110 @@ mod platform_impl {
                     assert!((round_trip.x - center.x).abs() < 1e-6);
                     assert!((round_trip.y - center.y).abs() < 1e-6);
                 })
+            });
+        }
+
+        #[test]
+        fn test_fitted_coordinate_matrix_handles_fractional_bounds_and_hidpi() {
+            let component_bounds =
+                Bounds::new(point(px(10.25), px(20.5)), size(px(320.25), px(180.25)));
+            let plot: Plot = Plot::new().line(&[0.0, 1.0], &[0.0, 1.0]).into();
+            let cx = TestAppContext::single();
+            let view = cx.update(|app| {
+                app.new(move |cx| {
+                    RuvizPlot::from_options_impl(
+                        plot,
+                        RuvizPlotOptions::default(),
+                        None,
+                        PlotPointerEventHandlers::default(),
+                        cx,
+                    )
+                })
+            });
+
+            cx.update(|app| {
+                view.update(app, |view, _| {
+                    let expected_sizes = [
+                        (1.0, (321, 181)),
+                        (1.25, (401, 226)),
+                        (1.5, (481, 271)),
+                        (2.0, (641, 361)),
+                    ];
+                    for (scale_factor, expected_size) in expected_sizes {
+                        let frame_size_px = (
+                            fill_backing_dimension_px(
+                                f64::from(component_bounds.size.width),
+                                scale_factor,
+                            ),
+                            fill_backing_dimension_px(
+                                f64::from(component_bounds.size.height),
+                                scale_factor,
+                            ),
+                        );
+                        assert_eq!(frame_size_px, expected_size);
+                        for image_fit in [ImageFit::Contain, ImageFit::Cover, ImageFit::Fill] {
+                            view.options.interaction.image_fit = image_fit;
+                            view.update_layout(component_bounds, frame_size_px);
+                            let layout = view.last_layout.as_ref().expect("fitted layout");
+                            let center = point(
+                                layout.component_bounds.origin.x
+                                    + layout.component_bounds.size.width / 2.0,
+                                layout.component_bounds.origin.y
+                                    + layout.component_bounds.size.height / 2.0,
+                            );
+                            let center_viewport = view
+                                .local_viewport_point(center)
+                                .expect("all centered fits contain the component center");
+                            assert!(
+                                (center_viewport.x - f64::from(frame_size_px.0) / 2.0).abs() < 1e-3,
+                            );
+                            assert!(
+                                (center_viewport.y - f64::from(frame_size_px.1) / 2.0).abs() < 1e-3,
+                            );
+                            assert_window_points_close(
+                                view.viewport_point_to_window_position(center_viewport)
+                                    .expect("center inverse"),
+                                center,
+                            );
+
+                            let outside = point(
+                                layout.component_bounds.origin.x - px(0.25),
+                                layout.component_bounds.origin.y + px(1.0),
+                            );
+                            assert_eq!(view.local_viewport_point(outside), None);
+
+                            let corner = match image_fit {
+                                ImageFit::Contain => point(
+                                    layout.content_bounds.origin.x + px(0.25),
+                                    layout.content_bounds.origin.y + px(0.25),
+                                ),
+                                ImageFit::Cover | ImageFit::Fill => point(
+                                    layout.component_bounds.origin.x + px(0.25),
+                                    layout.component_bounds.origin.y + px(0.25),
+                                ),
+                            };
+                            let corner_viewport = view
+                                .local_viewport_point(corner)
+                                .expect("visible fitted corner");
+                            assert_window_points_close(
+                                view.viewport_point_to_window_position(corner_viewport)
+                                    .expect("corner inverse"),
+                                corner,
+                            );
+
+                            if image_fit == ImageFit::Contain
+                                && layout.content_bounds != layout.component_bounds
+                            {
+                                let letterbox_corner = layout.component_bounds.origin;
+                                assert_eq!(
+                                    view.local_viewport_point(letterbox_corner),
+                                    None,
+                                    "contain letterbox must reject component-corner input",
+                                );
+                            }
+                        }
+                    }
+                });
             });
         }
 
@@ -2082,6 +2402,7 @@ mod platform_impl {
                                 .expect("pointer event lock poisoned")
                                 .push(event);
                         })),
+                        error: None,
                     };
 
                     let stale_window_position = view
@@ -2214,6 +2535,121 @@ mod platform_impl {
         }
 
         #[test]
+        fn test_stale_pointer_leave_clears_hover_without_accepting_new_stale_hits() {
+            let component_bounds =
+                Bounds::new(point(px(40.0), px(30.0)), size(px(400.0), px(300.0)));
+            let plot: Plot = Plot::new()
+                .scatter(&[0.5], &[0.5])
+                .xlim(0.0, 1.0)
+                .ylim(0.0, 1.0)
+                .into();
+            let (cx, view) = mapped_test_view(
+                plot,
+                RuvizPlotOptions::default(),
+                (400, 300),
+                1.0,
+                component_bounds,
+            );
+            let hover_events = Arc::new(Mutex::new(Vec::<PlotPointerEvent>::new()));
+
+            cx.update(|app| {
+                view.update(app, |view, cx| {
+                    let hover_events_for_handler = Arc::clone(&hover_events);
+                    view.pointer_event_handlers.hover = Some(Arc::new(move |event| {
+                        hover_events_for_handler
+                            .lock()
+                            .expect("hover event lock poisoned")
+                            .push(event);
+                    }));
+                    let window_position = view
+                        .screen_at(ViewportPoint::new(0.5, 0.5))
+                        .expect("initial mapping should succeed")
+                        .expect("scatter point should be visible");
+                    let installed_generation = view
+                        .cached_frame
+                        .as_ref()
+                        .expect("generation A should be installed")
+                        .base_generation;
+
+                    view.handle_mouse_move(
+                        &MouseMoveEvent {
+                            position: window_position,
+                            pressed_button: None,
+                            modifiers: Modifiers::default(),
+                        },
+                        cx,
+                    )
+                    .expect("current hover should succeed");
+                    synchronize_test_frame(
+                        view,
+                        RenderRequest::new((400, 300), 1.0, 0.0, PresentationMode::Hybrid)
+                            .with_presented_base_generation(Some(installed_generation)),
+                    );
+                    assert!(
+                        view.cached_frame
+                            .as_ref()
+                            .expect("generation A should remain installed")
+                            .overlay_image
+                            .is_some(),
+                        "generation A should display the hover overlay"
+                    );
+
+                    view.session.apply_input(PlotInputEvent::Pan {
+                        delta_px: ViewportPoint::new(30.0, 0.0),
+                    });
+                    let newer = view
+                        .session
+                        .render_to_surface_with_generation(SurfaceTarget {
+                            size_px: (400, 300),
+                            scale_factor: 1.0,
+                            time_seconds: 0.0,
+                        })
+                        .expect("generation B should render externally");
+                    assert!(newer.base_generation > installed_generation);
+                    assert!(!view.session.dirty_domains().overlay);
+
+                    view.handle_hover_change(false, cx);
+                    assert!(
+                        view.session.dirty_domains().overlay,
+                        "pointer leave must deliver ClearHover despite the stale GPUI frame"
+                    );
+
+                    let cleared = view
+                        .session
+                        .render_to_surface_with_generation(SurfaceTarget {
+                            size_px: (400, 300),
+                            scale_factor: 1.0,
+                            time_seconds: 0.0,
+                        })
+                        .expect("cleared generation B overlay should render");
+                    assert!(cleared.frame.layers.overlay.is_none());
+                    assert!(!view.session.dirty_domains().overlay);
+
+                    view.handle_mouse_move(
+                        &MouseMoveEvent {
+                            position: window_position,
+                            pressed_button: None,
+                            modifiers: Modifiers::default(),
+                        },
+                        cx,
+                    )
+                    .expect("stale hover should be ignored normally");
+                    assert!(
+                        !view.session.dirty_domains().overlay,
+                        "the stale frame must not accept a new hover hit"
+                    );
+                });
+            });
+
+            let hover_events = hover_events.lock().expect("hover event lock poisoned");
+            assert_eq!(
+                hover_events.len(),
+                1,
+                "only the initial current-frame hover may reach callbacks"
+            );
+        }
+
+        #[test]
         fn test_heatmap_hover_payload_coexists_with_builtin_hover_and_coalesces_duplicates() {
             let events = Arc::new(Mutex::new(Vec::<PlotPointerEvent>::new()));
             let events_for_callback = Arc::clone(&events);
@@ -2241,6 +2677,7 @@ mod platform_impl {
                                     .expect("hover event lock poisoned")
                                     .push(event);
                             })),
+                            error: None,
                         },
                         cx,
                     );
@@ -2312,7 +2749,7 @@ mod platform_impl {
             let session = plot.prepare_interactive();
 
             let frame_size =
-                frame_size_px_for_policy(&session, &SizingPolicy::Fill, (400, 250), 2.0);
+                frame_size_px_for_policy(&session, &SizingPolicy::Fill, (400.0, 250.0), 2.0);
 
             assert_eq!(frame_size, Some((666, 500)));
         }
@@ -2328,7 +2765,7 @@ mod platform_impl {
                     width: 800,
                     height: 500,
                 },
-                (400, 250),
+                (400.0, 250.0),
                 2.0,
             );
 
@@ -2463,7 +2900,13 @@ mod platform_impl {
                         target: RenderTargetKind::Surface,
                     });
                     view.scheduler.latest_requested_generation = 7;
+                    view.scheduler.in_flight = Some(ScheduledRender {
+                        scheduler_incarnation: Arc::clone(&view.scheduler.scheduler_incarnation),
+                        generation: 7,
+                        request: RenderRequest::new((320, 240), 1.0, 0.0, PresentationMode::Hybrid),
+                    });
                     view.scheduler.dropped_frames = 3;
+                    view.in_flight_render = Some(Task::ready(()));
 
                     view.set_plot(replacement_plot, cx);
                 });
@@ -2479,15 +2922,21 @@ mod platform_impl {
                     assert_eq!(snapshot.visible_bounds, snapshot.base_bounds);
                     assert_ne!(snapshot.visible_bounds, custom_view);
                     assert_eq!(snapshot.selected_count, 0);
-                    assert!(view.cached_frame.is_none());
-                    assert_eq!(view.retired_images.len(), 1);
+                    assert!(view.cached_frame.is_some());
+                    assert!(view.retired_images.is_empty());
                     assert!(view.last_layout.is_none());
                     assert_eq!(view.interaction_state, InteractionState::default());
-                    assert_eq!(view.scheduler.latest_requested_generation, 0);
-                    assert!(view.scheduler.in_flight.is_none());
+                    assert_eq!(view.scheduler.latest_requested_generation, 8);
+                    assert_eq!(
+                        view.scheduler
+                            .in_flight
+                            .as_ref()
+                            .map(|scheduled| scheduled.generation),
+                        Some(7),
+                    );
                     assert!(view.scheduler.queued.is_none());
-                    assert_eq!(view.scheduler.dropped_frames, 0);
-                    assert!(view.in_flight_render.is_none());
+                    assert_eq!(view.scheduler.dropped_frames, 3);
+                    assert!(view.in_flight_render.is_some());
                 })
             });
             assert_eq!(old_y.subscriber_count(), 0);
@@ -2534,6 +2983,10 @@ mod platform_impl {
                         .apply_input(PlotInputEvent::SelectAt { position_px: point });
                     assert_eq!(view.session.viewport_snapshot().unwrap().selected_count, 1);
                     assert!(view.session.restore_visible_bounds(custom_view));
+                    synchronize_test_frame(
+                        view,
+                        RenderRequest::new((320, 240), 1.0, 0.0, PresentationMode::Hybrid),
+                    );
                     view.interaction_state.last_pointer_px = Some(ViewportPoint::new(4.0, 5.0));
                     view.interaction_state.active_drag = ActiveDrag::RightZoom {
                         anchor_px: ViewportPoint::new(1.0, 1.0),
@@ -2544,6 +2997,12 @@ mod platform_impl {
                     };
                     view.interaction_state.home_view_bounds = Some(custom_view);
                     view.scheduler.latest_requested_generation = 4;
+                    view.scheduler.in_flight = Some(ScheduledRender {
+                        scheduler_incarnation: Arc::clone(&view.scheduler.scheduler_incarnation),
+                        generation: 4,
+                        request: RenderRequest::new((320, 240), 1.0, 0.0, PresentationMode::Hybrid),
+                    });
+                    view.in_flight_render = Some(Task::ready(()));
 
                     view.set_plot_keep_view(replacement_plot, cx)
                 })
@@ -2560,9 +3019,16 @@ mod platform_impl {
                     assert_ne!(snapshot.visible_bounds, snapshot.base_bounds);
                     assert_eq!(snapshot.selected_count, 0);
                     assert_eq!(view.interaction_state, InteractionState::default());
-                    assert_eq!(view.scheduler.latest_requested_generation, 0);
-                    assert!(view.cached_frame.is_none());
-                    assert!(view.in_flight_render.is_none());
+                    assert_eq!(view.scheduler.latest_requested_generation, 5);
+                    assert_eq!(
+                        view.scheduler
+                            .in_flight
+                            .as_ref()
+                            .map(|scheduled| scheduled.generation),
+                        Some(4),
+                    );
+                    assert!(view.cached_frame.is_some());
+                    assert!(view.in_flight_render.is_some());
                 })
             });
             assert_eq!(old_y.subscriber_count(), 0);
@@ -2620,7 +3086,10 @@ mod platform_impl {
                         .expect("temporal replacement frame should render");
                     let snapshot = view.session.viewport_snapshot().unwrap();
                     assert_viewport_bounds_close(snapshot.visible_bounds, custom_view);
-                    assert_eq!(snapshot.base_bounds, viewport_rect(0.0, 1.0, 0.0, 100.0));
+                    // The replacement has an explicit x limit but an automatic
+                    // y range, so the core's default 5% autoscale margin is
+                    // part of the resolved base bounds.
+                    assert_eq!(snapshot.base_bounds, viewport_rect(0.0, 1.0, -5.0, 105.0));
                 })
             });
         }
@@ -3106,7 +3575,7 @@ mod platform_impl {
         }
 
         #[test]
-        fn test_replace_session_retires_cached_frame() {
+        fn test_replace_session_retains_last_good_cached_frame() {
             let cx = TestAppContext::single();
             let focus_handle = cx.update(|cx| cx.focus_handle());
             let initial_plot: Plot = Plot::new().line(&[0.0, 1.0, 2.0], &[0.0, 1.0, 4.0]).into();
@@ -3136,12 +3605,15 @@ mod platform_impl {
                 surface_upload: SurfaceUploadState::default(),
                 scheduler: RenderScheduler::default(),
                 in_flight_render: None,
+                failed_request: None,
+                last_error: None,
                 last_layout: Some(InteractionLayout {
                     component_bounds: Bounds::default(),
                     content_bounds: Bounds::default(),
                     frame_size_px: (320, 240),
                 }),
                 focus_handle,
+                accepts_user_input: true,
                 interaction_state: InteractionState {
                     last_pointer_px: Some(ViewportPoint::new(2.0, 2.0)),
                     active_drag: ActiveDrag::LeftPan {
@@ -3163,11 +3635,239 @@ mod platform_impl {
             let replacement_session = replacement_plot.prepare_interactive();
             view.replace_session(replacement_session);
 
-            assert!(view.cached_frame.is_none());
-            assert_eq!(view.retired_images.len(), 1);
+            assert!(view.cached_frame.is_some());
+            assert!(view.retired_images.is_empty());
             assert!(view.last_layout.is_none());
             assert_eq!(view.interaction_state.active_drag, ActiveDrag::None);
             assert!(view.interaction_state.last_pointer_px.is_none());
+        }
+
+        #[test]
+        fn test_static_view_ignores_all_user_input_but_still_renders() {
+            let configured_builder = plot_builder(Plot::new())
+                .static_view()
+                .interaction_options(InteractionOptions::default())
+                .context_menu(GpuiContextMenuConfig {
+                    custom_items: vec![GpuiContextMenuItem::new("custom", "Custom")],
+                    ..GpuiContextMenuConfig::default()
+                });
+            assert!(!configured_builder.accepts_user_input);
+            assert!(
+                configured_builder.validate().is_ok(),
+                "a static context menu can never activate and must not require a callback"
+            );
+
+            let callback_events = Arc::new(Mutex::new(Vec::<&'static str>::new()));
+            let mut app = TestAppContext::single();
+            let (view, cx) = app.add_window_view(|_, cx| {
+                let plot: Plot = Plot::new()
+                    .scatter(&[0.5], &[0.5])
+                    .xlim(0.0, 1.0)
+                    .ylim(0.0, 1.0)
+                    .into();
+                let click_events = Arc::clone(&callback_events);
+                let hover_events = Arc::clone(&callback_events);
+                let error_events = Arc::clone(&callback_events);
+                let context_events = Arc::clone(&callback_events);
+                RuvizPlot::from_options_and_input_mode_impl(
+                    plot,
+                    RuvizPlotOptions::default(),
+                    false,
+                    Some(Arc::new(move |_| {
+                        context_events
+                            .lock()
+                            .expect("callback event lock poisoned")
+                            .push("context");
+                        Ok(())
+                    })),
+                    PlotPointerEventHandlers {
+                        click: Some(Arc::new(move |_| {
+                            click_events
+                                .lock()
+                                .expect("callback event lock poisoned")
+                                .push("click");
+                        })),
+                        hover: Some(Arc::new(move |_| {
+                            hover_events
+                                .lock()
+                                .expect("callback event lock poisoned")
+                                .push("hover");
+                        })),
+                        error: Some(Arc::new(move |_| {
+                            error_events
+                                .lock()
+                                .expect("callback event lock poisoned")
+                                .push("error");
+                        })),
+                    },
+                    cx,
+                )
+            });
+
+            for _ in 0..4 {
+                cx.refresh().expect("static frame refresh should succeed");
+                cx.run_until_parked();
+            }
+            cx.update(|_, app| {
+                view.update(app, |view, _| {
+                    let layout = view
+                        .last_layout
+                        .clone()
+                        .expect("static rendering should resolve a layout");
+                    assert!(
+                        view.session
+                            .restore_visible_bounds(viewport_rect(0.2, 0.8, 0.2, 0.8))
+                    );
+                    synchronize_test_frame(
+                        view,
+                        RenderRequest::new(
+                            layout.frame_size_px,
+                            1.0,
+                            0.0,
+                            PresentationMode::Hybrid,
+                        ),
+                    );
+                    assert!(
+                        view.cached_frame.is_some(),
+                        "static mode must not disable non-input rendering"
+                    );
+                });
+            });
+
+            let (position, initial_bounds) = cx.read(|app| {
+                app.read_entity(&view, |view, _| {
+                    (
+                        view.viewport_point_to_window_position(ViewportPoint::new(160.0, 120.0))
+                            .expect("static frame should map a viewport point"),
+                        view.session
+                            .viewport_snapshot()
+                            .expect("static viewport should exist")
+                            .visible_bounds,
+                    )
+                })
+            });
+
+            cx.update(|window, app| {
+                view.update(app, |view, cx| {
+                    view.handle_mouse_move(
+                        &MouseMoveEvent {
+                            position,
+                            pressed_button: None,
+                            modifiers: Modifiers::default(),
+                        },
+                        cx,
+                    )
+                    .expect("static mouse move should be a no-op");
+                    view.handle_left_mouse_down(
+                        &MouseDownEvent {
+                            button: MouseButton::Left,
+                            position,
+                            modifiers: Modifiers::shift(),
+                            click_count: 2,
+                            first_mouse: false,
+                        },
+                        window,
+                        cx,
+                    )
+                    .expect("static left press should be a no-op");
+                    view.handle_left_mouse_up(
+                        &MouseUpEvent {
+                            button: MouseButton::Left,
+                            position,
+                            modifiers: Modifiers::shift(),
+                            click_count: 1,
+                        },
+                        cx,
+                    )
+                    .expect("static left release should be a no-op");
+                    view.handle_right_mouse_down(
+                        &MouseDownEvent {
+                            button: MouseButton::Right,
+                            position,
+                            modifiers: Modifiers::default(),
+                            click_count: 1,
+                            first_mouse: false,
+                        },
+                        window,
+                        cx,
+                    )
+                    .expect("static right press should be a no-op");
+                    view.handle_right_mouse_up(
+                        &MouseUpEvent {
+                            button: MouseButton::Right,
+                            position,
+                            modifiers: Modifiers::default(),
+                            click_count: 1,
+                        },
+                        cx,
+                    )
+                    .expect("static right release should be a no-op");
+                    view.handle_scroll_wheel(
+                        &ScrollWheelEvent {
+                            position,
+                            delta: ScrollDelta::Pixels(point(px(0.0), px(-20.0))),
+                            ..Default::default()
+                        },
+                        cx,
+                    )
+                    .expect("static scroll should be a no-op");
+                    view.handle_hover_change(false, cx);
+
+                    for keystroke in [
+                        gpui::Keystroke {
+                            modifiers: Modifiers::default(),
+                            key: "escape".to_string(),
+                            key_char: None,
+                        },
+                        gpui::Keystroke {
+                            modifiers: Modifiers::secondary_key(),
+                            key: "s".to_string(),
+                            key_char: None,
+                        },
+                        gpui::Keystroke {
+                            modifiers: Modifiers::default(),
+                            key: "delete".to_string(),
+                            key_char: None,
+                        },
+                    ] {
+                        assert!(
+                            !view
+                                .handle_key_down(
+                                    &KeyDownEvent {
+                                        keystroke,
+                                        is_held: false,
+                                        prefer_character_input: false,
+                                    },
+                                    window,
+                                    cx,
+                                )
+                                .expect("static key handling should be a no-op"),
+                            "static views must not consume shortcuts"
+                        );
+                    }
+
+                    assert_eq!(
+                        view.session
+                            .viewport_snapshot()
+                            .expect("static viewport should remain available")
+                            .visible_bounds,
+                        initial_bounds
+                    );
+                    assert_eq!(view.interaction_state.active_drag, ActiveDrag::None);
+                    assert!(view.interaction_state.last_pointer_px.is_none());
+                    assert!(view.interaction_state.context_menu.is_none());
+                    assert!(!view.session.dirty_domains().data);
+                    assert!(!view.session.dirty_domains().overlay);
+                });
+            });
+
+            assert!(
+                callback_events
+                    .lock()
+                    .expect("callback event lock poisoned")
+                    .is_empty(),
+                "static input must not invoke pointer, context, or error callbacks"
+            );
         }
 
         #[test]
@@ -3189,8 +3889,11 @@ mod platform_impl {
                 surface_upload: SurfaceUploadState::default(),
                 scheduler: RenderScheduler::default(),
                 in_flight_render: None,
+                failed_request: None,
+                last_error: None,
                 last_layout: None,
                 focus_handle: TestAppContext::single().update(|cx| cx.focus_handle()),
+                accepts_user_input: true,
                 interaction_state: InteractionState::default(),
                 context_menu_action_handler: None,
                 pointer_event_handlers: PlotPointerEventHandlers::default(),
@@ -3248,6 +3951,7 @@ mod platform_impl {
                                 .push(event);
                         })),
                         hover: None,
+                        error: None,
                     },
                     cx,
                 )
@@ -3831,11 +4535,443 @@ mod platform_impl {
             assert!(scheduler.schedule(third).is_none());
             assert_eq!(scheduler.dropped_frames, 1);
 
-            assert!(scheduler.finish(&scheduled));
+            assert_eq!(scheduler.finish(&scheduled), Some(false));
             let queued = scheduler
                 .take_queued()
                 .expect("queued request should remain");
             assert_eq!(queued.request.size_px, (640, 480));
+        }
+
+        #[test]
+        fn test_render_scheduler_supersedes_in_flight_without_resetting_it() {
+            let mut scheduler = RenderScheduler::default();
+            let first = RenderRequest::new((320, 240), 1.0, 0.0, PresentationMode::Hybrid);
+            let replacement = RenderRequest::new((320, 240), 1.0, 1.0, PresentationMode::Hybrid);
+            let latest = RenderRequest::new((640, 480), 2.0, 2.0, PresentationMode::Image);
+
+            let scheduled = scheduler
+                .schedule(first)
+                .expect("the first request should start");
+            scheduler.start(scheduled.clone());
+            scheduler.supersede_in_flight();
+
+            assert_eq!(
+                scheduler
+                    .in_flight
+                    .as_ref()
+                    .map(|request| request.generation),
+                Some(scheduled.generation),
+            );
+            assert!(scheduler.schedule(replacement).is_none());
+            assert!(scheduler.schedule(latest.clone()).is_none());
+            assert_eq!(scheduler.dropped_frames, 1);
+            assert_eq!(scheduler.finish(&scheduled), Some(false));
+
+            let queued = scheduler
+                .take_queued()
+                .expect("only the latest replacement request should remain queued");
+            assert_eq!(queued.request, latest);
+        }
+
+        #[test]
+        fn test_render_scheduler_rollover_rejects_pre_rollover_aba_completion() {
+            let mut scheduler = RenderScheduler {
+                latest_requested_generation: u64::MAX - 1,
+                ..RenderScheduler::default()
+            };
+            let before_rollover = scheduler
+                .schedule(RenderRequest::new(
+                    (320, 240),
+                    1.0,
+                    0.0,
+                    PresentationMode::Hybrid,
+                ))
+                .expect("pre-rollover request should start");
+            scheduler.start(before_rollover.clone());
+            assert_eq!(before_rollover.generation, u64::MAX);
+
+            assert!(
+                scheduler
+                    .schedule(RenderRequest::new(
+                        (640, 480),
+                        2.0,
+                        1.0,
+                        PresentationMode::Image,
+                    ))
+                    .is_none()
+            );
+            let after_rollover = scheduler
+                .queued
+                .as_ref()
+                .expect("post-rollover request should be queued")
+                .clone();
+            assert_eq!(after_rollover.generation, 1);
+            assert!(!Arc::ptr_eq(
+                &before_rollover.scheduler_incarnation,
+                &after_rollover.scheduler_incarnation,
+            ));
+
+            assert_eq!(scheduler.finish(&before_rollover), Some(false));
+            let after_rollover = scheduler
+                .take_queued()
+                .expect("post-rollover request should remain queued");
+            scheduler.start(after_rollover.clone());
+            assert_eq!(
+                scheduler.finish(&before_rollover),
+                None,
+                "an old completion must not match the new scheduler incarnation",
+            );
+            assert_eq!(scheduler.finish(&after_rollover), Some(true));
+        }
+
+        #[test]
+        fn test_multiple_entities_route_completions_and_input_independently() {
+            let a_events = Arc::new(Mutex::new(Vec::<PlotPointerEvent>::new()));
+            let b_events = Arc::new(Mutex::new(Vec::<PlotPointerEvent>::new()));
+            let cx = TestAppContext::single();
+            let (view_a, view_b) = cx.update(|app| {
+                let plot_a: Plot = Plot::new()
+                    .scatter(&[0.5], &[0.5])
+                    .xlim(0.0, 1.0)
+                    .ylim(0.0, 1.0)
+                    .into();
+                let plot_b: Plot = Plot::new()
+                    .scatter(&[0.25], &[0.75])
+                    .xlim(0.0, 1.0)
+                    .ylim(0.0, 1.0)
+                    .into();
+                let a_events_for_handler = Arc::clone(&a_events);
+                let b_events_for_handler = Arc::clone(&b_events);
+                let view_a = app.new(move |cx| {
+                    RuvizPlot::from_options_impl(
+                        plot_a,
+                        RuvizPlotOptions::default(),
+                        None,
+                        PlotPointerEventHandlers {
+                            hover: Some(Arc::new(move |event| {
+                                a_events_for_handler
+                                    .lock()
+                                    .expect("entity A event lock poisoned")
+                                    .push(event);
+                            })),
+                            ..PlotPointerEventHandlers::default()
+                        },
+                        cx,
+                    )
+                });
+                let view_b = app.new(move |cx| {
+                    RuvizPlot::from_options_impl(
+                        plot_b,
+                        RuvizPlotOptions::default(),
+                        None,
+                        PlotPointerEventHandlers {
+                            hover: Some(Arc::new(move |event| {
+                                b_events_for_handler
+                                    .lock()
+                                    .expect("entity B event lock poisoned")
+                                    .push(event);
+                            })),
+                            ..PlotPointerEventHandlers::default()
+                        },
+                        cx,
+                    )
+                });
+                (view_a, view_b)
+            });
+
+            let request = RenderRequest::new((400, 300), 1.0, 0.0, PresentationMode::Hybrid);
+            let (scheduled_a, frame_a) = cx.update(|app| {
+                view_a.update(app, |view, _| {
+                    let frame = render_frame_from_session(view.session.clone(), request.clone())
+                        .expect("entity A frame should render");
+                    let scheduled = view
+                        .scheduler
+                        .schedule(request.clone())
+                        .expect("entity A request should start");
+                    view.scheduler.start(scheduled.clone());
+                    view.in_flight_render = Some(Task::ready(()));
+                    (scheduled, frame)
+                })
+            });
+            let (scheduled_b, frame_b) = cx.update(|app| {
+                view_b.update(app, |view, _| {
+                    let frame = render_frame_from_session(view.session.clone(), request.clone())
+                        .expect("entity B frame should render");
+                    let scheduled = view
+                        .scheduler
+                        .schedule(request.clone())
+                        .expect("entity B request should start");
+                    view.scheduler.start(scheduled.clone());
+                    view.in_flight_render = Some(Task::ready(()));
+                    (scheduled, frame)
+                })
+            });
+            assert_eq!(scheduled_a.generation, scheduled_b.generation);
+            assert!(!Arc::ptr_eq(
+                &scheduled_a.scheduler_incarnation,
+                &scheduled_b.scheduler_incarnation,
+            ));
+
+            cx.update(|app| {
+                view_b.update(app, |view, cx| {
+                    view.finish_render(
+                        scheduled_a.clone(),
+                        Err(PlottingError::RenderError(
+                            "misrouted entity A completion".to_string(),
+                        )),
+                        cx,
+                    );
+                    assert_eq!(view.scheduler.in_flight.as_ref(), Some(&scheduled_b));
+                    assert!(view.in_flight_render.is_some());
+                    assert!(view.cached_frame.is_none());
+                });
+                view_a.update(app, |view, cx| {
+                    view.finish_render(scheduled_a, Ok(frame_a), cx);
+                    assert!(view.scheduler.in_flight.is_none());
+                    assert!(view.in_flight_render.is_none());
+                    assert!(view.cached_frame.is_some());
+                });
+            });
+            cx.read(|app| {
+                app.read_entity(&view_b, |view, _| {
+                    assert_eq!(view.scheduler.in_flight.as_ref(), Some(&scheduled_b));
+                    assert!(view.in_flight_render.is_some());
+                    assert!(view.cached_frame.is_none());
+                });
+            });
+
+            let component_bounds =
+                Bounds::new(point(px(20.0), px(30.0)), size(px(400.0), px(300.0)));
+            cx.update(|app| {
+                view_b.update(app, |view, cx| {
+                    view.finish_render(scheduled_b, Ok(frame_b), cx);
+                    view.update_layout(component_bounds, (400, 300));
+                });
+                view_a.update(app, |view, _| {
+                    view.update_layout(component_bounds, (400, 300));
+                });
+            });
+
+            let b_before = cx.read(|app| {
+                app.read_entity(&view_b, |view, _| {
+                    (
+                        view.session
+                            .viewport_snapshot()
+                            .expect("entity B viewport should exist"),
+                        view.cached_frame
+                            .as_ref()
+                            .expect("entity B frame should be installed")
+                            .base_generation,
+                    )
+                })
+            });
+            let a_position = cx.read(|app| {
+                app.read_entity(&view_a, |view, _| {
+                    view.screen_at(ViewportPoint::new(0.5, 0.5))
+                        .expect("entity A mapping should succeed")
+                        .expect("entity A point should be visible")
+                })
+            });
+            cx.update(|app| {
+                view_a.update(app, |view, cx| {
+                    view.handle_mouse_move(
+                        &MouseMoveEvent {
+                            position: a_position,
+                            pressed_button: None,
+                            modifiers: Modifiers::default(),
+                        },
+                        cx,
+                    )
+                    .expect("entity A hover should succeed");
+                    view.handle_scroll_wheel(
+                        &ScrollWheelEvent {
+                            position: a_position,
+                            delta: ScrollDelta::Pixels(point(px(0.0), px(-20.0))),
+                            ..Default::default()
+                        },
+                        cx,
+                    )
+                    .expect("entity A scroll should succeed");
+                    assert!(view.interaction_state.last_pointer_px.is_some());
+                    assert!(view.session.dirty_domains().data);
+                    assert!(view.session.dirty_domains().overlay);
+                });
+            });
+
+            cx.read(|app| {
+                app.read_entity(&view_b, |view, _| {
+                    let b_after = view
+                        .session
+                        .viewport_snapshot()
+                        .expect("entity B viewport should remain available");
+                    assert_eq!(b_after, b_before.0);
+                    assert_eq!(
+                        view.cached_frame
+                            .as_ref()
+                            .expect("entity B cache should remain installed")
+                            .base_generation,
+                        b_before.1,
+                    );
+                    assert!(view.interaction_state.last_pointer_px.is_none());
+                    assert!(!view.session.dirty_domains().data);
+                    assert!(!view.session.dirty_domains().overlay);
+                });
+            });
+            assert_eq!(
+                a_events.lock().expect("entity A event lock poisoned").len(),
+                1
+            );
+            assert!(
+                b_events
+                    .lock()
+                    .expect("entity B event lock poisoned")
+                    .is_empty()
+            );
+        }
+
+        #[test]
+        fn test_render_errors_are_observable_current_only_and_keep_last_good_frame() {
+            let callback_errors = Arc::new(Mutex::new(Vec::<String>::new()));
+            let callback_errors_for_handler = Arc::clone(&callback_errors);
+            let cx = TestAppContext::single();
+            let view = cx.update(|app| {
+                let plot: Plot = Plot::new().line(&[0.0, 1.0], &[0.0, 1.0]).into();
+                app.new(move |cx| {
+                    RuvizPlot::from_options_impl(
+                        plot,
+                        RuvizPlotOptions::default(),
+                        None,
+                        PlotPointerEventHandlers {
+                            error: Some(Arc::new(move |error| {
+                                callback_errors_for_handler
+                                    .lock()
+                                    .expect("error callback lock poisoned")
+                                    .push(error.to_string());
+                            })),
+                            ..PlotPointerEventHandlers::default()
+                        },
+                        cx,
+                    )
+                })
+            });
+
+            cx.update(|app| {
+                view.update(app, |view, cx| {
+                    let cached_image = render_image_from_ruviz(ruviz::core::plot::Image::new(
+                        1,
+                        1,
+                        vec![10, 20, 30, 255],
+                    ));
+                    view.cached_frame = Some(CachedFrame {
+                        request: RenderRequest::new((320, 240), 1.0, 0.0, PresentationMode::Hybrid),
+                        base_generation: 7,
+                        primary: PrimaryFrame::Image(Arc::clone(&cached_image)),
+                        overlay_image: None,
+                        stats: FrameStats::default(),
+                        target: RenderTargetKind::Surface,
+                    });
+
+                    let current = view
+                        .scheduler
+                        .schedule(RenderRequest::new(
+                            (320, 240),
+                            1.0,
+                            1.0,
+                            PresentationMode::Hybrid,
+                        ))
+                        .expect("current render should start");
+                    let failed_request = current.request.clone();
+                    view.scheduler.start(current.clone());
+                    view.in_flight_render = Some(Task::ready(()));
+                    view.finish_render(
+                        current,
+                        Err(PlottingError::RenderError(
+                            "current render failed".to_string(),
+                        )),
+                        cx,
+                    );
+                    assert!(view.in_flight_render.is_none());
+                    assert_eq!(view.failed_request.as_ref(), Some(&failed_request));
+                    assert_eq!(
+                        view.last_error().map(ToString::to_string).as_deref(),
+                        Some("Rendering error: current render failed"),
+                    );
+                    assert!(
+                        !view.should_start_render(&failed_request),
+                        "an identical failed request must remain latched",
+                    );
+                    assert!(
+                        view.should_start_render(&RenderRequest::new(
+                            (640, 480),
+                            2.0,
+                            1.0,
+                            PresentationMode::Hybrid,
+                        )),
+                        "a resized request must remain retryable",
+                    );
+                    assert!(matches!(
+                        view.cached_frame.as_ref().map(|frame| &frame.primary),
+                        Some(PrimaryFrame::Image(image)) if Arc::ptr_eq(image, &cached_image)
+                    ));
+
+                    let stale = view
+                        .scheduler
+                        .schedule(RenderRequest::new(
+                            (320, 240),
+                            1.0,
+                            2.0,
+                            PresentationMode::Hybrid,
+                        ))
+                        .expect("stale render should start");
+                    view.scheduler.start(stale.clone());
+                    assert!(
+                        view.scheduler
+                            .schedule(RenderRequest::new(
+                                (640, 480),
+                                2.0,
+                                3.0,
+                                PresentationMode::Image,
+                            ))
+                            .is_none()
+                    );
+                    view.in_flight_render = Some(Task::ready(()));
+                    view.finish_render(
+                        stale,
+                        Err(PlottingError::RenderError(
+                            "superseded render failed".to_string(),
+                        )),
+                        cx,
+                    );
+                    assert!(matches!(
+                        view.cached_frame.as_ref().map(|frame| &frame.primary),
+                        Some(PrimaryFrame::Image(image)) if Arc::ptr_eq(image, &cached_image)
+                    ));
+
+                    view.retry_render(cx);
+                    assert!(view.failed_request.is_none());
+                    assert!(view.last_error().is_none());
+                    assert!(view.should_start_render(&failed_request));
+
+                    let core_superseded = view
+                        .scheduler
+                        .schedule(failed_request.clone())
+                        .expect("core-superseded render should start");
+                    view.scheduler.start(core_superseded.clone());
+                    view.in_flight_render = Some(Task::ready(()));
+                    view.finish_render(core_superseded, Err(PlottingError::RenderSuperseded), cx);
+                    assert!(view.failed_request.is_none());
+                    assert!(view.should_start_render(&failed_request));
+                });
+            });
+            cx.run_until_parked();
+
+            assert_eq!(
+                callback_errors
+                    .lock()
+                    .expect("error callback lock poisoned")
+                    .as_slice(),
+                ["Rendering error: current render failed"],
+            );
         }
 
         #[test]

@@ -1,19 +1,17 @@
 use super::*;
 
 pub(super) fn compose_images(base: &Image, overlay: &Image) -> Image {
-    let mut pixels = base.pixels.clone();
+    let mut pixels = base
+        .pixels_in_alpha_mode(crate::core::plot::AlphaMode::Straight)
+        .into_owned();
+    let overlay_pixels = overlay.pixels_in_alpha_mode(crate::core::plot::AlphaMode::Straight);
     for (dst, src) in pixels
         .chunks_exact_mut(4)
-        .zip(overlay.pixels.chunks_exact(4))
+        .zip(overlay_pixels.chunks_exact(4))
     {
-        let alpha = src[3] as f32 / 255.0;
-        if alpha <= 0.0 {
-            continue;
-        }
-        dst[0] = blend_channel(dst[0], src[0], alpha);
-        dst[1] = blend_channel(dst[1], src[1], alpha);
-        dst[2] = blend_channel(dst[2], src[2], alpha);
-        dst[3] = 255;
+        let destination = [dst[0], dst[1], dst[2], dst[3]];
+        let source = [src[0], src[1], src[2], src[3]];
+        dst.copy_from_slice(&crate::core::source_over_straight_rgba(destination, source));
     }
     Image::new(base.width, base.height, pixels)
 }
@@ -262,7 +260,11 @@ pub(super) fn apply_streaming_draw_ops(
         }
     }
 
-    Ok(Image::new(base.width, base.height, pixmap.take()))
+    Ok(Image::from_premultiplied_rgba(
+        base.width,
+        base.height,
+        pixmap.take(),
+    ))
 }
 
 pub(super) fn draw_incremental_polyline(
@@ -508,36 +510,17 @@ pub(super) fn create_geometry_clip_mask(
     Ok(mask)
 }
 
-pub(super) fn blend_channel(background: u8, foreground: u8, alpha: f32) -> u8 {
-    let bg = background as f32 / 255.0;
-    let fg = foreground as f32 / 255.0;
-    ((bg * (1.0 - alpha) + fg * alpha) * 255.0) as u8
-}
-
 /// Straight-alpha source-over composition of `color` onto one RGBA pixel.
 ///
 /// Unlike a plain channel blend that overwrites destination alpha, this
 /// preserves existing coverage (e.g. dynamic annotations underneath a brush
 /// or hover marker) so the base layer does not bleed through.
 fn blend_pixel_over(dst: &mut [u8], color: Color) {
-    let src_a = color.a as f32 / 255.0;
-    if src_a <= 0.0 {
-        return;
-    }
-    let dst_a = dst[3] as f32 / 255.0;
-    let out_a = src_a + dst_a * (1.0 - src_a);
-    if out_a <= 0.0 {
-        return;
-    }
-    let blend = |dst_c: u8, src_c: u8| -> u8 {
-        let d = dst_c as f32 / 255.0;
-        let s = src_c as f32 / 255.0;
-        (((s * src_a + d * dst_a * (1.0 - src_a)) / out_a) * 255.0).round() as u8
-    };
-    dst[0] = blend(dst[0], color.r);
-    dst[1] = blend(dst[1], color.g);
-    dst[2] = blend(dst[2], color.b);
-    dst[3] = (out_a * 255.0).round() as u8;
+    let destination = [dst[0], dst[1], dst[2], dst[3]];
+    dst.copy_from_slice(&crate::core::source_over_straight_rgba(
+        destination,
+        [color.r, color.g, color.b, color.a],
+    ));
 }
 
 pub(super) fn draw_hit(
@@ -728,7 +711,13 @@ pub(super) fn draw_tooltip_overlay(pixels: &mut [u8], size_px: (u32, u32), toolt
         log::debug!("Skipping tooltip text render because overlay size is invalid");
         return;
     };
-    let Some(mut pixmap) = tiny_skia::Pixmap::from_vec(pixels.to_vec(), size) else {
+    let mut premultiplied = pixels.to_vec();
+    crate::core::plot::convert_rgba_alpha_mode(
+        &mut premultiplied,
+        crate::core::AlphaMode::Straight,
+        crate::core::AlphaMode::Premultiplied,
+    );
+    let Some(mut pixmap) = tiny_skia::Pixmap::from_vec(premultiplied, size) else {
         log::debug!("Skipping tooltip text render because tooltip pixmap creation failed");
         return;
     };
@@ -745,7 +734,7 @@ pub(super) fn draw_tooltip_overlay(pixels: &mut [u8], size_px: (u32, u32), toolt
         return;
     }
 
-    let rendered = pixmap.take();
+    let rendered = pixmap.take_demultiplied();
     pixels.copy_from_slice(&rendered);
 }
 
