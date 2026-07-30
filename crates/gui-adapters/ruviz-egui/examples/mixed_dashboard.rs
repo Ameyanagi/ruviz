@@ -16,13 +16,13 @@ impl Default for MixedDashboard {
             two_d: plot_builder(
                 Plot::new()
                     .line(&x, &y)
-                    .title("Interactive 2D: pan, zoom, brush"),
+                    .title("2D: right-drag brush, right-click menu"),
             )
             .interactive()
             .build(),
             three_d: plot3d_builder(
                 ruviz::surface(&surface_axis, &surface_axis, &surface_z)
-                    .title("Interactive 3D: orbit, pan, zoom, pick"),
+                    .title("3D: right-drag pan, right-click menu"),
             )
             .interactive()
             .build()
@@ -38,10 +38,15 @@ impl eframe::App for MixedDashboard {
         let panel_size = eframe::egui::vec2(panel_width, available.y.max(1.0));
         ui.horizontal(|ui| {
             ui.allocate_ui(panel_size, |ui| {
-                self.two_d.show(ui);
+                self.two_d.show(ui).response.on_hover_text(
+                    "Drag to pan; right/shift-drag to brush; right-click for plot actions",
+                );
             });
             ui.allocate_ui(panel_size, |ui| {
-                self.three_d.show(ui);
+                self.three_d
+                    .show(ui)
+                    .response
+                    .on_hover_text("Drag to orbit/pan; right-click for camera and export actions");
             });
         });
     }

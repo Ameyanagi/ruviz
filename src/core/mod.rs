@@ -4,6 +4,7 @@ pub mod adapter;
 pub mod annotation;
 pub mod config;
 pub mod constants;
+pub mod context_menu;
 pub mod error;
 pub mod grid_style;
 pub mod layout;
@@ -36,6 +37,7 @@ pub use config::{
     SpacingConfig, SpineConfig, TypographyConfig,
 };
 pub use constants::{dimensions, dpi, font_scales, font_sizes, line_widths, margins, spacing};
+pub use context_menu::PlotContextMenuAction;
 pub use error::{PlotResult, PlottingError, Result};
 pub use grid_style::GridStyle;
 pub use layout::{
@@ -57,10 +59,11 @@ pub use plot::{
     ImageTarget, InsetAnchor, InsetLayout, InteractiveChangeRevision,
     InteractiveChangeSubscription, InteractiveFrame, InteractiveFrameWithGeneration,
     InteractivePlotSession, InteractiveRenderStamp, InteractiveViewportSnapshot, IntoPlot,
-    LayerRenderState, Plot, PlotBuilder, PlotInputEvent, PlotSource, PreparedPlot, QualityPolicy,
-    ReactiveSubscription, ReactiveValue, RenderTargetKind, StampedInteractiveFrame,
-    SurfaceCapability, SurfaceTarget, TextEngineMode, TickDirection, TickSides, ViewportPoint,
-    ViewportRect, source_over_straight_rgba,
+    LayerImages, LayerRenderState, Plot, PlotBuilder, PlotInputEvent, PlotSource, PreparedPlot,
+    QualityPolicy, ReactiveSubscription, ReactiveValue, RenderTargetKind, RenderedLayer,
+    StampedInteractiveFrame, StampedInteractiveLayers, SurfaceCapability, SurfaceTarget,
+    TextEngineMode, TickDirection, TickSides, ViewportPoint, ViewportRect,
+    source_over_straight_rgba,
 };
 // `PlotInput` and `SeriesStyle` are internal representations of a half-built series
 // (`SeriesStyle` alone has 18 public fields, including reactive-animation plumbing).
@@ -72,10 +75,10 @@ pub use plot3d::GpuBenchmarkSession3D;
 #[cfg(feature = "3d")]
 pub use plot3d::{
     AxisAspect3D, BackgroundRenderBackend3D, BackgroundRenderJob3D, BackgroundRenderOutcome3D,
-    BackgroundRenderer3D, Bounds3D, Camera3D, CameraSnapshot3D, InputEvent3D, InteractionResult3D,
-    InteractivePlot3DSession, Line3DBuilder, PickHit3D, PickPrimitive3D, Point3D, PointerButton3D,
-    ProjectedPoint3D, Projection3D, RenderDiagnostics3D, RenderStamp3D, RenderedImage3D,
-    Scatter3DBuilder, ScreenRay3D, StampedPick3D, Surface3DBuilder, ViewStamp3D,
+    BackgroundRenderer3D, Bounds3D, Camera3D, CameraSnapshot3D, CameraView3D, InputEvent3D,
+    InteractionResult3D, InteractivePlot3DSession, Line3DBuilder, PickHit3D, PickPrimitive3D,
+    Point3D, PointerButton3D, ProjectedPoint3D, Projection3D, RenderDiagnostics3D, RenderStamp3D,
+    RenderedImage3D, Scatter3DBuilder, ScreenRay3D, StampedPick3D, Surface3DBuilder, ViewStamp3D,
     Wireframe3DBuilder, release_3d_gpu_resources,
 };
 #[cfg(all(feature = "3d", feature = "gpu"))]

@@ -24,7 +24,9 @@ impl Dashboard {
         (
             Self {
                 plot,
-                status: "Drag to pan, scroll to zoom, click to select".to_owned(),
+                status:
+                    "Drag to pan, scroll to zoom, right-drag to box zoom; right-click for actions"
+                        .to_owned(),
             },
             initial,
         )

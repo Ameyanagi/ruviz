@@ -11,12 +11,15 @@ impl Default for ThreeD {
         let y = [-1.0_f64, 0.0, 1.0];
         let z = [[0.0_f64, 0.5, 0.0], [0.5, 1.0, 0.5], [0.0, 0.5, 0.0]];
         Self {
-            interactive: plot3d_builder(ruviz::surface(&x, &y, &z).title("Interactive 3D"))
-                .interactive()
-                .build()
-                .expect("valid 3D plot"),
+            interactive: plot3d_builder(
+                ruviz::surface(&x, &y, &z).title("3D: right-drag pan, right-click menu"),
+            )
+            .interactive()
+            .build()
+            .expect("valid 3D plot"),
             static_plot: plot3d_builder(
-                ruviz::scatter3d(&x, &y, &[0.0_f64, 1.0, 0.0]).title("Static 3D"),
+                ruviz::scatter3d(&x, &y, &[0.0_f64, 1.0, 0.0])
+                    .title("Static 3D: right-click to enable"),
             )
             .static_view()
             .build()
@@ -32,6 +35,10 @@ impl eframe::App for ThreeD {
         let width = available.x.max(1.0);
         ui.allocate_ui(eframe::egui::vec2(width, height), |ui| {
             let response = self.interactive.show(ui);
+            response
+                .response
+                .clone()
+                .on_hover_text("Right-click for camera views and export; right-drag to pan");
             if let Some(hit) = response.picked {
                 ui.ctx().debug_painter().text(
                     response.response.rect.left_top(),
@@ -43,7 +50,10 @@ impl eframe::App for ThreeD {
             }
         });
         ui.allocate_ui(eframe::egui::vec2(width, height), |ui| {
-            self.static_plot.show(ui);
+            self.static_plot
+                .show(ui)
+                .response
+                .on_hover_text("Right-click to enable interaction or export the installed frame");
         });
     }
 }

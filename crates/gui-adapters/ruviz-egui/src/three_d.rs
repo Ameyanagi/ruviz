@@ -1,16 +1,21 @@
-use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::{
+    Arc,
+    mpsc::{self, Receiver, Sender},
+};
 
-use egui::{Id, PointerButton, Response, Sense, TextureHandle, TextureOptions, Ui};
+use egui::{Id, PointerButton, Response, Sense, TextureHandle, Ui};
 use ruviz::core::{
     BackgroundRenderBackend3D, BackgroundRenderJob3D, BackgroundRenderOutcome3D,
-    BackgroundRenderer3D, CameraSnapshot3D, Image, ImageFit, InputEvent3D,
-    InteractivePlot3DSession, LatestRequestScheduler, PickHit3D, PointerButton3D, RenderedImage3D,
-    ScheduledRequestId, TryIntoPlot3DSession, ViewStamp3D, physical_backing_size,
+    BackgroundRenderer3D, CameraSnapshot3D, CameraView3D, Image, ImageFit, InputEvent3D,
+    InteractivePlot3DSession, LatestRequestScheduler, PickHit3D, PlotContextMenuAction,
+    PointerButton3D, RenderedImage3D, RenderedLayer, ScheduledRequestId, TryIntoPlot3DSession,
+    ViewStamp3D, physical_backing_size,
 };
 
 use crate::shared::{
-    AdapterError, AdapterErrorKind, PlotSize, ViewMode, claim_scroll_y, color_image, fitted_rect,
-    map_point, map_point_clamped, next_widget_id, paint_texture, press_starts_in,
+    AdapterError, AdapterErrorKind, PlotSize, RenderWorker, ViewMode, catch_render_panic,
+    claim_scroll_y, copy_image_to_clipboard, fitted_rect, map_point, map_point_clamped,
+    next_widget_id, paint_texture, press_starts_in, spawn_png_save, upload_texture,
     visible_content_rect,
 };
 
@@ -82,14 +87,31 @@ where
 }
 
 /// Observable event emitted while showing a 3D plot.
+///
+/// New variants are added in minor releases, so match with a `_` arm.
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub enum Plot3DEvent {
     Hovered(Option<PickHit3D>),
     Picked(PickHit3D),
     CameraChanged(CameraSnapshot3D),
     DragCancelled,
     Reset,
+    ContextMenuAction(PlotContextMenuAction),
     Error(AdapterError),
+}
+
+fn plot3d_event_marks_changed(event: &Plot3DEvent) -> bool {
+    !matches!(
+        event,
+        Plot3DEvent::ContextMenuAction(
+            PlotContextMenuAction::ResetView
+                | PlotContextMenuAction::FitToContent
+                | PlotContextMenuAction::SaveImage
+                | PlotContextMenuAction::CopyImage
+                | PlotContextMenuAction::CameraView(_)
+        )
+    )
 }
 
 /// Framework response plus ruviz-specific 3D interaction results.
@@ -105,7 +127,7 @@ pub struct Plot3DResponse {
 
 impl Plot3DResponse {
     pub fn changed(&self) -> bool {
-        self.camera_changed || !self.events.is_empty()
+        self.camera_changed || self.events.iter().any(plot3d_event_marks_changed)
     }
 }
 
@@ -140,13 +162,16 @@ pub struct RuvizPlot3D {
     fit: ImageFit,
     id: Id,
     texture: Option<TextureHandle>,
+    installed_image: Option<Arc<Image>>,
     image_size: Option<(u32, u32)>,
     displayed_view: Option<ViewStamp3D>,
     scene_epoch: u64,
     scheduler: LatestRequestScheduler<RenderRequest3D>,
-    worker_tx: Sender<WorkerRequest3D>,
+    worker: RenderWorker<WorkerRequest3D>,
     completion_tx: Sender<RenderCompletion3D>,
     completion_rx: Receiver<RenderCompletion3D>,
+    save_completion_tx: Sender<Result<(), AdapterError>>,
+    save_completion_rx: Receiver<Result<(), AdapterError>>,
     last_requested_view: Option<ViewStamp3D>,
     repaint_context: Option<egui::Context>,
     active_button: Option<PointerButton3D>,
@@ -165,8 +190,8 @@ impl RuvizPlot3D {
         id: Id,
     ) -> ruviz::core::Result<Self> {
         let (completion_tx, completion_rx) = mpsc::channel();
-        let (worker_tx, worker_rx) = mpsc::channel();
-        spawn_render_worker(worker_rx, completion_tx.clone()).map_err(|error| {
+        let (save_completion_tx, save_completion_rx) = mpsc::channel();
+        let worker = spawn_render_worker(completion_tx.clone()).map_err(|error| {
             ruviz::core::PlottingError::RenderError(format!(
                 "failed to start ruviz-egui 3D render worker: {error}"
             ))
@@ -178,13 +203,16 @@ impl RuvizPlot3D {
             fit,
             id,
             texture: None,
+            installed_image: None,
             image_size: None,
             displayed_view: None,
             scene_epoch: 0,
             scheduler: LatestRequestScheduler::default(),
-            worker_tx,
+            worker,
             completion_tx,
             completion_rx,
+            save_completion_tx,
+            save_completion_rx,
             last_requested_view: None,
             repaint_context: None,
             active_button: None,
@@ -254,15 +282,12 @@ impl RuvizPlot3D {
     pub fn show(&mut self, ui: &mut Ui) -> Plot3DResponse {
         self.repaint_context = Some(ui.ctx().clone());
         let size = self.size.desired(ui);
-        let sense = if self.mode == ViewMode::Interactive {
-            Sense::click_and_drag()
-        } else {
-            Sense::hover()
-        };
+        let sense = plot_sense(self.mode);
         let (_, outer) = ui.allocate_space(size);
         let mut response = ui.interact(outer, self.id, sense);
         let mut events = Vec::new();
         self.drain_completions(ui.ctx(), &mut events);
+        self.drain_save_completions(&mut events);
 
         let scale_factor = ui.ctx().pixels_per_point();
         let target_size = physical_backing_size(
@@ -281,7 +306,7 @@ impl RuvizPlot3D {
         }
 
         let frame_size = self.image_size.unwrap_or(target_size);
-        let content = fitted_rect(outer, frame_size, self.fit);
+        let content = fitted_rect(outer, frame_size, self.fit, scale_factor);
         let visible_content = visible_content_rect(content, outer);
         if let Some(texture) = &self.texture {
             paint_texture(ui, texture, content, outer);
@@ -326,6 +351,17 @@ impl RuvizPlot3D {
             }
         }
 
+        if let Some(action) =
+            plot_context_menu_action(&response, self.mode, self.installed_image.is_some())
+        {
+            let mut outcome = InputOutcome3D::default();
+            self.apply_context_menu_action(action, ui.ctx(), &mut outcome);
+            picked = outcome.picked.or(picked);
+            hovered = self.hovered;
+            camera_changed |= outcome.camera_changed;
+            events.extend(outcome.events);
+        }
+
         let view = self.session.view_stamp();
         if self.last_requested_view != Some(view) {
             self.last_requested_view = Some(view);
@@ -338,7 +374,7 @@ impl RuvizPlot3D {
             }
         }
 
-        if camera_changed || !events.is_empty() {
+        if camera_changed || events.iter().any(plot3d_event_marks_changed) {
             response.mark_changed();
         }
         let error = events.iter().rev().find_map(|event| match event {
@@ -385,7 +421,7 @@ impl RuvizPlot3D {
     }
 
     fn spawn_render(&self, id: ScheduledRequestId, request: RenderRequest3D) {
-        if let Err(error) = self.worker_tx.send(WorkerRequest3D { id, request }) {
+        if let Err(error) = self.worker.send(WorkerRequest3D { id, request }) {
             let work = error.0;
             let _ = self.completion_tx.send(RenderCompletion3D {
                 id: work.id,
@@ -402,6 +438,15 @@ impl RuvizPlot3D {
     fn drain_completions(&mut self, context: &egui::Context, events: &mut Vec<Plot3DEvent>) {
         while let Ok(completed) = self.completion_rx.try_recv() {
             self.handle_completion(context, events, completed);
+        }
+    }
+
+    fn drain_save_completions(&mut self, events: &mut Vec<Plot3DEvent>) {
+        while let Ok(result) = self.save_completion_rx.try_recv() {
+            if let Err(error) = result {
+                self.last_error = Some(error.clone());
+                events.push(Plot3DEvent::Error(error));
+            }
         }
     }
 
@@ -434,16 +479,16 @@ impl RuvizPlot3D {
 
     fn install_image(&mut self, context: &egui::Context, image: Image) {
         self.image_size = Some((image.width, image.height));
-        let color = color_image(&image);
-        if let Some(texture) = &mut self.texture {
-            texture.set(color, TextureOptions::LINEAR);
-        } else {
-            self.texture = Some(context.load_texture(
-                format!("ruviz-egui-3d-{:?}", self.id),
-                color,
-                TextureOptions::LINEAR,
-            ));
-        }
+        let image = Arc::new(image);
+        // The 3D renderer already emits straight alpha, so this wraps without
+        // converting; `upload_texture` picks the matching egui constructor.
+        upload_texture(
+            context,
+            &mut self.texture,
+            || format!("ruviz-egui-3d-{:?}", self.id),
+            &RenderedLayer::from_straight_image(Arc::clone(&image)),
+        );
+        self.installed_image = Some(image);
     }
 
     fn process_input(
@@ -662,6 +707,91 @@ impl RuvizPlot3D {
         }
     }
 
+    fn apply_context_menu_action(
+        &mut self,
+        action: PlotContextMenuAction,
+        context: &egui::Context,
+        outcome: &mut InputOutcome3D,
+    ) {
+        match action {
+            PlotContextMenuAction::ResetView => {
+                if self.active_button.is_some() {
+                    self.cancel_active_drag(outcome);
+                }
+                if self.apply_camera_mutation(outcome, |session| session.reset_view()) {
+                    outcome.events.push(Plot3DEvent::Reset);
+                }
+            }
+            PlotContextMenuAction::FitToContent => {
+                self.apply_camera_mutation(outcome, InteractivePlot3DSession::fit_to_content);
+            }
+            PlotContextMenuAction::SaveImage => {
+                if let Some(image) = &self.installed_image
+                    && let Err(error) = spawn_png_save(
+                        Arc::clone(image),
+                        "ruviz-plot-3d.png",
+                        self.save_completion_tx.clone(),
+                        context.clone(),
+                    )
+                {
+                    self.last_error = Some(error.clone());
+                    outcome.events.push(Plot3DEvent::Error(error));
+                }
+            }
+            PlotContextMenuAction::CopyImage => {
+                if let Some(image) = &self.installed_image {
+                    copy_image_to_clipboard(context, image);
+                }
+            }
+            PlotContextMenuAction::ToggleInteraction => {
+                let mode = match self.mode {
+                    ViewMode::Static => ViewMode::Interactive,
+                    ViewMode::Interactive => ViewMode::Static,
+                };
+                self.set_mode(mode);
+            }
+            PlotContextMenuAction::CameraView(view) => {
+                self.apply_camera_mutation(outcome, |session| session.apply_camera_view(view));
+            }
+            _ => {}
+        }
+        outcome.events.push(Plot3DEvent::ContextMenuAction(action));
+    }
+
+    fn record_camera_change(&mut self, outcome: &mut InputOutcome3D) {
+        self.hovered = None;
+        self.last_hover_position = None;
+        outcome.hovered = None;
+        outcome.camera_changed = true;
+        outcome
+            .events
+            .push(Plot3DEvent::CameraChanged(self.session.camera_snapshot()));
+    }
+
+    fn apply_camera_mutation(
+        &mut self,
+        outcome: &mut InputOutcome3D,
+        apply: impl FnOnce(&mut InteractivePlot3DSession) -> ruviz::core::Result<()>,
+    ) -> bool {
+        let before_camera = self.session.camera_snapshot();
+        let before_view = self.session.view_stamp();
+        if let Err(error) = apply(&mut self.session) {
+            self.record_input_error(error, outcome);
+            return false;
+        }
+        let after_camera = self.session.camera_snapshot();
+        let after_view = self.session.view_stamp();
+        let camera_changed = before_camera.camera != after_camera.camera;
+        let view_changed = !before_view.same_camera(after_view);
+        debug_assert_eq!(camera_changed, view_changed);
+        if camera_changed && view_changed {
+            self.record_camera_change(outcome);
+            true
+        } else {
+            false
+        }
+    }
+
     fn record_input_error(
         &mut self,
         error: ruviz::core::PlottingError,
@@ -679,29 +809,44 @@ impl RuvizPlot3D {
 }
 
 fn spawn_render_worker(
-    receiver: Receiver<WorkerRequest3D>,
     sender: Sender<RenderCompletion3D>,
-) -> std::io::Result<()> {
-    std::thread::Builder::new()
-        .name("ruviz-egui-3d-render".to_string())
-        .spawn(move || {
+) -> std::io::Result<RenderWorker<WorkerRequest3D>> {
+    RenderWorker::spawn(
+        "ruviz-egui-3d-render",
+        move |receiver: Receiver<WorkerRequest3D>| {
             let mut renderer = BackgroundRenderer3D::new(worker_backend());
             while let Ok(work) = receiver.recv() {
-                let result = match renderer.render(work.request.job) {
-                    Ok(frame) => RenderResult3D::Frame(frame),
-                    Err(error) => {
+                // This worker is spawned once per widget, so a panicking render
+                // must be contained: unwinding here would wedge the scheduler's
+                // in-flight slot forever with no way to respawn the lane.
+                let result = match catch_render_panic(|| renderer.render(work.request.job)) {
+                    Ok(Ok(frame)) => RenderResult3D::Frame(frame),
+                    Ok(Err(error)) => {
                         RenderResult3D::Error(AdapterError::new(AdapterErrorKind::Render, error))
                     }
+                    Err(message) => {
+                        // The renderer's state is unknown after a panic.
+                        renderer = BackgroundRenderer3D::new(worker_backend());
+                        RenderResult3D::Error(AdapterError::new(
+                            AdapterErrorKind::Render,
+                            format!("ruviz-egui 3D render panicked: {message}"),
+                        ))
+                    }
                 };
-                let _ = sender.send(RenderCompletion3D {
-                    id: work.id,
-                    scene_epoch: work.request.scene_epoch,
-                    result,
-                });
+                if sender
+                    .send(RenderCompletion3D {
+                        id: work.id,
+                        scene_epoch: work.request.scene_epoch,
+                        result,
+                    })
+                    .is_err()
+                {
+                    break;
+                }
                 work.request.repaint.request_repaint();
             }
-        })
-        .map(|_| ())
+        },
+    )
 }
 
 const fn worker_backend() -> BackgroundRenderBackend3D {
@@ -712,6 +857,100 @@ const fn worker_backend() -> BackgroundRenderBackend3D {
     #[cfg(not(all(feature = "3d-gpu", not(target_arch = "wasm32"))))]
     {
         BackgroundRenderBackend3D::Cpu
+    }
+}
+
+fn plot_sense(mode: ViewMode) -> Sense {
+    match mode {
+        ViewMode::Static => Sense::click(),
+        ViewMode::Interactive => Sense::click_and_drag(),
+    }
+}
+
+fn plot_context_menu_action(
+    response: &Response,
+    mode: ViewMode,
+    has_image: bool,
+) -> Option<PlotContextMenuAction> {
+    let mut selected = None;
+    response.context_menu(|ui| {
+        select_context_action(
+            ui,
+            &mut selected,
+            true,
+            "Reset View",
+            PlotContextMenuAction::ResetView,
+        );
+        select_context_action(
+            ui,
+            &mut selected,
+            true,
+            "Fit to Content",
+            PlotContextMenuAction::FitToContent,
+        );
+        ui.separator();
+        ui.menu_button("Camera View", |ui| {
+            for &(label, view) in CAMERA_VIEW_ACTIONS {
+                select_context_action(
+                    ui,
+                    &mut selected,
+                    true,
+                    label,
+                    PlotContextMenuAction::CameraView(view),
+                );
+            }
+        });
+        ui.separator();
+        select_context_action(
+            ui,
+            &mut selected,
+            has_image,
+            "Save PNG…",
+            PlotContextMenuAction::SaveImage,
+        );
+        select_context_action(
+            ui,
+            &mut selected,
+            has_image,
+            "Copy Image",
+            PlotContextMenuAction::CopyImage,
+        );
+        ui.separator();
+        let toggle_label = match mode {
+            ViewMode::Static => "Enable Interaction",
+            ViewMode::Interactive => "Disable Interaction",
+        };
+        select_context_action(
+            ui,
+            &mut selected,
+            true,
+            toggle_label,
+            PlotContextMenuAction::ToggleInteraction,
+        );
+    });
+    selected
+}
+
+const CAMERA_VIEW_ACTIONS: &[(&str, CameraView3D)] = &[
+    ("Isometric", CameraView3D::Isometric),
+    ("Front", CameraView3D::Front),
+    ("Back", CameraView3D::Back),
+    ("Left", CameraView3D::Left),
+    ("Right", CameraView3D::Right),
+    ("Top", CameraView3D::Top),
+    ("Bottom", CameraView3D::Bottom),
+];
+
+fn select_context_action(
+    ui: &mut Ui,
+    selected: &mut Option<PlotContextMenuAction>,
+    enabled: bool,
+    label: &str,
+    action: PlotContextMenuAction,
+) {
+    if ui.add_enabled(enabled, egui::Button::new(label)).clicked() {
+        *selected = Some(action);
+        ui.close();
     }
 }
 
@@ -935,5 +1174,149 @@ mod tests {
         assert!(!widget.session.is_drag_active());
         assert!(widget.active_button.is_none());
         assert!(outcome.events.contains(&Plot3DEvent::DragCancelled));
+    }
+
+    #[test]
+    fn static_mode_still_senses_context_clicks_without_dragging() {
+        let sense = plot_sense(ViewMode::Static);
+        assert!(sense.senses_click());
+        assert!(!sense.senses_drag());
+        assert!(plot_sense(ViewMode::Interactive).senses_drag());
+    }
+
+    #[test]
+    fn context_menu_exposes_every_named_camera_view() {
+        assert_eq!(
+            CAMERA_VIEW_ACTIONS,
+            &[
+                ("Isometric", CameraView3D::Isometric),
+                ("Front", CameraView3D::Front),
+                ("Back", CameraView3D::Back),
+                ("Left", CameraView3D::Left),
+                ("Right", CameraView3D::Right),
+                ("Top", CameraView3D::Top),
+                ("Bottom", CameraView3D::Bottom),
+            ]
+        );
+    }
+
+    #[test]
+    fn context_actions_toggle_static_mode_and_apply_named_camera_views() {
+        let mut widget = plot3d_builder(plot()).static_view().build().unwrap();
+        let context = egui::Context::default();
+        let mut outcome = InputOutcome3D::default();
+        let initial_camera = widget.session.camera_snapshot();
+
+        widget.apply_context_menu_action(
+            PlotContextMenuAction::ToggleInteraction,
+            &context,
+            &mut outcome,
+        );
+        assert_eq!(widget.mode(), ViewMode::Interactive);
+        assert_eq!(
+            outcome.events,
+            vec![Plot3DEvent::ContextMenuAction(
+                PlotContextMenuAction::ToggleInteraction
+            )]
+        );
+
+        outcome = InputOutcome3D::default();
+        widget.apply_context_menu_action(
+            PlotContextMenuAction::CameraView(CameraView3D::Top),
+            &context,
+            &mut outcome,
+        );
+        assert!(outcome.camera_changed);
+        assert!(matches!(
+            outcome.events.as_slice(),
+            [
+                Plot3DEvent::CameraChanged(_),
+                Plot3DEvent::ContextMenuAction(PlotContextMenuAction::CameraView(
+                    CameraView3D::Top
+                ))
+            ]
+        ));
+
+        outcome = InputOutcome3D::default();
+        widget.apply_context_menu_action(PlotContextMenuAction::ResetView, &context, &mut outcome);
+        assert_eq!(
+            widget.session.camera_snapshot().camera,
+            initial_camera.camera
+        );
+        assert!(matches!(
+            outcome.events.as_slice(),
+            [
+                Plot3DEvent::CameraChanged(_),
+                Plot3DEvent::Reset,
+                Plot3DEvent::ContextMenuAction(PlotContextMenuAction::ResetView)
+            ]
+        ));
+    }
+
+    #[test]
+    fn repeated_context_camera_actions_do_not_report_a_change() {
+        for action in [
+            PlotContextMenuAction::ResetView,
+            PlotContextMenuAction::FitToContent,
+            PlotContextMenuAction::CameraView(CameraView3D::Top),
+        ] {
+            let mut widget = plot3d_builder(plot()).build().unwrap();
+            let context = egui::Context::default();
+            widget.apply_context_menu_action(action, &context, &mut InputOutcome3D::default());
+            let before_repeat = widget.session.view_stamp();
+            let mut repeated = InputOutcome3D::default();
+
+            widget.apply_context_menu_action(action, &context, &mut repeated);
+
+            assert!(!repeated.camera_changed, "{action:?} should be idempotent");
+            assert_eq!(widget.session.view_stamp(), before_repeat);
+            assert!(
+                !repeated
+                    .events
+                    .iter()
+                    .any(|event| matches!(event, Plot3DEvent::CameraChanged(_)))
+            );
+            assert!(
+                !repeated.events.iter().any(plot3d_event_marks_changed),
+                "{action:?} should not mark the egui response changed"
+            );
+        }
+    }
+
+    #[test]
+    fn installed_frame_is_retained_for_menu_export_without_a_render() {
+        let mut widget = plot3d_builder(plot()).build().unwrap();
+        let context = egui::Context::default();
+        let image = Image::new(2, 1, vec![1, 2, 3, 255, 4, 5, 6, 128]);
+
+        widget.install_image(&context, image.clone());
+
+        let installed = widget.installed_image.as_ref().unwrap();
+        let export_handle = Arc::clone(installed);
+        assert_eq!((installed.width, installed.height), (2, 1));
+        assert_eq!(installed.pixels, image.pixels);
+        assert!(Arc::ptr_eq(installed, &export_handle));
+        assert!(widget.scheduler.is_idle());
+    }
+
+    #[test]
+    fn asynchronous_save_failures_are_reported_on_the_ui_thread() {
+        let mut widget = plot3d_builder(plot()).build().unwrap();
+        widget
+            .save_completion_tx
+            .send(Err(AdapterError::new(
+                AdapterErrorKind::Interaction,
+                "save failed",
+            )))
+            .unwrap();
+        let mut events = Vec::new();
+
+        widget.drain_save_completions(&mut events);
+
+        assert_eq!(
+            widget.last_error().map(AdapterError::message),
+            Some("save failed")
+        );
+        assert!(matches!(events.as_slice(), [Plot3DEvent::Error(_)]));
     }
 }

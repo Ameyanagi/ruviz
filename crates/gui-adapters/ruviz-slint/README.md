@@ -1,8 +1,9 @@
 # ruviz-slint
 
 `ruviz-slint` embeds static or interactive ruviz 2D and 3D plots in native
-Slint applications. Rendering is image-backed and happens on background
-workers; a Slint paint or input callback never renders a plot.
+Slint applications. Rendering is image-backed and happens on one persistent
+background worker per slot; a Slint paint or input callback never renders a
+plot.
 
 ## Component library
 
@@ -20,9 +21,20 @@ export component App inherits Window {
 ```
 
 `slot-id` is the component's only input. The controller-owned
-`RuvizRuntime` global supplies its image, effective interaction state, image
+`RuvizRuntime` global supplies its images, effective interaction state, image
 fit, device scale, and all callbacks. `RuvizPlotGrid` is also exported for a
 responsive multi-slot layout.
+
+`RuvizPlot` stacks two `Image` elements in one fitted geometry: the plot base
+and the interaction overlay. Slint's renderer composites them, so a hover,
+tooltip, brush, or dynamic annotation only re-uploads the small overlay layer
+and the plot base is left untouched. It enables that by calling
+`RuvizRuntime.overlay-supported(slot-id)`; until some component does, the
+controller keeps publishing one flat, pre-composed image in
+`RuvizRuntime.slots[i].source`. A custom component built directly on the slots
+model therefore keeps working unchanged, and opts into the cheaper layered
+presentation by stacking `overlay` over `source` and announcing itself from its
+own `init`.
 
 The consumer build script must use Slint `~1.17` and enable its experimental
 module support:
@@ -31,7 +43,7 @@ module support:
 [dependencies]
 ruviz-slint = "0.6"
 slint = { version = "~1.17", default-features = false, features = [
-    "std", "compat-1-2", "backend-winit", "renderer-software"
+    "std", "compat-1-2", "backend-winit", "renderer-femtovg"
 ] }
 
 [build-dependencies]
@@ -73,8 +85,12 @@ controller.resize(1, 800.0, 500.0, app.window().scale_factor());
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-`RuvizController::attach` installs the shared model and callback handlers.
-`RuvizController::new` remains available for application-owned image sinks.
+`RuvizController::attach` installs the shared model and callback handlers, and
+installs the overlay layer sink once a component announces
+`RuvizRuntime.overlay-supported`. `RuvizController::new` remains available for
+application-owned image sinks; it receives one flat, pre-composed image unless
+the application also installs `RuvizController::on_overlay` and presents the
+overlay over the base itself.
 
 Each slot supports:
 
@@ -88,6 +104,15 @@ Each slot supports:
   (an untouched view adopts the replacement's natural bounds), or
   `set_plot3d_keep_view` to preserve the 3D camera;
 - 3D orbit, pan, zoom, reset, picking, and pick/camera/error callbacks.
+
+An unmoved right click opens the packaged context menu. Right-drag remains a
+2D brush or 3D pan after a three-logical-pixel threshold, so the menu does not
+replace either gesture. The menu can reset or fit the view, save the installed
+frame as PNG, copy it to the native image clipboard, toggle interaction, and
+apply Isometric, Front, Back, Left, Right, Top, or Bottom views to a 3D plot.
+It remains available for static slots so interaction can be enabled again.
+Slint also supplies keyboard context-menu handling, including Menu and
+Shift+F10 on Windows.
 
 The backing size is computed from logical dimensions and the explicit
 fractional device scale. Pointer coordinates are mapped through the actual
@@ -104,10 +129,28 @@ window moves between displays.
 - `3d-gpu`: 3D GPU rendering followed by readback into a Slint image.
 
 GPU mode is not zero-copy. Slint receives a CPU-accessible
-`SharedPixelBuffer`; the GPU path therefore includes explicit readback. The
-normal dependency deliberately enables neither a Slint renderer nor a window
-backend. Applications choose those features. The `dashboard` example enables
-the Winit backend and software renderer only as development dependencies.
+`SharedPixelBuffer`; the GPU path therefore includes explicit readback. Each
+layer is copied into that buffer at most once, on a background worker, and only
+when the layer actually changed.
+
+The normal dependency deliberately enables neither a Slint renderer nor a
+window backend. Applications choose those features, and **an interactive plot
+should pick a GPU renderer**: `renderer-femtovg` (or `renderer-skia`) lets
+Slint composite the base and overlay layers on the GPU, while
+`renderer-software` blends every presented pixel on the CPU and caps the
+achievable frame rate.
+
+```toml
+slint = { version = "~1.17", default-features = false, features = [
+    "std", "compat-1-2", "backend-winit", "renderer-femtovg"
+] }
+```
+
+This crate's own dev-dependencies enable `renderer-femtovg` **and**
+`renderer-software`, because Cargo unifies dev-dependency features across
+examples and tests: the examples want the GPU renderer and the headless
+`i-slint-backend-testing` tests need the software one. Slint selects at
+runtime, and `SLINT_BACKEND=winit-software` forces the software path.
 
 ## Examples
 
@@ -118,8 +161,9 @@ cargo run --manifest-path crates/gui-adapters/ruviz-slint/Cargo.toml \
   --example dashboard
 ```
 
-The mixed dashboard places a static 2D slot beside interactive and static 3D
-slots, and demonstrates pick and camera callbacks:
+The mixed dashboard places an interactive 2D slot beside interactive and
+static 3D slots, and demonstrates pick and camera callbacks. The plot titles
+and startup output list the available gestures and context-menu actions:
 
 ```sh
 cargo run --manifest-path crates/gui-adapters/ruviz-slint/Cargo.toml \

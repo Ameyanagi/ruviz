@@ -28,10 +28,28 @@ iced = { version = "0.14", default-features = false, features = [
 ] }
 futures = "0.3"
 async-channel = "2"
+# Same `bytes` crate `iced_core` re-exports as `iced::advanced::image` pixel
+# storage. Used to hand ruviz pixels to Iced without copying them.
+bytes = "1.9"
+arboard = "3.6.1"
+rfd = "0.15"
 ruviz = { version = "=0.6.0", path = "../../.." }
 
 [dev-dependencies]
-iced = { version = "0.14", default-features = false, features = ["advanced", "image", "thread-pool", "tiny-skia", "x11", "wayland"] }
+# `default-features = false` drops iced's default renderer set, so `wgpu` and
+# `crisp` have to be named explicitly. Without `wgpu` every example falls back
+# to the `tiny-skia` CPU renderer, which rescales the full plot image on the
+# CPU for each frame. Applications must enable the same features; see README.md.
+iced = { version = "0.14", default-features = false, features = [
+    "advanced",
+    "image",
+    "thread-pool",
+    "wgpu",
+    "crisp",
+    "tiny-skia",
+    "x11",
+    "wayland",
+] }
 iced_runtime = "0.14"
 
 [[example]]

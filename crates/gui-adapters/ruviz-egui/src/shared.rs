@@ -1,9 +1,13 @@
 use std::fmt;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc::{self, Receiver, SendError, Sender};
+use std::thread::JoinHandle;
 
-use egui::{ColorImage, Id, Pos2, Rect, Vec2};
+use egui::{ColorImage, Id, Pos2, Rect, TextureHandle, TextureOptions, Vec2};
 use ruviz::core::{
-    AlphaMode, Image, ImageFit, LogicalPoint, LogicalRect, fitted_content_rect, logical_to_physical,
+    AlphaMode, Image, ImageFit, LogicalPoint, LogicalRect, RenderedLayer, fitted_content_rect,
+    logical_to_physical, physical_backing_size, source_over_straight_rgba,
 };
 
 static NEXT_WIDGET_ID: AtomicU64 = AtomicU64::new(1);
@@ -101,21 +105,51 @@ pub(crate) fn next_widget_id(kind: &'static str) -> Id {
     ))
 }
 
-pub(crate) fn fitted_rect(outer: Rect, image_size: (u32, u32), fit: ImageFit) -> Rect {
-    let logical = fitted_content_rect(
-        LogicalRect::new(
-            f64::from(outer.min.x),
-            f64::from(outer.min.y),
-            f64::from(outer.width()),
-            f64::from(outer.height()),
-        ),
-        image_size,
-        fit,
+/// Place the last rendered frame inside the widget rectangle.
+///
+/// A frame that was rendered for exactly this rectangle is presented at its
+/// natural size on whole physical pixels: the backing size is a ceiling of the
+/// logical box, so the shared fitted geometry would otherwise scale it by a
+/// fraction of a pixel and force the sampler to interpolate a plot that is
+/// already pixel-exact. Every other frame size — most importantly a frame that
+/// is still catching up with a resize — keeps the shared fitted geometry.
+pub(crate) fn fitted_rect(
+    outer: Rect,
+    image_size: (u32, u32),
+    fit: ImageFit,
+    pixels_per_point: f32,
+) -> Rect {
+    let outer_logical = LogicalRect::new(
+        f64::from(outer.min.x),
+        f64::from(outer.min.y),
+        f64::from(outer.width()),
+        f64::from(outer.height()),
     );
+    if pixels_per_point.is_finite()
+        && pixels_per_point > 0.0
+        && image_size
+            == physical_backing_size(outer_logical.width, outer_logical.height, pixels_per_point)
+    {
+        return Rect::from_min_size(
+            Pos2::new(
+                snap_to_physical_pixel(outer.min.x, pixels_per_point),
+                snap_to_physical_pixel(outer.min.y, pixels_per_point),
+            ),
+            Vec2::new(
+                image_size.0 as f32 / pixels_per_point,
+                image_size.1 as f32 / pixels_per_point,
+            ),
+        );
+    }
+    let logical = fitted_content_rect(outer_logical, image_size, fit);
     Rect::from_min_size(
         Pos2::new(logical.x as f32, logical.y as f32),
         Vec2::new(logical.width as f32, logical.height as f32),
     )
+}
+
+fn snap_to_physical_pixel(logical: f32, pixels_per_point: f32) -> f32 {
+    (logical * pixels_per_point).round() / pixels_per_point
 }
 
 pub(crate) fn visible_content_rect(content: Rect, outer: Rect) -> Rect {
@@ -175,12 +209,182 @@ pub(crate) fn claim_scroll_y(ui: &egui::Ui) -> f32 {
     })
 }
 
+/// Texture filtering for every plot layer.
+///
+/// Layers are rendered at the exact physical backing size and presented on
+/// whole physical pixels by [`fitted_rect`], so nearest sampling reproduces the
+/// rendered pixels instead of blurring them.
+pub(crate) const LAYER_TEXTURE_OPTIONS: TextureOptions = TextureOptions::NEAREST;
+
+/// Convert a straight-alpha ruviz frame into egui's premultiplied texels.
+///
+/// This is the only full-frame pass an unchanged adapter still performs, so it
+/// runs once per newly rendered layer and writes the final buffer directly
+/// rather than materialising an intermediate premultiplied byte buffer.
 pub(crate) fn color_image(image: &Image) -> ColorImage {
-    let pixels = image.pixels_in_alpha_mode(AlphaMode::Premultiplied);
-    ColorImage::from_rgba_premultiplied(
+    let pixels = image.pixels_in_alpha_mode(AlphaMode::Straight);
+    ColorImage::from_rgba_unmultiplied(
         [image.width as usize, image.height as usize],
         pixels.as_ref(),
     )
+}
+
+/// Build a `ColorImage` from a layer's native buffer with no alpha conversion.
+///
+/// `Color32::from_rgba_premultiplied` is a plain field copy while
+/// `from_rgba_unmultiplied` multiplies every channel, so taking ruviz's native
+/// premultiplied layer here removes a full-frame pass rather than adding one.
+pub(crate) fn layer_color_image(layer: &RenderedLayer) -> ColorImage {
+    let size = [layer.width() as usize, layer.height() as usize];
+    match layer.alpha_mode() {
+        AlphaMode::Premultiplied => ColorImage::from_rgba_premultiplied(size, layer.pixels()),
+        AlphaMode::Straight => ColorImage::from_rgba_unmultiplied(size, layer.pixels()),
+    }
+}
+
+/// Upload a layer, reusing the existing texture allocation when there is one.
+pub(crate) fn upload_texture(
+    context: &egui::Context,
+    texture: &mut Option<TextureHandle>,
+    name: impl FnOnce() -> String,
+    layer: &RenderedLayer,
+) {
+    let color = layer_color_image(layer);
+    match texture {
+        Some(texture) => texture.set(color, LAYER_TEXTURE_OPTIONS),
+        None => *texture = Some(context.load_texture(name(), color, LAYER_TEXTURE_OPTIONS)),
+    }
+}
+
+/// Blend an overlay layer over its base layer for export actions.
+///
+/// Presentation stacks the two layers instead, so this full-frame composite is
+/// only paid for when the user saves or copies the plot.
+pub(crate) fn compose_over(base: &Image, overlay: &Image) -> Image {
+    if base.width != overlay.width || base.height != overlay.height {
+        return base.clone();
+    }
+    let mut pixels = base.pixels_in_alpha_mode(AlphaMode::Straight).into_owned();
+    let overlay_pixels = overlay.pixels_in_alpha_mode(AlphaMode::Straight);
+    for (destination, source) in pixels
+        .chunks_exact_mut(4)
+        .zip(overlay_pixels.chunks_exact(4))
+    {
+        let blended = source_over_straight_rgba(
+            [
+                destination[0],
+                destination[1],
+                destination[2],
+                destination[3],
+            ],
+            [source[0], source[1], source[2], source[3]],
+        );
+        destination.copy_from_slice(&blended);
+    }
+    Image::new(base.width, base.height, pixels)
+}
+
+/// A persistent render thread owned by one widget.
+///
+/// The widget keeps a single thread for the lifetime of the plot instead of
+/// spawning one per frame. Dropping the worker closes the request channel and
+/// waits for the in-flight render, so no thread outlives the widget or the
+/// egui context it repaints.
+pub(crate) struct RenderWorker<T> {
+    sender: Option<Sender<T>>,
+    handle: Option<JoinHandle<()>>,
+}
+
+impl<T: Send + 'static> RenderWorker<T> {
+    pub(crate) fn spawn(
+        name: &'static str,
+        run: impl FnOnce(Receiver<T>) + Send + 'static,
+    ) -> std::io::Result<Self> {
+        let (sender, receiver) = mpsc::channel();
+        let handle = std::thread::Builder::new()
+            .name(name.to_owned())
+            .spawn(move || run(receiver))?;
+        Ok(Self {
+            sender: Some(sender),
+            handle: Some(handle),
+        })
+    }
+
+    pub(crate) fn send(&self, work: T) -> Result<(), SendError<T>> {
+        match self.sender.as_ref() {
+            Some(sender) => sender.send(work),
+            None => Err(SendError(work)),
+        }
+    }
+}
+
+/// Run one unit of render work, turning a panic into a reportable message.
+///
+/// A panicking render must never unwind out of a worker loop: the lane would
+/// die with the scheduler's in-flight slot still occupied, so every later
+/// request would be dropped and the widget would freeze without surfacing an
+/// error.
+pub(crate) fn catch_render_panic<R>(render: impl FnOnce() -> R) -> Result<R, String> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(render)).map_err(|payload| {
+        payload
+            .downcast_ref::<&str>()
+            .map(|message| (*message).to_owned())
+            .or_else(|| payload.downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "panic payload did not contain a message".to_owned())
+    })
+}
+
+impl<T> Drop for RenderWorker<T> {
+    fn drop(&mut self) {
+        drop(self.sender.take());
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+pub(crate) fn spawn_png_save(
+    image: Arc<Image>,
+    suggested_name: &str,
+    completion: Sender<Result<(), AdapterError>>,
+    repaint: egui::Context,
+) -> Result<(), AdapterError> {
+    let suggested_name = suggested_name.to_owned();
+    std::thread::Builder::new()
+        .name("ruviz-egui-png-save".to_owned())
+        .spawn(move || {
+            let result = pollster::block_on(async {
+                let Some(file) = rfd::AsyncFileDialog::new()
+                    .add_filter("PNG image", &["png"])
+                    .set_file_name(&suggested_name)
+                    .save_file()
+                    .await
+                else {
+                    return Ok(());
+                };
+                let mut path = file.path().to_owned();
+                if !path
+                    .extension()
+                    .is_some_and(|extension| extension.eq_ignore_ascii_case("png"))
+                {
+                    path.set_extension("png");
+                }
+                write_png(image.as_ref(), &path)
+            });
+            let _ = completion.send(result);
+            repaint.request_repaint();
+        })
+        .map(|_| ())
+        .map_err(|error| AdapterError::new(AdapterErrorKind::Interaction, error))
+}
+
+fn write_png(image: &Image, path: &std::path::Path) -> Result<(), AdapterError> {
+    ruviz::export::write_rgba_png_atomic(path, image)
+        .map_err(|error| AdapterError::new(AdapterErrorKind::Interaction, error))
+}
+
+pub(crate) fn copy_image_to_clipboard(context: &egui::Context, image: &Image) {
+    context.copy_image(color_image(image));
 }
 
 pub(crate) fn paint_texture(
@@ -200,12 +404,21 @@ pub(crate) fn paint_texture(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ruviz::core::physical_backing_size;
+
+    #[test]
+    fn a_panicking_render_is_reported_instead_of_unwinding_the_worker() {
+        assert_eq!(catch_render_panic(|| 7), Ok(7));
+        let previous = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {}));
+        let caught = catch_render_panic(|| panic!("render exploded"));
+        std::panic::set_hook(previous);
+        assert_eq!(caught, Err("render exploded".to_owned()));
+    }
 
     #[test]
     fn fitted_mapping_accounts_for_letterboxing_and_fractional_coordinates() {
         let outer = Rect::from_min_size(Pos2::new(10.25, 20.5), Vec2::new(400.0, 400.0));
-        let content = fitted_rect(outer, (800, 400), ImageFit::Contain);
+        let content = fitted_rect(outer, (800, 400), ImageFit::Contain, 1.0);
         assert_eq!(content.min, Pos2::new(10.25, 120.5));
         assert_eq!(
             map_point(content, Pos2::new(210.25, 220.5), (800, 400)),
@@ -220,7 +433,7 @@ mod tests {
     #[test]
     fn cover_interactions_are_limited_to_the_visible_intersection() {
         let outer = Rect::from_min_size(Pos2::new(10.0, 20.0), Vec2::new(200.0, 100.0));
-        let content = fitted_rect(outer, (100, 200), ImageFit::Cover);
+        let content = fitted_rect(outer, (100, 200), ImageFit::Cover, 1.0);
         assert!(content.height() > outer.height());
         let visible = visible_content_rect(content, outer);
         assert_eq!(visible, outer);
@@ -249,7 +462,7 @@ mod tests {
         let outer = Rect::from_min_size(Pos2::new(10.0, 20.0), Vec2::new(400.0, 300.0));
         let image_size = (800, 400);
 
-        let contain = fitted_rect(outer, image_size, ImageFit::Contain);
+        let contain = fitted_rect(outer, image_size, ImageFit::Contain, 1.0);
         assert_eq!(
             map_point(contain, contain.min, image_size),
             Some((0.0, 0.0))
@@ -271,7 +484,7 @@ mod tests {
             None
         );
 
-        let cover = fitted_rect(outer, image_size, ImageFit::Cover);
+        let cover = fitted_rect(outer, image_size, ImageFit::Cover, 1.0);
         let visible_cover = visible_content_rect(cover, outer);
         assert_eq!(visible_cover, outer);
         assert_close(
@@ -287,7 +500,7 @@ mod tests {
             (2000.0 / 3.0, 400.0),
         );
 
-        let fill = fitted_rect(outer, image_size, ImageFit::Fill);
+        let fill = fitted_rect(outer, image_size, ImageFit::Fill, 1.0);
         assert_eq!(fill, outer);
         assert_eq!(map_point(fill, fill.min, image_size), Some((0.0, 0.0)));
         assert_eq!(
@@ -317,6 +530,74 @@ mod tests {
     }
 
     #[test]
+    fn a_frame_rendered_for_this_rect_is_presented_one_to_one_on_physical_pixels() {
+        for (logical, scale) in [((100.25_f64, 50.1_f64), 2.0_f32), ((640.0, 360.0), 1.0)] {
+            let outer = Rect::from_min_size(
+                Pos2::new(10.3, 20.6),
+                Vec2::new(logical.0 as f32, logical.1 as f32),
+            );
+            let image_size = physical_backing_size(logical.0, logical.1, scale);
+
+            let content = fitted_rect(outer, image_size, ImageFit::Contain, scale);
+
+            let physical_min = (content.min.x * scale, content.min.y * scale);
+            assert_eq!(physical_min.0, physical_min.0.round());
+            assert_eq!(physical_min.1, physical_min.1.round());
+            assert_eq!(content.width() * scale, image_size.0 as f32);
+            assert_eq!(content.height() * scale, image_size.1 as f32);
+        }
+    }
+
+    #[test]
+    fn a_frame_that_lags_behind_a_resize_keeps_the_shared_fitted_geometry() {
+        let outer = Rect::from_min_size(Pos2::new(0.0, 0.0), Vec2::new(400.0, 400.0));
+        let stale = fitted_rect(outer, (800, 400), ImageFit::Contain, 1.0);
+        assert_eq!(stale.width(), 400.0);
+        assert_eq!(stale.height(), 200.0);
+    }
+
+    #[test]
+    fn export_composition_blends_the_overlay_over_the_base() {
+        let base = Image::new(2, 1, vec![255, 0, 0, 255, 10, 20, 30, 255]);
+        let overlay = Image::new(2, 1, vec![0, 0, 255, 0, 0, 0, 255, 128]);
+
+        let composed = compose_over(&base, &overlay);
+
+        assert_eq!((composed.width, composed.height), (2, 1));
+        assert_eq!(composed.pixels[..4], base.pixels[..4]);
+        assert_eq!(
+            composed.pixels[4..],
+            source_over_straight_rgba([10, 20, 30, 255], [0, 0, 255, 128])
+        );
+    }
+
+    #[test]
+    fn export_composition_ignores_a_mismatched_overlay() {
+        let base = Image::new(2, 1, vec![255, 0, 0, 255, 10, 20, 30, 255]);
+        let overlay = Image::new(1, 1, vec![0, 0, 255, 255]);
+        assert_eq!(compose_over(&base, &overlay).pixels, base.pixels);
+    }
+
+    #[test]
+    fn a_dropped_worker_closes_its_channel_and_joins_the_thread() {
+        let (observed, observer) = std::sync::mpsc::channel();
+        let worker = RenderWorker::spawn("ruviz-egui-test-worker", move |receiver| {
+            while let Ok(work) = receiver.recv() {
+                let _ = observed.send(work);
+            }
+            let _ = observed.send(u32::MAX);
+        })
+        .unwrap();
+
+        worker.send(7).unwrap();
+        assert_eq!(observer.recv().unwrap(), 7);
+        drop(worker);
+
+        assert_eq!(observer.recv().unwrap(), u32::MAX);
+        assert!(observer.recv().is_err());
+    }
+
+    #[test]
     fn alpha_is_converted_before_egui_upload() {
         let image = Image::new(1, 1, vec![255, 0, 0, 128]);
         let converted = color_image(&image);
@@ -324,6 +605,50 @@ mod tests {
             converted.pixels[0],
             egui::Color32::from_rgba_premultiplied(128, 0, 0, 128)
         );
+    }
+
+    #[test]
+    fn clipboard_export_uses_the_retained_image_pixels() {
+        let context = egui::Context::default();
+        let image = Image::new(2, 1, vec![255, 0, 0, 255, 0, 128, 255, 128]);
+        let output = context.run_ui(egui::RawInput::default(), |ui| {
+            copy_image_to_clipboard(ui.ctx(), &image);
+        });
+
+        let copied = output
+            .platform_output
+            .commands
+            .iter()
+            .find_map(|command| match command {
+                egui::OutputCommand::CopyImage(image) => Some(image),
+                _ => None,
+            })
+            .expect("copy action should emit an image clipboard command");
+        assert_eq!(copied.size, [2, 1]);
+        assert_eq!(
+            copied.pixels[0],
+            egui::Color32::from_rgba_premultiplied(255, 0, 0, 255)
+        );
+        assert_eq!(
+            copied.pixels[1],
+            egui::Color32::from_rgba_premultiplied(0, 64, 128, 128)
+        );
+    }
+
+    #[test]
+    fn png_export_writes_the_retained_frame_as_png() {
+        let image = Image::new(1, 1, vec![10, 20, 30, 128]);
+        let path = std::env::temp_dir().join(format!(
+            "ruviz-egui-export-{}-{}.png",
+            std::process::id(),
+            NEXT_WIDGET_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+
+        write_png(&image, &path).unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        std::fs::remove_file(&path).unwrap();
+
+        assert_eq!(&bytes[..8], b"\x89PNG\r\n\x1a\n");
     }
 
     #[test]

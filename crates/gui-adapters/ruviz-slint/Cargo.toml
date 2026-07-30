@@ -31,16 +31,25 @@ gpu = ["ruviz/gpu"]
 [dependencies]
 ruviz = { version = "=0.6.0", path = "../../.." }
 slint = { version = "~1.17", default-features = false, features = ["std", "compat-1-2"] }
+arboard = "3.6.1"
+rfd = "0.15"
 
 [build-dependencies]
 slint-build = { version = "~1.17", features = ["experimental-module-builds"] }
 
 [dev-dependencies]
 i-slint-backend-testing = { version = "~1.17", features = ["renderer-software"] }
+# Examples need a GPU renderer so interactive plots present at display rate;
+# the `i-slint-backend-testing` headless tests need the software renderer.
+# Cargo unifies dev-dependency features across examples and tests, so both
+# renderers are enabled and Slint picks one at runtime (`SLINT_BACKEND`
+# overrides it). Enabling only one would either regress the tests or leave the
+# examples CPU-rendered.
 slint = { version = "~1.17", default-features = false, features = [
     "std",
     "compat-1-2",
     "backend-winit",
+    "renderer-femtovg",
     "renderer-software",
 ] }
 

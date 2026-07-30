@@ -16,7 +16,7 @@ impl Default for Dashboard {
                 Plot::new()
                     .line(&x, &sine)
                     .label("sin(x)")
-                    .title("Interactive: drag, scroll, shift-drag, double-click"),
+                    .title("Interactive: drag, scroll, right-drag brush/click menu"),
             )
             .interactive()
             .build(),
@@ -37,13 +37,15 @@ impl eframe::App for Dashboard {
         let plot_height = (available.y - ui.spacing().item_spacing.y).max(2.0) * 0.5;
         let width = available.x.max(1.0);
         ui.allocate_ui(eframe::egui::vec2(width, plot_height), |ui| {
-            self.interactive
-                .show(ui)
-                .response
-                .on_hover_text("Scroll to zoom; drag to pan; shift-drag to brush");
+            self.interactive.show(ui).response.on_hover_text(
+                "Drag to pan; right/shift-drag to brush; right-click for plot actions",
+            );
         });
         ui.allocate_ui(eframe::egui::vec2(width, plot_height), |ui| {
-            self.static_plot.show(ui);
+            self.static_plot
+                .show(ui)
+                .response
+                .on_hover_text("Right-click to enable interaction or export the installed frame");
         });
     }
 }

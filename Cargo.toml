@@ -605,6 +605,10 @@ name = "performance"
 harness = false
 
 [[bench]]
+name = "interactive_presentation"
+harness = false
+
+[[bench]]
 name = "three_d"
 harness = false
 required-features = ["3d"]
