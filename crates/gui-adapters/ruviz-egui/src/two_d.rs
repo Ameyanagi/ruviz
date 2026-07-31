@@ -616,10 +616,13 @@ impl RuvizPlot {
                 },
             )?);
         }
-        Ok(self
-            .worker
+        // The worker was just installed above, so `None` is unreachable. Report
+        // it rather than asserting: the caller already turns an error into a
+        // surfaced `PlotEvent::Error`, and a panic here would take down the
+        // host application instead of one plot.
+        self.worker
             .as_ref()
-            .expect("2D render worker was just installed"))
+            .ok_or_else(|| std::io::Error::other("ruviz-egui 2D render worker was not installed"))
     }
 
     fn drain_completions(&mut self, context: &egui::Context, events: &mut Vec<PlotEvent>) {
