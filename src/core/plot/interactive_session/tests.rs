@@ -2780,6 +2780,75 @@ fn test_tooltip_tiny_skia_round_trip_returns_straight_alpha() {
     );
 }
 
+/// The tooltip label is rasterized on a sub-image covering only the tooltip box,
+/// so it must not disturb any pixel outside that box, and the sub-rect index
+/// math must stay in bounds when the box is clamped against a frame edge.
+#[test]
+fn test_tooltip_overlay_only_touches_its_own_region() {
+    let size_px = (160u32, 96u32);
+    let sentinel = [7u8, 11, 13, 17];
+    let seeded = || {
+        sentinel
+            .iter()
+            .copied()
+            .cycle()
+            .take(size_px.0 as usize * size_px.1 as usize * 4)
+            .collect::<Vec<u8>>()
+    };
+
+    let mut pixels = seeded();
+    draw_tooltip_overlay(
+        &mut pixels,
+        size_px,
+        &TooltipState {
+            content: "x=1.000".to_string(),
+            position_px: ViewportPoint::new(80.0, 48.0),
+        },
+    );
+
+    let before = seeded();
+    let changed = pixels
+        .chunks_exact(4)
+        .zip(before.chunks_exact(4))
+        .enumerate()
+        .filter(|(_, (after, original))| after != original)
+        .map(|(index, _)| (index as u32 % size_px.0, index as u32 / size_px.0))
+        .collect::<Vec<_>>();
+
+    assert!(!changed.is_empty(), "the tooltip must draw something");
+    let min_x = changed.iter().map(|(x, _)| *x).min().unwrap();
+    let max_x = changed.iter().map(|(x, _)| *x).max().unwrap();
+    let min_y = changed.iter().map(|(_, y)| *y).min().unwrap();
+    let max_y = changed.iter().map(|(_, y)| *y).max().unwrap();
+    assert!(
+        max_x - min_x < size_px.0 / 2 && max_y - min_y < size_px.1 / 2,
+        "tooltip writes must stay local to the box, got x {min_x}..={max_x}, y {min_y}..={max_y}"
+    );
+
+    // Each corner clamps the sub-rect against a different pair of frame edges.
+    for position in [
+        ViewportPoint::new(0.0, 0.0),
+        ViewportPoint::new(size_px.0 as f64, 0.0),
+        ViewportPoint::new(0.0, size_px.1 as f64),
+        ViewportPoint::new(size_px.0 as f64, size_px.1 as f64),
+    ] {
+        let mut pixels = seeded();
+        draw_tooltip_overlay(
+            &mut pixels,
+            size_px,
+            &TooltipState {
+                content: "edge".to_string(),
+                position_px: position,
+            },
+        );
+        assert_eq!(
+            pixels.len(),
+            size_px.0 as usize * size_px.1 as usize * 4,
+            "the overlay buffer must keep its size at {position:?}"
+        );
+    }
+}
+
 #[test]
 fn test_overlay_only_updates_reuse_cached_base_layer() {
     let plot: Plot = Plot::new()
@@ -4963,4 +5032,184 @@ fn test_translucent_dynamic_annotation_composes_with_straight_alpha() {
         "red channel should stay near full intensity in straight alpha, got {:?}",
         translucent_pixel
     );
+}
+
+fn layered_test_session() -> InteractivePlotSession {
+    let plot: Plot = Plot::new()
+        .scatter(&[0.25, 0.75], &[0.25, 0.75])
+        .xlim(0.0, 1.0)
+        .ylim(0.0, 1.0)
+        .into();
+    plot.prepare_interactive()
+}
+
+fn layered_image_target() -> ImageTarget {
+    ImageTarget {
+        size_px: (320, 240),
+        scale_factor: 1.0,
+        time_seconds: 0.0,
+    }
+}
+
+fn show_test_tooltip(session: &InteractivePlotSession, content: &str) {
+    session.apply_input(PlotInputEvent::ShowTooltip {
+        content: content.to_string(),
+        position_px: ViewportPoint::new(120.0, 80.0),
+    });
+}
+
+#[test]
+fn test_render_layers_stamped_returns_same_base_layer_as_composed_path() {
+    let session = layered_test_session();
+    let target = layered_image_target();
+    show_test_tooltip(&session, "layered");
+
+    let composed = session
+        .render_to_image_stamped(target)
+        .expect("composed frame should render");
+    assert_ne!(
+        composed.frame.image.pixels, composed.frame.layers.base.pixels,
+        "fixture must produce an overlay that actually changes composed pixels"
+    );
+
+    let layered = session
+        .render_layers_stamped(target)
+        .expect("layered frame should render");
+
+    // The base arrives in tiny-skia's native premultiplied form. The composed
+    // render above already memoized a straight view on the shared cached layer,
+    // so `has_straight_view` is legitimately true here; the assertion that a
+    // layered-only render never demultiplies lives in the overlay-only test.
+    assert_eq!(layered.base.alpha_mode(), AlphaMode::Premultiplied);
+
+    // Asking for the straight view yields exactly the composed path's base, and
+    // both share the cached layer's memoized allocation.
+    assert_eq!(
+        layered.base.image().pixels,
+        composed.frame.layers.base.pixels,
+        "the straight view must match the composed path's base layer"
+    );
+    assert!(
+        Arc::ptr_eq(layered.base.image(), &composed.frame.layers.base),
+        "the straight view must be memoized on the shared cached layer"
+    );
+
+    let composed_overlay = composed
+        .frame
+        .layers
+        .overlay
+        .as_ref()
+        .expect("tooltip overlay should render");
+    let layered_overlay = layered
+        .overlay
+        .as_ref()
+        .expect("layered path must expose the overlay layer");
+    // The overlay is drawn with straight-alpha blends, so it needs no conversion.
+    assert_eq!(layered_overlay.alpha_mode(), AlphaMode::Straight);
+    assert!(Arc::ptr_eq(layered_overlay.image(), composed_overlay));
+    assert_ne!(
+        layered.base.image().pixels,
+        composed.frame.image.pixels,
+        "the layered base must stay uncomposed"
+    );
+}
+
+#[test]
+fn test_render_layers_stamped_reuses_base_arc_across_overlay_only_redraw() {
+    let session = layered_test_session();
+    let target = layered_image_target();
+
+    let first = session
+        .render_layers_stamped(target)
+        .expect("initial layered frame should render");
+    assert!(first.layer_state.base_dirty);
+
+    show_test_tooltip(&session, "hover");
+    let second = session
+        .render_layers_stamped(target)
+        .expect("overlay-only layered frame should render");
+    assert!(!second.layer_state.base_dirty);
+    assert!(second.layer_state.overlay_dirty);
+    // compose_images allocates a fresh buffer; a pointer-identical base buffer
+    // across an overlay-only redraw proves the composite never ran. Compare the
+    // native pixels so the assertion itself does not materialize a straight view.
+    assert!(
+        first.base.same_buffer_as(&second.base),
+        "overlay-only redraw must reuse the cached base allocation"
+    );
+    assert!(
+        !second.base.has_straight_view(),
+        "an overlay-only layered redraw must not demultiply the base"
+    );
+    let overlay = second
+        .overlay
+        .as_ref()
+        .expect("tooltip overlay should render");
+    assert_eq!(
+        (overlay.width(), overlay.height()),
+        (second.base.width(), second.base.height())
+    );
+    assert_eq!(overlay.alpha_mode(), AlphaMode::Straight);
+    assert_eq!(second.base.alpha_mode(), AlphaMode::Premultiplied);
+}
+
+#[test]
+fn test_render_layers_stamped_matches_image_currentness_contract() {
+    let session = layered_test_session();
+    let target = layered_image_target();
+
+    let first = session
+        .render_layers_stamped(target)
+        .expect("initial layered frame should render");
+    assert!(session.is_render_stamp_current(first.render_stamp()));
+    assert_eq!(
+        session.displayed_frame_generation(),
+        Some(first.base_generation)
+    );
+    assert_eq!(first.stats.last_target, RenderTargetKind::Image);
+    assert_eq!(
+        first.stats.last_surface_capability,
+        SurfaceCapability::Unsupported
+    );
+
+    let other_session = session.prepared_plot().clone().into_interactive();
+    other_session
+        .render_layers_stamped(target)
+        .expect("other session should render");
+    assert!(!other_session.is_render_stamp_current(first.render_stamp()));
+
+    show_test_tooltip(&session, "stale me");
+    assert!(
+        !session.is_render_stamp_current(first.render_stamp()),
+        "an overlay-only change must make the layered stamp stale"
+    );
+    let overlay_frame = session
+        .render_layers_stamped(target)
+        .expect("overlay-only layered frame should render");
+    assert_eq!(overlay_frame.base_generation, first.base_generation);
+    assert_ne!(overlay_frame.render_stamp(), first.render_stamp());
+    assert!(session.is_render_stamp_current(overlay_frame.render_stamp()));
+
+    session.apply_input(PlotInputEvent::Pan {
+        delta_px: ViewportPoint::new(20.0, 0.0),
+    });
+    let panned = session
+        .render_layers_stamped(target)
+        .expect("panned layered frame should render");
+    assert!(panned.base_generation > first.base_generation);
+    assert_eq!(
+        session.displayed_frame_generation(),
+        Some(panned.base_generation)
+    );
+
+    // The two paths commit interchangeable stamps for the same session state.
+    let composed = session
+        .render_to_image_stamped(target)
+        .expect("composed frame should render");
+    assert_eq!(composed.base_generation, panned.base_generation);
+    assert_eq!(composed.render_stamp(), panned.render_stamp());
+    assert!(session.is_render_stamp_current(panned.render_stamp()));
+
+    session.invalidate();
+    assert!(!session.is_render_stamp_current(panned.render_stamp()));
 }

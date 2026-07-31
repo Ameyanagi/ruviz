@@ -40,7 +40,8 @@ impl Dashboard {
             Self {
                 two_d,
                 three_d,
-                status: "2D: pan/zoom/select · 3D: orbit/pan/zoom/pick".to_owned(),
+                status: "2D: pan/zoom/select · 3D: orbit/pan/zoom/pick · right-click either plot"
+                    .to_owned(),
             },
             tasks,
         )

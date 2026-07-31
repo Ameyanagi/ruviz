@@ -1,18 +1,22 @@
-use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::{
+    Arc,
+    mpsc::{self, Receiver, Sender},
+};
 
-use egui::{Id, PointerButton, Response, Sense, TextureHandle, TextureOptions, Ui};
+use egui::{Id, PointerButton, Response, Sense, TextureHandle, Ui};
 use ruviz::axes::AxisScale;
 use ruviz::core::{
     HitResult, Image, ImageFit, ImageTarget, InteractiveChangeRevision,
     InteractiveChangeSubscription, InteractivePlotSession, InteractiveRenderStamp, IntoPlotSession,
-    LatestRequestScheduler, Plot, PlotInputEvent, ScheduledRequestId, ViewportPoint, ViewportRect,
-    physical_backing_size,
+    LatestRequestScheduler, LayerRenderState, Plot, PlotContextMenuAction, PlotInputEvent,
+    RenderedLayer, ScheduledRequestId, ViewportPoint, ViewportRect, physical_backing_size,
 };
 
 use crate::shared::{
-    AdapterError, AdapterErrorKind, PlotSize, ViewMode, claim_scroll_y, color_image, fitted_rect,
-    map_delta, map_point, map_point_clamped, next_widget_id, paint_texture, press_starts_in,
-    release_is_cancelled, visible_content_rect,
+    AdapterError, AdapterErrorKind, PlotSize, RenderWorker, ViewMode, catch_render_panic,
+    claim_scroll_y, compose_over, copy_image_to_clipboard, fitted_rect, map_delta, map_point,
+    map_point_clamped, next_widget_id, paint_texture, press_starts_in, release_is_cancelled,
+    spawn_png_save, upload_texture, visible_content_rect,
 };
 
 /// Start an egui adapter builder from any ruviz plot, prepared plot, builder,
@@ -96,7 +100,10 @@ impl RuvizPlotBuilder {
 }
 
 /// Observable event emitted while showing a 2D plot.
+///
+/// New variants are added in minor releases, so match with a `_` arm.
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub enum PlotEvent {
     Hovered(Option<HitResult>),
     Clicked(HitResult),
@@ -106,6 +113,7 @@ pub enum PlotEvent {
     BrushFinished,
     DragCancelled,
     Reset,
+    ContextMenuAction(PlotContextMenuAction),
     Error(AdapterError),
 }
 
@@ -144,7 +152,9 @@ struct RenderRequest2D {
 }
 
 struct Rendered2D {
-    image: Image,
+    base: RenderedLayer,
+    overlay: Option<RenderedLayer>,
+    layer_state: LayerRenderState,
     stamp: InteractiveRenderStamp,
 }
 
@@ -160,10 +170,24 @@ struct RenderCompletion2D {
     result: RenderResult2D,
 }
 
+struct WorkerRequest2D {
+    id: ScheduledRequestId,
+    request: RenderRequest2D,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Drag2D {
     Pan,
-    Brush,
+    Brush(PointerButton),
+}
+
+impl Drag2D {
+    fn button(self) -> PointerButton {
+        match self {
+            Self::Pan => PointerButton::Primary,
+            Self::Brush(button) => button,
+        }
+    }
 }
 
 /// App-owned retained egui widget for a 2D ruviz plot.
@@ -174,13 +198,19 @@ pub struct RuvizPlot {
     fit: ImageFit,
     prefer_gpu: bool,
     id: Id,
-    texture: Option<TextureHandle>,
+    base_texture: Option<TextureHandle>,
+    overlay_texture: Option<TextureHandle>,
+    installed_base: Option<RenderedLayer>,
+    installed_overlay: Option<RenderedLayer>,
     image_size: Option<(u32, u32)>,
     displayed_stamp: Option<InteractiveRenderStamp>,
     session_epoch: u64,
     scheduler: LatestRequestScheduler<RenderRequest2D>,
+    worker: Option<RenderWorker<WorkerRequest2D>>,
     completion_tx: Sender<RenderCompletion2D>,
     completion_rx: Receiver<RenderCompletion2D>,
+    save_completion_tx: Sender<Result<(), AdapterError>>,
+    save_completion_rx: Receiver<Result<(), AdapterError>>,
     last_requested: Option<RenderKey2D>,
     subscription: Option<InteractiveChangeSubscription>,
     subscribed_context: Option<egui::Context>,
@@ -204,6 +234,7 @@ impl RuvizPlot {
     ) -> Self {
         session.set_prefer_gpu(prefer_gpu);
         let (completion_tx, completion_rx) = mpsc::channel();
+        let (save_completion_tx, save_completion_rx) = mpsc::channel();
         Self {
             session,
             mode,
@@ -211,13 +242,19 @@ impl RuvizPlot {
             fit,
             prefer_gpu,
             id,
-            texture: None,
+            base_texture: None,
+            overlay_texture: None,
+            installed_base: None,
+            installed_overlay: None,
             image_size: None,
             displayed_stamp: None,
             session_epoch: 0,
             scheduler: LatestRequestScheduler::default(),
+            worker: None,
             completion_tx,
             completion_rx,
+            save_completion_tx,
+            save_completion_rx,
             last_requested: None,
             subscription: None,
             subscribed_context: None,
@@ -310,16 +347,13 @@ impl RuvizPlot {
     pub fn show(&mut self, ui: &mut Ui) -> PlotResponse {
         self.ensure_subscription(ui.ctx());
         let size = self.size.desired(ui);
-        let sense = if self.mode == ViewMode::Interactive {
-            Sense::click_and_drag()
-        } else {
-            Sense::hover()
-        };
+        let sense = plot_sense(self.mode);
         let (_, outer) = ui.allocate_space(size);
         let mut response = ui.interact(outer, self.id, sense);
 
         let mut events = Vec::new();
         self.drain_completions(ui.ctx(), &mut events);
+        self.drain_save_completions(&mut events);
 
         let scale_factor = ui.ctx().pixels_per_point();
         let target_size = physical_backing_size(
@@ -329,11 +363,16 @@ impl RuvizPlot {
         );
         self.session.resize(target_size, scale_factor);
         let frame_size = self.image_size.unwrap_or(target_size);
-        let content = fitted_rect(outer, frame_size, self.fit);
+        let content = fitted_rect(outer, frame_size, self.fit, scale_factor);
         let visible_content = visible_content_rect(content, outer);
 
-        if let Some(texture) = &self.texture {
+        // Base first, then the overlay blended over it in the same rect. The
+        // two layers are never composited on the CPU for presentation.
+        if let Some(texture) = &self.base_texture {
             paint_texture(ui, texture, content, outer);
+            if let Some(overlay) = &self.overlay_texture {
+                paint_texture(ui, overlay, content, outer);
+            }
         }
 
         let mut clicked = None;
@@ -367,20 +406,27 @@ impl RuvizPlot {
         } else if self.mode == ViewMode::Static && self.active_drag.is_some() {
             self.cancel_drag();
             events.push(PlotEvent::DragCancelled);
-        } else if self.active_drag.is_some() {
-            let (primary_down, focused) = ui.input(|input| {
+        } else if let Some(active_drag) = self.active_drag {
+            let (active_button_down, focused) = ui.input(|input| {
                 (
-                    input.pointer.button_down(PointerButton::Primary),
+                    input.pointer.button_down(active_drag.button()),
                     input.focused,
                 )
             });
-            if !primary_down || !focused {
+            if !active_button_down || !focused {
                 let mut outcome = InputOutcome2D::default();
                 self.cancel_active_drag(&mut outcome);
                 events.extend(outcome.events);
-            } else if let Some(position) = response.interact_pointer_pos() {
-                self.last_drag_position = Some(position);
             }
+            // The pointer keeps moving while a frame is in flight. Leaving
+            // `last_drag_position` at the last applied position coalesces that
+            // motion into the next drag delta instead of discarding it.
+        }
+
+        if let Some(action) =
+            plot_context_menu_action(&response, self.mode, self.installed_base.is_some())
+        {
+            self.apply_context_menu_action(action, ui.ctx(), &mut view_changed, &mut events);
         }
 
         let key = RenderKey2D {
@@ -492,44 +538,105 @@ impl RuvizPlot {
         true
     }
 
-    fn spawn_render(&self, id: ScheduledRequestId, request: RenderRequest2D) {
-        let sender = self.completion_tx.clone();
-        let worker_sender = sender.clone();
-        let worker_id = id.clone();
+    fn spawn_render(&mut self, id: ScheduledRequestId, request: RenderRequest2D) {
         let repaint = request.repaint.clone();
-        if let Err(error) = std::thread::Builder::new()
-            .name("ruviz-egui-2d-render".to_string())
-            .spawn(move || {
-                let result = match request.session.render_to_image_stamped(request.target) {
-                    Ok(frame) => RenderResult2D::Frame(Rendered2D {
-                        image: frame.frame.image.as_ref().clone(),
-                        stamp: frame.render_stamp(),
-                    }),
-                    Err(error) if error.is_render_superseded() => RenderResult2D::Superseded,
-                    Err(error) => {
-                        RenderResult2D::Error(AdapterError::new(AdapterErrorKind::Render, error))
-                    }
-                };
-                let _ = worker_sender.send(RenderCompletion2D {
-                    id: worker_id,
-                    session_epoch: request.session_epoch,
-                    result,
-                });
-                request.repaint.request_repaint();
-            })
-        {
-            let _ = sender.send(RenderCompletion2D {
+        let failure = match self.render_worker() {
+            Ok(worker) => match worker.send(WorkerRequest2D { id, request }) {
+                Ok(()) => return,
+                Err(returned) => Some((
+                    returned.0.id,
+                    AdapterError::new(
+                        AdapterErrorKind::Render,
+                        "ruviz-egui 2D render worker is unavailable",
+                    ),
+                )),
+            },
+            Err(error) => Some((id, AdapterError::new(AdapterErrorKind::Render, error))),
+        };
+        if let Some((id, error)) = failure {
+            let _ = self.completion_tx.send(RenderCompletion2D {
                 id,
                 session_epoch: self.session_epoch,
-                result: RenderResult2D::Error(AdapterError::new(AdapterErrorKind::Render, error)),
+                result: RenderResult2D::Error(error),
             });
             repaint.request_repaint();
         }
     }
 
+    /// One persistent render thread per widget, started with the first frame.
+    fn render_worker(&mut self) -> std::io::Result<&RenderWorker<WorkerRequest2D>> {
+        if self.worker.is_none() {
+            let completions = self.completion_tx.clone();
+            self.worker = Some(RenderWorker::spawn(
+                "ruviz-egui-2d-render",
+                move |requests| {
+                    while let Ok(work) = requests.recv() {
+                        let WorkerRequest2D { id, request } = work;
+                        let RenderRequest2D {
+                            session,
+                            session_epoch,
+                            target,
+                            repaint,
+                        } = request;
+                        // A panicking render must not kill the lane, or the
+                        // scheduler's in-flight slot would stay occupied and
+                        // the widget would freeze with no error reported.
+                        let result =
+                            match catch_render_panic(|| session.render_layers_stamped(target)) {
+                                Ok(Ok(layers)) => RenderResult2D::Frame(Rendered2D {
+                                    stamp: layers.render_stamp(),
+                                    layer_state: layers.layer_state,
+                                    base: layers.base,
+                                    overlay: layers.overlay,
+                                }),
+                                Ok(Err(error)) if error.is_render_superseded() => {
+                                    RenderResult2D::Superseded
+                                }
+                                Ok(Err(error)) => RenderResult2D::Error(AdapterError::new(
+                                    AdapterErrorKind::Render,
+                                    error,
+                                )),
+                                Err(message) => RenderResult2D::Error(AdapterError::new(
+                                    AdapterErrorKind::Render,
+                                    format!("ruviz-egui 2D render panicked: {message}"),
+                                )),
+                            };
+                        if completions
+                            .send(RenderCompletion2D {
+                                id,
+                                session_epoch,
+                                result,
+                            })
+                            .is_err()
+                        {
+                            break;
+                        }
+                        repaint.request_repaint();
+                    }
+                },
+            )?);
+        }
+        // The worker was just installed above, so `None` is unreachable. Report
+        // it rather than asserting: the caller already turns an error into a
+        // surfaced `PlotEvent::Error`, and a panic here would take down the
+        // host application instead of one plot.
+        self.worker
+            .as_ref()
+            .ok_or_else(|| std::io::Error::other("ruviz-egui 2D render worker was not installed"))
+    }
+
     fn drain_completions(&mut self, context: &egui::Context, events: &mut Vec<PlotEvent>) {
         while let Ok(completed) = self.completion_rx.try_recv() {
             self.handle_completion(context, events, completed);
+        }
+    }
+
+    fn drain_save_completions(&mut self, events: &mut Vec<PlotEvent>) {
+        while let Ok(result) = self.save_completion_rx.try_recv() {
+            if let Err(error) = result {
+                self.last_error = Some(error.clone());
+                events.push(PlotEvent::Error(error));
+            }
         }
     }
 
@@ -547,7 +654,7 @@ impl RuvizPlot {
                 RenderResult2D::Frame(frame)
                     if self.session.is_render_stamp_current(frame.stamp) =>
                 {
-                    self.install_image(context, frame.image);
+                    self.install_layers(context, frame.base, frame.overlay, frame.layer_state);
                     self.displayed_stamp = Some(frame.stamp);
                     self.last_error = None;
                 }
@@ -563,18 +670,70 @@ impl RuvizPlot {
         }
     }
 
-    fn install_image(&mut self, context: &egui::Context, image: Image) {
-        self.image_size = Some((image.width, image.height));
-        let color = color_image(&image);
-        if let Some(texture) = &mut self.texture {
-            texture.set(color, TextureOptions::LINEAR);
-        } else {
-            self.texture = Some(context.load_texture(
-                format!("ruviz-egui-2d-{:?}", self.id),
-                color,
-                TextureOptions::LINEAR,
-            ));
+    /// Install a rendered frame as two stacked textures.
+    ///
+    /// The base layer is `Arc`-identical across an overlay-only redraw, so a
+    /// hover or tooltip only re-uploads the small overlay.
+    fn install_layers(
+        &mut self,
+        context: &egui::Context,
+        base: RenderedLayer,
+        overlay: Option<RenderedLayer>,
+        layer_state: LayerRenderState,
+    ) {
+        self.image_size = Some((base.width(), base.height()));
+
+        if layer_needs_upload(
+            self.installed_base.as_ref(),
+            &base,
+            layer_state.base_dirty,
+            self.base_texture.is_some(),
+        ) {
+            upload_texture(
+                context,
+                &mut self.base_texture,
+                || format!("ruviz-egui-2d-{:?}", self.id),
+                &base,
+            );
         }
+        self.installed_base = Some(base);
+
+        match overlay {
+            Some(overlay) => {
+                if layer_needs_upload(
+                    self.installed_overlay.as_ref(),
+                    &overlay,
+                    layer_state.overlay_dirty,
+                    self.overlay_texture.is_some(),
+                ) {
+                    upload_texture(
+                        context,
+                        &mut self.overlay_texture,
+                        || format!("ruviz-egui-2d-overlay-{:?}", self.id),
+                        &overlay,
+                    );
+                }
+                self.installed_overlay = Some(overlay);
+            }
+            // Nothing overlay-drawn is active: release the overlay texture
+            // instead of uploading a transparent frame over the plot.
+            None => {
+                self.installed_overlay = None;
+                self.overlay_texture = None;
+            }
+        }
+    }
+
+    /// The displayed frame flattened into one image, for export actions only.
+    ///
+    /// This is the one place that needs straight alpha, so it is also the only
+    /// place that pays for materializing it.
+    fn export_image(&self) -> Option<Arc<Image>> {
+        let base = self.installed_base.as_ref()?;
+        Some(match &self.installed_overlay {
+            Some(overlay) => Arc::new(compose_over(base.image(), overlay.image())),
+            None => Arc::clone(base.image()),
+        })
     }
 
     fn process_input(
@@ -590,7 +749,6 @@ impl RuvizPlot {
             ..InputOutcome2D::default()
         };
         let pointer = response.interact_pointer_pos();
-        let primary_down = ui.input(|input| input.pointer.button_down(PointerButton::Primary));
 
         if response.clicked() {
             response.request_focus();
@@ -666,8 +824,11 @@ impl RuvizPlot {
             }
         }
 
-        if response.drag_started_by(PointerButton::Primary) {
-            let brush = ui.input(|input| input.modifiers.shift);
+        let started_button = [PointerButton::Secondary, PointerButton::Primary]
+            .into_iter()
+            .find(|button| response.drag_started_by(*button));
+        if let Some(button) = started_button {
+            let brush = drag_starts_brush(button, ui.input(|input| input.modifiers.shift));
             let press_origin = ui.input(|input| input.pointer.press_origin());
             if !press_starts_in(visible_content, press_origin) {
                 return outcome;
@@ -676,57 +837,85 @@ impl RuvizPlot {
                 return outcome;
             };
             response.request_focus();
-            self.last_drag_position = Some(start);
-            if brush {
-                let (x, y) = map_point_clamped(content, start, image_size);
-                self.session.apply_input(PlotInputEvent::BrushStart {
-                    position_px: ViewportPoint::new(x, y),
-                });
-                self.active_drag = Some(Drag2D::Brush);
-                outcome.events.push(PlotEvent::BrushStarted);
-            } else {
-                self.active_drag = Some(Drag2D::Pan);
-            }
+            self.start_drag(button, brush, start, content, image_size, &mut outcome);
         }
 
-        if response.dragged_by(PointerButton::Primary)
+        if let Some(active_drag) = self.active_drag
+            && response.dragged_by(active_drag.button())
             && let Some(position) = pointer
         {
-            match self.active_drag {
-                Some(Drag2D::Pan) => {
-                    let delta = incremental_drag_delta(self.last_drag_position, position);
-                    let (x, y) = map_delta(content, delta, image_size);
-                    if x != 0.0 || y != 0.0 {
-                        self.session.apply_input(PlotInputEvent::Pan {
-                            delta_px: ViewportPoint::new(x, y),
-                        });
-                        outcome.view_changed = true;
-                        outcome.events.push(PlotEvent::ViewChanged);
-                    }
-                }
-                Some(Drag2D::Brush) => {
-                    let (x, y) = map_point_clamped(content, position, image_size);
-                    self.session.apply_input(PlotInputEvent::BrushMove {
-                        position_px: ViewportPoint::new(x, y),
-                    });
-                }
-                None => {}
-            }
-            self.last_drag_position = Some(position);
+            self.move_drag(position, content, image_size, &mut outcome);
         }
 
         let focused = ui.input(|input| input.focused);
-        if response.drag_stopped_by(PointerButton::Primary) {
+        let active_button = self.active_drag.map(Drag2D::button);
+        if active_button.is_some_and(|button| response.drag_stopped_by(button)) {
             if release_is_cancelled(visible_content, pointer, focused) {
                 self.cancel_active_drag(&mut outcome);
             } else {
                 self.finish_drag(pointer, content, image_size, &mut outcome);
             }
-        } else if self.active_drag.is_some() && (!primary_down || !focused) {
-            self.cancel_active_drag(&mut outcome);
+        } else if let Some(button) = active_button {
+            let active_button_down = ui.input(|input| input.pointer.button_down(button));
+            if !active_button_down || !focused {
+                self.cancel_active_drag(&mut outcome);
+            }
         }
 
         outcome
+    }
+
+    fn start_drag(
+        &mut self,
+        button: PointerButton,
+        brush: bool,
+        start: egui::Pos2,
+        content: egui::Rect,
+        image_size: (u32, u32),
+        outcome: &mut InputOutcome2D,
+    ) {
+        self.last_drag_position = Some(start);
+        if brush {
+            let (x, y) = map_point_clamped(content, start, image_size);
+            self.session.apply_input(PlotInputEvent::BrushStart {
+                position_px: ViewportPoint::new(x, y),
+            });
+            self.active_drag = Some(Drag2D::Brush(button));
+            outcome.events.push(PlotEvent::BrushStarted);
+        } else {
+            debug_assert_eq!(button, PointerButton::Primary);
+            self.active_drag = Some(Drag2D::Pan);
+        }
+    }
+
+    fn move_drag(
+        &mut self,
+        position: egui::Pos2,
+        content: egui::Rect,
+        image_size: (u32, u32),
+        outcome: &mut InputOutcome2D,
+    ) {
+        match self.active_drag {
+            Some(Drag2D::Pan) => {
+                let delta = incremental_drag_delta(self.last_drag_position, position);
+                let (x, y) = map_delta(content, delta, image_size);
+                if x != 0.0 || y != 0.0 {
+                    self.session.apply_input(PlotInputEvent::Pan {
+                        delta_px: ViewportPoint::new(x, y),
+                    });
+                    outcome.view_changed = true;
+                    outcome.events.push(PlotEvent::ViewChanged);
+                }
+            }
+            Some(Drag2D::Brush(_)) => {
+                let (x, y) = map_point_clamped(content, position, image_size);
+                self.session.apply_input(PlotInputEvent::BrushMove {
+                    position_px: ViewportPoint::new(x, y),
+                });
+            }
+            None => {}
+        }
+        self.last_drag_position = Some(position);
     }
 
     fn clear_hover_if_pointer_left(&mut self, pointer_over_visible_content: bool) -> bool {
@@ -739,6 +928,62 @@ impl RuvizPlot {
         true
     }
 
+    fn apply_context_menu_action(
+        &mut self,
+        action: PlotContextMenuAction,
+        context: &egui::Context,
+        view_changed: &mut bool,
+        events: &mut Vec<PlotEvent>,
+    ) {
+        match action {
+            PlotContextMenuAction::ResetView => {
+                if self.active_drag.is_some() {
+                    let mut outcome = InputOutcome2D::default();
+                    self.cancel_active_drag(&mut outcome);
+                    events.extend(outcome.events);
+                }
+                self.session.apply_input(PlotInputEvent::ResetView);
+                *view_changed = true;
+                events.push(PlotEvent::Reset);
+                events.push(PlotEvent::ViewChanged);
+            }
+            PlotContextMenuAction::FitToContent => {
+                self.session.apply_input(PlotInputEvent::ResetView);
+                *view_changed = true;
+                events.push(PlotEvent::ViewChanged);
+            }
+            PlotContextMenuAction::SaveImage => {
+                if let Some(image) = self.export_image()
+                    && let Err(error) = spawn_png_save(
+                        image,
+                        "ruviz-plot.png",
+                        self.save_completion_tx.clone(),
+                        context.clone(),
+                    )
+                {
+                    self.last_error = Some(error.clone());
+                    events.push(PlotEvent::Error(error));
+                }
+            }
+            PlotContextMenuAction::CopyImage => {
+                if let Some(image) = self.export_image() {
+                    copy_image_to_clipboard(context, &image);
+                }
+            }
+            PlotContextMenuAction::ToggleInteraction => {
+                let mode = match self.mode {
+                    ViewMode::Static => ViewMode::Interactive,
+                    ViewMode::Interactive => ViewMode::Static,
+                };
+                self.set_mode(mode);
+            }
+            #[cfg(feature = "3d")]
+            PlotContextMenuAction::CameraView(_) => {}
+            _ => {}
+        }
+        events.push(PlotEvent::ContextMenuAction(action));
+    }
+
     fn finish_drag(
         &mut self,
         position: Option<egui::Pos2>,
@@ -746,7 +991,7 @@ impl RuvizPlot {
         image_size: (u32, u32),
         outcome: &mut InputOutcome2D,
     ) {
-        if self.active_drag.take() == Some(Drag2D::Brush) {
+        if matches!(self.active_drag.take(), Some(Drag2D::Brush(_))) {
             let (x, y) =
                 map_point_clamped(content, position.unwrap_or(content.center()), image_size);
             self.session.apply_input(PlotInputEvent::BrushEnd {
@@ -773,8 +1018,102 @@ impl RuvizPlot {
     }
 }
 
+/// Whether a rendered layer still has to reach its egui texture.
+///
+/// An overlay-only redraw returns the previous base layer unchanged, so the
+/// large base upload is skipped whenever the session hands back the same
+/// `Arc` and reports the layer as clean.
+/// A layer is already on the GPU when it is not dirty and its native buffer is
+/// the very same allocation we uploaded last time.
+fn layer_needs_upload(
+    installed: Option<&RenderedLayer>,
+    rendered: &RenderedLayer,
+    layer_dirty: bool,
+    has_texture: bool,
+) -> bool {
+    layer_dirty
+        || !has_texture
+        || installed.is_none_or(|installed| !installed.same_buffer_as(rendered))
+}
+
 fn incremental_drag_delta(previous: Option<egui::Pos2>, current: egui::Pos2) -> egui::Vec2 {
     previous.map_or(egui::Vec2::ZERO, |previous| current - previous)
+}
+
+fn drag_starts_brush(button: PointerButton, shift: bool) -> bool {
+    button == PointerButton::Secondary || (button == PointerButton::Primary && shift)
+}
+
+fn plot_sense(mode: ViewMode) -> Sense {
+    match mode {
+        ViewMode::Static => Sense::click(),
+        ViewMode::Interactive => Sense::click_and_drag(),
+    }
+}
+
+fn plot_context_menu_action(
+    response: &Response,
+    mode: ViewMode,
+    has_image: bool,
+) -> Option<PlotContextMenuAction> {
+    let mut selected = None;
+    response.context_menu(|ui| {
+        select_context_action(
+            ui,
+            &mut selected,
+            true,
+            "Reset View",
+            PlotContextMenuAction::ResetView,
+        );
+        select_context_action(
+            ui,
+            &mut selected,
+            true,
+            "Fit to Content",
+            PlotContextMenuAction::FitToContent,
+        );
+        ui.separator();
+        select_context_action(
+            ui,
+            &mut selected,
+            has_image,
+            "Save PNG…",
+            PlotContextMenuAction::SaveImage,
+        );
+        select_context_action(
+            ui,
+            &mut selected,
+            has_image,
+            "Copy Image",
+            PlotContextMenuAction::CopyImage,
+        );
+        ui.separator();
+        let toggle_label = match mode {
+            ViewMode::Static => "Enable Interaction",
+            ViewMode::Interactive => "Disable Interaction",
+        };
+        select_context_action(
+            ui,
+            &mut selected,
+            true,
+            toggle_label,
+            PlotContextMenuAction::ToggleInteraction,
+        );
+    });
+    selected
+}
+
+fn select_context_action(
+    ui: &mut Ui,
+    selected: &mut Option<PlotContextMenuAction>,
+    enabled: bool,
+    label: &str,
+    action: PlotContextMenuAction,
+) {
+    if ui.add_enabled(enabled, egui::Button::new(label)).clicked() {
+        *selected = Some(action);
+        ui.close();
+    }
 }
 
 const VIEW_BOUNDS_NORMALIZED_TOLERANCE: f64 = 1e-12;
@@ -856,18 +1195,28 @@ mod tests {
             .unwrap();
         let id = scheduled.id();
         let request = scheduled.into_request();
-        let frame = request
+        let layers = request
             .session
-            .render_to_image_stamped(request.target)
+            .render_layers_stamped(request.target)
             .unwrap();
         RenderCompletion2D {
             id,
             session_epoch: request.session_epoch,
             result: RenderResult2D::Frame(Rendered2D {
-                image: frame.frame.image.as_ref().clone(),
-                stamp: frame.render_stamp(),
+                stamp: layers.render_stamp(),
+                layer_state: layers.layer_state,
+                base: layers.base,
+                overlay: layers.overlay,
             }),
         }
+    }
+
+    fn opaque_layer(width: u32, height: u32, red: u8) -> Arc<Image> {
+        Arc::new(Image::new(
+            width,
+            height,
+            (0..width * height).flat_map(|_| [red, 0, 0, 255]).collect(),
+        ))
     }
 
     #[test]
@@ -957,7 +1306,7 @@ mod tests {
     #[test]
     fn switching_to_static_clears_drag_hover_and_requests_a_cleanup_frame() {
         let mut widget = plot_builder(plot()).build();
-        widget.active_drag = Some(Drag2D::Brush);
+        widget.active_drag = Some(Drag2D::Brush(PointerButton::Primary));
         widget.last_drag_position = Some(egui::pos2(10.0, 20.0));
         widget.session_hover_active = true;
         widget.last_hover_position = Some((10, 20));
@@ -1010,7 +1359,7 @@ mod tests {
             .expect("initial reactive frame should complete");
         widget.handle_completion(&context, &mut Vec::new(), initial_completion);
         let initial_stamp = widget.displayed_stamp.unwrap();
-        assert!(widget.texture.is_some());
+        assert!(widget.base_texture.is_some());
 
         for _ in 0..4 {
             let _ = context.run_ui(egui::RawInput::default(), |_| {});
@@ -1043,7 +1392,7 @@ mod tests {
         assert_ne!(updated_stamp, initial_stamp);
         assert!(widget.session.is_render_stamp_current(updated_stamp));
         assert_eq!(widget.image_size, Some(target.size_px));
-        assert!(widget.texture.is_some());
+        assert!(widget.base_texture.is_some());
     }
 
     #[test]
@@ -1071,7 +1420,9 @@ mod tests {
             session_epoch: first_completion.session_epoch,
             result: match &first_completion.result {
                 RenderResult2D::Frame(frame) => RenderResult2D::Frame(Rendered2D {
-                    image: frame.image.clone(),
+                    base: frame.base.clone(),
+                    overlay: frame.overlay.clone(),
+                    layer_state: frame.layer_state,
                     stamp: frame.stamp,
                 }),
                 RenderResult2D::Superseded | RenderResult2D::Error(_) => unreachable!(),
@@ -1083,15 +1434,15 @@ mod tests {
 
         first.handle_completion(&context, &mut Vec::new(), first_completion);
         assert_eq!(first.image_size, Some(first_target.size_px));
-        assert!(first.texture.is_some());
-        assert!(second.texture.is_none());
+        assert!(first.base_texture.is_some());
+        assert!(second.base_texture.is_none());
 
         second.handle_completion(&context, &mut Vec::new(), second_completion);
         assert_eq!(second.image_size, Some(second_target.size_px));
-        assert!(second.texture.is_some());
+        assert!(second.base_texture.is_some());
         assert_ne!(
-            first.texture.as_ref().map(TextureHandle::id),
-            second.texture.as_ref().map(TextureHandle::id)
+            first.base_texture.as_ref().map(TextureHandle::id),
+            second.base_texture.as_ref().map(TextureHandle::id)
         );
 
         first.session_hover_active = true;
@@ -1101,11 +1452,14 @@ mod tests {
         assert!(second.session_hover_active);
 
         first.active_drag = Some(Drag2D::Pan);
-        second.active_drag = Some(Drag2D::Brush);
+        second.active_drag = Some(Drag2D::Brush(PointerButton::Primary));
         let mut first_events = InputOutcome2D::default();
         first.cancel_active_drag(&mut first_events);
         assert!(first.active_drag.is_none());
-        assert_eq!(second.active_drag, Some(Drag2D::Brush));
+        assert_eq!(
+            second.active_drag,
+            Some(Drag2D::Brush(PointerButton::Primary))
+        );
         assert_eq!(first_events.events, vec![PlotEvent::DragCancelled]);
     }
 
@@ -1203,10 +1557,351 @@ mod tests {
     #[test]
     fn cancelled_brush_does_not_emit_selection_or_finish() {
         let mut widget = plot_builder(plot()).build();
-        widget.active_drag = Some(Drag2D::Brush);
+        widget.active_drag = Some(Drag2D::Brush(PointerButton::Primary));
         let mut outcome = InputOutcome2D::default();
         widget.cancel_active_drag(&mut outcome);
         assert_eq!(outcome.events, vec![PlotEvent::DragCancelled]);
         assert!(!outcome.selection_changed);
+    }
+
+    #[test]
+    fn secondary_drag_starts_moves_and_finishes_a_brush() {
+        let mut widget = plot_builder(plot()).build();
+        let content = egui::Rect::from_min_size(egui::pos2(10.0, 20.0), egui::vec2(200.0, 100.0));
+        let image_size = (400, 200);
+        let mut outcome = InputOutcome2D::default();
+
+        widget.start_drag(
+            PointerButton::Secondary,
+            true,
+            egui::pos2(60.0, 45.0),
+            content,
+            image_size,
+            &mut outcome,
+        );
+
+        assert_eq!(
+            widget.active_drag,
+            Some(Drag2D::Brush(PointerButton::Secondary))
+        );
+        assert_eq!(outcome.events, vec![PlotEvent::BrushStarted]);
+
+        widget.move_drag(egui::pos2(160.0, 95.0), content, image_size, &mut outcome);
+        assert_eq!(widget.last_drag_position, Some(egui::pos2(160.0, 95.0)));
+
+        widget.finish_drag(
+            Some(egui::pos2(160.0, 95.0)),
+            content,
+            image_size,
+            &mut outcome,
+        );
+        assert!(widget.active_drag.is_none());
+        assert!(widget.last_drag_position.is_none());
+        assert!(outcome.selection_changed);
+        assert_eq!(
+            outcome.events,
+            vec![
+                PlotEvent::BrushStarted,
+                PlotEvent::SelectionChanged,
+                PlotEvent::BrushFinished,
+            ]
+        );
+    }
+
+    #[test]
+    fn cancelled_secondary_brush_does_not_finish_or_select() {
+        let mut widget = plot_builder(plot()).build();
+        let content = egui::Rect::from_min_size(egui::pos2(10.0, 20.0), egui::vec2(200.0, 100.0));
+        let mut outcome = InputOutcome2D::default();
+        widget.start_drag(
+            PointerButton::Secondary,
+            true,
+            egui::pos2(60.0, 45.0),
+            content,
+            (400, 200),
+            &mut outcome,
+        );
+        widget.move_drag(egui::pos2(160.0, 95.0), content, (400, 200), &mut outcome);
+
+        widget.cancel_active_drag(&mut outcome);
+
+        assert!(widget.active_drag.is_none());
+        assert!(widget.last_drag_position.is_none());
+        assert!(!outcome.selection_changed);
+        assert_eq!(
+            outcome.events,
+            vec![PlotEvent::BrushStarted, PlotEvent::DragCancelled]
+        );
+    }
+
+    #[test]
+    fn shift_primary_brush_and_plain_primary_pan_are_unchanged() {
+        assert!(drag_starts_brush(PointerButton::Secondary, false));
+        assert!(drag_starts_brush(PointerButton::Primary, true));
+        assert!(!drag_starts_brush(PointerButton::Primary, false));
+
+        let content = egui::Rect::from_min_size(egui::pos2(10.0, 20.0), egui::vec2(200.0, 100.0));
+        let image_size = (400, 200);
+
+        let mut brush = plot_builder(plot()).build();
+        let mut brush_outcome = InputOutcome2D::default();
+        brush.start_drag(
+            PointerButton::Primary,
+            true,
+            egui::pos2(60.0, 45.0),
+            content,
+            image_size,
+            &mut brush_outcome,
+        );
+        assert_eq!(
+            brush.active_drag,
+            Some(Drag2D::Brush(PointerButton::Primary))
+        );
+        assert_eq!(brush_outcome.events, vec![PlotEvent::BrushStarted]);
+
+        let mut pan = plot_builder(plot()).build();
+        let mut pan_outcome = InputOutcome2D::default();
+        pan.start_drag(
+            PointerButton::Primary,
+            false,
+            egui::pos2(60.0, 45.0),
+            content,
+            image_size,
+            &mut pan_outcome,
+        );
+        assert_eq!(pan.active_drag, Some(Drag2D::Pan));
+        assert!(pan_outcome.events.is_empty());
+    }
+
+    #[test]
+    fn static_mode_still_senses_context_clicks_without_dragging() {
+        let sense = plot_sense(ViewMode::Static);
+        assert!(sense.senses_click());
+        assert!(!sense.senses_drag());
+        assert!(plot_sense(ViewMode::Interactive).senses_drag());
+    }
+
+    #[test]
+    fn context_actions_toggle_static_mode_and_keep_fit_distinct() {
+        let mut widget = plot_builder(plot()).static_view().build();
+        let context = egui::Context::default();
+        let mut view_changed = false;
+        let mut events = Vec::new();
+
+        widget.apply_context_menu_action(
+            PlotContextMenuAction::ToggleInteraction,
+            &context,
+            &mut view_changed,
+            &mut events,
+        );
+        assert_eq!(widget.mode(), ViewMode::Interactive);
+        assert_eq!(
+            events,
+            vec![PlotEvent::ContextMenuAction(
+                PlotContextMenuAction::ToggleInteraction
+            )]
+        );
+
+        events.clear();
+        widget.apply_context_menu_action(
+            PlotContextMenuAction::FitToContent,
+            &context,
+            &mut view_changed,
+            &mut events,
+        );
+        assert!(view_changed);
+        assert_eq!(
+            events,
+            vec![
+                PlotEvent::ViewChanged,
+                PlotEvent::ContextMenuAction(PlotContextMenuAction::FitToContent),
+            ]
+        );
+    }
+
+    #[test]
+    fn installed_frame_is_retained_for_menu_export_without_a_render() {
+        let mut widget = plot_builder(plot()).build();
+        let context = egui::Context::default();
+        let base = Arc::new(Image::new(2, 1, vec![1, 2, 3, 255, 4, 5, 6, 128]));
+
+        widget.install_layers(
+            &context,
+            RenderedLayer::from_straight_image(Arc::clone(&base)),
+            None,
+            LayerRenderState {
+                base_dirty: true,
+                ..LayerRenderState::default()
+            },
+        );
+
+        let installed = widget.installed_base.as_ref().unwrap();
+        assert_eq!((installed.width(), installed.height()), (2, 1));
+        assert!(
+            Arc::ptr_eq(installed.image(), &base),
+            "the rendered Arc is retained instead of a second copy"
+        );
+        let exported = widget.export_image().unwrap();
+        assert!(
+            Arc::ptr_eq(&exported, &base),
+            "an overlay-free frame exports without composing"
+        );
+        assert!(widget.scheduler.is_idle());
+    }
+
+    #[test]
+    fn export_composes_the_overlay_over_the_base_on_demand() {
+        let mut widget = plot_builder(plot()).build();
+        let context = egui::Context::default();
+        let base = Arc::new(Image::new(2, 1, vec![255, 0, 0, 255, 10, 20, 30, 255]));
+        let overlay = Arc::new(Image::new(2, 1, vec![0, 0, 255, 0, 0, 0, 255, 128]));
+
+        widget.install_layers(
+            &context,
+            RenderedLayer::from_straight_image(Arc::clone(&base)),
+            Some(RenderedLayer::from_straight_image(Arc::clone(&overlay))),
+            LayerRenderState {
+                base_dirty: true,
+                overlay_dirty: true,
+                used_incremental_data: false,
+            },
+        );
+
+        let exported = widget.export_image().unwrap();
+        assert_eq!(exported.pixels[..4], base.pixels[..4]);
+        assert_eq!(
+            exported.pixels[4..],
+            ruviz::core::source_over_straight_rgba([10, 20, 30, 255], [0, 0, 255, 128])
+        );
+        assert!(
+            Arc::ptr_eq(widget.installed_base.as_ref().unwrap().image(), &base),
+            "export must not disturb the retained layers"
+        );
+    }
+
+    #[test]
+    fn overlay_texture_is_released_when_no_overlay_is_active() {
+        let mut widget = plot_builder(plot()).build();
+        let context = egui::Context::default();
+        let base = opaque_layer(2, 1, 255);
+        let overlay = Arc::new(Image::new(2, 1, vec![0, 0, 255, 0, 0, 0, 255, 128]));
+
+        widget.install_layers(
+            &context,
+            RenderedLayer::from_straight_image(Arc::clone(&base)),
+            Some(RenderedLayer::from_straight_image(overlay)),
+            LayerRenderState {
+                base_dirty: true,
+                overlay_dirty: true,
+                used_incremental_data: false,
+            },
+        );
+        let base_texture = widget.base_texture.as_ref().map(TextureHandle::id);
+        assert!(widget.overlay_texture.is_some());
+
+        widget.install_layers(
+            &context,
+            RenderedLayer::from_straight_image(Arc::clone(&base)),
+            None,
+            LayerRenderState::default(),
+        );
+
+        assert!(widget.overlay_texture.is_none());
+        assert!(widget.installed_overlay.is_none());
+        assert_eq!(
+            widget.base_texture.as_ref().map(TextureHandle::id),
+            base_texture,
+            "an overlay-only change must keep the base texture"
+        );
+    }
+
+    #[test]
+    fn an_overlay_only_redraw_does_not_re_upload_the_base_layer() {
+        let session = plot().into_plot_session();
+        let target = ImageTarget {
+            size_px: (96, 64),
+            scale_factor: 1.0,
+            time_seconds: 0.0,
+        };
+        let first = session.render_layers_stamped(target).unwrap();
+        session.apply_input(PlotInputEvent::Hover {
+            position_px: ViewportPoint::new(48.0, 32.0),
+        });
+
+        let second = session.render_layers_stamped(target).unwrap();
+
+        assert!(
+            first.base.same_buffer_as(&second.base),
+            "the base layer must survive an overlay-only redraw"
+        );
+        assert!(!second.layer_state.base_dirty);
+        // Neither layer got demultiplied: the whole point of the native path.
+        assert!(!second.base.has_straight_view());
+        assert!(!layer_needs_upload(
+            Some(&first.base),
+            &second.base,
+            second.layer_state.base_dirty,
+            true,
+        ));
+        assert!(layer_needs_upload(
+            Some(&first.base),
+            &second.base,
+            second.layer_state.base_dirty,
+            false,
+        ));
+        assert!(layer_needs_upload(None, &second.base, false, true));
+    }
+
+    #[test]
+    fn the_render_worker_is_started_once_and_reused_across_frames() {
+        let mut widget = plot_builder(plot()).build();
+        let context = egui::Context::default();
+        let target = ImageTarget {
+            size_px: (64, 48),
+            scale_factor: 1.0,
+            time_seconds: 0.0,
+        };
+        assert!(widget.worker.is_none());
+
+        for _ in 0..3 {
+            widget.last_requested = None;
+            let key = RenderKey2D {
+                size_px: target.size_px,
+                scale_bits: target.scale_factor.to_bits(),
+                time_bits: target.time_seconds.to_bits(),
+                revision: widget.session.change_revision(),
+            };
+            assert!(widget.request_render_if_needed(key, target, context.clone()));
+            let completion = widget
+                .completion_rx
+                .recv_timeout(BACKGROUND_RENDER_TIMEOUT)
+                .expect("the persistent worker should deliver every frame");
+            widget.handle_completion(&context, &mut Vec::new(), completion);
+        }
+
+        assert!(widget.worker.is_some());
+        assert!(widget.base_texture.is_some());
+        assert_eq!(widget.image_size, Some(target.size_px));
+    }
+
+    #[test]
+    fn asynchronous_save_failures_are_reported_on_the_ui_thread() {
+        let mut widget = plot_builder(plot()).build();
+        widget
+            .save_completion_tx
+            .send(Err(AdapterError::new(
+                AdapterErrorKind::Interaction,
+                "save failed",
+            )))
+            .unwrap();
+        let mut events = Vec::new();
+
+        widget.drain_save_completions(&mut events);
+
+        assert_eq!(
+            widget.last_error().map(AdapterError::message),
+            Some("save failed")
+        );
+        assert!(matches!(events.as_slice(), [PlotEvent::Error(_)]));
     }
 }

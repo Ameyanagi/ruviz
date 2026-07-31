@@ -7,9 +7,31 @@ export enum RuvizImageFit {
     fill,
 }
 
+export enum RuvizContextAction {
+    reset-view,
+    fit-to-content,
+    save-png,
+    copy-image,
+    toggle-interaction,
+    view-isometric,
+    view-front,
+    view-back,
+    view-left,
+    view-right,
+    view-top,
+    view-bottom,
+}
+
 export struct RuvizSlotState {
     source: image,
+    /// Interaction overlay stacked over `source` in the same fitted geometry.
+    ///
+    /// The controller publishes it separately so an overlay-only redraw never
+    /// re-uploads the base layer. An empty image means "no overlay".
+    overlay: image,
     interactive: bool,
+    is-3d: bool,
+    has-frame: bool,
     device-scale: float,
     image-fit: RuvizImageFit,
 }
@@ -18,6 +40,13 @@ export struct RuvizSlotState {
 /// tree. The Rust controller owns the slots model and callback handlers.
 export global RuvizRuntime {
     in-out property <[RuvizSlotState]> slots;
+    /// Announces that this component stacks `overlay` over `source`.
+    ///
+    /// The controller keeps publishing one flat, pre-composed image in `source`
+    /// until a component says otherwise, so a component that binds `source`
+    /// alone never loses its interaction overlay. `RuvizPlot` announces itself;
+    /// a custom component that draws `overlay` must call this from its `init`.
+    callback overlay-supported(slot-id: int);
     callback resized(slot-id: int, width: float, height: float, device-scale: float);
     callback pointer-event(
         slot-id: int,
@@ -25,7 +54,8 @@ export global RuvizRuntime {
         button: int,
         x: float,
         y: float,
-    );
+    ) -> bool;
+    callback context-action(slot-id: int, action: RuvizContextAction);
     callback wheel-event(
         slot-id: int,
         delta-x: float,
@@ -48,14 +78,29 @@ export component RuvizPlot inherits Rectangle {
         root.slot-id >= 0 && root.slot-id < RuvizRuntime.slots.length;
     private property <bool> interactive:
         root.slot-valid && RuvizRuntime.slots[root.slot-id].interactive;
+    private property <bool> is-3d:
+        root.slot-valid && RuvizRuntime.slots[root.slot-id].is-3d;
+    private property <bool> has-frame:
+        root.slot-valid && RuvizRuntime.slots[root.slot-id].has-frame;
     private property <float> device-scale:
         root.slot-valid ? RuvizRuntime.slots[root.slot-id].device-scale : 1.0;
     private property <RuvizImageFit> image-fit:
         root.slot-valid ? RuvizRuntime.slots[root.slot-id].image-fit : RuvizImageFit.contain;
+    private property <ImageFit> fitting:
+        root.image-fit == RuvizImageFit.cover ? ImageFit.cover :
+        root.image-fit == RuvizImageFit.fill ? ImageFit.fill :
+        ImageFit.contain;
 
     min-width: 1px;
     min-height: 1px;
     clip: true;
+
+    // Announced from both places because only one of them can fire: a
+    // repeated instance is created with a valid slot, while a statically
+    // placed one is created before the controller is attached.
+    init => {
+        RuvizRuntime.overlay-supported(root.slot-id);
+    }
 
     changed width => {
         RuvizRuntime.resized(root.slot-id, root.width / 1px, root.height / 1px, root.device-scale);
@@ -68,6 +113,7 @@ export component RuvizPlot inherits Rectangle {
     }
     changed slot-valid => {
         if (root.slot-valid) {
+            RuvizRuntime.overlay-supported(root.slot-id);
             RuvizRuntime.resized(root.slot-id, root.width / 1px, root.height / 1px, root.device-scale);
         }
     }
@@ -76,70 +122,175 @@ export component RuvizPlot inherits Rectangle {
         width: parent.width;
         height: parent.height;
         source: root.slot-valid ? RuvizRuntime.slots[root.slot-id].source : @image-url("");
-        image-fit:
-            root.image-fit == RuvizImageFit.cover ? ImageFit.cover :
-            root.image-fit == RuvizImageFit.fill ? ImageFit.fill :
-            ImageFit.contain;
+        image-fit: root.fitting;
     }
 
-    input := FocusScope {
+    // Same geometry and fit as the base layer, so the renderer composites the
+    // two on the GPU instead of the controller blending them per pixel.
+    Image {
         width: parent.width;
         height: parent.height;
-        enabled: root.interactive;
+        source: root.slot-valid ? RuvizRuntime.slots[root.slot-id].overlay : @image-url("");
+        image-fit: root.fitting;
+    }
 
-        focus-lost(_) => {
-            RuvizRuntime.focus-lost(root.slot-id);
-        }
+    context-menu := ContextMenuArea {
+        width: parent.width;
+        height: parent.height;
+        enabled: root.slot-valid;
 
-        key-pressed(event) => {
-            if (event.text == Key.Escape) {
-                RuvizRuntime.escape(root.slot-id);
-                accept
-            } else {
-                reject
-            }
-        }
-
-        TouchArea {
-            enabled: root.interactive;
-
-            pointer-event(event) => {
-                if (event.kind == PointerEventKind.down) {
-                    input.focus();
+        Menu {
+            MenuItem {
+                title: @tr("Reset View");
+                enabled: root.has-frame;
+                activated => {
+                    RuvizRuntime.context-action(root.slot-id, RuvizContextAction.reset-view);
                 }
-                RuvizRuntime.pointer-event(
-                    root.slot-id,
-                    event.kind == PointerEventKind.down ? 0 :
-                    event.kind == PointerEventKind.up ? 1 :
-                    event.kind == PointerEventKind.move ? 2 : 3,
-                    event.button == PointerEventButton.left ? 1 :
-                    event.button == PointerEventButton.right ? 2 :
-                    event.button == PointerEventButton.middle ? 3 : 0,
-                    self.mouse-x / 1px,
-                    self.mouse-y / 1px,
-                );
+            }
+            MenuItem {
+                title: @tr("Fit to Content");
+                enabled: root.has-frame;
+                activated => {
+                    RuvizRuntime.context-action(root.slot-id, RuvizContextAction.fit-to-content);
+                }
+            }
+            MenuSeparator {}
+            MenuItem {
+                title: @tr("Save PNG…");
+                enabled: root.has-frame;
+                activated => {
+                    RuvizRuntime.context-action(root.slot-id, RuvizContextAction.save-png);
+                }
+            }
+            MenuItem {
+                title: @tr("Copy Image");
+                enabled: root.has-frame;
+                activated => {
+                    RuvizRuntime.context-action(root.slot-id, RuvizContextAction.copy-image);
+                }
+            }
+            MenuSeparator {}
+            MenuItem {
+                title: root.interactive ? @tr("Disable Interaction") : @tr("Enable Interaction");
+                checked: root.interactive;
+                activated => {
+                    RuvizRuntime.context-action(
+                        root.slot-id,
+                        RuvizContextAction.toggle-interaction,
+                    );
+                }
+            }
+            if root.is-3d: Menu {
+                title: @tr("3D View");
+                MenuItem {
+                    title: @tr("Isometric");
+                    activated => {
+                        RuvizRuntime.context-action(
+                            root.slot-id,
+                            RuvizContextAction.view-isometric,
+                        );
+                    }
+                }
+                MenuItem {
+                    title: @tr("Front");
+                    activated => {
+                        RuvizRuntime.context-action(root.slot-id, RuvizContextAction.view-front);
+                    }
+                }
+                MenuItem {
+                    title: @tr("Back");
+                    activated => {
+                        RuvizRuntime.context-action(root.slot-id, RuvizContextAction.view-back);
+                    }
+                }
+                MenuItem {
+                    title: @tr("Left");
+                    activated => {
+                        RuvizRuntime.context-action(root.slot-id, RuvizContextAction.view-left);
+                    }
+                }
+                MenuItem {
+                    title: @tr("Right");
+                    activated => {
+                        RuvizRuntime.context-action(root.slot-id, RuvizContextAction.view-right);
+                    }
+                }
+                MenuItem {
+                    title: @tr("Top");
+                    activated => {
+                        RuvizRuntime.context-action(root.slot-id, RuvizContextAction.view-top);
+                    }
+                }
+                MenuItem {
+                    title: @tr("Bottom");
+                    activated => {
+                        RuvizRuntime.context-action(root.slot-id, RuvizContextAction.view-bottom);
+                    }
+                }
+            }
+        }
+
+        input := FocusScope {
+            width: parent.width;
+            height: parent.height;
+            enabled: root.slot-valid;
+
+            focus-lost(_) => {
+                RuvizRuntime.focus-lost(root.slot-id);
             }
 
-            scroll-event(event) => {
-                if (RuvizRuntime.wheel-event(
-                    root.slot-id,
-                    event.delta-x / 1px,
-                    event.delta-y / 1px,
-                    self.mouse-x / 1px,
-                    self.mouse-y / 1px,
-                )) {
+            key-pressed(event) => {
+                if (event.text == Key.Escape) {
+                    RuvizRuntime.escape(root.slot-id);
                     accept
                 } else {
                     reject
                 }
             }
 
-            double-clicked => {
-                RuvizRuntime.double-clicked(
-                    root.slot-id,
-                    self.mouse-x / 1px,
-                    self.mouse-y / 1px,
-                );
+            TouchArea {
+                enabled: root.slot-valid;
+
+                pointer-event(event) => {
+                    if (event.kind == PointerEventKind.down) {
+                        input.focus();
+                    }
+                    if (RuvizRuntime.pointer-event(
+                        root.slot-id,
+                        event.kind == PointerEventKind.down ? 0 :
+                        event.kind == PointerEventKind.up ? 1 :
+                        event.kind == PointerEventKind.move ? 2 : 3,
+                        event.button == PointerEventButton.left ? 1 :
+                        event.button == PointerEventButton.right ? 2 :
+                        event.button == PointerEventButton.middle ? 3 : 0,
+                        self.mouse-x / 1px,
+                        self.mouse-y / 1px,
+                    )) {
+                        context-menu.show({ x: self.mouse-x, y: self.mouse-y });
+                    }
+                }
+
+                scroll-event(event) => {
+                    if (RuvizRuntime.wheel-event(
+                        root.slot-id,
+                        event.delta-x / 1px,
+                        event.delta-y / 1px,
+                        self.mouse-x / 1px,
+                        self.mouse-y / 1px,
+                    )) {
+                        accept
+                    } else {
+                        reject
+                    }
+                }
+
+                double-clicked => {
+                    RuvizRuntime.double-clicked(
+                        root.slot-id,
+                        self.mouse-x / 1px,
+                        self.mouse-y / 1px,
+                    );
+                }
             }
         }
     }

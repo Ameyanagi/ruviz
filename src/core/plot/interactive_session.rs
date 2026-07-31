@@ -1,6 +1,6 @@
 use super::{
     BackendOperation, Image, Plot, PlotData, PlotSeries, PreparedPlot, ReactiveSubscription,
-    ResolvedData, ResolvedFrame, ResolvedSeries, SeriesType, TextEngineMode,
+    RenderedLayer, ResolvedData, ResolvedFrame, ResolvedSeries, SeriesType, TextEngineMode,
 };
 use crate::{
     axes::{AxisScale, expand_degenerate_range},
@@ -474,6 +474,19 @@ pub enum RenderTargetKind {
     Surface,
 }
 
+/// Whether `render_to_target` should CPU-composite the overlay onto the base.
+///
+/// Internal only: it selects between the composed
+/// (`render_to_image_stamped`) and layered (`render_layers_stamped`) results
+/// without affecting any other part of the render pipeline, including
+/// [`SurfaceCapability`] resolution which stays keyed off
+/// [`RenderTargetKind`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ComposeLayers {
+    Yes,
+    No,
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum SurfaceCapability {
     #[default]
@@ -617,6 +630,101 @@ impl StampedInteractiveFrame {
     /// Returns the opaque identity of this committed frame.
     pub fn render_stamp(&self) -> InteractiveRenderStamp {
         self.render_stamp
+    }
+}
+
+/// A committed interactive frame delivered as separate layers, plus its opaque
+/// currentness stamp.
+///
+/// This is the result of
+/// [`InteractivePlotSession::render_layers_stamped`]. It carries no composed
+/// image: the base and overlay layers are handed over untouched so a
+/// presentation adapter can blend them itself (typically as two stacked GPU
+/// textures). Skipping the CPU composite is what makes overlay-only redraws
+/// cheap — the base layer keeps the same buffer across them, so an adapter can
+/// compare with [`RenderedLayer::same_buffer_as`] and re-upload only the
+/// overlay. The two layers may differ in alpha representation; see
+/// [`InteractivePlotSession::render_layers_stamped`].
+///
+/// Everything else matches [`StampedInteractiveFrame`] exactly: the same frame
+/// is committed to the session, and `base_generation` / [`render_stamp`] carry
+/// the identical currentness contract, validated with
+/// [`InteractivePlotSession::is_render_stamp_current`].
+///
+/// [`render_stamp`]: Self::render_stamp
+#[derive(Clone, Debug)]
+pub struct StampedInteractiveLayers {
+    /// Base layer, in whichever alpha representation the renderer produced
+    /// natively. Upload [`RenderedLayer::pixels`] directly, or call
+    /// [`RenderedLayer::image`] if you need straight-alpha bytes.
+    pub base: RenderedLayer,
+    /// Overlay layer, or `None` when nothing overlay-drawn is active.
+    pub overlay: Option<RenderedLayer>,
+    /// Which layers were re-rendered for this frame.
+    pub layer_state: LayerRenderState,
+    /// Frame statistics recorded for this frame.
+    pub stats: FrameStats,
+    /// Base-image generation used by the frame's interaction geometry.
+    pub base_generation: u64,
+    render_stamp: InteractiveRenderStamp,
+}
+
+impl StampedInteractiveLayers {
+    /// Returns the opaque identity of this committed frame.
+    pub fn render_stamp(&self) -> InteractiveRenderStamp {
+        self.render_stamp
+    }
+}
+
+/// Internal result of one `render_to_target` call.
+///
+/// The public entry points project from this. Keeping the base layer in its
+/// native representation here is what lets `render_layers_stamped` skip the
+/// straight-alpha normalization that the composed and Surface paths need.
+struct RenderOutcome {
+    base_layer: RenderedLayer,
+    overlay: Option<Arc<Image>>,
+    /// Composed straight-alpha frame; `None` when composition was skipped.
+    composed: Option<Arc<Image>>,
+    layer_state: LayerRenderState,
+    stats: FrameStats,
+    target: RenderTargetKind,
+    surface_capability: SurfaceCapability,
+    base_generation: u64,
+    render_stamp: InteractiveRenderStamp,
+}
+
+impl RenderOutcome {
+    /// Project into the composed public frame, materializing straight alpha.
+    fn into_stamped_frame(self) -> StampedInteractiveFrame {
+        let base = Arc::clone(self.base_layer.image());
+        StampedInteractiveFrame {
+            base_generation: self.base_generation,
+            render_stamp: self.render_stamp,
+            frame: InteractiveFrame {
+                image: self.composed.unwrap_or_else(|| Arc::clone(&base)),
+                layers: LayerImages {
+                    base,
+                    overlay: self.overlay,
+                },
+                layer_state: self.layer_state,
+                stats: self.stats,
+                target: self.target,
+                surface_capability: self.surface_capability,
+            },
+        }
+    }
+
+    /// Project into the uncomposed public layers, converting nothing.
+    fn into_stamped_layers(self) -> StampedInteractiveLayers {
+        StampedInteractiveLayers {
+            base: self.base_layer,
+            overlay: self.overlay.map(RenderedLayer::from_straight_image),
+            layer_state: self.layer_state,
+            stats: self.stats,
+            base_generation: self.base_generation,
+            render_stamp: self.render_stamp,
+        }
     }
 }
 
@@ -1217,7 +1325,7 @@ fn inclusive_cell_count(min: i64, max: i64) -> Option<u64> {
 struct InteractiveFrameCache {
     generation: u64,
     key: InteractiveFrameKey,
-    image: Arc<Image>,
+    layer: RenderedLayer,
     geometry: GeometrySnapshot,
     displayed_data: DisplayedFrameData,
     point_hit_index: LazyPointHitIndex,
@@ -1457,7 +1565,7 @@ fn apply_axis_constraints(plot: &Plot, data_bounds: DataBounds) -> DataBounds {
 
 #[derive(Clone, Debug)]
 struct BaseLayerResult {
-    image: Arc<Image>,
+    layer: RenderedLayer,
     generation: u64,
     updated: bool,
     used_incremental_data: bool,
@@ -2326,10 +2434,44 @@ impl InteractivePlotSession {
     pub fn render_to_image_stamped(&self, target: ImageTarget) -> Result<StampedInteractiveFrame> {
         self.render_to_target(
             RenderTargetKind::Image,
+            ComposeLayers::Yes,
             target.size_px,
             target.scale_factor,
             target.time_seconds,
         )
+        .map(RenderOutcome::into_stamped_frame)
+    }
+
+    /// Renders a frame as separate base and overlay layers, with an opaque
+    /// currentness stamp.
+    ///
+    /// This performs exactly the same work as
+    /// [`render_to_image_stamped`](Self::render_to_image_stamped) — same caches,
+    /// same committed frame, same stamp semantics — except that the per-pixel
+    /// CPU composite of overlay over base is skipped. Use it from presentation
+    /// adapters that can stack the two layers themselves (e.g. as two GPU
+    /// textures); an overlay-only redraw then reuses the base layer's buffer,
+    /// so only the small overlay needs re-uploading. Test that reuse with
+    /// [`RenderedLayer::same_buffer_as`], which compares the retained
+    /// allocations without touching pixels.
+    ///
+    /// Both layers are RGBA8 of the same dimensions, and the overlay is `None`
+    /// when nothing overlay-drawn is active. They may differ in alpha
+    /// representation: the base arrives in whatever the renderer produced
+    /// natively — premultiplied for the CPU rasterizer — while the overlay is
+    /// straight. Always upload [`RenderedLayer::pixels`] together with
+    /// [`RenderedLayer::alpha_mode`] rather than assuming either, or ask for
+    /// [`RenderedLayer::image`] when straight-alpha bytes are genuinely
+    /// required.
+    pub fn render_layers_stamped(&self, target: ImageTarget) -> Result<StampedInteractiveLayers> {
+        self.render_to_target(
+            RenderTargetKind::Image,
+            ComposeLayers::No,
+            target.size_px,
+            target.scale_factor,
+            target.time_seconds,
+        )
+        .map(RenderOutcome::into_stamped_layers)
     }
 
     pub fn render_to_surface(&self, target: SurfaceTarget) -> Result<InteractiveFrame> {
@@ -2356,10 +2498,12 @@ impl InteractivePlotSession {
     ) -> Result<StampedInteractiveFrame> {
         self.render_to_target(
             RenderTargetKind::Surface,
+            ComposeLayers::Yes,
             target.size_px,
             target.scale_factor,
             target.time_seconds,
         )
+        .map(RenderOutcome::into_stamped_frame)
     }
 
     pub fn dirty_domains(&self) -> DirtyDomains {
@@ -2565,10 +2709,11 @@ impl InteractivePlotSession {
     fn render_to_target(
         &self,
         target: RenderTargetKind,
+        compose: ComposeLayers,
         size_px: (u32, u32),
         scale_factor: f32,
         time_seconds: f64,
-    ) -> Result<StampedInteractiveFrame> {
+    ) -> Result<RenderOutcome> {
         self.repair_poisoned_session();
         self.ensure_epochs_available()?;
         // Synchronizing the request can emit change notifications. It must
@@ -2589,7 +2734,7 @@ impl InteractivePlotSession {
 
         let mut state_before_render = None;
         let mut render_epoch = None;
-        let render_result = (|| -> Result<StampedInteractiveFrame> {
+        let render_result = (|| -> Result<RenderOutcome> {
             let (state_snapshot, dirty_before_render, epoch_before_render) = self.render_snapshot();
             state_before_render = Some(state_snapshot);
             render_epoch = Some(epoch_before_render);
@@ -2691,14 +2836,23 @@ impl InteractivePlotSession {
             self.run_render_test_hook(RenderTestPoint::AfterBasePublication);
             self.refresh_overlay_state(dirty_before_render, epoch_before_render)?;
             let overlay_result = self.ensure_overlay_image(frame_size_px, dirty_before_render)?;
-            let composed = if target == RenderTargetKind::Image {
-                if let Some(overlay_image) = overlay_result.image.as_ref() {
-                    Arc::new(compose_images(&base_result.image, overlay_image))
+            // Only the composed and Surface paths need straight alpha, and
+            // `RenderedLayer::image` materializes it lazily. Leaving it alone
+            // here is what keeps `render_layers_stamped` free of the full-frame
+            // premultiplied -> straight divide.
+            let composed = if compose == ComposeLayers::Yes {
+                if target == RenderTargetKind::Image
+                    && let Some(overlay_image) = overlay_result.image.as_ref()
+                {
+                    Some(Arc::new(compose_images(
+                        base_result.layer.image(),
+                        overlay_image,
+                    )))
                 } else {
-                    Arc::clone(&base_result.image)
+                    Some(Arc::clone(base_result.layer.image()))
                 }
             } else {
-                Arc::clone(&base_result.image)
+                None
             };
 
             self.run_render_test_hook(RenderTestPoint::BeforeFinalCommit);
@@ -2726,24 +2880,20 @@ impl InteractivePlotSession {
                 target,
                 surface_capability,
             );
-            Ok(StampedInteractiveFrame {
+            Ok(RenderOutcome {
+                base_layer: base_result.layer,
+                overlay: overlay_result.image,
+                composed,
+                layer_state: LayerRenderState {
+                    base_dirty: base_result.updated,
+                    overlay_dirty: overlay_result.updated,
+                    used_incremental_data: base_result.used_incremental_data,
+                },
+                stats,
+                target,
+                surface_capability,
                 base_generation: base_result.generation,
                 render_stamp,
-                frame: InteractiveFrame {
-                    image: composed,
-                    layers: LayerImages {
-                        base: base_result.image,
-                        overlay: overlay_result.image,
-                    },
-                    layer_state: LayerRenderState {
-                        base_dirty: base_result.updated,
-                        overlay_dirty: overlay_result.updated,
-                        used_incremental_data: base_result.used_incremental_data,
-                    },
-                    stats,
-                    target,
-                    surface_capability,
-                },
             })
         })();
 
@@ -2821,7 +2971,7 @@ impl InteractivePlotSession {
                 && cached.key == *key
             {
                 return Ok(BaseLayerResult {
-                    image: Arc::clone(&cached.image),
+                    layer: cached.layer.clone(),
                     generation: cached.generation,
                     updated: false,
                     used_incremental_data: false,
@@ -2863,7 +3013,9 @@ impl InteractivePlotSession {
         }
         let mode = plot.render_execution_mode(BackendOperation::Interactive);
         let (renderer, _) = plot.render_renderer_with_frame_and_diagnostics(mode, frame)?;
-        let image = Arc::new(renderer.into_image());
+        // Native premultiplied, no conversion. Straight alpha is derived on
+        // demand by whoever needs it (compose, Surface, export).
+        let layer = renderer.into_rendered_layer();
         let displayed_data = DisplayedFrameData::capture(source_plot, frame);
         let point_hit_index = Arc::new(OnceLock::new());
         let streaming_watermarks = StreamingFrameWatermarks::capture(frame);
@@ -2872,7 +3024,7 @@ impl InteractivePlotSession {
             InteractiveFrameCache {
                 generation: 0,
                 key: key.clone(),
-                image: Arc::clone(&image),
+                layer: layer.clone(),
                 geometry: geometry.clone(),
                 displayed_data,
                 point_hit_index,
@@ -2881,7 +3033,7 @@ impl InteractivePlotSession {
             epoch_before_render,
         )?;
         Ok(BaseLayerResult {
-            image,
+            layer,
             generation,
             updated: true,
             used_incremental_data: false,
@@ -3422,11 +3574,13 @@ impl InteractivePlotSession {
             return Ok(None);
         }
 
-        let image = Arc::new(apply_streaming_draw_ops(
-            cached.image.as_ref(),
+        // The incremental path draws on top of the previous straight-alpha
+        // frame, so this branch legitimately produces a straight layer.
+        let layer = RenderedLayer::from_straight_image(Arc::new(apply_streaming_draw_ops(
+            cached.layer.image().as_ref(),
             geometry,
             &draw_ops,
-        )?);
+        )?));
         let displayed_data = DisplayedFrameData::capture(source_plot, frame);
         let point_hit_index = Arc::new(OnceLock::new());
         let streaming_watermarks = StreamingFrameWatermarks::capture(frame);
@@ -3435,7 +3589,7 @@ impl InteractivePlotSession {
             InteractiveFrameCache {
                 generation: 0,
                 key: key.clone(),
-                image: Arc::clone(&image),
+                layer: layer.clone(),
                 geometry: geometry.clone(),
                 displayed_data,
                 point_hit_index,
@@ -3445,7 +3599,7 @@ impl InteractivePlotSession {
         )?;
 
         Ok(Some(BaseLayerResult {
-            image,
+            layer,
             generation,
             updated: true,
             used_incremental_data: true,

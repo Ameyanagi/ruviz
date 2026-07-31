@@ -188,6 +188,34 @@ pub enum AxisAspect3D {
     Fixed { x: f32, y: f32, z: f32 },
 }
 
+/// A named, axis-aligned orientation for a 3D camera.
+///
+/// Applying a named view changes azimuth, elevation, and roll only. Projection,
+/// axis aspect, zoom, and the current look-at target are preserved.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum CameraView3D {
+    /// The default three-quarter view (`-60°` azimuth, `30°` elevation).
+    #[default]
+    Isometric,
+    /// Look from negative y toward the scene center.
+    Front,
+    /// Look from positive y toward the scene center.
+    Back,
+    /// Look from negative x toward the scene center.
+    Left,
+    /// Look from positive x toward the scene center.
+    Right,
+    /// Look down from positive z.
+    ///
+    /// The camera uses `89.9°` rather than the singular `90°` pole.
+    Top,
+    /// Look up from negative z.
+    ///
+    /// The camera uses `-89.9°` rather than the singular `-90°` pole.
+    Bottom,
+}
+
 impl AxisAspect3D {
     /// Create explicit positive x/y/z box proportions.
     pub const fn fixed(x: f32, y: f32, z: f32) -> Self {
@@ -226,6 +254,35 @@ pub struct Camera3D {
 }
 
 impl Camera3D {
+    /// Apply a named orientation while preserving projection, aspect, zoom,
+    /// and the current look-at target.
+    ///
+    /// Top and bottom use the pole-safe elevations `89.9°` and `-89.9°`.
+    pub fn camera_view(mut self, view: CameraView3D) -> Self {
+        let (azimuth_deg, elevation_deg) = match view {
+            CameraView3D::Isometric => (-60.0, 30.0),
+            CameraView3D::Front => (-90.0, 0.0),
+            CameraView3D::Back => (90.0, 0.0),
+            CameraView3D::Left => (180.0, 0.0),
+            CameraView3D::Right => (0.0, 0.0),
+            CameraView3D::Top => (0.0, 89.9),
+            CameraView3D::Bottom => (0.0, -89.9),
+        };
+        self.azimuth_deg = azimuth_deg;
+        self.elevation_deg = elevation_deg;
+        self.roll_deg = 0.0;
+        self
+    }
+
+    /// Recenter on `bounds` and restore unit zoom.
+    ///
+    /// Camera orientation, projection, and axis aspect are preserved.
+    pub fn fit_to_content(mut self, bounds: Bounds3D) -> Self {
+        self.zoom = 1.0;
+        self.target = Some(bounds.center());
+        self
+    }
+
     /// Set the orbit azimuth in degrees.
     pub fn azimuth_deg(mut self, degrees: f32) -> Self {
         self.azimuth_deg = degrees;
@@ -840,6 +897,65 @@ mod tests {
         assert_eq!(camera.get_roll_deg(), 0.0);
         assert_eq!(camera.projection(), Projection3D::Orthographic);
         camera.validate().expect("default camera is valid");
+    }
+
+    #[test]
+    fn named_camera_views_have_stable_pole_safe_orientations() {
+        let target = Point3D::new(2.0, 3.0, 4.0);
+        let original = Camera3D::default()
+            .perspective_deg(37.0)
+            .axis_aspect(AxisAspect3D::fixed(1.0, 2.0, 3.0))
+            .zoom(2.5)
+            .look_at(target)
+            .roll_deg(17.0);
+
+        for (view, azimuth, elevation) in [
+            (CameraView3D::Isometric, -60.0, 30.0),
+            (CameraView3D::Front, -90.0, 0.0),
+            (CameraView3D::Back, 90.0, 0.0),
+            (CameraView3D::Left, 180.0, 0.0),
+            (CameraView3D::Right, 0.0, 0.0),
+            (CameraView3D::Top, 0.0, 89.9),
+            (CameraView3D::Bottom, 0.0, -89.9),
+        ] {
+            let camera = original.camera_view(view);
+            assert_eq!(camera.get_azimuth_deg(), azimuth);
+            assert_eq!(camera.get_elevation_deg(), elevation);
+            assert_eq!(camera.get_roll_deg(), 0.0);
+            assert_eq!(camera.projection(), original.projection());
+            assert_eq!(camera.axis_aspect_value(), original.axis_aspect_value());
+            assert_eq!(camera.get_zoom(), original.get_zoom());
+            assert_eq!(camera.target(), original.target());
+            camera.validate().expect("named camera view is valid");
+        }
+    }
+
+    #[test]
+    fn fit_to_content_recenters_and_restores_zoom_without_reorienting() {
+        let bounds = Bounds3D::new(
+            Point3D::new(-10.0, 20.0, 5.0),
+            Point3D::new(30.0, 80.0, 25.0),
+        )
+        .expect("bounds");
+        let original = Camera3D::default()
+            .azimuth_deg(23.0)
+            .elevation_deg(-41.0)
+            .roll_deg(9.0)
+            .perspective_deg(53.0)
+            .axis_aspect(AxisAspect3D::Equal)
+            .zoom(7.0)
+            .look_at(Point3D::new(-10.0, 20.0, 5.0));
+
+        let fitted = original.fit_to_content(bounds);
+
+        assert_eq!(fitted.get_azimuth_deg(), original.get_azimuth_deg());
+        assert_eq!(fitted.get_elevation_deg(), original.get_elevation_deg());
+        assert_eq!(fitted.get_roll_deg(), original.get_roll_deg());
+        assert_eq!(fitted.projection(), original.projection());
+        assert_eq!(fitted.axis_aspect_value(), original.axis_aspect_value());
+        assert_eq!(fitted.get_zoom(), 1.0);
+        assert_eq!(fitted.target(), Some(bounds.center()));
+        fitted.validate().expect("fitted camera is valid");
     }
 
     fn unit_bounds() -> Bounds3D {

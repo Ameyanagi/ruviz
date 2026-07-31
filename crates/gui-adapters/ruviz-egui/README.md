@@ -27,10 +27,18 @@ egui::CentralPanel::default().show(ctx, |ui| {
 ```
 
 `RuvizPlot::show` never renders an image. It translates current egui input,
-drains already-completed work, updates an existing `TextureHandle`, and
+drains already-completed work, updates existing `TextureHandle`s, and
 schedules at most one background render plus one coalesced newest request. The
 last good texture remains visible during rendering and after errors. Reactive
 2D session changes call `egui::Context::request_repaint`.
+
+2D frames are presented as two stacked textures — the plot base and the
+interaction overlay — and are never flattened on the CPU for display. A hover,
+tooltip, or brush update leaves the base layer untouched, so only the small
+overlay texture is re-uploaded. Saving or copying the plot composes the two
+layers on demand. All rendering for one widget runs on a single background
+thread that is started with its first frame and joined when the widget is
+dropped.
 
 Render errors are returned in `response.error` and retained by `last_error()`.
 Call `retry_render()` to explicitly retry the unchanged current plot or 3D
@@ -38,8 +46,15 @@ view.
 
 Static mode disables input but retains resize, replacement, and reactive
 redraws. Interactive 2D mode supports hover, click selection, scroll zoom,
-drag pan, shift-drag brush selection, Escape/double-click reset, and
-release-outside cancellation.
+drag pan, right-drag or shift-drag brush selection, Escape/double-click reset,
+and release-outside cancellation.
+
+Right-click without dragging opens the plot context menu in both interactive
+and static mode. It can reset or fit the view, save the installed frame as PNG,
+copy that frame to the clipboard, and enable or disable interaction. These
+image actions reuse the last displayed frame rather than scheduling a render.
+The native save dialog and atomic PNG write run on a named worker so they do
+not block the egui frame.
 
 Pointer input is accepted only over the visible fitted image. Wheel zoom is
 claimed by the plot so a containing egui scroll area does not scroll at the
@@ -64,9 +79,11 @@ if let Some(hit) = response.picked {
 ```
 
 Left-drag orbits, middle/right-drag pans, the wheel zooms, click picks, and
-Escape/double-click resets the camera. `set_plot_keep_view` preserves a
-user-customized 2D visible view or the 3D camera where valid. An untouched 2D
-view uses the replacement plot's natural bounds.
+Escape/double-click resets the camera. A 3D context menu also provides
+isometric, front, back, left, right, top, and bottom camera views.
+`set_plot_keep_view` preserves a user-customized 2D visible view or the 3D
+camera where valid. An untouched 2D view uses the replacement plot's natural
+bounds.
 
 The image upload explicitly converts ruviz RGBA pixels to egui's
 premultiplied-alpha representation. Pointer coordinates are mapped through the

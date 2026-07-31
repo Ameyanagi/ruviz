@@ -707,11 +707,34 @@ pub(super) fn draw_tooltip_overlay(pixels: &mut [u8], size_px: (u32, u32), toolt
     };
     draw_rect(pixels, size_px, rect, Color::from_rgba(255, 255, 220, 220));
 
-    let Some(size) = tiny_skia::IntSize::from_wh(size_px.0, size_px.1) else {
-        log::debug!("Skipping tooltip text render because overlay size is invalid");
+    // Rasterize the label through tiny-skia on a sub-image just big enough for
+    // the tooltip box. Doing it on the whole overlay costs four passes over
+    // every pixel in the frame — copy out, premultiply, demultiply, copy back,
+    // the last two with a per-pixel divide — to draw a box covering a fraction
+    // of a percent of it. The margin absorbs glyph overhang and antialiasing.
+    const TOOLTIP_TEXT_MARGIN: f64 = 8.0;
+    let frame_width = i64::from(size_px.0);
+    let frame_height = i64::from(size_px.1);
+    let sub_x = ((left - TOOLTIP_TEXT_MARGIN).floor() as i64).clamp(0, frame_width);
+    let sub_y = ((top - TOOLTIP_TEXT_MARGIN).floor() as i64).clamp(0, frame_height);
+    let sub_x2 =
+        ((left + tooltip_width + TOOLTIP_TEXT_MARGIN).ceil() as i64).clamp(sub_x, frame_width);
+    let sub_y2 =
+        ((top + tooltip_height + TOOLTIP_TEXT_MARGIN).ceil() as i64).clamp(sub_y, frame_height);
+    let Some(size) = tiny_skia::IntSize::from_wh((sub_x2 - sub_x) as u32, (sub_y2 - sub_y) as u32)
+    else {
+        log::debug!("Skipping tooltip text render because the tooltip area is empty");
         return;
     };
-    let mut premultiplied = pixels.to_vec();
+
+    let frame_row_bytes = size_px.0 as usize * 4;
+    let sub_row_bytes = size.width() as usize * 4;
+    let sub_origin = (sub_x as usize * 4, sub_y as usize);
+    let mut premultiplied = Vec::with_capacity(sub_row_bytes * size.height() as usize);
+    for row in 0..size.height() as usize {
+        let start = (sub_origin.1 + row) * frame_row_bytes + sub_origin.0;
+        premultiplied.extend_from_slice(&pixels[start..start + sub_row_bytes]);
+    }
     crate::core::plot::convert_rgba_alpha_mode(
         &mut premultiplied,
         crate::core::AlphaMode::Straight,
@@ -725,8 +748,8 @@ pub(super) fn draw_tooltip_overlay(pixels: &mut [u8], size_px: (u32, u32), toolt
     if let Err(err) = text_renderer.render_text(
         &mut pixmap,
         &tooltip.content,
-        (left + TOOLTIP_PADDING_X) as f32,
-        (top + TOOLTIP_PADDING_Y) as f32,
+        (left + TOOLTIP_PADDING_X - sub_x as f64) as f32,
+        (top + TOOLTIP_PADDING_Y - sub_y as f64) as f32,
         &font,
         Color::from_rgba(24, 24, 24, 255),
     ) {
@@ -735,7 +758,12 @@ pub(super) fn draw_tooltip_overlay(pixels: &mut [u8], size_px: (u32, u32), toolt
     }
 
     let rendered = pixmap.take_demultiplied();
-    pixels.copy_from_slice(&rendered);
+    for row in 0..size.height() as usize {
+        let destination = (sub_origin.1 + row) * frame_row_bytes + sub_origin.0;
+        let source = row * sub_row_bytes;
+        pixels[destination..destination + sub_row_bytes]
+            .copy_from_slice(&rendered[source..source + sub_row_bytes]);
+    }
 }
 
 pub(super) fn tooltip_from_hit(hit: &HitResult) -> TooltipState {

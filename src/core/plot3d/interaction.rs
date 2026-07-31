@@ -16,13 +16,13 @@ use crate::render::three_d::gpu::{
 #[cfg(all(feature = "interactive-gpu", not(target_arch = "wasm32")))]
 use crate::render::three_d::gpu::{SurfacePresentOutcome3D, SurfacePresenter3D};
 
-use super::Camera3D;
 use super::RenderDiagnostics3D;
 use super::builder::Plot3D;
 use super::layout::Axis3Layout;
 use super::picking::{Bvh3D, PickHit3D, pick_scene};
 use super::prepared::PreparedSceneCache3D;
 use super::resolve::{CacheKey3D, FrameKeys3D, ResolvedFrame3D};
+use super::{Camera3D, CameraView3D};
 
 const DRAG_THRESHOLD_PX: f32 = 3.0;
 const ORBIT_DEGREES_PER_PIXEL: f32 = 0.25;
@@ -549,6 +549,21 @@ impl InteractivePlot3DSession {
     /// Restore the camera supplied by the original builder.
     pub fn reset_view(&mut self) -> Result<()> {
         self.set_camera(self.initial_camera)
+    }
+
+    /// Apply a named camera orientation without rebuilding scene geometry.
+    ///
+    /// Projection, axis aspect, zoom, and the current look-at target are
+    /// preserved. Top and bottom use pole-safe elevations of `±89.9°`.
+    pub fn apply_camera_view(&mut self, view: CameraView3D) -> Result<()> {
+        self.set_camera(self.frame.camera.camera_view(view))
+    }
+
+    /// Recenter the current scene and restore unit zoom.
+    ///
+    /// Camera orientation, projection, and axis aspect are preserved.
+    pub fn fit_to_content(&mut self) -> Result<()> {
+        self.set_camera(self.frame.camera.fit_to_content(self.frame.bounds))
     }
 
     /// Resize the physical render target without rebuilding scene geometry.
@@ -1340,6 +1355,73 @@ mod tests {
             .handle_input(InputEvent3D::Escape)
             .expect("escape should reset and cancel");
         assert!(!session.is_drag_active());
+    }
+
+    #[test]
+    fn named_camera_view_preserves_non_orientation_state() {
+        let mut session = scatter3d(&[-2.0, 4.0], &[10.0, 30.0], &[5.0, 9.0])
+            .interactive_session()
+            .expect("session");
+        let target = Point3D::new(1.0, 20.0, 7.0);
+        let camera = session
+            .camera()
+            .perspective_deg(51.0)
+            .axis_aspect(super::super::AxisAspect3D::Equal)
+            .zoom(3.0)
+            .look_at(target)
+            .roll_deg(22.0);
+        session.set_camera(camera).expect("custom camera");
+        let before = session.camera_snapshot();
+
+        session
+            .apply_camera_view(CameraView3D::Top)
+            .expect("top view");
+
+        let after = session.camera_snapshot();
+        assert_eq!(after.camera.get_azimuth_deg(), 0.0);
+        assert_eq!(after.camera.get_elevation_deg(), 89.9);
+        assert_eq!(after.camera.get_roll_deg(), 0.0);
+        assert_eq!(after.camera.projection(), before.camera.projection());
+        assert_eq!(
+            after.camera.axis_aspect_value(),
+            before.camera.axis_aspect_value()
+        );
+        assert_eq!(after.camera.get_zoom(), before.camera.get_zoom());
+        assert_eq!(after.camera.target(), before.camera.target());
+        assert_eq!(
+            after.camera_generation,
+            before.camera_generation.checked_add(1).expect("generation")
+        );
+    }
+
+    #[test]
+    fn fit_to_content_uses_scene_bounds_and_preserves_view_direction() {
+        let mut session = scatter3d(&[-2.0, 4.0], &[10.0, 30.0], &[5.0, 9.0])
+            .interactive_session()
+            .expect("session");
+        let camera = session
+            .camera()
+            .azimuth_deg(12.0)
+            .elevation_deg(-34.0)
+            .roll_deg(8.0)
+            .perspective_deg(47.0)
+            .axis_aspect(super::super::AxisAspect3D::Equal)
+            .zoom(5.0)
+            .look_at(Point3D::new(-2.0, 10.0, 5.0));
+        session.set_camera(camera).expect("custom camera");
+        let before = session.camera();
+        let expected_center = session.frame.bounds.center();
+
+        session.fit_to_content().expect("fit");
+
+        let fitted = session.camera();
+        assert_eq!(fitted.get_azimuth_deg(), before.get_azimuth_deg());
+        assert_eq!(fitted.get_elevation_deg(), before.get_elevation_deg());
+        assert_eq!(fitted.get_roll_deg(), before.get_roll_deg());
+        assert_eq!(fitted.projection(), before.projection());
+        assert_eq!(fitted.axis_aspect_value(), before.axis_aspect_value());
+        assert_eq!(fitted.get_zoom(), 1.0);
+        assert_eq!(fitted.target(), Some(expected_center));
     }
 
     #[test]

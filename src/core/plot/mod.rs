@@ -641,14 +641,14 @@ pub use config::{
 pub use configuration::{PlotConfiguration, TextEngineMode};
 pub use data::{IntoPlotData, PlotData, PlotSource, PlotText, ReactiveValue};
 pub(crate) use image::convert_rgba_alpha_mode;
-pub use image::{AlphaMode, Image, source_over_straight_rgba};
+pub use image::{AlphaMode, Image, RenderedLayer, source_over_straight_rgba};
 pub use interactive_session::{
     AnnotationId, DirtyDomain, DirtyDomains, FramePacing, FrameStats, HitResult, ImageTarget,
     InteractiveChangeRevision, InteractiveChangeSubscription, InteractiveFrame,
     InteractiveFrameWithGeneration, InteractivePlotSession, InteractiveRenderStamp,
-    InteractiveViewBoundsSnapshot, InteractiveViewportSnapshot, LayerRenderState, PlotInputEvent,
-    QualityPolicy, RenderTargetKind, StampedInteractiveFrame, SurfaceCapability, SurfaceTarget,
-    ViewportPoint, ViewportRect,
+    InteractiveViewBoundsSnapshot, InteractiveViewportSnapshot, LayerImages, LayerRenderState,
+    PlotInputEvent, QualityPolicy, RenderTargetKind, StampedInteractiveFrame,
+    StampedInteractiveLayers, SurfaceCapability, SurfaceTarget, ViewportPoint, ViewportRect,
 };
 pub use layout_manager::LayoutManager;
 pub use prepared::{PreparedPlot, ReactiveSubscription};

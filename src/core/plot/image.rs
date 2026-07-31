@@ -1,6 +1,7 @@
 //! Image representation for rendered plots
 
 use std::borrow::Cow;
+use std::sync::{Arc, OnceLock};
 
 /// Alpha representation used by an RGBA pixel buffer.
 ///
@@ -106,6 +107,147 @@ impl Image {
     /// Encode the image as PNG bytes.
     pub fn encode_png(&self) -> crate::core::Result<Vec<u8>> {
         crate::export::encode_rgba_png(self)
+    }
+}
+
+/// One rendered presentation layer, kept in whichever alpha representation its
+/// producer emitted natively.
+///
+/// [`Image`] is always straight alpha, which is the right canonical form for
+/// export and for straight-alpha compositors. GPU-backed toolkits want the
+/// opposite: tiny-skia rasterizes premultiplied, and egui and Slint upload
+/// premultiplied, so normalizing to straight in between costs a full-frame
+/// divide that the toolkit immediately undoes with a full-frame multiply.
+///
+/// `RenderedLayer` avoids that round trip. [`pixels`](Self::pixels) hands back
+/// the native buffer with no conversion, [`alpha_mode`](Self::alpha_mode) says
+/// what it is, and [`image`](Self::image) materializes the straight-alpha
+/// [`Image`] on first use and caches it for anyone who genuinely needs one.
+#[derive(Clone, Debug)]
+pub struct RenderedLayer {
+    kind: LayerKind,
+}
+
+#[derive(Clone, Debug)]
+enum LayerKind {
+    /// Already straight; the `Image` is the canonical buffer.
+    Straight(Arc<Image>),
+    /// Native premultiplied bytes, with the straight view computed on demand.
+    Premultiplied {
+        width: u32,
+        height: u32,
+        pixels: Arc<Vec<u8>>,
+        straight: Arc<OnceLock<Arc<Image>>>,
+    },
+}
+
+impl RenderedLayer {
+    /// Wrap an existing straight-alpha image without copying or converting it.
+    pub fn from_straight_image(image: Arc<Image>) -> Self {
+        Self {
+            kind: LayerKind::Straight(image),
+        }
+    }
+
+    /// Adopt native premultiplied RGBA bytes without converting them.
+    ///
+    /// The straight-alpha [`Image`] view is produced only if
+    /// [`image`](Self::image) is called.
+    pub fn from_premultiplied_pixels(width: u32, height: u32, pixels: Vec<u8>) -> Self {
+        Self {
+            kind: LayerKind::Premultiplied {
+                width,
+                height,
+                pixels: Arc::new(pixels),
+                straight: Arc::new(OnceLock::new()),
+            },
+        }
+    }
+
+    /// Width in pixels.
+    pub fn width(&self) -> u32 {
+        match &self.kind {
+            LayerKind::Straight(image) => image.width,
+            LayerKind::Premultiplied { width, .. } => *width,
+        }
+    }
+
+    /// Height in pixels.
+    pub fn height(&self) -> u32 {
+        match &self.kind {
+            LayerKind::Straight(image) => image.height,
+            LayerKind::Premultiplied { height, .. } => *height,
+        }
+    }
+
+    /// Alpha representation of the buffer returned by [`pixels`](Self::pixels).
+    pub fn alpha_mode(&self) -> AlphaMode {
+        match &self.kind {
+            LayerKind::Straight(_) => AlphaMode::Straight,
+            LayerKind::Premultiplied { .. } => AlphaMode::Premultiplied,
+        }
+    }
+
+    /// Native pixel bytes, in [`alpha_mode`](Self::alpha_mode) representation.
+    ///
+    /// This never converts. Pair it with `alpha_mode` to pick the matching
+    /// toolkit upload entry point (for example egui's
+    /// `ColorImage::from_rgba_premultiplied` or Slint's
+    /// `Image::from_rgba8_premultiplied`).
+    pub fn pixels(&self) -> &[u8] {
+        match &self.kind {
+            LayerKind::Straight(image) => &image.pixels,
+            LayerKind::Premultiplied { pixels, .. } => pixels,
+        }
+    }
+
+    /// Straight-alpha [`Image`] view of this layer.
+    ///
+    /// Free when the layer is already straight. Otherwise the conversion runs
+    /// once on first call and the result is cached for the layer's lifetime.
+    pub fn image(&self) -> &Arc<Image> {
+        match &self.kind {
+            LayerKind::Straight(image) => image,
+            LayerKind::Premultiplied {
+                width,
+                height,
+                pixels,
+                straight,
+            } => straight.get_or_init(|| {
+                Arc::new(Image::from_premultiplied_rgba(
+                    *width,
+                    *height,
+                    pixels.as_ref().clone(),
+                ))
+            }),
+        }
+    }
+
+    /// Whether this layer is backed by the very same buffer as `other`.
+    ///
+    /// Presentation code uses this to answer "is this already on the GPU?"
+    /// without touching pixels. It compares the retained allocations directly,
+    /// so it cannot be fooled by a freed buffer's address being reused.
+    pub fn same_buffer_as(&self, other: &Self) -> bool {
+        match (&self.kind, &other.kind) {
+            (LayerKind::Straight(this), LayerKind::Straight(that)) => Arc::ptr_eq(this, that),
+            (
+                LayerKind::Premultiplied { pixels: this, .. },
+                LayerKind::Premultiplied { pixels: that, .. },
+            ) => Arc::ptr_eq(this, that),
+            _ => false,
+        }
+    }
+
+    /// Whether the straight-alpha view has already been materialized.
+    ///
+    /// Exposed for tests and diagnostics that assert the fast path stayed on
+    /// the native buffer.
+    pub fn has_straight_view(&self) -> bool {
+        match &self.kind {
+            LayerKind::Straight(_) => true,
+            LayerKind::Premultiplied { straight, .. } => straight.get().is_some(),
+        }
     }
 }
 

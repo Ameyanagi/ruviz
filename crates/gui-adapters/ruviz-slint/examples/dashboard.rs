@@ -7,6 +7,9 @@ fn main() -> Result<(), slint::PlatformError> {
     dashboard.set_columns(2);
     dashboard.window().set_size(LogicalSize::new(1200.0, 520.0));
 
+    eprintln!("Right-click a plot for reset, fit, export, copy, and interaction controls.");
+    eprintln!("Right-drag still brushes after the context-menu movement threshold.");
+
     let controller = RuvizController::attach(&dashboard);
     controller.on_error(|error| eprintln!("{error}"));
 

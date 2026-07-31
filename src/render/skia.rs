@@ -2720,8 +2720,27 @@ impl SkiaRenderer {
     ///
     /// Tiny-skia's native premultiplied buffer is normalized to [`Image`]'s
     /// canonical straight-alpha representation.
+    /// `Pixmap::take` hands over the pixmap's own buffer, so the normalization
+    /// happens in place. Copying it out first (`data().to_vec()`) cost a second
+    /// full-frame pass — 20 MB of memcpy per frame at a 2800x1800 backing size.
     pub fn into_image(self) -> Image {
-        Image::from_premultiplied_rgba(self.width, self.height, self.pixmap.data().to_vec())
+        Image::from_premultiplied_rgba(self.width, self.height, self.pixmap.take())
+    }
+
+    /// Consume the renderer and take tiny-skia's native premultiplied buffer as
+    /// a [`RenderedLayer`](crate::core::plot::RenderedLayer), with no
+    /// conversion and no copy.
+    ///
+    /// Prefer this over [`into_image`](Self::into_image) for presentation paths
+    /// that upload to a GPU texture: the straight-alpha normalization
+    /// `into_image` performs is a full-frame divide that premultiplying
+    /// toolkits immediately undo.
+    pub fn into_rendered_layer(self) -> crate::core::plot::RenderedLayer {
+        crate::core::plot::RenderedLayer::from_premultiplied_pixels(
+            self.width,
+            self.height,
+            self.pixmap.take(),
+        )
     }
 
     /// Consume the renderer and convert to an `Image` with straight-alpha

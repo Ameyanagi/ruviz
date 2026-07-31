@@ -9,20 +9,23 @@
 //! Host applications remain responsible for that choice.
 
 use std::{
+    borrow::Cow,
     collections::HashMap,
     fmt,
     sync::{
-        Arc, Mutex, MutexGuard,
+        Arc, Mutex, MutexGuard, Weak,
         atomic::{AtomicU64, Ordering},
+        mpsc,
     },
 };
 
 use ruviz::core::{
-    AlphaMode, HitResult, ImageFit, ImageTarget, InteractiveChangeSubscription,
-    InteractivePlotSession, InteractiveRenderStamp, IntoPlotSession, LatestRequestScheduler,
-    LogicalPoint, LogicalRect, PlotInputEvent, ScheduledRequest, ScheduledRequestId, ViewportPoint,
-    ViewportRect, fitted_content_rect, logical_to_physical, physical_backing_size,
-    sanitize_scale_factor,
+    AlphaMode, HitResult, Image as RuvizImage, ImageFit, ImageTarget,
+    InteractiveChangeSubscription, InteractivePlotSession, InteractiveRenderStamp, IntoPlotSession,
+    LatestRequestScheduler, LogicalPoint, LogicalRect, PlotContextMenuAction, PlotInputEvent,
+    RenderedLayer, ScheduledRequest, ScheduledRequestId, ViewportPoint, ViewportRect,
+    fitted_content_rect, logical_to_physical, physical_backing_size, sanitize_scale_factor,
+    source_over_straight_rgba,
 };
 use ruviz::prelude::AxisScale;
 use slint::{Model as _, Rgba8Pixel, SharedPixelBuffer};
@@ -38,7 +41,9 @@ pub mod slint_generated {
     slint::include_modules!();
 }
 
-pub use slint_generated::{RuvizImageFit, RuvizPlotGrid, RuvizRuntime, RuvizSlotState};
+pub use slint_generated::{
+    RuvizContextAction, RuvizImageFit, RuvizPlotGrid, RuvizRuntime, RuvizSlotState,
+};
 
 static NEXT_SLOT_INCARNATION: AtomicU64 = AtomicU64::new(1);
 
@@ -52,6 +57,11 @@ fn lock_scalar_recover<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 fn catch_callback<T>(callback: impl FnOnce() -> T) -> Result<T, String> {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(callback))
         .map_err(|payload| panic_payload_message(payload.as_ref()))
+}
+
+fn write_image_png(image: &RuvizImage, path: impl AsRef<std::path::Path>) -> Result<(), String> {
+    ruviz::export::write_rgba_png_atomic(path, image)
+        .map_err(|error| format!("failed to save PNG: {error}"))
 }
 
 fn panic_payload_message(payload: &(dyn std::any::Any + Send)) -> String {
@@ -171,11 +181,12 @@ impl std::error::Error for AdapterError {}
 
 type UiTask = Box<dyn FnOnce() + Send + 'static>;
 type FrameSink = Arc<dyn Fn(SlotId, slint::Image) + Send + Sync + 'static>;
+type OverlaySink = Arc<dyn Fn(SlotId, Option<slint::Image>) + Send + Sync + 'static>;
 type Dispatcher = Arc<dyn Fn(UiTask) -> Result<(), String> + Send + Sync + 'static>;
 type PointerCallback = Arc<dyn Fn(PointerReport) + Send + Sync + 'static>;
 type ErrorCallback = Arc<dyn Fn(AdapterError) + Send + Sync + 'static>;
 type RuntimeConfigSink =
-    Arc<dyn Fn(SlotId, InteractionMode, ImageFit, f32) + Send + Sync + 'static>;
+    Arc<dyn Fn(SlotId, InteractionMode, ImageFit, f32, bool, bool) + Send + Sync + 'static>;
 
 #[cfg(feature = "3d")]
 type PickCallback = Arc<dyn Fn(SlotId, ruviz::core::PickHit3D) + Send + Sync + 'static>;
@@ -194,11 +205,19 @@ struct ControllerCallbacks {
 
 /// Retained, cloneable controller for any number of Slint plot slots.
 ///
-/// Rendering uses a latest-request scheduler per slot. At most one worker is
-/// active for a slot; intermediate resize/reactive requests are coalesced.
-/// Workers send a [`SharedPixelBuffer`] to the Slint event loop, where the
-/// [`slint::Image`] is constructed and installed. The last successful frame is
-/// retained when a newer render fails.
+/// Rendering uses a latest-request scheduler per slot, drained by one
+/// persistent worker thread per slot. At most one render is active for a slot;
+/// intermediate resize/reactive requests are coalesced. Workers send a
+/// [`SharedPixelBuffer`] to the Slint event loop, where the [`slint::Image`] is
+/// constructed and installed. The last successful frame is retained when a
+/// newer render fails.
+///
+/// A controller with an overlay sink (see [`RuvizController::on_overlay`],
+/// installed automatically by [`RuvizController::attach`]) presents the plot
+/// base and its interaction overlay as two stacked Slint images, so a hover,
+/// tooltip, brush, or annotation change only re-uploads the small overlay and
+/// the renderer composites the layers. Without an overlay sink the controller
+/// blends the two layers itself and installs one flat image.
 #[derive(Clone)]
 pub struct RuvizController {
     inner: Arc<ControllerInner>,
@@ -206,8 +225,9 @@ pub struct RuvizController {
 
 struct ControllerInner {
     slots: Mutex<HashMap<SlotId, SlotState>>,
-    render_gates: Mutex<HashMap<SlotId, Arc<Mutex<()>>>>,
+    render_workers: Mutex<HashMap<SlotId, RenderWorker>>,
     frame_sink: FrameSink,
+    overlay_sink: Mutex<Option<OverlaySink>>,
     dispatcher: Dispatcher,
     runtime_config_sink: Option<RuntimeConfigSink>,
     default_scale_factor: f32,
@@ -223,8 +243,16 @@ struct SlotState {
     layout: SlotLayout,
     scheduler: LatestRequestScheduler<RenderRequest>,
     drag: Option<ActiveDrag>,
+    context_press: Option<ContextPress>,
     _subscription: Option<InteractiveChangeSubscription>,
     last_frame: Option<InstalledFrame>,
+    /// Layers the slot's sinks actually hold right now.
+    ///
+    /// This is deliberately not `last_frame`: layers are handed to the sinks
+    /// before the frame can be committed, so a frame that is presented but then
+    /// rejected still changed what is on screen. Diffing against anything else
+    /// would let a shown overlay survive a redraw that means to clear it.
+    presented: Option<PresentedLayers>,
 }
 
 fn lock_slots(
@@ -255,6 +283,14 @@ enum PlotSlot {
 }
 
 impl PlotSlot {
+    fn is_3d(&self) -> bool {
+        match self {
+            Self::TwoD(_) => false,
+            #[cfg(feature = "3d")]
+            Self::ThreeD { .. } => true,
+        }
+    }
+
     fn customized_2d_visible_bounds(&self) -> Option<ViewportRect> {
         match self {
             Self::TwoD(session) => {
@@ -292,28 +328,111 @@ fn lock_3d_renderer(
 }
 
 #[derive(Clone)]
-enum RenderRequest {
+struct RenderRequest {
+    incarnation: u64,
+    /// Layers the slot currently presents, used to skip unchanged uploads.
+    ///
+    /// `None` means nothing presentable is known to be on screen, so both
+    /// layers are published even if that only clears the overlay.
+    published: Option<PublishedLayers>,
+    /// Whether base and overlay are presented as two stacked Slint images.
+    layered: bool,
+    kind: RenderRequestKind,
+}
+
+#[derive(Clone)]
+enum RenderRequestKind {
     TwoD {
-        incarnation: u64,
         session: InteractivePlotSession,
         target: ImageTarget,
     },
     #[cfg(feature = "3d")]
     ThreeD {
-        incarnation: u64,
         session: Arc<Mutex<ruviz::core::InteractivePlot3DSession>>,
         renderer: Arc<Mutex<ruviz::core::BackgroundRenderer3D>>,
         job: ruviz::core::BackgroundRenderJob3D,
     },
 }
 
-impl RenderRequest {
-    fn incarnation(&self) -> u64 {
-        match self {
-            Self::TwoD { incarnation, .. } => *incarnation,
-            #[cfg(feature = "3d")]
-            Self::ThreeD { incarnation, .. } => *incarnation,
-        }
+/// Layer identities a slot has already handed to Slint.
+///
+/// A layer whose `Arc` is unchanged is still on screen, so the worker skips
+/// both its pixel copy and its install.
+#[derive(Clone)]
+struct PublishedLayers {
+    base: RenderedLayer,
+    overlay: Option<RenderedLayer>,
+}
+
+/// What a slot's sinks currently hold, and under which presentation.
+///
+/// Layers only stay reusable while the slot keeps the same plot and the same
+/// layered/flat presentation; anything else must be republished.
+#[derive(Clone)]
+struct PresentedLayers {
+    incarnation: u64,
+    layered: bool,
+    layers: PublishedLayers,
+}
+
+struct RenderJob {
+    id: ScheduledRequestId,
+    incarnation: u64,
+    request: RenderRequest,
+    #[cfg(test)]
+    barrier: Option<(Arc<std::sync::Barrier>, Arc<std::sync::Barrier>)>,
+}
+
+/// One persistent render lane per slot.
+///
+/// Dropping the controller drops the sender, which ends the worker's `recv`
+/// loop after its current render; nothing is joined, so a slow render can never
+/// block the UI thread that dropped the controller.
+struct RenderWorker {
+    sender: mpsc::Sender<RenderJob>,
+    #[cfg(test)]
+    busy: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl RenderWorker {
+    fn start(slot: SlotId, weak: Weak<ControllerInner>) -> Result<Self, String> {
+        let (sender, receiver) = mpsc::channel::<RenderJob>();
+        #[cfg(test)]
+        let busy = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        #[cfg(test)]
+        let lane_busy = Arc::clone(&busy);
+        std::thread::Builder::new()
+            .name(format!("ruviz-slint-{slot}"))
+            .spawn(move || {
+                while let Ok(job) = receiver.recv() {
+                    #[cfg(test)]
+                    lane_busy.store(true, Ordering::SeqCst);
+                    #[cfg(test)]
+                    if let Some((entered, release)) = job.barrier {
+                        entered.wait();
+                        release.wait();
+                    }
+                    let result = match catch_callback(|| render_request(job.request)) {
+                        Ok(result) => result,
+                        Err(message) => Err(WorkerFailure::Error(format!(
+                            "plot renderer panicked while producing a background frame: {message}"
+                        ))),
+                    };
+                    // The controller may have been dropped mid-render; the
+                    // frame is then simply discarded.
+                    if let Some(inner) = weak.upgrade() {
+                        inner.finish_render(slot, job.id, job.incarnation, result);
+                    }
+                    #[cfg(test)]
+                    lane_busy.store(false, Ordering::SeqCst);
+                }
+            })
+            .map_err(|error| error.to_string())?;
+        Ok(Self {
+            sender,
+            #[cfg(test)]
+            busy,
+        })
     }
 }
 
@@ -343,6 +462,8 @@ impl Default for SlotLayout {
 
 #[derive(Clone)]
 struct InstalledFrame {
+    base: RenderedLayer,
+    overlay: Option<RenderedLayer>,
     size_px: (u32, u32),
     generation: u64,
     incarnation: u64,
@@ -360,6 +481,13 @@ struct ActiveDrag {
     button: PointerButton,
     anchor: LogicalPoint,
     last: LogicalPoint,
+    moved: bool,
+    forwarded: bool,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ContextPress {
+    anchor: LogicalPoint,
     moved: bool,
 }
 
@@ -388,10 +516,61 @@ impl RenderValidity {
     }
 }
 
-struct RenderedBuffer {
+/// One presentable layer, already copied into Slint's pixel storage.
+struct LayerBuffer {
     buffer: SharedPixelBuffer<Rgba8Pixel>,
     alpha_mode: AlphaMode,
+}
+
+impl LayerBuffer {
+    fn new(image: &RuvizImage) -> Self {
+        Self {
+            buffer: SharedPixelBuffer::clone_from_slice(&image.pixels, image.width, image.height),
+            alpha_mode: image.alpha_mode(),
+        }
+    }
+
+    /// Copy a layer's native bytes, converting nothing.
+    ///
+    /// `into_slint_image` then picks `from_rgba8_premultiplied` for a
+    /// premultiplied layer, so tiny-skia's native output reaches Slint without
+    /// a demultiply/re-premultiply round trip.
+    fn from_layer(layer: &RenderedLayer) -> Self {
+        Self {
+            buffer: SharedPixelBuffer::clone_from_slice(
+                layer.pixels(),
+                layer.width(),
+                layer.height(),
+            ),
+            alpha_mode: layer.alpha_mode(),
+        }
+    }
+
+    fn into_slint_image(self) -> slint::Image {
+        match self.alpha_mode {
+            AlphaMode::Straight => slint::Image::from_rgba8(self.buffer),
+            AlphaMode::Premultiplied => slint::Image::from_rgba8_premultiplied(self.buffer),
+        }
+    }
+}
+
+/// What the overlay layer of an installed slot must become.
+enum OverlayUpdate {
+    /// The presented overlay is still correct; leave it untouched.
+    Reuse,
+    /// Replace it, or clear it when the frame carries no overlay.
+    Replace(Option<LayerBuffer>),
+}
+
+struct RenderedFrame {
+    /// `None` when the presented base layer is still the rendered one.
+    base: Option<LayerBuffer>,
+    overlay: OverlayUpdate,
+    base_layer: RenderedLayer,
+    overlay_layer: Option<RenderedLayer>,
     size_px: (u32, u32),
+    /// Whether this frame was produced for layered presentation.
+    layered: bool,
     validity: RenderValidity,
 }
 
@@ -403,7 +582,8 @@ enum WorkerFailure {
 impl RuvizController {
     /// Create a controller that installs frames through `frame_sink`.
     ///
-    /// `frame_sink` always runs on the Slint UI event loop.
+    /// `frame_sink` always runs on the Slint UI event loop. It receives one
+    /// flat image unless [`RuvizController::on_overlay`] is also installed.
     pub fn new(frame_sink: impl Fn(SlotId, slint::Image) + Send + Sync + 'static) -> Self {
         Self::with_dispatcher(frame_sink, |task| {
             slint::invoke_from_event_loop(task).map_err(|error| error.to_string())
@@ -431,8 +611,9 @@ impl RuvizController {
         Self {
             inner: Arc::new(ControllerInner {
                 slots: Mutex::new(HashMap::new()),
-                render_gates: Mutex::new(HashMap::new()),
+                render_workers: Mutex::new(HashMap::new()),
                 frame_sink: Arc::new(frame_sink),
+                overlay_sink: Mutex::new(None),
                 dispatcher: Arc::new(dispatcher),
                 runtime_config_sink,
                 default_scale_factor: sanitize_scale_factor(default_scale_factor),
@@ -447,6 +628,13 @@ impl RuvizController {
     ///
     /// `C` may be the standalone [`RuvizPlotGrid`] or an application component that
     /// imports `RuvizPlot` from `@Ruviz`.
+    ///
+    /// Layered presentation is enabled per component tree, not unconditionally:
+    /// the overlay sink is installed the first time a component announces
+    /// itself through `RuvizRuntime.overlay-supported`, which `RuvizPlot` does
+    /// for itself. A custom component that binds `RuvizRuntime.slots[i].source`
+    /// alone therefore keeps receiving one flat, pre-composed image and never
+    /// silently loses its crosshair, tooltip, selection, or brush overlay.
     pub fn attach<C>(component: &C) -> Self
     where
         C: slint::ComponentHandle + 'static,
@@ -457,12 +645,14 @@ impl RuvizController {
         let runtime: RuvizRuntime<'_> = component.global();
         runtime.set_slots(slint::ModelRc::default());
         let frame_runtime = runtime.as_weak();
+        let overlay_runtime = frame_runtime.clone();
         let config_runtime = frame_runtime.clone();
-        let config_sink: RuntimeConfigSink = Arc::new(move |slot, mode, fit, scale| {
-            if let Some(runtime) = config_runtime.upgrade() {
-                update_runtime_config(&runtime, slot, mode, fit, scale);
-            }
-        });
+        let config_sink: RuntimeConfigSink =
+            Arc::new(move |slot, mode, fit, scale, is_3d, has_frame| {
+                if let Some(runtime) = config_runtime.upgrade() {
+                    update_runtime_config(&runtime, slot, mode, fit, scale, is_3d, has_frame);
+                }
+            });
         let controller = Self::with_parts(
             move |slot, image| {
                 if let Some(runtime) = frame_runtime.upgrade() {
@@ -473,8 +663,49 @@ impl RuvizController {
             Some(config_sink),
             component.window().scale_factor(),
         );
+        let overlay_sink: OverlaySink = Arc::new(move |slot, overlay| {
+            if let Some(runtime) = overlay_runtime.upgrade() {
+                update_runtime_overlay(&runtime, slot, overlay.unwrap_or_default());
+            }
+        });
+        let announced = controller.clone();
+        runtime.on_overlay_supported(move |_slot| {
+            announced.enable_overlay_layer(Arc::clone(&overlay_sink));
+        });
         controller.bind_runtime(component);
         controller
+    }
+
+    /// Switch to layered presentation once a component can stack two images.
+    ///
+    /// Every `RuvizPlot` announces itself, so this runs repeatedly and only the
+    /// first call installs the sink.
+    fn enable_overlay_layer(&self, sink: OverlaySink) {
+        {
+            let mut installed = lock_scalar_recover(&self.inner.overlay_sink);
+            if installed.is_some() {
+                return;
+            }
+            *installed = Some(sink);
+        }
+        self.inner.request_render_all();
+    }
+
+    /// Install the sink that presents the interaction overlay layer.
+    ///
+    /// Installing it switches the slot to layered presentation: `frame_sink`
+    /// receives the plot base and this sink receives the overlay drawn over it
+    /// in the same fitted geometry, using normal source-over blending. `None`
+    /// means the frame has no overlay, so any previously shown overlay must be
+    /// cleared. Each layer is only handed over when it actually changed, which
+    /// is what keeps a hover redraw off the base layer.
+    ///
+    /// [`RuvizController::attach`] installs this for a component that announces
+    /// `RuvizRuntime.overlay-supported`. A controller without an overlay sink
+    /// keeps receiving one flat, pre-composed image.
+    pub fn on_overlay(&self, sink: impl Fn(SlotId, Option<slint::Image>) + Send + Sync + 'static) {
+        *lock_scalar_recover(&self.inner.overlay_sink) = Some(Arc::new(sink));
+        self.inner.request_render_all();
     }
 
     /// Connect the `RuvizRuntime` global callbacks to this controller.
@@ -499,7 +730,16 @@ impl RuvizController {
                         button,
                         position: LogicalPoint::new(f64::from(x), f64::from(y)),
                     },
-                );
+                )
+            } else {
+                false
+            }
+        });
+
+        let controller = self.clone();
+        runtime.on_context_action(move |slot, action| {
+            if let Some(action) = decode_context_action(action) {
+                controller.context_action(slot, action);
             }
         });
 
@@ -595,8 +835,10 @@ impl RuvizController {
                     layout,
                     scheduler,
                     drag: None,
+                    context_press: None,
                     _subscription: Some(subscription),
                     last_frame,
+                    presented: None,
                 },
             );
             (layout, bounds)
@@ -698,8 +940,10 @@ impl RuvizController {
                 layout,
                 scheduler,
                 drag: None,
+                context_press: None,
                 _subscription: None,
                 last_frame,
+                presented: None,
             },
         );
         drop(slots);
@@ -811,51 +1055,119 @@ impl RuvizController {
     }
 
     /// Apply one pointer transition.
-    pub fn pointer_input(&self, slot: SlotId, input: PointerInput) {
-        let action = {
+    ///
+    /// Returns `true` when an unmoved secondary click should open the packaged
+    /// context menu. Secondary presses are retained until the pointer crosses
+    /// the drag threshold, so a menu click never starts a 2D brush or 3D pan.
+    pub fn pointer_input(&self, slot: SlotId, input: PointerInput) -> bool {
+        let (action, open_context_menu) = {
             let mut slots = lock_slots(&self.inner.slots);
             let Some(state) = slots.get_mut(&slot) else {
-                return;
+                return false;
             };
             let handle = state.plot.clone_handle();
             let mapped = state.map_point(input.position);
-            if !state.pointer_input_enabled(input.kind) {
+            let open_context_menu = match input.kind {
+                PointerKind::Down if input.button == PointerButton::Right => {
+                    state.context_press = Some(ContextPress {
+                        anchor: input.position,
+                        moved: false,
+                    });
+                    false
+                }
+                PointerKind::Down => {
+                    state.context_press = None;
+                    false
+                }
+                PointerKind::Move => {
+                    if let Some(mut press) = state.context_press {
+                        let total = LogicalPoint::new(
+                            input.position.x - press.anchor.x,
+                            input.position.y - press.anchor.y,
+                        );
+                        press.moved |= total.x.hypot(total.y) >= 3.0;
+                        state.context_press = Some(press);
+                    }
+                    false
+                }
+                PointerKind::Up if input.button == PointerButton::Right => {
+                    state.context_press.take().is_some_and(|press| {
+                        let total = LogicalPoint::new(
+                            input.position.x - press.anchor.x,
+                            input.position.y - press.anchor.y,
+                        );
+                        !press.moved && total.x.hypot(total.y) < 3.0
+                    })
+                }
+                PointerKind::Up => false,
+                PointerKind::Cancel => {
+                    state.context_press = None;
+                    false
+                }
+            };
+            if input.kind == PointerKind::Up
+                && input.button == PointerButton::Right
+                && let Some(drag) = state.drag.as_mut()
+            {
+                let total = LogicalPoint::new(
+                    input.position.x - drag.anchor.x,
+                    input.position.y - drag.anchor.y,
+                );
+                drag.moved |= total.x.hypot(total.y) >= 3.0;
+            }
+            if open_context_menu {
+                state.drag = None;
+                (None, true)
+            } else if !state.pointer_input_enabled(input.kind) {
                 if matches!(input.kind, PointerKind::Up | PointerKind::Cancel) {
                     state.drag = None;
-                    PointerAction::Cancel { handle }
+                    (Some(PointerAction::Cancel { handle }), false)
                 } else if state.stale_hover_clear_enabled(input.kind, mapped) {
-                    PointerAction::Move {
-                        handle,
-                        mapped: None,
-                        input,
-                        drag: None,
-                    }
+                    (
+                        Some(PointerAction::Move {
+                            handle,
+                            mapped: None,
+                            input,
+                            drag: None,
+                            start: None,
+                        }),
+                        false,
+                    )
                 } else {
-                    return;
+                    return false;
                 }
             } else {
                 match input.kind {
                     PointerKind::Down => {
                         if mapped.is_none() {
                             state.drag = None;
-                            return;
+                            return false;
                         }
+                        let forwarded = input.button != PointerButton::Right;
                         state.drag = Some(ActiveDrag {
                             button: input.button,
                             anchor: input.position,
                             last: input.position,
                             moved: false,
+                            forwarded,
                         });
-                        PointerAction::Down {
-                            handle,
-                            mapped,
-                            input,
+                        if forwarded {
+                            (
+                                Some(PointerAction::Down {
+                                    handle,
+                                    mapped,
+                                    input,
+                                }),
+                                false,
+                            )
+                        } else {
+                            (None, false)
                         }
                     }
                     PointerKind::Move => {
                         if mapped.is_none() && state.drag.is_some() {
                             state.drag = None;
-                            PointerAction::Cancel { handle }
+                            (Some(PointerAction::Cancel { handle }), false)
                         } else {
                             let drag = state.drag.map(|mut drag| {
                                 let delta = LogicalPoint::new(
@@ -867,6 +1179,17 @@ impl RuvizController {
                                     input.position.y - drag.anchor.y,
                                 );
                                 drag.moved |= total.x.hypot(total.y) >= 3.0;
+                                let start = if drag.button == PointerButton::Right
+                                    && drag.moved
+                                    && !drag.forwarded
+                                {
+                                    drag.forwarded = true;
+                                    state
+                                        .map_point(drag.anchor)
+                                        .map(|mapped| (drag.anchor, mapped))
+                                } else {
+                                    None
+                                };
                                 drag.last = input.position;
                                 state.drag = Some(drag);
                                 (
@@ -876,39 +1199,64 @@ impl RuvizController {
                                     } else {
                                         LogicalPoint::default()
                                     },
+                                    start,
                                 )
                             });
-                            PointerAction::Move {
-                                handle,
-                                mapped,
-                                input,
-                                drag,
+                            if drag.is_some_and(|(drag, _, _)| {
+                                drag.button == PointerButton::Right && !drag.moved
+                            }) {
+                                (None, false)
+                            } else {
+                                let (drag, start) = drag
+                                    .map_or((None, None), |(drag, delta, start)| {
+                                        (Some((drag, delta)), start)
+                                    });
+                                (
+                                    Some(PointerAction::Move {
+                                        handle,
+                                        mapped,
+                                        input,
+                                        drag,
+                                        start,
+                                    }),
+                                    false,
+                                )
                             }
                         }
                     }
                     PointerKind::Up => {
                         let drag = state.drag.take();
-                        if mapped.is_none() || drag.is_some_and(|drag| drag.button != input.button)
+                        if mapped.is_none()
+                            || drag.is_some_and(|drag| {
+                                drag.button != input.button
+                                    || (drag.button == PointerButton::Right && !drag.forwarded)
+                            })
                         {
-                            PointerAction::Cancel { handle }
+                            (Some(PointerAction::Cancel { handle }), false)
                         } else {
-                            PointerAction::Up {
-                                handle,
-                                mapped,
-                                input,
-                                drag,
-                            }
+                            (
+                                Some(PointerAction::Up {
+                                    handle,
+                                    mapped,
+                                    input,
+                                    drag,
+                                }),
+                                false,
+                            )
                         }
                     }
                     PointerKind::Cancel => {
                         state.drag = None;
-                        PointerAction::Cancel { handle }
+                        (Some(PointerAction::Cancel { handle }), false)
                     }
                 }
             }
         };
-        self.apply_pointer_action(slot, action);
+        if let Some(action) = action {
+            self.apply_pointer_action(slot, action);
+        }
         self.inner.sync_runtime(slot);
+        open_context_menu
     }
 
     /// Apply a wheel zoom centered on the actual fitted image content.
@@ -963,11 +1311,184 @@ impl RuvizController {
             Some(PlotHandle::TwoD(session)) => session.apply_input(PlotInputEvent::ResetView),
             #[cfg(feature = "3d")]
             Some(PlotHandle::ThreeD(session)) => {
-                self.apply_3d_input(slot, &session, ruviz::core::InputEvent3D::Escape);
+                self.mutate_3d_camera(slot, &session, |session| session.reset_view());
             }
             None => {}
         }
         self.inner.sync_runtime(slot);
+    }
+
+    /// Execute one shared plot context-menu action.
+    pub fn context_action(&self, slot: SlotId, action: PlotContextMenuAction) {
+        match action {
+            PlotContextMenuAction::ResetView => self.reset_view(slot),
+            PlotContextMenuAction::FitToContent => self.fit_to_content(slot),
+            PlotContextMenuAction::SaveImage => self.save_png_dialog(slot),
+            PlotContextMenuAction::CopyImage => self.copy_image(slot),
+            PlotContextMenuAction::ToggleInteraction => self.toggle_interaction(slot),
+            #[cfg(feature = "3d")]
+            PlotContextMenuAction::CameraView(view) => self.apply_camera_view(slot, view),
+            _ => {}
+        }
+    }
+
+    /// Fit the data while preserving the current 3D orientation.
+    ///
+    /// For 2D plots this is the natural data-bounds reset.
+    pub fn fit_to_content(&self, slot: SlotId) {
+        match self.inner.plot_handle(slot) {
+            Some(PlotHandle::TwoD(session)) => {
+                session.apply_input(PlotInputEvent::ResetView);
+            }
+            #[cfg(feature = "3d")]
+            Some(PlotHandle::ThreeD(session)) => {
+                self.mutate_3d_camera(slot, &session, |session| session.fit_to_content());
+            }
+            None => {}
+        }
+        self.inner.sync_runtime(slot);
+    }
+
+    /// Toggle whether a retained slot accepts plot interaction.
+    pub fn toggle_interaction(&self, slot: SlotId) {
+        let options = lock_slots(&self.inner.slots).get(&slot).map(|state| {
+            let mut options = state.options;
+            options.interaction = match options.interaction {
+                InteractionMode::Static => InteractionMode::Interactive,
+                InteractionMode::Interactive => InteractionMode::Static,
+            };
+            options
+        });
+        if let Some(options) = options {
+            self.set_options(slot, options);
+        }
+    }
+
+    #[cfg(feature = "3d")]
+    fn apply_camera_view(&self, slot: SlotId, view: ruviz::core::CameraView3D) {
+        let Some(PlotHandle::ThreeD(session)) = self.inner.plot_handle(slot) else {
+            return;
+        };
+        self.mutate_3d_camera(slot, &session, |session| session.apply_camera_view(view));
+        self.inner.sync_runtime(slot);
+    }
+
+    #[cfg(feature = "3d")]
+    fn mutate_3d_camera(
+        &self,
+        slot: SlotId,
+        session: &Arc<Mutex<ruviz::core::InteractivePlot3DSession>>,
+        mutation: impl FnOnce(&mut ruviz::core::InteractivePlot3DSession) -> ruviz::core::Result<()>,
+    ) {
+        let snapshot = match lock_3d_session(session) {
+            Ok(mut session) => {
+                let previous = session.view_stamp();
+                match mutation(&mut session) {
+                    Ok(()) if !previous.same_camera(session.view_stamp()) => {
+                        Some(session.camera_snapshot())
+                    }
+                    Ok(()) => None,
+                    Err(error) => {
+                        self.inner.report_error(slot, error.to_string());
+                        None
+                    }
+                }
+            }
+            Err(message) => {
+                self.inner.report_error(slot, message.to_string());
+                None
+            }
+        };
+        let Some(snapshot) = snapshot else {
+            return;
+        };
+        let callback = lock_scalar_recover(&self.inner.callbacks).camera.clone();
+        if let Some(callback) = callback
+            && let Err(message) = catch_callback(|| callback(slot, snapshot))
+        {
+            self.inner
+                .report_error(slot, format!("camera callback panicked: {message}"));
+        }
+        self.inner.request_render(slot);
+    }
+
+    /// Installed layers, kept uncomposed so presentation never blends them.
+    ///
+    /// Export composes on demand on its own worker; it is not a hot path.
+    fn installed_layers(&self, slot: SlotId) -> Option<(Arc<RuvizImage>, Option<Arc<RuvizImage>>)> {
+        lock_slots(&self.inner.slots)
+            .get(&slot)
+            .and_then(|state| state.last_frame.as_ref())
+            .map(|frame| {
+                (
+                    Arc::clone(frame.base.image()),
+                    frame
+                        .overlay
+                        .as_ref()
+                        .map(|overlay| Arc::clone(overlay.image())),
+                )
+            })
+    }
+
+    fn save_png_dialog(&self, slot: SlotId) {
+        let Some(layers) = self.installed_layers(slot) else {
+            self.inner
+                .report_error(slot, "no installed frame is available to save".to_string());
+            return;
+        };
+        let worker_inner = Arc::clone(&self.inner);
+        let spawn_error_inner = Arc::clone(&self.inner);
+        let result = std::thread::Builder::new()
+            .name(format!("ruviz-slint-save-png-{slot}"))
+            .spawn(move || {
+                let Some(path) = rfd::FileDialog::new()
+                    .add_filter("PNG image", &["png"])
+                    .set_file_name(format!("ruviz-plot-{slot}.png"))
+                    .save_file()
+                else {
+                    return;
+                };
+                if let Err(message) =
+                    write_image_png(&compose_layers(&layers.0, layers.1.as_deref()), path)
+                {
+                    worker_inner.report_error(slot, message);
+                }
+            });
+        if let Err(error) = result {
+            spawn_error_inner.report_error(slot, format!("failed to start PNG save: {error}"));
+        }
+    }
+
+    fn copy_image(&self, slot: SlotId) {
+        let Some(layers) = self.installed_layers(slot) else {
+            self.inner
+                .report_error(slot, "no installed frame is available to copy".to_string());
+            return;
+        };
+        let worker_inner = Arc::clone(&self.inner);
+        let spawn_error_inner = Arc::clone(&self.inner);
+        let result = std::thread::Builder::new()
+            .name(format!("ruviz-slint-copy-image-{slot}"))
+            .spawn(move || {
+                let image = compose_layers(&layers.0, layers.1.as_deref());
+                let result = arboard::Clipboard::new()
+                    .map_err(|error| format!("clipboard unavailable: {error}"))
+                    .and_then(|mut clipboard| {
+                        clipboard
+                            .set_image(arboard::ImageData {
+                                width: image.width as usize,
+                                height: image.height as usize,
+                                bytes: Cow::Borrowed(&image.pixels),
+                            })
+                            .map_err(|error| format!("failed to copy image: {error}"))
+                    });
+                if let Err(message) = result {
+                    worker_inner.report_error(slot, message);
+                }
+            });
+        if let Err(error) = result {
+            spawn_error_inner.report_error(slot, format!("failed to start image copy: {error}"));
+        }
     }
 
     /// Cancel a drag after release-outside, pointer capture loss, or focus loss.
@@ -978,6 +1499,7 @@ impl RuvizController {
                 return;
             };
             state.drag = None;
+            state.context_press = None;
             state.plot.clone_handle()
         };
         match handle {
@@ -1129,8 +1651,20 @@ impl RuvizController {
                 mapped,
                 input,
                 drag,
+                start,
             } => match handle {
                 PlotHandle::TwoD(session) => {
+                    if let Some((logical_position, position_px)) = start {
+                        session.apply_input(PlotInputEvent::BrushStart { position_px });
+                        self.report_pointer(
+                            slot,
+                            PointerKind::Down,
+                            PointerButton::Right,
+                            logical_position,
+                            Some(position_px),
+                            Some(&session),
+                        );
+                    }
                     if let Some((drag, delta)) = drag {
                         if !drag.moved {
                             self.report_pointer(
@@ -1174,6 +1708,25 @@ impl RuvizController {
                 }
                 #[cfg(feature = "3d")]
                 PlotHandle::ThreeD(session) => {
+                    if let Some((logical_position, start)) = start {
+                        self.apply_3d_input(
+                            slot,
+                            &session,
+                            ruviz::core::InputEvent3D::PointerDown {
+                                x: start.x as f32,
+                                y: start.y as f32,
+                                button: ruviz::core::PointerButton3D::Right,
+                            },
+                        );
+                        self.report_pointer(
+                            slot,
+                            PointerKind::Down,
+                            PointerButton::Right,
+                            logical_position,
+                            Some(start),
+                            None,
+                        );
+                    }
                     if let Some(mapped) = mapped {
                         self.apply_3d_input(
                             slot,
@@ -1359,13 +1912,15 @@ impl ControllerInner {
         let Some(config_sink) = self.runtime_config_sink.clone() else {
             return;
         };
-        let Some((incarnation, interaction, fit, scale)) =
+        let Some((incarnation, interaction, fit, scale, is_3d, has_frame)) =
             lock_slots(&self.slots).get(&slot).map(|state| {
                 (
                     state.incarnation,
                     state.options.interaction,
                     state.options.fit,
                     state.layout.scale_factor,
+                    state.plot.is_3d(),
+                    state.last_frame.is_some(),
                 )
             })
         else {
@@ -1380,7 +1935,9 @@ impl ControllerInner {
                 .get(&slot)
                 .is_some_and(|state| state.incarnation == incarnation);
             if current
-                && let Err(message) = catch_callback(|| config_sink(slot, interaction, fit, scale))
+                && let Err(message) = catch_callback(|| {
+                    config_sink(slot, interaction, fit, scale, is_3d, has_frame);
+                })
             {
                 inner.report_error_direct(
                     slot,
@@ -1398,6 +1955,7 @@ impl ControllerInner {
 
     fn clear_runtime(self: &Arc<Self>, slot: SlotId) {
         let sink = Arc::clone(&self.frame_sink);
+        let overlay_sink = lock_scalar_recover(&self.overlay_sink).clone();
         let config_sink = self.runtime_config_sink.clone();
         let weak = Arc::downgrade(self);
         let task = Box::new(move || {
@@ -1413,9 +1971,24 @@ impl ControllerInner {
                     format!("runtime image callback panicked while clearing a slot: {message}"),
                 );
             }
+            if let Some(overlay_sink) = overlay_sink
+                && let Err(message) = catch_callback(|| overlay_sink(slot, None))
+            {
+                inner.report_error_direct(
+                    slot,
+                    format!("runtime overlay callback panicked while clearing a slot: {message}"),
+                );
+            }
             if let Some(config_sink) = config_sink
                 && let Err(message) = catch_callback(|| {
-                    config_sink(slot, InteractionMode::Static, ImageFit::Contain, 1.0);
+                    config_sink(
+                        slot,
+                        InteractionMode::Static,
+                        ImageFit::Contain,
+                        1.0,
+                        false,
+                        false,
+                    );
                 })
             {
                 inner.report_error_direct(
@@ -1429,16 +2002,35 @@ impl ControllerInner {
         }
     }
 
+    /// Redraw every retained slot, used when the presentation itself changes.
+    fn request_render_all(self: &Arc<Self>) {
+        let slots: Vec<SlotId> = lock_slots(&self.slots).keys().copied().collect();
+        for slot in slots {
+            self.request_render(slot);
+        }
+    }
+
     fn request_render(self: &Arc<Self>, slot: SlotId) {
+        let layered = lock_scalar_recover(&self.overlay_sink).is_some();
         let scheduled = {
             let mut slots = lock_slots(&self.slots);
             let Some(state) = slots.get_mut(&slot) else {
                 return;
             };
             let target = target_size(state.layout, state.options.sizing);
-            let request: Result<RenderRequest, String> = match &state.plot {
-                PlotSlot::TwoD(session) => Ok(RenderRequest::TwoD {
-                    incarnation: state.incarnation,
+            let incarnation = state.incarnation;
+            // Only layers presented for the live incarnation under the current
+            // presentation are still on screen; anything else must be
+            // republished so a stale overlay cannot survive.
+            let published = state
+                .presented
+                .as_ref()
+                .filter(|presented| {
+                    presented.incarnation == incarnation && presented.layered == layered
+                })
+                .map(|presented| presented.layers.clone());
+            let kind: Result<RenderRequestKind, String> = match &state.plot {
+                PlotSlot::TwoD(session) => Ok(RenderRequestKind::TwoD {
                     session: session.clone(),
                     target: ImageTarget {
                         size_px: target,
@@ -1452,8 +2044,7 @@ impl ControllerInner {
                 } => match lock_3d_session(session) {
                     Ok(mut session_guard) => session_guard
                         .background_render_job()
-                        .map(|job| RenderRequest::ThreeD {
-                            incarnation: state.incarnation,
+                        .map(|job| RenderRequestKind::ThreeD {
                             session: Arc::clone(session),
                             renderer: Arc::clone(renderer),
                             job,
@@ -1462,7 +2053,14 @@ impl ControllerInner {
                     Err(message) => Err(message.to_string()),
                 },
             };
-            request.map(|request| state.scheduler.request(request))
+            kind.map(|kind| {
+                state.scheduler.request(RenderRequest {
+                    incarnation,
+                    published,
+                    layered,
+                    kind,
+                })
+            })
         };
         match scheduled {
             Ok(Some(scheduled)) => self.spawn_render(slot, scheduled),
@@ -1471,35 +2069,26 @@ impl ControllerInner {
         }
     }
 
+    /// Hand a scheduled render to the slot's persistent worker.
+    ///
+    /// The worker owns the slot's render lane, so the depth-1 latest-wins
+    /// scheduler stays the only queue and requests never pile up as threads.
     fn spawn_render(self: &Arc<Self>, slot: SlotId, scheduled: ScheduledRequest<RenderRequest>) {
-        let weak = Arc::downgrade(self);
-        let render_gate = self.render_gate(slot);
         let id = scheduled.id();
-        let worker_id = id.clone();
         let request = scheduled.into_request();
-        let incarnation = request.incarnation();
-        #[cfg(test)]
-        let render_barrier = lock_scalar_recover(&self.render_barrier).clone();
-        let spawn = std::thread::Builder::new()
-            .name(format!("ruviz-slint-{slot}"))
-            .spawn(move || {
-                let _serial_render = lock_scalar_recover(&render_gate);
-                #[cfg(test)]
-                if let Some((entered, release)) = render_barrier {
-                    entered.wait();
-                    release.wait();
-                }
-                let result = match catch_callback(|| render_request(request)) {
-                    Ok(result) => result,
-                    Err(message) => Err(WorkerFailure::Error(format!(
-                        "plot renderer panicked while producing a background frame: {message}"
-                    ))),
-                };
-                if let Some(inner) = weak.upgrade() {
-                    inner.finish_render(slot, worker_id, incarnation, result);
-                }
-            });
-        if let Err(error) = spawn {
+        let incarnation = request.incarnation;
+        let job = RenderJob {
+            id: id.clone(),
+            incarnation,
+            request,
+            #[cfg(test)]
+            barrier: lock_scalar_recover(&self.render_barrier).clone(),
+        };
+        if let Err(error) = self.render_worker(slot).and_then(|worker| {
+            worker
+                .send(job)
+                .map_err(|_| "plot render worker stopped".to_string())
+        }) {
             self.finish_render(
                 slot,
                 id,
@@ -1511,12 +2100,26 @@ impl ControllerInner {
         }
     }
 
-    fn render_gate(&self, slot: SlotId) -> Arc<Mutex<()>> {
-        Arc::clone(
-            lock_scalar_recover(&self.render_gates)
-                .entry(slot)
-                .or_insert_with(|| Arc::new(Mutex::new(()))),
-        )
+    /// The slot's render lane, started on first use and retained afterwards.
+    ///
+    /// Lanes outlive `remove_plot` so a detached in-flight render still owns
+    /// the lane when the same slot identifier is registered again.
+    fn render_worker(self: &Arc<Self>, slot: SlotId) -> Result<mpsc::Sender<RenderJob>, String> {
+        let mut workers = lock_scalar_recover(&self.render_workers);
+        if let Some(worker) = workers.get(&slot) {
+            return Ok(worker.sender.clone());
+        }
+        let worker = RenderWorker::start(slot, Arc::downgrade(self))?;
+        let sender = worker.sender.clone();
+        workers.insert(slot, worker);
+        Ok(sender)
+    }
+
+    #[cfg(test)]
+    fn render_lane_busy(&self, slot: SlotId) -> bool {
+        lock_scalar_recover(&self.render_workers)
+            .get(&slot)
+            .is_some_and(|worker| worker.busy.load(Ordering::SeqCst))
     }
 
     fn finish_render(
@@ -1524,7 +2127,7 @@ impl ControllerInner {
         slot: SlotId,
         id: ScheduledRequestId,
         incarnation: u64,
-        result: Result<RenderedBuffer, WorkerFailure>,
+        result: Result<RenderedFrame, WorkerFailure>,
     ) {
         let (install, next) = {
             let mut slots = lock_slots(&self.slots);
@@ -1544,6 +2147,7 @@ impl ControllerInner {
             Ok(rendered) if install && rendered.is_current() => {
                 let weak = Arc::downgrade(self);
                 let sink = Arc::clone(&self.frame_sink);
+                let overlay_sink = lock_scalar_recover(&self.overlay_sink).clone();
                 let generation = id.generation();
                 let task = Box::new(move || {
                     let Some(inner) = weak.upgrade() else {
@@ -1562,41 +2166,111 @@ impl ControllerInner {
                     if !still_current {
                         return;
                     }
-                    let RenderedBuffer {
-                        buffer,
-                        alpha_mode,
+                    let RenderedFrame {
+                        base,
+                        overlay,
+                        base_layer,
+                        overlay_layer,
                         size_px,
+                        layered,
                         validity,
                     } = rendered;
-                    let image = match alpha_mode {
-                        AlphaMode::Straight => slint::Image::from_rgba8(buffer),
-                        AlphaMode::Premultiplied => slint::Image::from_rgba8_premultiplied(buffer),
+                    // The worker skipped a layer against the state presented
+                    // when the request was scheduled, which an earlier install
+                    // may have moved on from since. Only the UI thread installs
+                    // layers, so re-check the hint here and copy after all when
+                    // it no longer holds.
+                    let (base_reusable, overlay_reusable) = {
+                        let slots = lock_slots(&inner.slots);
+                        match slots.get(&slot).and_then(|state| state.presented.as_ref()) {
+                            Some(presented)
+                                if presented.incarnation == incarnation
+                                    && presented.layered == layered =>
+                            {
+                                (
+                                    presented.layers.base.same_buffer_as(&base_layer),
+                                    match (&presented.layers.overlay, &overlay_layer) {
+                                        (None, None) => true,
+                                        (Some(shown), Some(next)) => shown.same_buffer_as(next),
+                                        _ => false,
+                                    },
+                                )
+                            }
+                            _ => (false, false),
+                        }
                     };
-                    if let Err(message) = catch_callback(|| sink(slot, image)) {
+                    let base = match base {
+                        None if !base_reusable => Some(LayerBuffer::from_layer(&base_layer)),
+                        base => base,
+                    };
+                    let overlay = match overlay {
+                        OverlayUpdate::Reuse if layered && !overlay_reusable => {
+                            OverlayUpdate::Replace(
+                                overlay_layer.as_ref().map(LayerBuffer::from_layer),
+                            )
+                        }
+                        overlay => overlay,
+                    };
+                    if let Some(base) = base
+                        && let Err(message) = catch_callback(|| sink(slot, base.into_slint_image()))
+                    {
+                        // What the sinks hold is now unknown, so the next frame
+                        // must republish both layers instead of diffing.
+                        inner.forget_presented(slot);
                         inner.report_error_direct(
                             slot,
                             format!("runtime image callback panicked: {message}"),
                         );
                         return;
                     }
+                    if let OverlayUpdate::Replace(layer) = overlay
+                        && let Some(overlay_sink) = overlay_sink
+                        && let Err(message) = catch_callback(|| {
+                            overlay_sink(slot, layer.map(LayerBuffer::into_slint_image));
+                        })
+                    {
+                        inner.forget_presented(slot);
+                        inner.report_error_direct(
+                            slot,
+                            format!("runtime overlay callback panicked: {message}"),
+                        );
+                        return;
+                    }
 
+                    let presented = PresentedLayers {
+                        incarnation,
+                        layered,
+                        layers: PublishedLayers {
+                            base: base_layer.clone(),
+                            overlay: overlay_layer.clone(),
+                        },
+                    };
                     let committed = {
                         let mut slots = lock_slots(&inner.slots);
                         match slots.get_mut(&slot) {
-                            Some(state)
+                            // Both layers are on screen now, so record them
+                            // whether or not the frame is still committable: a
+                            // rejected frame changed the presentation anyway.
+                            Some(state) => {
+                                state.presented = Some(presented);
                                 if state.incarnation == incarnation
                                     && state.scheduler.latest_generation() == generation
-                                    && validity.is_current() =>
-                            {
-                                state.last_frame = Some(InstalledFrame {
-                                    size_px,
-                                    generation,
-                                    incarnation,
-                                    validity,
-                                });
-                                true
+                                    && validity.is_current()
+                                {
+                                    state.last_frame = Some(InstalledFrame {
+                                        base: base_layer,
+                                        overlay: overlay_layer,
+                                        size_px,
+                                        generation,
+                                        incarnation,
+                                        validity,
+                                    });
+                                    true
+                                } else {
+                                    false
+                                }
                             }
-                            _ => false,
+                            None => false,
                         }
                     };
                     if committed {
@@ -1615,6 +2289,16 @@ impl ControllerInner {
 
         if let Some(next) = next {
             self.spawn_render(slot, next);
+        }
+    }
+
+    /// Forget which layers a slot presents.
+    ///
+    /// The next frame then republishes both layers instead of reusing what it
+    /// believes is on screen.
+    fn forget_presented(&self, slot: SlotId) {
+        if let Some(state) = lock_slots(&self.slots).get_mut(&slot) {
+            state.presented = None;
         }
     }
 
@@ -1656,7 +2340,7 @@ impl ControllerInner {
     }
 }
 
-impl RenderedBuffer {
+impl RenderedFrame {
     fn is_current(&self) -> bool {
         match &self.validity {
             RenderValidity::TwoD { session, stamp } => session.is_render_stamp_current(*stamp),
@@ -1668,14 +2352,18 @@ impl RenderedBuffer {
     }
 }
 
-fn render_request(request: RenderRequest) -> Result<RenderedBuffer, WorkerFailure> {
-    let (image, validity) = match request {
-        RenderRequest::TwoD {
-            incarnation: _,
-            session,
-            target,
-        } => {
-            let frame = session.render_to_image_stamped(target).map_err(|error| {
+fn render_request(request: RenderRequest) -> Result<RenderedFrame, WorkerFailure> {
+    let RenderRequest {
+        published,
+        layered,
+        kind,
+        ..
+    } = request;
+    let (base_layer, overlay_layer, validity) = match kind {
+        RenderRequestKind::TwoD { session, target } => {
+            // Layered: the base is only re-rendered when it actually changed,
+            // so an overlay-only redraw costs neither a composite nor a copy.
+            let frame = session.render_layers_stamped(target).map_err(|error| {
                 if error.is_render_superseded() {
                     WorkerFailure::Superseded
                 } else {
@@ -1684,13 +2372,13 @@ fn render_request(request: RenderRequest) -> Result<RenderedBuffer, WorkerFailur
             })?;
             let stamp = frame.render_stamp();
             (
-                (*frame.frame.image).clone(),
+                frame.base,
+                frame.overlay,
                 RenderValidity::TwoD { session, stamp },
             )
         }
         #[cfg(feature = "3d")]
-        RenderRequest::ThreeD {
-            incarnation: _,
+        RenderRequestKind::ThreeD {
             session,
             renderer,
             job,
@@ -1700,13 +2388,70 @@ fn render_request(request: RenderRequest) -> Result<RenderedBuffer, WorkerFailur
                 .render(job)
                 .map_err(|error| WorkerFailure::Error(error.to_string()))?;
             let stamp = rendered.stamp;
-            (rendered.image, RenderValidity::ThreeD { session, stamp })
+            (
+                RenderedLayer::from_straight_image(Arc::new(rendered.image)),
+                None,
+                RenderValidity::ThreeD { session, stamp },
+            )
         }
     };
-    let expected = usize::try_from(image.width)
+    validate_layer(&base_layer)?;
+    let size_px = (base_layer.width(), base_layer.height());
+    if let Some(overlay) = overlay_layer.as_ref() {
+        validate_layer(overlay)?;
+        if (overlay.width(), overlay.height()) != size_px {
+            return Err(WorkerFailure::Error(
+                "overlay layer does not match the base layer size".to_string(),
+            ));
+        }
+    }
+
+    let (base, overlay) = if layered {
+        let base = (!published
+            .as_ref()
+            .is_some_and(|published| published.base.same_buffer_as(&base_layer)))
+        .then(|| LayerBuffer::from_layer(&base_layer));
+        // An unknown presented state must clear the overlay rather than reuse
+        // it, so a replaced plot can never keep the old plot's overlay.
+        let overlay = match (published.map(|published| published.overlay), &overlay_layer) {
+            (Some(None), None) => OverlayUpdate::Reuse,
+            (Some(Some(shown)), Some(next)) if shown.same_buffer_as(next) => OverlayUpdate::Reuse,
+            (_, Some(next)) => OverlayUpdate::Replace(Some(LayerBuffer::from_layer(next))),
+            (_, None) => OverlayUpdate::Replace(None),
+        };
+        (base, overlay)
+    } else {
+        // One flat image for a controller without an overlay sink.
+        let composed = compose_layers(
+            base_layer.image(),
+            overlay_layer
+                .as_ref()
+                .map(|overlay| overlay.image().as_ref()),
+        );
+        (Some(LayerBuffer::new(&composed)), OverlayUpdate::Reuse)
+    };
+
+    Ok(RenderedFrame {
+        base,
+        overlay,
+        base_layer,
+        overlay_layer,
+        size_px,
+        layered,
+        validity,
+    })
+}
+
+/// Validate a layer's native buffer without materializing a straight view.
+fn validate_layer(layer: &RenderedLayer) -> Result<(), WorkerFailure> {
+    validate_rgba_dimensions(layer.width(), layer.height(), layer.pixels().len())
+}
+
+fn validate_rgba_dimensions(width: u32, height: u32, len: usize) -> Result<(), WorkerFailure> {
+    let expected = usize::try_from(width)
         .ok()
         .and_then(|width| {
-            usize::try_from(image.height)
+            usize::try_from(height)
                 .ok()
                 .and_then(|height| width.checked_mul(height))
         })
@@ -1714,19 +2459,48 @@ fn render_request(request: RenderRequest) -> Result<RenderedBuffer, WorkerFailur
         .ok_or_else(|| {
             WorkerFailure::Error("rendered image dimensions overflow address space".to_string())
         })?;
-    if image.pixels.len() != expected {
+    if len != expected {
         return Err(WorkerFailure::Error(format!(
-            "rendered RGBA buffer has {} bytes, expected {expected}",
-            image.pixels.len()
+            "rendered RGBA buffer has {len} bytes, expected {expected}"
         )));
     }
-    let buffer = SharedPixelBuffer::clone_from_slice(&image.pixels, image.width, image.height);
-    Ok(RenderedBuffer {
-        buffer,
-        alpha_mode: image.alpha_mode(),
-        size_px: (image.width, image.height),
-        validity,
-    })
+    Ok(())
+}
+
+/// Blend an overlay layer over its base layer.
+///
+/// Presentation never calls this: Slint stacks the two images and the renderer
+/// composites them. It is only used for PNG export, clipboard copy, and the
+/// single-sink controller that cannot present two layers.
+fn compose_layers(base: &Arc<RuvizImage>, overlay: Option<&RuvizImage>) -> Arc<RuvizImage> {
+    let Some(overlay) = overlay.filter(|overlay| {
+        (overlay.width, overlay.height) == (base.width, base.height)
+            && overlay.pixels.len() == base.pixels.len()
+    }) else {
+        return Arc::clone(base);
+    };
+    let mut pixels = base.pixels_in_alpha_mode(AlphaMode::Straight).into_owned();
+    let overlay_pixels = overlay.pixels_in_alpha_mode(AlphaMode::Straight);
+    for (destination, source) in pixels
+        .chunks_exact_mut(4)
+        .zip(overlay_pixels.chunks_exact(4))
+    {
+        let blended = source_over_straight_rgba(
+            [
+                destination[0],
+                destination[1],
+                destination[2],
+                destination[3],
+            ],
+            [source[0], source[1], source[2], source[3]],
+        );
+        destination.copy_from_slice(&blended);
+    }
+    Arc::new(RuvizImage::from_straight_rgba(
+        base.width,
+        base.height,
+        pixels,
+    ))
 }
 
 enum PlotHandle {
@@ -1756,6 +2530,7 @@ enum PointerAction {
         mapped: Option<ViewportPoint>,
         input: PointerInput,
         drag: Option<(ActiveDrag, LogicalPoint)>,
+        start: Option<(LogicalPoint, ViewportPoint)>,
     },
     Up {
         handle: PlotHandle,
@@ -1892,6 +2667,52 @@ fn decode_button(value: i32) -> Option<PointerButton> {
     }
 }
 
+fn decode_context_action(action: RuvizContextAction) -> Option<PlotContextMenuAction> {
+    Some(match action {
+        RuvizContextAction::ResetView => PlotContextMenuAction::ResetView,
+        RuvizContextAction::FitToContent => PlotContextMenuAction::FitToContent,
+        RuvizContextAction::SavePng => PlotContextMenuAction::SaveImage,
+        RuvizContextAction::CopyImage => PlotContextMenuAction::CopyImage,
+        RuvizContextAction::ToggleInteraction => PlotContextMenuAction::ToggleInteraction,
+        #[cfg(feature = "3d")]
+        RuvizContextAction::ViewIsometric => {
+            PlotContextMenuAction::CameraView(ruviz::core::CameraView3D::Isometric)
+        }
+        #[cfg(feature = "3d")]
+        RuvizContextAction::ViewFront => {
+            PlotContextMenuAction::CameraView(ruviz::core::CameraView3D::Front)
+        }
+        #[cfg(feature = "3d")]
+        RuvizContextAction::ViewBack => {
+            PlotContextMenuAction::CameraView(ruviz::core::CameraView3D::Back)
+        }
+        #[cfg(feature = "3d")]
+        RuvizContextAction::ViewLeft => {
+            PlotContextMenuAction::CameraView(ruviz::core::CameraView3D::Left)
+        }
+        #[cfg(feature = "3d")]
+        RuvizContextAction::ViewRight => {
+            PlotContextMenuAction::CameraView(ruviz::core::CameraView3D::Right)
+        }
+        #[cfg(feature = "3d")]
+        RuvizContextAction::ViewTop => {
+            PlotContextMenuAction::CameraView(ruviz::core::CameraView3D::Top)
+        }
+        #[cfg(feature = "3d")]
+        RuvizContextAction::ViewBottom => {
+            PlotContextMenuAction::CameraView(ruviz::core::CameraView3D::Bottom)
+        }
+        #[cfg(not(feature = "3d"))]
+        RuvizContextAction::ViewIsometric
+        | RuvizContextAction::ViewFront
+        | RuvizContextAction::ViewBack
+        | RuvizContextAction::ViewLeft
+        | RuvizContextAction::ViewRight
+        | RuvizContextAction::ViewTop
+        | RuvizContextAction::ViewBottom => return None,
+    })
+}
+
 fn next_slot_incarnation() -> Option<u64> {
     reserve_slot_incarnation(&NEXT_SLOT_INCARNATION)
 }
@@ -1908,15 +2729,23 @@ fn update_runtime_image(runtime: &RuvizRuntime<'_>, slot: SlotId, image: slint::
     update_runtime_row(runtime, slot, |row| row.source = image);
 }
 
+fn update_runtime_overlay(runtime: &RuvizRuntime<'_>, slot: SlotId, overlay: slint::Image) {
+    update_runtime_row(runtime, slot, |row| row.overlay = overlay);
+}
+
 fn update_runtime_config(
     runtime: &RuvizRuntime<'_>,
     slot: SlotId,
     interaction: InteractionMode,
     fit: ImageFit,
     scale_factor: f32,
+    is_3d: bool,
+    has_frame: bool,
 ) {
     update_runtime_row(runtime, slot, |row| {
         row.interactive = interaction == InteractionMode::Interactive;
+        row.is_3d = is_3d;
+        row.has_frame = has_frame;
         row.image_fit = match fit {
             ImageFit::Contain => RuvizImageFit::Contain,
             ImageFit::Cover => RuvizImageFit::Cover,
@@ -1935,6 +2764,18 @@ fn update_runtime_row(
         return;
     };
     let model = runtime.get_slots();
+    // Update in place when the row already exists so a frame install does not
+    // rebuild the model and re-instantiate every slot in the repeater.
+    if index < model.row_count()
+        && let Some(rows) = model
+            .as_any()
+            .downcast_ref::<slint::VecModel<RuvizSlotState>>()
+        && let Some(mut row) = model.row_data(index)
+    {
+        update(&mut row);
+        rows.set_row_data(index, row);
+        return;
+    }
     let mut rows = (0..model.row_count())
         .map(|row| model.row_data(row).unwrap_or_default())
         .collect::<Vec<_>>();
@@ -2010,10 +2851,38 @@ mod tests {
     fn packaged_component_focuses_on_pointer_down() {
         let component = include_str!("../ui/ruviz.slint").replace("\r\n", "\n");
         assert!(
-            component.contains(
-                "if (event.kind == PointerEventKind.down) {\n                    input.focus();"
-            ),
+            component.contains("if (event.kind == PointerEventKind.down)")
+                && component.contains("input.focus();"),
             "RuvizPlot must acquire focus on press so Escape and focus loss are routed"
+        );
+    }
+
+    #[test]
+    fn packaged_component_exposes_the_full_context_menu_contract() {
+        let component = include_str!("../ui/ruviz.slint");
+        for required in [
+            "ContextMenuArea",
+            "Reset View",
+            "Fit to Content",
+            "Save PNG",
+            "Copy Image",
+            "toggle-interaction",
+            "3D View",
+            "view-isometric",
+            "view-bottom",
+        ] {
+            assert!(
+                component.contains(required),
+                "packaged context menu must contain {required}"
+            );
+        }
+        assert!(
+            component.matches("enabled: root.slot-valid;").count() >= 3,
+            "context area, focus scope, and touch area must remain available for static slots"
+        );
+        assert!(
+            !component.contains("enabled: root.interactive;"),
+            "Rust gates plot gestures; Slint must keep the keyboard/menu path enabled"
         );
     }
 
@@ -2171,6 +3040,7 @@ mod tests {
                 anchor: LogicalPoint::new(1.0, 1.0),
                 last: LogicalPoint::new(2.0, 2.0),
                 moved: true,
+                forwarded: true,
             });
             panic!("poison the slot state after a partial mutation");
         }));
@@ -2478,8 +3348,10 @@ mod tests {
             layout,
             scheduler: LatestRequestScheduler::default(),
             drag: None,
+            context_press: None,
             _subscription: None,
             last_frame: None,
+            presented: None,
         };
 
         let contain = state_for(ImageFit::Contain);
@@ -2840,10 +3712,9 @@ mod tests {
             .incarnation;
         assert_ne!(old_incarnation, new_incarnation);
         assert_eq!(controller.installed_generation(12), None);
-        let serial_gate = controller.inner.render_gate(12);
         assert!(
-            serial_gate.try_lock().is_err(),
-            "the detached old worker must retain the physical render lane"
+            controller.inner.render_lane_busy(12),
+            "the detached old render must retain the physical render lane"
         );
         release.wait();
         wait_for(|| {
@@ -2898,6 +3769,231 @@ mod tests {
                 .unwrap()
                 .moved
         );
+    }
+
+    #[test]
+    fn secondary_click_requests_menu_without_starting_a_brush() {
+        let (controller, _) = test_controller();
+        controller.set_plot(
+            34,
+            ruviz::prelude::Plot::new().line(&[0.0, 1.0, 2.0], &[0.0, 1.0, 4.0]),
+            SlotOptions::default(),
+        );
+        controller.resize(34, 200.0, 120.0, 1.0);
+        wait_for(|| controller.installed_size(34) == Some((200, 120)));
+        let session = two_d_session(controller.inner.plot_handle(34).unwrap());
+        let before = session.view_bounds_snapshot().visible_bounds;
+
+        assert!(!controller.pointer_input(
+            34,
+            PointerInput {
+                kind: PointerKind::Down,
+                button: PointerButton::Right,
+                position: LogicalPoint::new(80.0, 50.0),
+            },
+        ));
+        assert!(controller.pointer_input(
+            34,
+            PointerInput {
+                kind: PointerKind::Up,
+                button: PointerButton::Right,
+                position: LogicalPoint::new(80.0, 50.0),
+            },
+        ));
+
+        assert_eq!(session.view_bounds_snapshot().visible_bounds, before);
+        assert!(lock_slots(&controller.inner.slots)[&34].drag.is_none());
+    }
+
+    #[test]
+    fn secondary_release_recomputes_menu_threshold_without_a_move_event() {
+        let (controller, _) = test_controller();
+        controller.set_plot(
+            39,
+            ruviz::prelude::Plot::new().line(&[0.0, 1.0], &[0.0, 1.0]),
+            SlotOptions::default(),
+        );
+        controller.resize(39, 200.0, 120.0, 1.0);
+        wait_for(|| controller.installed_size(39) == Some((200, 120)));
+
+        assert!(!controller.pointer_input(
+            39,
+            PointerInput {
+                kind: PointerKind::Down,
+                button: PointerButton::Right,
+                position: LogicalPoint::new(40.0, 30.0),
+            },
+        ));
+        assert!(
+            !controller.pointer_input(
+                39,
+                PointerInput {
+                    kind: PointerKind::Up,
+                    button: PointerButton::Right,
+                    position: LogicalPoint::new(44.0, 30.0),
+                },
+            ),
+            "a release beyond the threshold must not open a menu when no move was delivered"
+        );
+        let state = &lock_slots(&controller.inner.slots)[&39];
+        assert!(state.drag.is_none());
+        assert!(state.context_press.is_none());
+    }
+
+    #[test]
+    fn context_click_is_available_for_static_slots_without_an_installed_frame() {
+        let (controller, _) = test_controller();
+        controller.set_plot(
+            40,
+            ruviz::prelude::Plot::new().line(&[0.0, 1.0], &[0.0, 1.0]),
+            SlotOptions {
+                interaction: InteractionMode::Static,
+                ..SlotOptions::default()
+            },
+        );
+        wait_for(|| controller.installed_size(40).is_some());
+        lock_slots(&controller.inner.slots)
+            .get_mut(&40)
+            .expect("slot should exist")
+            .last_frame = None;
+
+        assert!(!controller.pointer_input(
+            40,
+            PointerInput {
+                kind: PointerKind::Down,
+                button: PointerButton::Right,
+                position: LogicalPoint::new(80.0, 50.0),
+            },
+        ));
+        assert!(controller.pointer_input(
+            40,
+            PointerInput {
+                kind: PointerKind::Up,
+                button: PointerButton::Right,
+                position: LogicalPoint::new(80.0, 50.0),
+            },
+        ));
+    }
+
+    #[test]
+    fn secondary_drag_still_brushes_after_crossing_the_menu_threshold() {
+        let (controller, _) = test_controller();
+        let reports = Arc::new(Mutex::new(Vec::<PointerReport>::new()));
+        let reported = Arc::clone(&reports);
+        controller.on_pointer(move |report| {
+            lock_scalar_recover(&reported).push(report);
+        });
+        controller.set_plot(
+            35,
+            ruviz::prelude::Plot::new().line(&[0.0, 1.0, 2.0], &[0.0, 1.0, 4.0]),
+            SlotOptions::default(),
+        );
+        controller.resize(35, 200.0, 120.0, 1.0);
+        wait_for(|| controller.installed_size(35) == Some((200, 120)));
+        assert!(!controller.pointer_input(
+            35,
+            PointerInput {
+                kind: PointerKind::Down,
+                button: PointerButton::Right,
+                position: LogicalPoint::new(40.0, 30.0),
+            },
+        ));
+        assert!(!controller.pointer_input(
+            35,
+            PointerInput {
+                kind: PointerKind::Move,
+                button: PointerButton::None,
+                position: LogicalPoint::new(41.0, 31.0),
+            },
+        ));
+        assert!(
+            lock_scalar_recover(&reports).is_empty(),
+            "sub-threshold movement must remain a possible context click"
+        );
+        assert!(!controller.pointer_input(
+            35,
+            PointerInput {
+                kind: PointerKind::Move,
+                button: PointerButton::None,
+                position: LogicalPoint::new(160.0, 90.0),
+            },
+        ));
+        assert_eq!(
+            lock_scalar_recover(&reports)
+                .iter()
+                .map(|report| (report.kind, report.button))
+                .collect::<Vec<_>>(),
+            vec![
+                (PointerKind::Down, PointerButton::Right),
+                (PointerKind::Move, PointerButton::None),
+            ]
+        );
+        assert!(!controller.pointer_input(
+            35,
+            PointerInput {
+                kind: PointerKind::Up,
+                button: PointerButton::Right,
+                position: LogicalPoint::new(160.0, 90.0),
+            },
+        ));
+
+        assert_eq!(
+            lock_scalar_recover(&reports)
+                .last()
+                .map(|report| (report.kind, report.button)),
+            Some((PointerKind::Up, PointerButton::Right))
+        );
+        assert!(lock_slots(&controller.inner.slots)[&35].drag.is_none());
+    }
+
+    #[test]
+    fn context_toggle_can_reenable_a_static_slot() {
+        let (controller, _) = test_controller();
+        controller.set_plot(
+            36,
+            ruviz::prelude::Plot::new().line(&[0.0, 1.0], &[0.0, 1.0]),
+            SlotOptions {
+                interaction: InteractionMode::Static,
+                ..SlotOptions::default()
+            },
+        );
+        wait_for(|| controller.installed_size(36).is_some());
+
+        controller.context_action(36, PlotContextMenuAction::ToggleInteraction);
+
+        assert_eq!(
+            lock_slots(&controller.inner.slots)[&36].options.interaction,
+            InteractionMode::Interactive
+        );
+    }
+
+    #[test]
+    fn installed_frame_can_be_exported_as_png() {
+        let (controller, _) = test_controller();
+        controller.set_plot(
+            37,
+            ruviz::prelude::Plot::new().line(&[0.0, 1.0], &[0.0, 1.0]),
+            SlotOptions::default(),
+        );
+        controller.resize(37, 73.0, 41.0, 1.0);
+        wait_for(|| controller.installed_size(37) == Some((73, 41)));
+        let path = std::env::temp_dir().join(format!(
+            "ruviz-slint-context-menu-{}-{}.png",
+            std::process::id(),
+            controller.installed_generation(37).unwrap_or_default()
+        ));
+
+        let (base, overlay) = controller
+            .installed_layers(37)
+            .expect("installed layers should be retained");
+        let image = compose_layers(&base, overlay.as_deref());
+        write_image_png(&image, &path).expect("installed image should export");
+        let bytes = std::fs::read(&path).expect("exported PNG should be readable");
+        let _ = std::fs::remove_file(&path);
+
+        assert_eq!(&bytes[..8], b"\x89PNG\r\n\x1a\n");
+        assert_eq!(u32::from_be_bytes(bytes[16..20].try_into().unwrap()), 73);
+        assert_eq!(u32::from_be_bytes(bytes[20..24].try_into().unwrap()), 41);
     }
 
     #[test]
@@ -3246,6 +4342,72 @@ mod tests {
 
     #[cfg(feature = "3d")]
     #[test]
+    fn three_d_context_click_does_not_pan_and_named_view_is_applied() {
+        let (controller, _) = test_controller();
+        controller
+            .set_plot3d(
+                38,
+                ruviz::scatter3d(&[0.0, 1.0], &[0.0, 1.0], &[0.0, 1.0]),
+                SlotOptions::default(),
+            )
+            .unwrap();
+        controller.resize(38, 160.0, 120.0, 1.0);
+        wait_for(|| controller.installed_size(38) == Some((160, 120)));
+        let session = match controller.inner.plot_handle(38).unwrap() {
+            PlotHandle::ThreeD(session) => session,
+            PlotHandle::TwoD(_) => unreachable!(),
+        };
+        let initial = lock_3d_session(&session).unwrap().camera();
+        let camera_events = Arc::new(AtomicUsize::new(0));
+        let observed_camera_events = Arc::clone(&camera_events);
+        controller.on_camera_change(move |_, _| {
+            observed_camera_events.fetch_add(1, Ordering::SeqCst);
+        });
+
+        assert!(!controller.pointer_input(
+            38,
+            PointerInput {
+                kind: PointerKind::Down,
+                button: PointerButton::Right,
+                position: LogicalPoint::new(80.0, 60.0),
+            },
+        ));
+        assert!(controller.pointer_input(
+            38,
+            PointerInput {
+                kind: PointerKind::Up,
+                button: PointerButton::Right,
+                position: LogicalPoint::new(80.0, 60.0),
+            },
+        ));
+        assert_eq!(lock_3d_session(&session).unwrap().camera(), initial);
+
+        controller.context_action(
+            38,
+            PlotContextMenuAction::CameraView(ruviz::core::CameraView3D::Top),
+        );
+        let top = lock_3d_session(&session).unwrap().camera();
+        assert_eq!(top.get_elevation_deg(), 89.9);
+        assert_eq!(top.get_roll_deg(), 0.0);
+        assert_eq!(camera_events.load(Ordering::SeqCst), 1);
+
+        controller.context_action(
+            38,
+            PlotContextMenuAction::CameraView(ruviz::core::CameraView3D::Top),
+        );
+        assert_eq!(
+            camera_events.load(Ordering::SeqCst),
+            1,
+            "selecting the active named view must not emit a camera event"
+        );
+
+        controller.context_action(38, PlotContextMenuAction::ResetView);
+        assert_eq!(lock_3d_session(&session).unwrap().camera(), initial);
+        assert_eq!(camera_events.load(Ordering::SeqCst), 2);
+    }
+
+    #[cfg(feature = "3d")]
+    #[test]
     fn failed_three_d_keep_view_replacement_retains_the_old_slot() {
         let (controller, _) = test_controller();
         controller
@@ -3292,13 +4454,263 @@ mod tests {
         let premultiplied =
             ruviz::core::Image::from_premultiplied_rgba(1, 1, vec![10, 20, 30, 128]);
         for image in [straight, premultiplied] {
-            let buffer =
-                SharedPixelBuffer::clone_from_slice(&image.pixels, image.width, image.height);
-            let slint_image = match image.alpha_mode() {
-                AlphaMode::Straight => slint::Image::from_rgba8(buffer),
-                AlphaMode::Premultiplied => slint::Image::from_rgba8_premultiplied(buffer),
-            };
+            let slint_image = LayerBuffer::new(&image).into_slint_image();
             assert_eq!(slint_image.size().width, 1);
         }
+    }
+
+    #[test]
+    fn packaged_component_stacks_the_overlay_layer() {
+        let component = include_str!("../ui/ruviz.slint");
+        assert!(
+            component.contains("overlay: image,"),
+            "the slot state must expose the overlay as its own layer"
+        );
+        assert_eq!(
+            component.matches("image-fit: root.fitting;").count(),
+            2,
+            "base and overlay must be stacked in one shared fitted geometry"
+        );
+        assert_eq!(
+            component
+                .matches("RuvizRuntime.overlay-supported(root.slot-id);")
+                .count(),
+            2,
+            "RuvizPlot must announce layered presentation from both init and \
+             the slot handshake, since only one of them fires"
+        );
+    }
+
+    #[test]
+    fn compose_layers_blends_the_overlay_over_the_base() {
+        let base = Arc::new(ruviz::core::Image::from_straight_rgba(
+            1,
+            1,
+            vec![0, 0, 255, 255],
+        ));
+        let overlay = ruviz::core::Image::from_straight_rgba(1, 1, vec![255, 0, 0, 255]);
+        assert_eq!(
+            compose_layers(&base, Some(&overlay)).pixels,
+            overlay.pixels,
+            "an opaque overlay must replace the base"
+        );
+        assert_eq!(compose_layers(&base, None).pixels, base.pixels);
+        let mismatched = ruviz::core::Image::from_straight_rgba(2, 1, vec![0; 8]);
+        assert_eq!(
+            compose_layers(&base, Some(&mismatched)).pixels,
+            base.pixels,
+            "a mismatched overlay must never corrupt the exported frame"
+        );
+    }
+
+    /// Wait until a newer frame is installed and the slot's render lane is idle.
+    fn wait_for_settled_frame_after(controller: &RuvizController, slot: SlotId, generation: u64) {
+        wait_for(|| {
+            controller
+                .installed_generation(slot)
+                .is_some_and(|installed| installed > generation)
+                && !controller.inner.render_lane_busy(slot)
+        });
+    }
+
+    fn first_hit_position(session: &InteractivePlotSession, size: (u32, u32)) -> ViewportPoint {
+        for y in (0..size.1).step_by(4) {
+            for x in (0..size.0).step_by(4) {
+                let position = ViewportPoint::new(f64::from(x), f64::from(y));
+                if !matches!(session.hit_test(position), HitResult::None) {
+                    return position;
+                }
+            }
+        }
+        panic!("rendered scatter must expose a hit target");
+    }
+
+    fn layered_controller() -> (RuvizController, Arc<AtomicUsize>, Arc<Mutex<Vec<bool>>>) {
+        let bases = Arc::new(AtomicUsize::new(0));
+        let overlays = Arc::new(Mutex::new(Vec::<bool>::new()));
+        let installed = Arc::clone(&bases);
+        let controller = RuvizController::with_dispatcher(
+            move |_, _| {
+                installed.fetch_add(1, Ordering::SeqCst);
+            },
+            |task| {
+                task();
+                Ok(())
+            },
+        );
+        let recorded = Arc::clone(&overlays);
+        controller.on_overlay(move |_, overlay| {
+            lock_scalar_recover(&recorded).push(overlay.is_some());
+        });
+        (controller, bases, overlays)
+    }
+
+    #[test]
+    fn overlay_only_redraw_reuses_the_installed_base_layer() {
+        let (controller, bases, overlays) = layered_controller();
+        controller.set_plot(
+            40,
+            ruviz::prelude::Plot::new().scatter(&[0.0, 1.0, 2.0], &[0.0, 1.0, 0.0]),
+            SlotOptions::default(),
+        );
+        controller.resize(40, 640.0, 480.0, 1.0);
+        wait_for(|| controller.installed_size(40) == Some((640, 480)));
+        let session = two_d_session(controller.inner.plot_handle(40).unwrap());
+        let hit_position = first_hit_position(&session, (640, 480));
+        let base_installs = bases.load(Ordering::SeqCst);
+        assert!(base_installs >= 1, "the base layer must be installed once");
+        assert!(
+            lock_scalar_recover(&overlays).iter().all(|shown| !shown),
+            "a plot without interaction state must not install an overlay"
+        );
+        let before_hover = controller
+            .installed_generation(40)
+            .expect("initial frame should be installed");
+
+        controller.pointer_input(
+            40,
+            PointerInput {
+                kind: PointerKind::Move,
+                button: PointerButton::None,
+                position: LogicalPoint::new(hit_position.x, hit_position.y),
+            },
+        );
+        wait_for_settled_frame_after(&controller, 40, before_hover);
+        assert_eq!(
+            lock_scalar_recover(&overlays).last().copied(),
+            Some(true),
+            "hovering must install an overlay layer"
+        );
+        assert_eq!(
+            bases.load(Ordering::SeqCst),
+            base_installs,
+            "an overlay-only redraw must not re-upload the base layer"
+        );
+
+        let hovered = controller
+            .installed_generation(40)
+            .expect("hover frame should be installed");
+        session.apply_input(PlotInputEvent::ClearHover);
+        wait_for_settled_frame_after(&controller, 40, hovered);
+        assert_eq!(
+            lock_scalar_recover(&overlays).last().copied(),
+            Some(false),
+            "clearing the hover must clear the presented overlay layer"
+        );
+        assert_eq!(
+            bases.load(Ordering::SeqCst),
+            base_installs,
+            "clearing an overlay must not re-upload the base layer either"
+        );
+    }
+
+    #[test]
+    fn an_overlay_presented_by_an_uncommitted_frame_is_still_cleared() {
+        let overlays = Arc::new(Mutex::new(Vec::<bool>::new()));
+        let recorded = Arc::clone(&overlays);
+        let hovered_session = Arc::new(Mutex::new(None::<InteractivePlotSession>));
+        let sink_session = Arc::clone(&hovered_session);
+        let controller = RuvizController::with_dispatcher(
+            |_, _| {},
+            |task| {
+                task();
+                Ok(())
+            },
+        );
+        controller.on_overlay(move |_, overlay| {
+            lock_scalar_recover(&recorded).push(overlay.is_some());
+            // The crosshair is on screen now. Mutating the session here makes
+            // its frame uncommittable, so `last_frame` never learns that the
+            // slot presents an overlay.
+            if overlay.is_some()
+                && let Some(session) = lock_scalar_recover(&sink_session).take()
+            {
+                session.apply_input(PlotInputEvent::ClearHover);
+            }
+        });
+        controller.set_plot(
+            42,
+            ruviz::prelude::Plot::new().scatter(&[0.0, 1.0, 2.0], &[0.0, 1.0, 0.0]),
+            SlotOptions::default(),
+        );
+        controller.resize(42, 640.0, 480.0, 1.0);
+        wait_for(|| controller.installed_size(42) == Some((640, 480)));
+        let session = two_d_session(controller.inner.plot_handle(42).unwrap());
+        let hit_position = first_hit_position(&session, (640, 480));
+        *lock_scalar_recover(&hovered_session) = Some(session.clone());
+        let before_hover = controller
+            .installed_generation(42)
+            .expect("initial frame should be installed");
+
+        controller.pointer_input(
+            42,
+            PointerInput {
+                kind: PointerKind::Move,
+                button: PointerButton::None,
+                position: LogicalPoint::new(hit_position.x, hit_position.y),
+            },
+        );
+        wait_for_settled_frame_after(&controller, 42, before_hover);
+        assert!(
+            lock_scalar_recover(&overlays).contains(&true),
+            "the hover frame must have presented an overlay"
+        );
+        assert_eq!(
+            lock_scalar_recover(&overlays).last().copied(),
+            Some(false),
+            "an overlay presented by a frame that was never committed must \
+             still be cleared by the next overlay-less frame"
+        );
+    }
+
+    #[test]
+    fn replacing_a_hovered_layered_plot_clears_the_stale_overlay() {
+        let (controller, bases, overlays) = layered_controller();
+        controller.set_plot(
+            41,
+            ruviz::prelude::Plot::new().scatter(&[0.0, 1.0, 2.0], &[0.0, 1.0, 0.0]),
+            SlotOptions::default(),
+        );
+        controller.resize(41, 640.0, 480.0, 1.0);
+        wait_for(|| controller.installed_size(41) == Some((640, 480)));
+        let session = two_d_session(controller.inner.plot_handle(41).unwrap());
+        let hit_position = first_hit_position(&session, (640, 480));
+        let before_hover = controller
+            .installed_generation(41)
+            .expect("initial frame should be installed");
+        controller.pointer_input(
+            41,
+            PointerInput {
+                kind: PointerKind::Move,
+                button: PointerButton::None,
+                position: LogicalPoint::new(hit_position.x, hit_position.y),
+            },
+        );
+        wait_for_settled_frame_after(&controller, 41, before_hover);
+        assert_eq!(
+            lock_scalar_recover(&overlays).last().copied(),
+            Some(true),
+            "the replaced plot must actually be showing an overlay"
+        );
+        let installs = bases.load(Ordering::SeqCst);
+        let hovered = controller
+            .installed_generation(41)
+            .expect("hover frame should be installed");
+
+        controller.set_plot(
+            41,
+            ruviz::prelude::Plot::new().bar(&["new"], &[7.0]),
+            SlotOptions::default(),
+        );
+        wait_for_settled_frame_after(&controller, 41, hovered);
+        assert!(
+            bases.load(Ordering::SeqCst) > installs,
+            "the replacement must publish its own base layer"
+        );
+        assert_eq!(
+            lock_scalar_recover(&overlays).last().copied(),
+            Some(false),
+            "a replacement must never leave the old plot's overlay on screen"
+        );
     }
 }
