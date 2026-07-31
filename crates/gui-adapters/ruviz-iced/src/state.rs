@@ -2330,8 +2330,14 @@ mod tests {
         let rendered = BackgroundRenderer3D::new(BackgroundRenderBackend3D::Cpu)
             .render(job)
             .unwrap();
+        // Mirror `render_3d_task`: the worker builds the handle so its
+        // full-frame copy never lands on the UI thread.
+        let frame = Rendered3DFrame {
+            handle: crate::iced_handle_owned(&rendered.image).0,
+            rendered,
+        };
         let allocation =
-            state.complete_render(state.incarnation.clone(), scheduled.id(), Ok(rendered));
+            state.complete_render(state.incarnation.clone(), scheduled.id(), Ok(frame));
         let allocated = task_output(allocation.into_task());
         let installed = state.update(allocated);
 

@@ -117,7 +117,14 @@ num_cpus = "1.17"
 # GPU acceleration (optional)
 wgpu = { version = "29.0", optional = true }
 bytemuck = { version = "1.25", optional = true }
-wgsl_bindgen = { version = "0.21", optional = true }
+# `wgsl_bindgen` is deliberately absent: nothing referenced it (there is no
+# build script, and no source file mentions it), and it pulled `naga_oil` ->
+# `naga` 26 with default features. That turned on `codespan-reporting`'s
+# `termcolor` feature, which unifies across every crate sharing
+# `codespan-reporting` 0.12 -- including the `naga` 27 that `iced_wgpu` uses,
+# which writes diagnostics into a `String` and only compiles with `termcolor`
+# off. Re-adding it breaks any build combining `gpu` with a wgpu-backed GUI
+# adapter.
 pollster = { version = "0.4", optional = true }
 futures-intrusive = { version = "0.5", optional = true }
 
@@ -226,7 +233,7 @@ polars = ["polars_support"]
 # series-parallel renderer was deleted in 2026-07, so `parallel` changes no 2D
 # output and no 2D timing.
 parallel = ["dep:rayon"]
-gpu = ["dep:wgpu", "dep:bytemuck", "dep:wgsl_bindgen", "dep:pollster", "dep:futures-intrusive"]
+gpu = ["dep:wgpu", "dep:bytemuck", "dep:pollster", "dep:futures-intrusive"]
 simd = ["dep:wide"]
 performance = ["parallel", "simd"]
 

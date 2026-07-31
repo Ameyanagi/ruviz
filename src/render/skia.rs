@@ -2728,7 +2728,8 @@ impl SkiaRenderer {
     }
 
     /// Consume the renderer and take tiny-skia's native premultiplied buffer as
-    /// a [`RenderedLayer`], with no conversion and no copy.
+    /// a [`RenderedLayer`](crate::core::plot::RenderedLayer), with no
+    /// conversion and no copy.
     ///
     /// Prefer this over [`into_image`](Self::into_image) for presentation paths
     /// that upload to a GPU texture: the straight-alpha normalization
