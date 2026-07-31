@@ -287,9 +287,8 @@ pub(crate) fn compose_over(base: &Image, overlay: &Image) -> Image {
 /// A persistent render thread owned by one widget.
 ///
 /// The widget keeps a single thread for the lifetime of the plot instead of
-/// spawning one per frame. Dropping the worker closes the request channel and
-/// waits for the in-flight render, so no thread outlives the widget or the
-/// egui context it repaints.
+/// spawning one per frame. Dropping the worker closes the request channel, so
+/// the loop exits after the unit of work it is already running.
 pub(crate) struct RenderWorker<T> {
     sender: Option<Sender<T>>,
     handle: Option<JoinHandle<()>>,
@@ -336,10 +335,20 @@ pub(crate) fn catch_render_panic<R>(render: impl FnOnce() -> R) -> Result<R, Str
 
 impl<T> Drop for RenderWorker<T> {
     fn drop(&mut self) {
+        // Close the channel so the loop exits once its current unit of work
+        // finishes, then detach rather than join.
+        //
+        // Joining here would block whichever thread drops the widget — the UI
+        // thread — for the length of an in-flight render. Closing the channel
+        // cannot interrupt a render already underway, so removing a plot or
+        // shutting the application down would stall for a full frame, and for
+        // a dashboard that cost is paid once per plot.
+        //
+        // Detaching is safe because the worker owns everything it touches: the
+        // `InteractivePlotSession` and `egui::Context` it holds are Arc-backed
+        // clones, and its final send simply fails once the receiver is gone.
         drop(self.sender.take());
-        if let Some(handle) = self.handle.take() {
-            let _ = handle.join();
-        }
+        drop(self.handle.take());
     }
 }
 
@@ -578,8 +587,12 @@ mod tests {
         assert_eq!(compose_over(&base, &overlay).pixels, base.pixels);
     }
 
+    /// Drop must close the channel so the loop terminates, but must not join:
+    /// joining would block the dropping thread for an in-flight render. This
+    /// waits on the worker's own post-loop send, so it proves termination
+    /// without depending on drop having blocked.
     #[test]
-    fn a_dropped_worker_closes_its_channel_and_joins_the_thread() {
+    fn a_dropped_worker_closes_its_channel_and_lets_the_thread_finish() {
         let (observed, observer) = std::sync::mpsc::channel();
         let worker = RenderWorker::spawn("ruviz-egui-test-worker", move |receiver| {
             while let Ok(work) = receiver.recv() {

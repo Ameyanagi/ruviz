@@ -641,8 +641,10 @@ impl StampedInteractiveFrame {
 /// image: the base and overlay layers are handed over untouched so a
 /// presentation adapter can blend them itself (typically as two stacked GPU
 /// textures). Skipping the CPU composite is what makes overlay-only redraws
-/// cheap — the base layer stays `Arc`-identical across them, so an adapter can
-/// compare with [`Arc::ptr_eq`] and re-upload only the overlay.
+/// cheap — the base layer keeps the same buffer across them, so an adapter can
+/// compare with [`RenderedLayer::same_buffer_as`] and re-upload only the
+/// overlay. The two layers may differ in alpha representation; see
+/// [`InteractivePlotSession::render_layers_stamped`].
 ///
 /// Everything else matches [`StampedInteractiveFrame`] exactly: the same frame
 /// is committed to the session, and `base_generation` / [`render_stamp`] carry
@@ -2448,11 +2450,19 @@ impl InteractivePlotSession {
     /// same committed frame, same stamp semantics — except that the per-pixel
     /// CPU composite of overlay over base is skipped. Use it from presentation
     /// adapters that can stack the two layers themselves (e.g. as two GPU
-    /// textures); an overlay-only redraw then leaves the base layer
-    /// `Arc`-identical and only the small overlay needs re-uploading.
+    /// textures); an overlay-only redraw then reuses the base layer's buffer,
+    /// so only the small overlay needs re-uploading. Test that reuse with
+    /// [`RenderedLayer::same_buffer_as`], which compares the retained
+    /// allocations without touching pixels.
     ///
-    /// Both layers are straight-alpha RGBA8 of the same dimensions, and the
-    /// overlay is `None` when nothing overlay-drawn is active.
+    /// Both layers are RGBA8 of the same dimensions, and the overlay is `None`
+    /// when nothing overlay-drawn is active. They may differ in alpha
+    /// representation: the base arrives in whatever the renderer produced
+    /// natively — premultiplied for the CPU rasterizer — while the overlay is
+    /// straight. Always upload [`RenderedLayer::pixels`] together with
+    /// [`RenderedLayer::alpha_mode`] rather than assuming either, or ask for
+    /// [`RenderedLayer::image`] when straight-alpha bytes are genuinely
+    /// required.
     pub fn render_layers_stamped(&self, target: ImageTarget) -> Result<StampedInteractiveLayers> {
         self.render_to_target(
             RenderTargetKind::Image,

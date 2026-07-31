@@ -234,7 +234,13 @@ impl PlotState {
             return Update::none();
         }
         self.interaction_enabled = enabled;
-        let had_drag = self.drag.take().is_some() | self.session.cancel_interaction();
+        // Both sides must run: a widget-level drag and a session-level
+        // interaction can be live at once, and leaving either behind would
+        // strand it. Kept as separate statements rather than `|` so the
+        // unconditional evaluation is not mistaken for a typo'd `||`.
+        let dropped_drag = self.drag.take().is_some();
+        let cancelled_interaction = self.session.cancel_interaction();
+        let had_drag = dropped_drag || cancelled_interaction;
         let task = if had_drag {
             self.note_direct_change();
             self.queue_render()
