@@ -2,6 +2,7 @@ use ruviz::core::plot::Plot;
 
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     println!("Testing improved font alignment...");
+    std::fs::create_dir_all("generated/bench")?;
 
     // Create simple test data
     let x = vec![1.0, 2.0, 3.0, 4.0, 5.0];
@@ -13,11 +14,11 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .title("Font Alignment Test")
         .xlabel("X Values")
         .ylabel("Y Values")
-        .save("test_font_alignment.png")
+        .save("generated/bench/test_font_alignment.png")
     {
         Ok(_) => {
             println!("✅ Plot created successfully with improved font alignment!");
-            println!("📄 Saved as: test_font_alignment.png");
+            println!("📄 Saved as: generated/bench/test_font_alignment.png");
         }
         Err(e) => {
             println!("❌ Error creating plot: {}", e);

@@ -4,6 +4,7 @@ use ruviz::render::{Color, MarkerStyle, Theme};
 
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     println!("🔍 Testing legend handles with scatter markers (auto-positioning)...");
+    std::fs::create_dir_all("generated/bench")?;
 
     // Generate test data
     let x1: Vec<f64> = (0..20).map(|i| i as f64 * 0.5).collect();
@@ -36,10 +37,10 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .color(Color::GREEN)
         .marker(MarkerStyle::Triangle)
         .legend(LegendPosition::Best) // Auto-positioning to minimize overlap
-        .save("gallery/basic/legend_scatter_test.png")?;
+        .save("generated/bench/legend_scatter_test.png")?;
 
     println!("✅ Legend scatter test completed!");
-    println!("📂 Check ./gallery/basic/legend_scatter_test.png");
+    println!("📂 Check generated/bench/legend_scatter_test.png");
     println!("   Legend should auto-position to avoid data overlap");
 
     Ok(())

@@ -4,6 +4,7 @@ use ruviz::render::{Color, LineStyle, Theme};
 
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     println!("Testing legend with rounded corners...");
+    std::fs::create_dir_all("generated/bench")?;
 
     // Generate test data
     let x_data: Vec<f64> = (0..100).map(|i| i as f64 * 0.1).collect();
@@ -30,10 +31,10 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .line_style(LineStyle::Dotted)
         .legend(LegendPosition::UpperRight)
         .legend_corner_radius(6.0)
-        .save("gallery/basic/legend_rounded_test.png")?;
+        .save("generated/bench/legend_rounded_test.png")?;
 
     println!("Legend rounded corners test completed!");
-    println!("Check ./gallery/basic/legend_rounded_test.png");
+    println!("Check generated/bench/legend_rounded_test.png");
 
     Ok(())
 }

@@ -3,7 +3,7 @@ use std::fs;
 
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // Create output directory
-    fs::create_dir_all("axes_test")?;
+    fs::create_dir_all("generated/bench/axes-grid")?;
 
     println!("Testing axes and grid visibility...");
 
@@ -18,7 +18,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .xlabel("X Values")
         .ylabel("Y Values")
         .line(&x_data, &y_data)
-        .save("axes_test/01_axes_only.png")?;
+        .save("generated/bench/axes-grid/01_axes_only.png")?;
 
     // 2. Plot with grid enabled
     println!("Creating plot with axes and grid...");
@@ -28,7 +28,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .ylabel("Y Values")
         .grid(true) // Enable grid
         .line(&x_data, &y_data)
-        .save("axes_test/02_axes_and_grid.png")?;
+        .save("generated/bench/axes-grid/02_axes_and_grid.png")?;
 
     // 3. Multi-series with grid
     println!("Creating multi-series plot with grid...");
@@ -43,7 +43,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .color(Color::from_rgb(255, 0, 0)) // Red for sine
         .line(&x_data, &y2_data)
         .color(Color::from_rgb(0, 0, 255)) // Blue for cosine
-        .save("axes_test/03_multi_series_grid.png")?;
+        .save("generated/bench/axes-grid/03_multi_series_grid.png")?;
 
     // 4. Scatter plot with grid
     println!("Creating scatter plot with grid...");
@@ -57,10 +57,10 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .grid(true)
         .scatter(&scatter_x, &scatter_y)
         .color(Color::from_rgb(0, 150, 0)) // Green
-        .save("axes_test/04_scatter_grid.png")?;
+        .save("generated/bench/axes-grid/04_scatter_grid.png")?;
 
     println!("\n✅ Axes and grid test complete!");
-    println!("📁 Check axes_test/ directory:");
+    println!("📁 Check generated/bench/axes-grid/ directory:");
     println!("  - 01_axes_only.png      (default - axes without grid)");
     println!("  - 02_axes_and_grid.png  (axes with grid enabled)");
     println!("  - 03_multi_series_grid.png (multiple series with grid)");

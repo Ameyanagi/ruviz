@@ -12,8 +12,11 @@ PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 echo "Cleaning ruviz output files..."
 
 if [ -d "$PROJECT_ROOT/generated" ]; then
-    find "$PROJECT_ROOT/generated" -mindepth 1 ! -name "README.md" -exec rm -rf {} +
-    echo "  Cleared generated/ (preserved generated/README.md)"
+    find "$PROJECT_ROOT/generated" -mindepth 1 -maxdepth 1 \
+        ! -name "README.md" \
+        ! -name "manifest.json" \
+        -exec rm -rf -- {} +
+    echo "  Cleared generated/ (preserved README.md and manifest.json)"
 fi
 
 for legacy_dir in \

@@ -3,7 +3,7 @@ use std::fs;
 
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // Create output directory
-    fs::create_dir_all("verify_axes")?;
+    fs::create_dir_all("generated/bench/verify-axes")?;
 
     println!("🔍 Verifying axes and grid rendering...");
 
@@ -17,7 +17,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .title("Grid Disabled")
         .grid(false) // Explicitly disable
         .line(&x_data, &y_data)
-        .save("verify_axes/no_grid.png")?;
+        .save("generated/bench/verify-axes/no_grid.png")?;
 
     // 2. Plot with grid enabled (default)
     println!("Creating plot with grid enabled...");
@@ -25,11 +25,11 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .title("Grid Enabled")
         // grid should be true by default now
         .line(&x_data, &y_data)
-        .save("verify_axes/with_grid.png")?;
+        .save("generated/bench/verify-axes/with_grid.png")?;
 
     // Check file sizes - they should be different if grid is actually rendered
-    let no_grid_size = fs::metadata("verify_axes/no_grid.png")?.len();
-    let with_grid_size = fs::metadata("verify_axes/with_grid.png")?.len();
+    let no_grid_size = fs::metadata("generated/bench/verify-axes/no_grid.png")?.len();
+    let with_grid_size = fs::metadata("generated/bench/verify-axes/with_grid.png")?.len();
 
     println!("\n📊 File size comparison:");
     println!("  No grid:   {} bytes", no_grid_size);
@@ -50,10 +50,10 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .title("Minimal Test")
         .line(&minimal_x, &minimal_y)
         .color(Color::from_rgb(255, 0, 0)) // Bright red line
-        .save("verify_axes/minimal_test.png")?;
+        .save("generated/bench/verify-axes/minimal_test.png")?;
 
     println!("✅ Verification complete!");
-    println!("📁 Check verify_axes/ directory for visual verification");
+    println!("📁 Check generated/bench/verify-axes/ for visual verification");
 
     Ok(())
 }
