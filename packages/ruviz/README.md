@@ -174,7 +174,7 @@ The package also exports:
 
 - VitePress docs source: `packages/ruviz/docs/`
 - TypeScript examples: `packages/ruviz/examples/`
-- Raw Rust bridge: <https://github.com/Ameyanagi/ruviz/tree/main/crates/ruviz-web>
+- Raw Rust bridge: <https://github.com/Ameyanagi/ruviz/tree/main/bindings/wasm>
 - Root project README: <https://github.com/Ameyanagi/ruviz/blob/main/README.md>
 
 ## Local Development

@@ -121,13 +121,13 @@ arbitrary meshes, and mixed 2D/3D axes are not yet exposed.
 ## Documentation
 
 - Python docs source: `python/docs/`
-- Python examples: `python/examples/`
+- Python examples: `bindings/python/examples/`
 - Root project README: <https://github.com/Ameyanagi/ruviz/blob/main/README.md>
 
 ## Contributor Workflow
 
 ```sh
-cd python
+cd bindings/python
 uv sync
 uv run maturin develop
 uv run python scripts/generate_gallery.py

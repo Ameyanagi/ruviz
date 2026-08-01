@@ -407,7 +407,7 @@ rustup default stable-gnu
 Experimental WASM support is now available:
 
 - `ruviz` compiles for `wasm32-unknown-unknown` and supports in-memory PNG/SVG output.
-- `crates/ruviz-web` provides browser canvas bindings for interactive rendering.
+- `bindings/wasm` provides browser canvas bindings for interactive rendering.
 - `ruviz` registers a bundled browser fallback font automatically for canvas sessions.
 - `ruviz` exposes `web_runtime_capabilities()` so apps can detect worker, touch, and WebGPU availability.
 - `apps/web-demo` contains a Vite example for main-thread, OffscreenCanvas, and Observable usage.

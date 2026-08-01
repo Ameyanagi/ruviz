@@ -55,7 +55,7 @@
 //!
 //! Then build a normal `ruviz::Plot` or `PreparedPlot` and hand it to the GPUI
 //! component. See the repository examples under
-//! `crates/ruviz-gpui/examples/` for end-to-end setups.
+//! `adapters/gpui/examples/` for end-to-end setups.
 //!
 //! For data-only updates, build the plot once with `Plot::line_source` or
 //! `Plot::scatter_source` and `Observable<Vec<f64>>`, then call
@@ -69,7 +69,7 @@
 //! # Documentation
 //!
 //! - Repository README: <https://github.com/Ameyanagi/ruviz/blob/main/README.md>
-//! - Adapter README: <https://github.com/Ameyanagi/ruviz/tree/main/crates/ruviz-gpui>
+//! - Adapter README: <https://github.com/Ameyanagi/ruviz/tree/main/adapters/gpui>
 
 #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
 compile_error!("ruviz-gpui currently supports macOS, Linux, and Windows only.");

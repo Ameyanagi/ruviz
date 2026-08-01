@@ -378,7 +378,7 @@ Plot::new()
 ## FAQ
 
 ### Q: Can I use ruviz in Jupyter notebooks?
-**A**: Yes. The repository includes the `ruviz` Python package and notebook support under `python/`. Rust users can also save images and display them with `IPython.display.Image()`.
+**A**: Yes. The repository includes the `ruviz` Python package and notebook support under `bindings/python/`. Rust users can also save images and display them with `IPython.display.Image()`.
 
 ### Q: How do I display plots interactively?
 **A**: Current focus is file output. For interactive:

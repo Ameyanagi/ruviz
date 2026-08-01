@@ -29,7 +29,7 @@ class TrackedOutputTests(unittest.TestCase):
     def test_allows_published_assets_and_test_references(self) -> None:
         paths = [
             "docs/assets/gallery/rust/basic/line.png",
-            "python/docs/assets/gallery/line.png",
+            "bindings/python/docs/assets/gallery/line.png",
             "tests/fixtures/golden/line.png",
             "tests/visual/reference/matplotlib/line.png",
             "generated/manifest.json",

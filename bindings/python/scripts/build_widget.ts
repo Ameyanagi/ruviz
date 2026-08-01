@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 
-const repoRoot = resolve(import.meta.dir, "..", "..");
+const repoRoot = resolve(import.meta.dir, "..", "..", "..");
 const bunExecutable = process.execPath;
 
 async function runBun(args: string[], env: Record<string, string> = {}) {
@@ -23,4 +23,4 @@ async function runBun(args: string[], env: Record<string, string> = {}) {
 
 await runBun(["run", "--cwd", "packages/ruviz", "build:raw"]);
 await runBun(["run", "--cwd", "packages/ruviz", "build:js"]);
-await runBun(["python/scripts/build_widget_bundle.ts"]);
+await runBun(["bindings/python/scripts/build_widget_bundle.ts"]);

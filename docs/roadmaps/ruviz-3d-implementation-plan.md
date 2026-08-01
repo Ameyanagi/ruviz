@@ -1504,7 +1504,7 @@ Documentation must state:
   handle rather than JSON, multiple series share the Rust builder pipeline,
   and PNG/hybrid SVG/PDF exports are tested. Interactive/GPU Python sessions
   remain outside this alpha. Local integration commands must run from
-  `python/` through `uv run`: invoking Cargo from the workspace root selected
+  `bindings/python/` through `uv run`: invoking Cargo from the workspace root selected
   macOS Python 3.9 and correctly failed the package's `abi3-py310` floor,
   while the managed CPython 3.14 environment passed Cargo, maturin, pytest,
   and Ruff.

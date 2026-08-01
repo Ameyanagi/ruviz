@@ -145,9 +145,9 @@ zero-copy presentation.
 ## Examples
 
 ```sh
-cargo run --manifest-path crates/gui-adapters/ruviz-iced/Cargo.toml --example dashboard_2d
-cargo run --manifest-path crates/gui-adapters/ruviz-iced/Cargo.toml --features 3d --example dashboard
-cargo run --manifest-path crates/gui-adapters/ruviz-iced/Cargo.toml --features 3d --example static_dashboard
+cargo run --manifest-path adapters/gui/ruviz-iced/Cargo.toml --example dashboard_2d
+cargo run --manifest-path adapters/gui/ruviz-iced/Cargo.toml --features 3d --example dashboard
+cargo run --manifest-path adapters/gui/ruviz-iced/Cargo.toml --features 3d --example static_dashboard
 ```
 
 The mixed dashboard shows independently retained 2D and 3D widgets in one

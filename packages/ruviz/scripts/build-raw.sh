@@ -21,7 +21,7 @@ mkdir -p "${RAW_OUT_DIR}"
 # wasm-pack's managed bindgen bootstrap and invoke the pinned CLI directly.
 cargo build \
   --locked \
-  --manifest-path "${REPO_ROOT}/crates/ruviz-web/Cargo.toml" \
+  --manifest-path "${REPO_ROOT}/bindings/wasm/Cargo.toml" \
   --target wasm32-unknown-unknown \
   --features 3d-gpu \
   --release

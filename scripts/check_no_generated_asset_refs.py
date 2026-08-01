@@ -11,14 +11,14 @@ ROOTS = [
     Path("README.md"),
     Path("src"),
     Path("docs"),
-    Path("python/README.md"),
-    Path("python/docs"),
+    Path("bindings/python/README.md"),
+    Path("bindings/python/docs"),
     Path("packages/ruviz/README.md"),
     Path("packages/ruviz/docs"),
-    Path("crates/ruviz-web/README.md"),
-    Path("crates/ruviz-web/src"),
-    Path("crates/ruviz-gpui/README.md"),
-    Path("crates/ruviz-gpui/src"),
+    Path("bindings/wasm/README.md"),
+    Path("bindings/wasm/src"),
+    Path("adapters/gpui/README.md"),
+    Path("adapters/gpui/src"),
 ]
 
 TEXT_SUFFIXES = {".md", ".rs"}

@@ -126,20 +126,20 @@ class WorkflowContractTests(unittest.TestCase):
             "--features 3d --locked",
             "--all-features --locked",
             "--examples --all-features --locked",
-            "cargo doc --manifest-path crates/gui-adapters/Cargo.toml",
+            "cargo doc --manifest-path adapters/gui/Cargo.toml",
             "Native GUI Adapter MSRV (1.92)",
             "GPUI MSRV (1.92)",
-            "hashFiles('crates/gui-adapters/Cargo.lock')",
-            "hashFiles('crates/ruviz-gpui/Cargo.lock')",
-            "cargo clippy --manifest-path crates/gui-adapters/Cargo.toml --workspace --all-targets --locked",
-            "cargo clippy --manifest-path crates/ruviz-gpui/Cargo.toml --all-targets --locked",
-            "cargo test --manifest-path crates/gui-adapters/Cargo.toml --workspace --lib --all-features --locked",
-            "cargo test --manifest-path crates/ruviz-gpui/Cargo.toml --lib --all-features --locked",
-            "cargo test --manifest-path crates/gui-adapters/Cargo.toml --workspace --doc --all-features --locked",
-            "cargo test --manifest-path crates/ruviz-gpui/Cargo.toml --doc --all-features --locked",
-            "cargo check --manifest-path crates/ruviz-gpui/Cargo.toml --examples --all-features --locked",
-            "cargo check --manifest-path crates/ruviz-gpui/Cargo.toml --target ${{ matrix.platform.target }} --example plot3d_embed --all-features --locked",
-            "cargo doc --manifest-path crates/ruviz-gpui/Cargo.toml --all-features --no-deps --locked",
+            "hashFiles('adapters/gui/Cargo.lock')",
+            "hashFiles('adapters/gpui/Cargo.lock')",
+            "cargo clippy --manifest-path adapters/gui/Cargo.toml --workspace --all-targets --locked",
+            "cargo clippy --manifest-path adapters/gpui/Cargo.toml --all-targets --locked",
+            "cargo test --manifest-path adapters/gui/Cargo.toml --workspace --lib --all-features --locked",
+            "cargo test --manifest-path adapters/gpui/Cargo.toml --lib --all-features --locked",
+            "cargo test --manifest-path adapters/gui/Cargo.toml --workspace --doc --all-features --locked",
+            "cargo test --manifest-path adapters/gpui/Cargo.toml --doc --all-features --locked",
+            "cargo check --manifest-path adapters/gpui/Cargo.toml --examples --all-features --locked",
+            "cargo check --manifest-path adapters/gpui/Cargo.toml --target ${{ matrix.platform.target }} --example plot3d_embed --all-features --locked",
+            "cargo doc --manifest-path adapters/gpui/Cargo.toml --all-features --no-deps --locked",
             "Run direct 3D GPU suite with a required adapter",
             "BackgroundRenderer3D::GpuReadback",
         ):
@@ -165,12 +165,12 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("needs.publish-gui-adapters.result == 'success'", workflow)
         self.assertIn("softprops/action-gh-release@v2", workflow)
         self.assertIn(
-            "cargo check --manifest-path crates/ruviz-gpui/Cargo.toml --example plot3d_embed --all-features --locked",
+            "cargo check --manifest-path adapters/gpui/Cargo.toml --example plot3d_embed --all-features --locked",
             workflow,
         )
         self.assertIn("Test and build ruviz-gpui documentation", workflow)
         self.assertIn(
-            "cargo test --manifest-path crates/ruviz-gpui/Cargo.toml --doc --all-features --locked",
+            "cargo test --manifest-path adapters/gpui/Cargo.toml --doc --all-features --locked",
             workflow,
         )
 
@@ -217,11 +217,11 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("Check GPUI documentation examples", workflow)
         self.assertIn("Build GPUI documentation", workflow)
         self.assertIn(
-            "cargo test --manifest-path crates/ruviz-gpui/Cargo.toml --doc --all-features --locked",
+            "cargo test --manifest-path adapters/gpui/Cargo.toml --doc --all-features --locked",
             workflow,
         )
         self.assertIn(
-            "cargo doc --manifest-path crates/ruviz-gpui/Cargo.toml --all-features --no-deps --locked",
+            "cargo doc --manifest-path adapters/gpui/Cargo.toml --all-features --no-deps --locked",
             workflow,
         )
         self.assertIn("CARGO_TARGET_DIR: ${{ github.workspace }}/target", workflow)

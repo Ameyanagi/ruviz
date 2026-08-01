@@ -157,7 +157,7 @@ runtime, and `SLINT_BACKEND=winit-software` forces the software path.
 Run the interactive 2D dashboard from the repository root:
 
 ```sh
-cargo run --manifest-path crates/gui-adapters/ruviz-slint/Cargo.toml \
+cargo run --manifest-path adapters/gui/ruviz-slint/Cargo.toml \
   --example dashboard
 ```
 
@@ -166,7 +166,7 @@ static 3D slots, and demonstrates pick and camera callbacks. The plot titles
 and startup output list the available gestures and context-menu actions:
 
 ```sh
-cargo run --manifest-path crates/gui-adapters/ruviz-slint/Cargo.toml \
+cargo run --manifest-path adapters/gui/ruviz-slint/Cargo.toml \
   --features 3d --example mixed_3d_dashboard
 ```
 

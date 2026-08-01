@@ -27,7 +27,7 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
 
-ADAPTER_WORKSPACE = Path("crates/gui-adapters")
+ADAPTER_WORKSPACE = Path("adapters/gui")
 ADAPTERS = ("ruviz-egui", "ruviz-iced", "ruviz-slint")
 MSRV = "1.92"
 # Cargo validates a path dependency's version against crates.io even with

@@ -36,10 +36,10 @@ jobs:
       # checked. `cargo fmt` only reads the manifest, so this costs nothing —
       # it never resolves the zed GPUI checkout.
       - name: Check ruviz-gpui formatting
-        run: cargo fmt --all --manifest-path crates/ruviz-gpui/Cargo.toml -- --check
+        run: cargo fmt --all --manifest-path adapters/gpui/Cargo.toml -- --check
 
       - name: Check native GUI adapter formatting
-        run: cargo fmt --all --manifest-path crates/gui-adapters/Cargo.toml -- --check
+        run: cargo fmt --all --manifest-path adapters/gui/Cargo.toml -- --check
 
   clippy:
     name: Clippy
@@ -65,8 +65,8 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-            crates/ruviz-gpui/target
-            crates/gui-adapters/target
+            adapters/gpui/target
+            adapters/gui/target
           key: ${{ runner.os }}-cargo-clippy-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Run clippy
@@ -80,13 +80,13 @@ jobs:
       # the only CI step that resolves the zed GPUI checkout.
       - name: Run clippy for the GPUI default and 3D feature surfaces
         run: |
-          cargo clippy --manifest-path crates/ruviz-gpui/Cargo.toml --all-targets --locked -- -D warnings
-          cargo clippy --manifest-path crates/ruviz-gpui/Cargo.toml --all-targets --all-features --locked -- -D warnings
+          cargo clippy --manifest-path adapters/gpui/Cargo.toml --all-targets --locked -- -D warnings
+          cargo clippy --manifest-path adapters/gpui/Cargo.toml --all-targets --all-features --locked -- -D warnings
 
       - name: Run clippy for native GUI adapters
         run: |
-          cargo clippy --manifest-path crates/gui-adapters/Cargo.toml --workspace --all-targets --locked -- -D warnings
-          cargo clippy --manifest-path crates/gui-adapters/Cargo.toml --workspace --all-targets --all-features --locked -- -D warnings
+          cargo clippy --manifest-path adapters/gui/Cargo.toml --workspace --all-targets --locked -- -D warnings
+          cargo clippy --manifest-path adapters/gui/Cargo.toml --workspace --all-targets --all-features --locked -- -D warnings
 
       - name: Test production unwrap checker
         run: python3 -m unittest scripts/test_check_no_new_production_unwraps.py
@@ -178,8 +178,8 @@ jobs:
         with:
           path: |
             ~/.cargo/registry
-            crates/gui-adapters/target
-          key: ${{ runner.os }}-cargo-gui-adapter-packages-${{ hashFiles('crates/gui-adapters/Cargo.lock') }}
+            adapters/gui/target
+          key: ${{ runner.os }}-cargo-gui-adapter-packages-${{ hashFiles('adapters/gui/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-gui-adapter-packages-
 
       - name: Test native GUI adapter package verifier
@@ -221,38 +221,38 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            crates/gui-adapters/target
-            crates/ruviz-gpui/target
-          key: ${{ matrix.platform.cache_key }}-cargo-native-gui-tests-${{ hashFiles('crates/gui-adapters/Cargo.lock', 'crates/ruviz-gpui/Cargo.lock') }}
+            adapters/gui/target
+            adapters/gpui/target
+          key: ${{ matrix.platform.cache_key }}-cargo-native-gui-tests-${{ hashFiles('adapters/gui/Cargo.lock', 'adapters/gpui/Cargo.lock') }}
           restore-keys: ${{ matrix.platform.cache_key }}-cargo-native-gui-tests-
 
       - name: Test adapter default behavior
-        run: cargo test --manifest-path crates/gui-adapters/Cargo.toml --workspace --lib --locked
+        run: cargo test --manifest-path adapters/gui/Cargo.toml --workspace --lib --locked
 
       - name: Test adapter 3D behavior
-        run: cargo test --manifest-path crates/gui-adapters/Cargo.toml --workspace --lib --features 3d --locked
+        run: cargo test --manifest-path adapters/gui/Cargo.toml --workspace --lib --features 3d --locked
 
       - name: Test all adapter feature behavior
-        run: cargo test --manifest-path crates/gui-adapters/Cargo.toml --workspace --lib --all-features --locked
+        run: cargo test --manifest-path adapters/gui/Cargo.toml --workspace --lib --all-features --locked
 
       - name: Test adapter documentation
         run: |
-          cargo test --manifest-path crates/gui-adapters/Cargo.toml --workspace --doc --locked
-          cargo test --manifest-path crates/gui-adapters/Cargo.toml --workspace --doc --all-features --locked
+          cargo test --manifest-path adapters/gui/Cargo.toml --workspace --doc --locked
+          cargo test --manifest-path adapters/gui/Cargo.toml --workspace --doc --all-features --locked
 
       - name: Test GPUI default behavior
-        run: cargo test --manifest-path crates/ruviz-gpui/Cargo.toml --lib --locked
+        run: cargo test --manifest-path adapters/gpui/Cargo.toml --lib --locked
 
       - name: Test GPUI 3D behavior
-        run: cargo test --manifest-path crates/ruviz-gpui/Cargo.toml --lib --no-default-features --features 3d --locked
+        run: cargo test --manifest-path adapters/gpui/Cargo.toml --lib --no-default-features --features 3d --locked
 
       - name: Test all GPUI feature behavior
-        run: cargo test --manifest-path crates/ruviz-gpui/Cargo.toml --lib --all-features --locked
+        run: cargo test --manifest-path adapters/gpui/Cargo.toml --lib --all-features --locked
 
       - name: Test GPUI documentation
         run: |
-          cargo test --manifest-path crates/ruviz-gpui/Cargo.toml --doc --locked
-          cargo test --manifest-path crates/ruviz-gpui/Cargo.toml --doc --all-features --locked
+          cargo test --manifest-path adapters/gpui/Cargo.toml --doc --locked
+          cargo test --manifest-path adapters/gpui/Cargo.toml --doc --all-features --locked
 
       - name: Test native GUI smoke helper
         if: runner.os == 'Linux'
@@ -265,7 +265,7 @@ jobs:
           native_gui_stage_dir="${RUNNER_TEMP}/native-gui-examples"
           mkdir -p "${native_gui_stage_dir}"
 
-          cargo build --manifest-path crates/gui-adapters/Cargo.toml --package ruviz-egui --examples --all-features --locked --message-format=json-render-diagnostics > "${RUNNER_TEMP}/ruviz-egui-examples.json"
+          cargo build --manifest-path adapters/gui/Cargo.toml --package ruviz-egui --examples --all-features --locked --message-format=json-render-diagnostics > "${RUNNER_TEMP}/ruviz-egui-examples.json"
           python3 scripts/smoke_native_gui_examples.py stage \
             --cargo-json "${RUNNER_TEMP}/ruviz-egui-examples.json" \
             --stage-dir "${native_gui_stage_dir}" \
@@ -273,7 +273,7 @@ jobs:
             --expect ruviz-egui:mixed_dashboard \
             --expect ruviz-egui:three_d
 
-          cargo build --manifest-path crates/gui-adapters/Cargo.toml --package ruviz-iced --examples --all-features --locked --message-format=json-render-diagnostics > "${RUNNER_TEMP}/ruviz-iced-examples.json"
+          cargo build --manifest-path adapters/gui/Cargo.toml --package ruviz-iced --examples --all-features --locked --message-format=json-render-diagnostics > "${RUNNER_TEMP}/ruviz-iced-examples.json"
           python3 scripts/smoke_native_gui_examples.py stage \
             --cargo-json "${RUNNER_TEMP}/ruviz-iced-examples.json" \
             --stage-dir "${native_gui_stage_dir}" \
@@ -281,14 +281,14 @@ jobs:
             --expect ruviz-iced:dashboard_2d \
             --expect ruviz-iced:static_dashboard
 
-          cargo build --manifest-path crates/gui-adapters/Cargo.toml --package ruviz-slint --examples --all-features --locked --message-format=json-render-diagnostics > "${RUNNER_TEMP}/ruviz-slint-examples.json"
+          cargo build --manifest-path adapters/gui/Cargo.toml --package ruviz-slint --examples --all-features --locked --message-format=json-render-diagnostics > "${RUNNER_TEMP}/ruviz-slint-examples.json"
           python3 scripts/smoke_native_gui_examples.py stage \
             --cargo-json "${RUNNER_TEMP}/ruviz-slint-examples.json" \
             --stage-dir "${native_gui_stage_dir}" \
             --expect ruviz-slint:dashboard \
             --expect ruviz-slint:mixed_3d_dashboard
 
-          cargo build --manifest-path crates/ruviz-gpui/Cargo.toml --examples --all-features --locked --message-format=json-render-diagnostics > "${RUNNER_TEMP}/gpui-examples.json"
+          cargo build --manifest-path adapters/gpui/Cargo.toml --examples --all-features --locked --message-format=json-render-diagnostics > "${RUNNER_TEMP}/gpui-examples.json"
           python3 scripts/smoke_native_gui_examples.py stage \
             --cargo-json "${RUNNER_TEMP}/gpui-examples.json" \
             --stage-dir "${native_gui_stage_dir}" \
@@ -794,20 +794,20 @@ jobs:
         with:
           path: |
             ~/.cargo/registry
-            crates/gui-adapters/target
-          key: ${{ runner.os }}-cargo-gui-adapters-msrv-1.92-${{ hashFiles('crates/gui-adapters/Cargo.lock') }}
+            adapters/gui/target
+          key: ${{ runner.os }}-cargo-gui-adapters-msrv-1.92-${{ hashFiles('adapters/gui/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-gui-adapters-msrv-1.92-
 
       - name: Check default adapter features on the MSRV
-        run: cargo check --manifest-path crates/gui-adapters/Cargo.toml --workspace --locked
+        run: cargo check --manifest-path adapters/gui/Cargo.toml --workspace --locked
 
       - name: Check 3D adapter features on the MSRV
-        run: cargo check --manifest-path crates/gui-adapters/Cargo.toml --workspace --features 3d --locked
+        run: cargo check --manifest-path adapters/gui/Cargo.toml --workspace --features 3d --locked
 
       - name: Check all adapter features and examples on the MSRV
         run: |
-          cargo check --manifest-path crates/gui-adapters/Cargo.toml --workspace --all-features --locked
-          cargo check --manifest-path crates/gui-adapters/Cargo.toml --workspace --examples --all-features --locked
+          cargo check --manifest-path adapters/gui/Cargo.toml --workspace --all-features --locked
+          cargo check --manifest-path adapters/gui/Cargo.toml --workspace --examples --all-features --locked
 
   gpui-msrv:
     name: GPUI MSRV (1.92)
@@ -842,20 +842,20 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            crates/ruviz-gpui/target
-          key: ${{ runner.os }}-cargo-gpui-msrv-1.92-${{ hashFiles('crates/ruviz-gpui/Cargo.lock') }}
+            adapters/gpui/target
+          key: ${{ runner.os }}-cargo-gpui-msrv-1.92-${{ hashFiles('adapters/gpui/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-gpui-msrv-1.92-
 
       - name: Check GPUI default features on the MSRV
-        run: cargo check --manifest-path crates/ruviz-gpui/Cargo.toml --locked
+        run: cargo check --manifest-path adapters/gpui/Cargo.toml --locked
 
       - name: Check all GPUI features on the MSRV
-        run: cargo check --manifest-path crates/ruviz-gpui/Cargo.toml --all-features --locked
+        run: cargo check --manifest-path adapters/gpui/Cargo.toml --all-features --locked
 
       - name: Check GPUI examples on the MSRV
         run: |
-          cargo check --manifest-path crates/ruviz-gpui/Cargo.toml --examples --locked
-          cargo check --manifest-path crates/ruviz-gpui/Cargo.toml --examples --all-features --locked
+          cargo check --manifest-path adapters/gpui/Cargo.toml --examples --locked
+          cargo check --manifest-path adapters/gpui/Cargo.toml --examples --all-features --locked
 
   python:
     name: Python
@@ -877,7 +877,7 @@ jobs:
         uses: astral-sh/setup-uv@v8.0.0
         with:
           enable-cache: true
-          working-directory: python
+          working-directory: bindings/python
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -888,7 +888,7 @@ jobs:
         uses: ./.github/actions/install-linux-desktop-build-deps
 
       - name: Sync Python dependencies
-        run: cd python && uv sync
+        run: cd bindings/python && uv sync
 
       - name: Install wasm target
         run: rustup target add wasm32-unknown-unknown
@@ -900,19 +900,19 @@ jobs:
         run: |
           bun run build:python-widget
           first_widget="$(mktemp)"
-          cp python/ruviz_py/ruviz/widget.js "${first_widget}"
+          cp bindings/python/ruviz_py/ruviz/widget.js "${first_widget}"
           bun run build:python-widget
-          sha256sum "${first_widget}" python/ruviz_py/ruviz/widget.js
-          cmp --silent "${first_widget}" python/ruviz_py/ruviz/widget.js
+          sha256sum "${first_widget}" bindings/python/ruviz_py/ruviz/widget.js
+          cmp --silent "${first_widget}" bindings/python/ruviz_py/ruviz/widget.js
 
       - name: Run Python extension tests
-        run: cd python && uv run cargo test
+        run: cd bindings/python && uv run cargo test
 
       - name: Run Python package tests
-        run: cd python && uv run python -m pytest
+        run: cd bindings/python && uv run python -m pytest
 
       - name: Run Python lint
-        run: cd python && uv run python -m ruff check
+        run: cd bindings/python && uv run python -m ruff check
 
   python-packaging:
     name: Python Packaging
@@ -936,7 +936,7 @@ jobs:
         uses: astral-sh/setup-uv@v8.0.0
         with:
           enable-cache: true
-          working-directory: python
+          working-directory: bindings/python
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -947,7 +947,7 @@ jobs:
         uses: ./.github/actions/install-linux-desktop-build-deps
 
       - name: Sync Python dependencies
-        run: cd python && uv sync
+        run: cd bindings/python && uv sync
 
       - name: Install wasm target
         run: rustup target add wasm32-unknown-unknown
@@ -959,13 +959,13 @@ jobs:
         run: bun run build:python-widget
 
       - name: Build Python sdist
-        run: cd python && uv run maturin sdist --out dist
+        run: cd bindings/python && uv run maturin sdist --out dist
 
       - name: Smoke test sdist install
         run: |
           tempdir="$(mktemp -d)"
           uv venv --python 3.12 "${tempdir}/venv"
-          uv pip install --python "${tempdir}/venv/bin/python" python/dist/ruviz-*.tar.gz
+          uv pip install --python "${tempdir}/venv/bin/python" bindings/python/dist/ruviz-*.tar.gz
           "${tempdir}/venv/bin/python" <<'PY'
           import ruviz
 
@@ -983,14 +983,14 @@ jobs:
           rust-toolchain: 1.94.1
           manylinux: 2_28
           target: x86_64-unknown-linux-gnu
-          working-directory: python
+          working-directory: bindings/python
           args: --release --out dist --compatibility pypi --interpreter python3.10 --no-default-features --features pyo3/extension-module
 
       - name: Smoke test Linux wheel
         run: |
           tempdir="$(mktemp -d)"
           uv venv --python 3.12 "${tempdir}/venv"
-          uv pip install --python "${tempdir}/venv/bin/python" python/dist/ruviz-*.whl
+          uv pip install --python "${tempdir}/venv/bin/python" bindings/python/dist/ruviz-*.whl
           "${tempdir}/venv/bin/python" <<'PY'
           import ruviz
 
@@ -1088,7 +1088,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-            crates/ruviz-gpui/target
+            adapters/gpui/target
           key: ${{ runner.os }}-${{ matrix.platform.target }}-cargo-build-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Install GPUI Linux build dependencies
@@ -1128,19 +1128,19 @@ jobs:
       # resolves from crates.io alone instead of dragging in the zed checkout.
       - name: Check ruviz-gpui desktop build
         if: ${{ !matrix.platform.cross }}
-        run: cargo check --manifest-path crates/ruviz-gpui/Cargo.toml --target ${{ matrix.platform.target }} --locked
+        run: cargo check --manifest-path adapters/gpui/Cargo.toml --target ${{ matrix.platform.target }} --locked
 
       - name: Check ruviz-gpui 3D GPU desktop build
         if: ${{ !matrix.platform.cross }}
-        run: cargo check --manifest-path crates/ruviz-gpui/Cargo.toml --target ${{ matrix.platform.target }} --no-default-features --features 3d-gpu --locked
+        run: cargo check --manifest-path adapters/gpui/Cargo.toml --target ${{ matrix.platform.target }} --no-default-features --features 3d-gpu --locked
 
       - name: Check ruviz-gpui desktop examples
         if: ${{ !matrix.platform.cross }}
-        run: cargo check --manifest-path crates/ruviz-gpui/Cargo.toml --target ${{ matrix.platform.target }} --examples --locked
+        run: cargo check --manifest-path adapters/gpui/Cargo.toml --target ${{ matrix.platform.target }} --examples --locked
 
       - name: Check ruviz-gpui 3D desktop example
         if: ${{ !matrix.platform.cross }}
-        run: cargo check --manifest-path crates/ruviz-gpui/Cargo.toml --target ${{ matrix.platform.target }} --example plot3d_embed --all-features --locked
+        run: cargo check --manifest-path adapters/gpui/Cargo.toml --target ${{ matrix.platform.target }} --example plot3d_embed --all-features --locked
 
   gui-adapters:
     name: Native GUI Adapters (${{ matrix.platform.name }})
@@ -1177,24 +1177,24 @@ jobs:
         with:
           path: |
             ~/.cargo/registry
-            crates/gui-adapters/target
-          key: ${{ runner.os }}-${{ matrix.platform.target }}-cargo-gui-adapters-${{ hashFiles('crates/gui-adapters/Cargo.lock') }}
+            adapters/gui/target
+          key: ${{ runner.os }}-${{ matrix.platform.target }}-cargo-gui-adapters-${{ hashFiles('adapters/gui/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-${{ matrix.platform.target }}-cargo-gui-adapters-
 
       - name: Check default adapter features
-        run: cargo check --manifest-path crates/gui-adapters/Cargo.toml --workspace --target ${{ matrix.platform.target }} --locked
+        run: cargo check --manifest-path adapters/gui/Cargo.toml --workspace --target ${{ matrix.platform.target }} --locked
 
       - name: Check 3D adapter features
-        run: cargo check --manifest-path crates/gui-adapters/Cargo.toml --workspace --target ${{ matrix.platform.target }} --features 3d --locked
+        run: cargo check --manifest-path adapters/gui/Cargo.toml --workspace --target ${{ matrix.platform.target }} --features 3d --locked
 
       - name: Check all adapter features
-        run: cargo check --manifest-path crates/gui-adapters/Cargo.toml --workspace --target ${{ matrix.platform.target }} --all-features --locked
+        run: cargo check --manifest-path adapters/gui/Cargo.toml --workspace --target ${{ matrix.platform.target }} --all-features --locked
 
       - name: Check adapter examples
-        run: cargo check --manifest-path crates/gui-adapters/Cargo.toml --workspace --target ${{ matrix.platform.target }} --examples --all-features --locked
+        run: cargo check --manifest-path adapters/gui/Cargo.toml --workspace --target ${{ matrix.platform.target }} --examples --all-features --locked
 
       - name: Build adapter documentation
-        run: cargo doc --manifest-path crates/gui-adapters/Cargo.toml --workspace --target ${{ matrix.platform.target }} --all-features --no-deps --locked
+        run: cargo doc --manifest-path adapters/gui/Cargo.toml --workspace --target ${{ matrix.platform.target }} --all-features --no-deps --locked
         env:
           RUSTDOCFLAGS: -D warnings
 
@@ -1315,8 +1315,8 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-            crates/gui-adapters/target
-            crates/ruviz-gpui/target
+            adapters/gui/target
+            adapters/gpui/target
           key: ${{ runner.os }}-cargo-docs-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Install Linux desktop build dependencies
@@ -1357,17 +1357,17 @@ jobs:
           RUSTDOCFLAGS: -D warnings
 
       - name: Build native GUI adapter documentation
-        run: cargo doc --manifest-path crates/gui-adapters/Cargo.toml --workspace --all-features --no-deps --locked
+        run: cargo doc --manifest-path adapters/gui/Cargo.toml --workspace --all-features --no-deps --locked
         env:
           RUSTDOCFLAGS: -D warnings
 
       - name: Test GPUI documentation
         run: |
-          cargo test --manifest-path crates/ruviz-gpui/Cargo.toml --doc --locked
-          cargo test --manifest-path crates/ruviz-gpui/Cargo.toml --doc --all-features --locked
+          cargo test --manifest-path adapters/gpui/Cargo.toml --doc --locked
+          cargo test --manifest-path adapters/gpui/Cargo.toml --doc --all-features --locked
 
       - name: Build GPUI documentation
-        run: cargo doc --manifest-path crates/ruviz-gpui/Cargo.toml --all-features --no-deps --locked
+        run: cargo doc --manifest-path adapters/gpui/Cargo.toml --all-features --no-deps --locked
         env:
           RUSTDOCFLAGS: -D warnings
 
@@ -1395,7 +1395,7 @@ jobs:
           while IFS= read -r path; do
             [ -z "${path}" ] && continue
             case "${path}" in
-              .github/workflows/ci.yml|.github/actions/install-linux-desktop-build-deps/*|Cargo.toml|Cargo.lock|Makefile|package.json|bun.lock|generated/manifest.json|docs/BUILD_OUTPUTS.md|src/*|examples/*|python/*|packages/ruviz/*|crates/ruviz-web/*|apps/web-demo/*|scripts/*)
+              .github/workflows/ci.yml|.github/actions/install-linux-desktop-build-deps/*|Cargo.toml|Cargo.lock|Makefile|package.json|bun.lock|generated/manifest.json|docs/BUILD_OUTPUTS.md|src/*|examples/*|bindings/python/*|packages/ruviz/*|bindings/wasm/*|apps/web-demo/*|scripts/*)
                 run_preview=true
                 break
                 ;;
@@ -1543,7 +1543,7 @@ jobs:
         uses: astral-sh/setup-uv@v8.0.0
         with:
           enable-cache: true
-          working-directory: python
+          working-directory: bindings/python
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -1578,7 +1578,7 @@ jobs:
         uses: ./.github/actions/install-linux-desktop-build-deps
 
       - name: Sync Python dependencies
-        run: cd python && uv sync
+        run: cd bindings/python && uv sync
 
       - name: Install wasm target
         run: rustup target add wasm32-unknown-unknown
@@ -1839,7 +1839,7 @@ jobs:
 
             Workflow run: ${process.env.RUN_URL}
 
-            Published docs still read only from committed assets under \`docs/assets/**\`, \`python/docs/assets/gallery/**\`, and \`tests/fixtures/golden/**\`.`
+            Published docs still read only from committed assets under \`docs/assets/**\`, \`bindings/python/docs/assets/gallery/**\`, and \`tests/fixtures/golden/**\`.`
                 : changed
                   ? `${marker}
             ## Generated Preview Artifacts
@@ -1853,7 +1853,7 @@ jobs:
 
             Workflow run: ${process.env.RUN_URL}
 
-            Published docs still read only from committed assets under \`docs/assets/**\`, \`python/docs/assets/gallery/**\`, and \`tests/fixtures/golden/**\`.`
+            Published docs still read only from committed assets under \`docs/assets/**\`, \`bindings/python/docs/assets/gallery/**\`, and \`tests/fixtures/golden/**\`.`
                   : `${marker}
             ## Generated Preview Artifacts
 
@@ -1861,7 +1861,7 @@ jobs:
 
             Workflow run: ${process.env.RUN_URL}
 
-            Published docs still read only from committed assets under \`docs/assets/**\`, \`python/docs/assets/gallery/**\`, and \`tests/fixtures/golden/**\`.`;
+            Published docs still read only from committed assets under \`docs/assets/**\`, \`bindings/python/docs/assets/gallery/**\`, and \`tests/fixtures/golden/**\`.`;
 
             const { owner, repo } = context.repo;
             const issue_number = context.issue.number;

@@ -450,7 +450,7 @@ fn runs_on_pull_requests(body: &str) -> bool {
 /// Every `cargo test` the workflow runs on a pull request.
 ///
 /// A segment only counts when `cargo test` starts the command, so
-/// `cd python && uv run cargo test` — which tests the separate `python`
+/// `cd bindings/python && uv run cargo test` — which tests the separate `python`
 /// package — is correctly not credited to this crate's targets.
 fn cargo_test_invocations(
     workflow: &str,
@@ -659,7 +659,7 @@ jobs:
       - name: Everything
         run: cargo test --all-features --tests
       - name: Another package
-        run: cd python && uv run cargo test
+        run: cd bindings/python && uv run cargo test
 ";
     let invocations = cargo_test_invocations(workflow, &defaults);
     assert_eq!(

@@ -28,17 +28,17 @@ some currently resolve different `wgpu` versions or use non-wgpu renderers.
 Keep GUI dependency resolution isolated from the root workspace:
 
 ```text
-crates/
-  gui-adapters/
+adapters/
+  gui/
     Cargo.toml
     Cargo.lock
     ruviz-egui/
     ruviz-iced/
     ruviz-slint/
-  ruviz-gpui/
+  gpui/
 ```
 
-`crates/gui-adapters` will be an independent virtual workspace and will be
+`adapters/gui` will be an independent virtual workspace and will be
 listed in the root workspace's `exclude` array. The three adapters share one
 lockfile. GPUI remains in its existing independent workspace because of its
 Zed/GPUI patch.
@@ -308,8 +308,8 @@ mixed dashboard example, unit tests, and documentation.
   smoke tests.
 - Scope caches by workspace lockfile:
   - root: `Cargo.lock`;
-  - GPUI: `crates/ruviz-gpui/Cargo.lock`;
-  - GUI adapters: `crates/gui-adapters/Cargo.lock`.
+  - GPUI: `adapters/gpui/Cargo.lock`;
+  - GUI adapters: `adapters/gui/Cargo.lock`.
 - Generalize packaged-crate verification for all adapters and compile fresh
   external consumers from extracted archives.
 - Verify Slint's `@Ruviz` import from the packaged archive.

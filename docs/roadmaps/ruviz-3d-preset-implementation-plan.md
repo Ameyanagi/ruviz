@@ -953,11 +953,11 @@ Acceptance:
 
 Likely touchpoints:
 
-- `python/src/lib.rs`
-- `python/ruviz_py/ruviz/_api.py`
-- `python/ruviz_py/ruviz/__init__.py`
-- `python/tests/test_3d_api.py`
-- `crates/ruviz-web/src/lib.rs`
+- `bindings/python/src/lib.rs`
+- `bindings/python/ruviz_py/ruviz/_api.py`
+- `bindings/python/ruviz_py/ruviz/__init__.py`
+- `bindings/python/tests/test_3d_api.py`
+- `bindings/wasm/src/lib.rs`
 - `packages/ruviz/src/3d.ts`
 - `packages/ruviz/src/index.ts`
 - `apps/web-demo/tests/3d.spec.js`

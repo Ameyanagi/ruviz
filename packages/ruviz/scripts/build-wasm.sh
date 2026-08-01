@@ -14,7 +14,7 @@ export PATH="${CARGO_HOME_DIR}/bin:${PATH}"
 cd "${PACKAGE_DIR}"
 WASM_PACK_ARGS=(
   build
-  ../../crates/ruviz-web
+  ../../bindings/wasm
   --target
   web
   --out-dir

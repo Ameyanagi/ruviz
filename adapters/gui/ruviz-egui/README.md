@@ -100,7 +100,7 @@ software renderer.
 Run the examples with:
 
 ```text
-cargo run --manifest-path crates/gui-adapters/ruviz-egui/Cargo.toml --example dashboard
-cargo run --manifest-path crates/gui-adapters/ruviz-egui/Cargo.toml --features 3d --example three_d
-cargo run --manifest-path crates/gui-adapters/ruviz-egui/Cargo.toml --features 3d --example mixed_dashboard
+cargo run --manifest-path adapters/gui/ruviz-egui/Cargo.toml --example dashboard
+cargo run --manifest-path adapters/gui/ruviz-egui/Cargo.toml --features 3d --example three_d
+cargo run --manifest-path adapters/gui/ruviz-egui/Cargo.toml --features 3d --example mixed_dashboard
 ```

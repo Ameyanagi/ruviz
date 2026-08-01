@@ -403,7 +403,7 @@ A: Yes! Week 6 benchmarks show performance exceeding all targets by 2.9-5.7x. Pr
 **Q: Can I use ruviz in web applications (WASM)?**
 
 A: Yes, experimentally. The core crate now builds for `wasm32-unknown-unknown`, and browser-facing
-bindings live in `crates/ruviz-web` with a working demo in `apps/web-demo`.
+bindings live in `bindings/wasm` with a working demo in `apps/web-demo`.
 
 Current caveats:
 - Native path-based helpers such as `.save(...)` and windowed interactive APIs remain desktop-only.

@@ -205,10 +205,10 @@ class WorkflowContractTests(unittest.TestCase):
         )
         expected_fragments = (
             "Build all native GUI examples for smoke testing",
-            "crates/gui-adapters/Cargo.toml --package ruviz-egui --examples --all-features --locked",
-            "crates/gui-adapters/Cargo.toml --package ruviz-iced --examples --all-features --locked",
-            "crates/gui-adapters/Cargo.toml --package ruviz-slint --examples --all-features --locked",
-            "crates/ruviz-gpui/Cargo.toml --examples --all-features --locked",
+            "adapters/gui/Cargo.toml --package ruviz-egui --examples --all-features --locked",
+            "adapters/gui/Cargo.toml --package ruviz-iced --examples --all-features --locked",
+            "adapters/gui/Cargo.toml --package ruviz-slint --examples --all-features --locked",
+            "adapters/gpui/Cargo.toml --examples --all-features --locked",
             "--message-format=json-render-diagnostics",
             "smoke_native_gui_examples.py stage",
             "Smoke all native GUI examples under Xvfb",

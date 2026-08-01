@@ -41,7 +41,7 @@ Committed release-facing media lives in stable paths:
 - `docs/assets/readme/` for README-facing images
 - `docs/assets/rustdoc/` for rustdoc and guide screenshots/GIFs
 - `docs/assets/gallery/rust/` for committed Rust gallery assets
-- `python/docs/assets/gallery/` for committed Python gallery assets
+- `bindings/python/docs/assets/gallery/` for committed Python gallery assets
 - `tests/fixtures/golden/` for visual regression fixtures
 
 ## Canonical Regeneration Command

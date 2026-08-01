@@ -31,7 +31,7 @@ ZED_GIT = "https://github.com/zed-industries/zed"
 ZED_REV = "a" * 40
 
 ROOT_MANIFEST = f"""[workspace]
-members = ["crates/ruviz-web", "python"]
+members = ["bindings/wasm", "bindings/python"]
 exclude = ["{GPUI_CRATE_DIR}"]
 default-members = ["."]
 resolver = "2"
@@ -1058,7 +1058,7 @@ class WorkspaceSplitTests(unittest.TestCase):
     """The GPUI adapter must stay a workspace of its own.
 
     `[patch.crates-io]` is workspace-scoped and `default-members` does not
-    exempt it, so re-adding `crates/ruviz-gpui` to the root `members` would put
+    exempt it, so re-adding `adapters/gpui` to the root `members` would put
     the zed monorepo checkout back into the resolve graph of every cargo command
     in the repository. These are the checks that make that a failure instead of
     a silent 38-`git+`-entry lockfile.
@@ -1090,7 +1090,7 @@ class WorkspaceSplitTests(unittest.TestCase):
         self.assertEqual(contract.gpui_version, "0.2.2")
         self.assertEqual(contract.gpui_patch_git, ZED_GIT)
         self.assertEqual(contract.gpui_patch_rev, ZED_REV)
-        self.assertEqual(contract.gpui_workspace.name, "ruviz-gpui")
+        self.assertEqual(contract.gpui_workspace.parts[-2:], ("adapters", "gpui"))
         self.assertEqual(
             contract.workspace_only_dev_dependencies,
             frozenset({"gpui_macos", "gpui_platform"}),
@@ -1098,8 +1098,8 @@ class WorkspaceSplitTests(unittest.TestCase):
 
     def test_gpui_adapter_may_not_be_a_root_member(self) -> None:
         root = ROOT_MANIFEST.replace(
-            'members = ["crates/ruviz-web", "python"]',
-            f'members = ["crates/ruviz-web", "python", "{GPUI_CRATE_DIR}"]',
+            'members = ["bindings/wasm", "bindings/python"]',
+            f'members = ["bindings/wasm", "bindings/python", "{GPUI_CRATE_DIR}"]',
         )
 
         with self.assertRaisesRegex(VerificationError, "must not be a member"):

@@ -1,6 +1,6 @@
 # Gallery
 
-This page is generated from `python/examples/` by `scripts/generate_gallery.py`.
+This page is generated from `bindings/python/examples/` by `scripts/generate_gallery.py`.
 
 ## Basic plots
 
