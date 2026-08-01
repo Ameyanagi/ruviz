@@ -3,8 +3,8 @@ use ruviz::prelude::*;
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     println!("Creating a basic plot...");
 
-    // Ensure gallery directory exists
-    std::fs::create_dir_all("gallery")?;
+    // Keep transient renders out of the source tree.
+    std::fs::create_dir_all("generated/bench")?;
 
     // Sample data
     let x_data = vec![1.0, 2.0, 3.0, 4.0, 5.0];
@@ -16,10 +16,10 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .xlabel("X Axis".to_string())
         .ylabel("Y Axis".to_string())
         .line(&x_data, &y_data)
-        .save("gallery/basic/basic_example.png")?;
+        .save("generated/bench/basic_example.png")?;
 
     println!("Plot created successfully!");
-    println!("Plot saved as: gallery/basic/basic_example.png");
+    println!("Plot saved as: generated/bench/basic_example.png");
 
     Ok(())
 }

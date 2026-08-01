@@ -5,8 +5,8 @@ use ruviz::render::Theme;
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     println!("🔍 Testing axis labels and legends...");
 
-    // Create output directory
-    std::fs::create_dir_all("gallery/test")?;
+    // Keep transient renders out of the source tree.
+    std::fs::create_dir_all("generated/bench")?;
 
     // Generate test data
     let x_data: Vec<f64> = (0..100).map(|i| i as f64 * 0.1).collect();
@@ -23,10 +23,10 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .line(&x_data, &y1) // First series
         .line(&x_data, &y2) // Second series
         .legend(LegendPosition::UpperRight) // Enable legend in top-right
-        .save_with_size("gallery/basic/axis_legend_test.png", 1200, 900)?;
+        .save_with_size("generated/bench/axis_legend_test.png", 1200, 900)?;
 
     println!("✅ Axis and legend test completed!");
-    println!("📂 Check ./gallery/basic/axis_legend_test.png");
+    println!("📂 Check generated/bench/axis_legend_test.png");
 
     Ok(())
 }

@@ -13,6 +13,7 @@ use ruviz::render::{Color, LineStyle, MarkerStyle, Theme};
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     println!("Legend Features Gallery Example");
     println!("================================");
+    std::fs::create_dir_all("generated/bench")?;
 
     // Generate sample data
     let x: Vec<f64> = (0..80).map(|i| i as f64 * 0.1).collect();
@@ -40,7 +41,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .line_style(LineStyle::Dotted)
         .legend(LegendPosition::UpperRight)
         .legend_corner_radius(5.0)
-        .save("gallery/publication/legend_line_styles.png")?;
+        .save("generated/bench/legend_line_styles.png")?;
 
     // Example 2: Scatter markers in legend
     println!("2. Creating legend with scatter markers...");
@@ -68,7 +69,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .marker(MarkerStyle::Triangle)
         .legend(LegendPosition::UpperLeft)
         .legend_corner_radius(4.0)
-        .save("gallery/publication/legend_scatter_markers.png")?;
+        .save("generated/bench/legend_scatter_markers.png")?;
 
     // Example 3: Horizontal legend layout
     println!("3. Creating horizontal legend layout...");
@@ -91,7 +92,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .legend(LegendPosition::LowerCenter)
         .legend_columns(3)
         .legend_corner_radius(4.0)
-        .save("gallery/publication/legend_horizontal.png")?;
+        .save("generated/bench/legend_horizontal.png")?;
 
     // Example 4: Mixed line and scatter with 2-column layout
     println!("4. Creating mixed series legend...");
@@ -118,15 +119,15 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .legend(LegendPosition::UpperRight)
         .legend_columns(2)
         .legend_corner_radius(6.0)
-        .save("gallery/publication/legend_mixed.png")?;
+        .save("generated/bench/legend_mixed.png")?;
 
     println!();
     println!("Gallery examples created!");
     println!("Check the following files:");
-    println!("  - gallery/publication/legend_line_styles.png");
-    println!("  - gallery/publication/legend_scatter_markers.png");
-    println!("  - gallery/publication/legend_horizontal.png");
-    println!("  - gallery/publication/legend_mixed.png");
+    println!("  - generated/bench/legend_line_styles.png");
+    println!("  - generated/bench/legend_scatter_markers.png");
+    println!("  - generated/bench/legend_horizontal.png");
+    println!("  - generated/bench/legend_mixed.png");
 
     Ok(())
 }

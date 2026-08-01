@@ -20,6 +20,9 @@ Committed published gallery media is not stored here. The published Rust gallery
 assets live under `docs/assets/gallery/rust/`, and the markdown index pages live
 under `docs/gallery/`.
 
+CI enforces this boundary by rejecting tracked render files under `gallery/`
+and literal gallery render destinations outside `generated/`.
+
 ## Regeneration
 
 For the release-facing Rust gallery, use:

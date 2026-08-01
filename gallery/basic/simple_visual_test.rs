@@ -15,9 +15,9 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .title("Visual Test - Cosmic-Text Rendering")
         .line(&x_data, &y_data)
         .color(Color::from_rgb(255, 0, 0)) // Bright red line
-        .save("gallery/basic/simple_visual_test.png")?;
+        .save("generated/bench/simple_visual_test.png")?;
 
-    println!("✅ Created gallery/basic/simple_visual_test.png");
+    println!("✅ Created generated/bench/simple_visual_test.png");
     println!("📋 This plot should show:");
     println!("   - Red line from bottom-left to top-right");
     println!("   - Black axes with professional Roboto font");
@@ -30,10 +30,10 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .title("Cosmic-Text Typography Demo")
         .size_px(400, 300)
         .line(&vec![0.0], &vec![0.0]) // Single point (will be barely visible)
-        .save("gallery/basic/simple_visual_test_typography.png")?;
+        .save("generated/bench/simple_visual_test_typography.png")?;
 
     println!(
-        "✅ Created gallery/basic/simple_visual_test_typography.png (shows professional text rendering)"
+        "✅ Created generated/bench/simple_visual_test_typography.png (shows professional text rendering)"
     );
 
     Ok(())

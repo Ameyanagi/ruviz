@@ -4,6 +4,7 @@ use ruviz::render::{Color, LineStyle, Theme};
 
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     println!("Testing legend horizontal (multi-column) layout...");
+    std::fs::create_dir_all("generated/bench")?;
 
     // Generate test data
     let x_data: Vec<f64> = (0..100).map(|i| i as f64 * 0.1).collect();
@@ -31,10 +32,10 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .legend(LegendPosition::UpperCenter)
         .legend_columns(3) // Single row with all 3 items
         .legend_corner_radius(4.0)
-        .save("gallery/basic/legend_horizontal_test.png")?;
+        .save("generated/bench/legend_horizontal_test.png")?;
 
     println!("Legend horizontal layout test completed!");
-    println!("Check ./gallery/basic/legend_horizontal_test.png");
+    println!("Check generated/bench/legend_horizontal_test.png");
 
     Ok(())
 }

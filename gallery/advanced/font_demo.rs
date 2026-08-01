@@ -17,9 +17,9 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .title("Professional Cosmic-Text Font Rendering")
         .xlabel("X Axis (Roboto Font + Advanced Shaping)")
         .ylabel("Y Values")
-        .save("gallery/advanced/font_demo.png")?;
+        .save("generated/bench/font_demo.png")?;
 
-    println!("Plot saved as 'gallery/advanced/font_demo.png'");
+    println!("Plot saved as 'generated/bench/font_demo.png'");
     println!("Text now uses cosmic-text with Roboto font and advanced typography");
 
     Ok(())

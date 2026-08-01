@@ -4,6 +4,7 @@ use ruviz::render::{Color, LineStyle, Theme};
 
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     println!("🔍 Testing legend handles with different line styles...");
+    std::fs::create_dir_all("generated/bench")?;
 
     // Generate test data
     let x_data: Vec<f64> = (0..100).map(|i| i as f64 * 0.1).collect();
@@ -29,10 +30,10 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .color(Color::GREEN)
         .line_style(LineStyle::Dotted)
         .legend(LegendPosition::UpperRight)
-        .save("gallery/basic/legend_handles_test.png")?;
+        .save("generated/bench/legend_handles_test.png")?;
 
     println!("✅ Legend handles test completed!");
-    println!("📂 Check ./gallery/basic/legend_handles_test.png");
+    println!("📂 Check generated/bench/legend_handles_test.png");
 
     Ok(())
 }

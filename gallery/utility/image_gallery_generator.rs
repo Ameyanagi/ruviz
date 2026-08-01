@@ -6,9 +6,9 @@ const WIDTH: u32 = 1_200;
 const HEIGHT: u32 = 900;
 
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    fs::create_dir_all("gallery/publication/basic")?;
-    fs::create_dir_all("gallery/publication/datashader")?;
-    fs::create_dir_all("gallery/publication/themes")?;
+    fs::create_dir_all("generated/bench/image-gallery/basic")?;
+    fs::create_dir_all("generated/bench/image-gallery/datashader")?;
+    fs::create_dir_all("generated/bench/image-gallery/themes")?;
 
     generate_exact_pixel_examples()?;
     generate_explicit_datashader_example()?;
@@ -29,7 +29,7 @@ fn generate_exact_pixel_examples() -> std::result::Result<(), Box<dyn std::error
         .ylabel("Amplitude")
         .line(&x, &y)
         .save_with_size(
-            "gallery/publication/basic/line_plot_exact_pixels.png",
+            "generated/bench/image-gallery/basic/line_plot_exact_pixels.png",
             WIDTH,
             HEIGHT,
         )?;
@@ -44,7 +44,7 @@ fn generate_exact_pixel_examples() -> std::result::Result<(), Box<dyn std::error
         .ylabel("Dependent Variable")
         .scatter(&x, &scatter_y)
         .save_with_size(
-            "gallery/publication/basic/scatter_plot_exact_pixels.png",
+            "generated/bench/image-gallery/basic/scatter_plot_exact_pixels.png",
             WIDTH,
             HEIGHT,
         )?;
@@ -66,7 +66,7 @@ fn generate_explicit_datashader_example() -> std::result::Result<(), Box<dyn std
         .into_plot();
     report_backend("DataShader gallery example", &plot);
     plot.save_with_size(
-        "gallery/publication/datashader/explicit_scatter_exact_pixels.png",
+        "generated/bench/image-gallery/datashader/explicit_scatter_exact_pixels.png",
         WIDTH,
         HEIGHT,
     )?;
@@ -92,7 +92,7 @@ fn generate_theme_examples() -> std::result::Result<(), Box<dyn std::error::Erro
             .theme(theme)
             .line(&x, &y)
             .save_with_size(
-                format!("gallery/publication/themes/{name}_exact_pixels.png"),
+                format!("generated/bench/image-gallery/themes/{name}_exact_pixels.png"),
                 WIDTH,
                 HEIGHT,
             )?;
