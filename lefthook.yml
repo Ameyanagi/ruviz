@@ -9,6 +9,9 @@ pre-commit:
     - name: docs-examples
       files: git diff --cached --name-only --diff-filter=ACMR | grep -E '(^|/)[^/]+\.md$|^scripts/check_docs\.py$|^lefthook\.yml$' || true
       run: uv run python scripts/check_docs.py
+    - name: repository-structure
+      files: git diff --cached --name-only --diff-filter=ACMR
+      run: uv run python scripts/check_repository_structure.py
     - name: oxfmt
       files: git diff --cached --name-only --diff-filter=ACMR | grep -E '^(packages/ruviz/src/.*\.(js|ts)|apps/web-demo/src/.*\.(js|ts)|apps/web-demo/tests/.*\.(js|ts)|apps/web-demo/playwright\.config\.js)$' || true
       run: bunx oxfmt --check {files}

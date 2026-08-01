@@ -326,6 +326,7 @@ cargo run --features animation --example animation_wave
 - [API Documentation](https://docs.rs/ruviz)
 - [Gallery](docs/gallery/README.md)
 - [Native GUI Adapters](adapters/gui/README.md)
+- [Repository Structure](docs/REPOSITORY_STRUCTURE.md)
 
 ## Development
 
