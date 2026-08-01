@@ -9,8 +9,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-ROOT = Path(__file__).resolve().parents[2]
-MANIFEST_PATH = ROOT / "benchmarks" / "interactive" / "scenarios.json"
+ROOT = Path(__file__).resolve().parents[3]
+MANIFEST_PATH = ROOT / "tools" / "benchmarks" / "interactive" / "scenarios.json"
 
 
 def run_command(args: list[str]) -> None:
@@ -125,7 +125,12 @@ def main() -> None:
         args.output_dir.resolve()
         if args.output_dir is not None
         else (
-            ROOT / "benchmarks" / "interactive" / "results" / ("reference" if args.mode == "full" else "smoke")
+            ROOT
+            / "tools"
+            / "benchmarks"
+            / "interactive"
+            / "results"
+            / ("reference" if args.mode == "full" else "smoke")
         ).resolve()
     )
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -155,7 +160,7 @@ def main() -> None:
     run_command(
         [
             "bun",
-            "benchmarks/interactive/wasm_runner.mjs",
+            "tools/benchmarks/interactive/wasm_runner.mjs",
             "--manifest",
             str(manifest_path),
             "--mode",

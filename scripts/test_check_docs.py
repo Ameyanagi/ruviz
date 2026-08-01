@@ -189,11 +189,11 @@ class CheckDocsTests(unittest.TestCase):
             "parallel_demo",
         )
         self.assertEqual(
-            targets["gallery/performance/memory_optimization_demo.rs"],
+            targets["tools/gallery/performance/memory_optimization_demo.rs"],
             "gallery_memory_optimization_demo",
         )
         self.assertEqual(
-            targets["gallery/performance/parallel_demo.rs"],
+            targets["tools/gallery/performance/parallel_demo.rs"],
             "gallery_parallel_demo",
         )
 
@@ -203,13 +203,13 @@ class CheckDocsTests(unittest.TestCase):
             "example": [
                 {
                     "name": "parallel_demo",
-                    "path": "gallery/performance/parallel_demo.rs",
+                    "path": "tools/gallery/performance/parallel_demo.rs",
                 }
             ],
         }
         sources = {
             "examples/parallel_demo.rs",
-            "gallery/performance/parallel_demo.rs",
+            "tools/gallery/performance/parallel_demo.rs",
         }
         errors = check_docs.check_example_target_coverage(manifest, sources)
         self.assertEqual(len(errors), 1)
@@ -219,12 +219,12 @@ class CheckDocsTests(unittest.TestCase):
         manifest = {
             "package": {"autoexamples": False},
             "example": [
-                {"name": "first", "path": "gallery/basic/demo.rs"},
-                {"name": "second", "path": "gallery/basic/demo.rs"},
+                {"name": "first", "path": "tools/gallery/basic/demo.rs"},
+                {"name": "second", "path": "tools/gallery/basic/demo.rs"},
             ],
         }
         errors = check_docs.check_example_target_coverage(
-            manifest, {"gallery/basic/demo.rs"}
+            manifest, {"tools/gallery/basic/demo.rs"}
         )
         self.assertEqual(len(errors), 1)
         self.assertIn("registered by multiple targets", errors[0])
@@ -232,7 +232,7 @@ class CheckDocsTests(unittest.TestCase):
     def test_uncovered_example_path_is_rejected(self) -> None:
         errors = check_docs.check_example_target_coverage(
             {"package": {"autoexamples": False}},
-            {"gallery/basic/unregistered.rs"},
+            {"tools/gallery/basic/unregistered.rs"},
         )
         self.assertEqual(len(errors), 1)
         self.assertIn("not covered by a Cargo example target", errors[0])

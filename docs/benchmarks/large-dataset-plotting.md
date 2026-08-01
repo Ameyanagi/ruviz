@@ -68,11 +68,11 @@ Interpretation notes:
 - Chromium: `145.0.7632.6`
 
 Raw artifacts:
-- [environment.json](../../benchmarks/plotting/results/reference/environment.json)
-- [results.csv](../../benchmarks/plotting/results/reference/results.csv)
-- [python.json](../../benchmarks/plotting/results/reference/python.json)
-- [rust.json](../../benchmarks/plotting/results/reference/rust.json)
-- [wasm.json](../../benchmarks/plotting/results/reference/wasm.json)
+- [environment.json](../../tools/benchmarks/plotting/results/reference/environment.json)
+- [results.csv](../../tools/benchmarks/plotting/results/reference/results.csv)
+- [python.json](../../tools/benchmarks/plotting/results/reference/python.json)
+- [rust.json](../../tools/benchmarks/plotting/results/reference/rust.json)
+- [wasm.json](../../tools/benchmarks/plotting/results/reference/wasm.json)
 
 ## Rust Renderer Diagnostics
 

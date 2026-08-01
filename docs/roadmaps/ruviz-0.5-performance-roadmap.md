@@ -31,7 +31,7 @@ Findings:
 | Robust error handling | New builder ingestion errors preserve `DataLengthMismatch`; public render checks pending ingestion errors before fallback rendering; new production unwrap/expect/panic guard. |
 | Nonbreaking high-level plot APIs | `Plot::step`, `Plot::area`, `Plot::stem`, `Plot::boxen`, and `Plot::quiver` with typed builders and rustdoc examples. |
 | Scientific feature additions | Boxen/letter-value plots promoted to the public API; quiver vector fields promoted to the public API and exported through the prelude. |
-| Benchmark comparison | `benchmarks/plotting/compare.py`, benchmark runner `--auto-optimize`, public render/save boundaries, and Markdown regression reports. |
+| Benchmark comparison | `tools/benchmarks/plotting/compare.py`, benchmark runner `--auto-optimize`, public render/save boundaries, and Markdown regression reports. |
 | Verification | `tests/nonbreaking_plot_api_test.rs`, focused backend/DataShader tests in `src/core/plot/tests.rs`, benchmark smoke output with `actualBackend`, and `scripts/check_no_new_production_unwraps.py`. |
 
 ## Deliberate next targets

@@ -960,7 +960,7 @@ Likely touchpoints:
 - `crates/ruviz-web/src/lib.rs`
 - `packages/ruviz-web/src/3d.ts`
 - `packages/ruviz-web/src/index.ts`
-- `demo/web/tests/3d.spec.js`
+- `apps/web-demo/tests/3d.spec.js`
 - `packages/ruviz-web/scripts/verify-npm-package.mjs`
 - `tests/fixtures/contracts/3d_presets.json`
 

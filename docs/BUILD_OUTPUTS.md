@@ -75,9 +75,10 @@ Use `make check-rust-gallery` for the non-mutating freshness check used by CI.
 
 CI rejects tracked files under `generated/` except for the two control files,
 and rejects tracked render output in the repository root, `examples/`, and
-`gallery/`. Under `tests/`, committed visual media is limited to fixture and
-reference trees. Gallery source programs are also checked so literal render
-destinations stay under `generated/`.
+`tools/gallery/`. Under `tests/`, committed visual media is limited to fixture
+and reference trees. Gallery source programs are also checked so literal
+render destinations stay under `generated/`. Tracked Python bytecode and
+`__pycache__/` files are rejected everywhere.
 
 ## Legacy Paths
 

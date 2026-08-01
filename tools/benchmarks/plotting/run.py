@@ -66,9 +66,9 @@ def main() -> None:
     manifest_path = args.manifest.resolve()
     if args.output_dir is None:
         default_output_dir = (
-            ROOT / "benchmarks" / "plotting" / "results" / "reference"
+            ROOT / "tools" / "benchmarks" / "plotting" / "results" / "reference"
             if args.mode == "full"
-            else ROOT / "benchmarks" / "plotting" / "results" / "smoke"
+            else ROOT / "tools" / "benchmarks" / "plotting" / "results" / "smoke"
         )
         output_dir = default_output_dir.resolve()
     else:
@@ -121,7 +121,7 @@ def main() -> None:
         run_command(
             [
                 "bun",
-                "benchmarks/plotting/wasm_runner.mjs",
+                "tools/benchmarks/plotting/wasm_runner.mjs",
                 "--manifest",
                 str(manifest_path),
                 "--mode",
@@ -151,7 +151,7 @@ def main() -> None:
     docs_markdown = generate_markdown_report(
         environment=environment,
         runtime_payloads=runtime_payloads,
-        raw_link_base="../../benchmarks/plotting/results/reference"
+        raw_link_base="../../tools/benchmarks/plotting/results/reference"
         if output_dir.name == "reference"
         else ".",
         report_title="Large Dataset Plotting Benchmarks",

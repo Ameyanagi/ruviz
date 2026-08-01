@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 
 import { chromium } from "@playwright/test";
 
-const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+const root = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const baseUrl = "http://127.0.0.1:4173";
 
 function parseArgs(argv) {
@@ -98,10 +98,10 @@ async function main() {
   const outputPath = resolve(root, args.output);
   const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
 
-  await runCommand("bun", ["run", "--cwd", "demo/web", "build"]);
+  await runCommand("bun", ["run", "--cwd", "apps/web-demo", "build"]);
 
   const preview = spawn("bunx", ["vite", "preview", "--host", "127.0.0.1", "--port", "4173"], {
-    cwd: resolve(root, "demo/web"),
+    cwd: resolve(root, "apps/web-demo"),
     stdio: "inherit",
   });
 

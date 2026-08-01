@@ -1267,10 +1267,10 @@ jobs:
           sudo apt-get install -y mesa-vulkan-drivers
 
       - name: Run cross-browser 2D smoke tests
-        run: bun run --cwd demo/web test:e2e -- tests/browser.spec.js
+        run: bun run --cwd apps/web-demo test:e2e -- tests/browser.spec.js
 
       - name: Run Chromium 3D WebGPU smoke test
-        run: bun run --cwd demo/web test:e2e -- tests/3d.spec.js --project=chromium
+        run: bun run --cwd apps/web-demo test:e2e -- tests/3d.spec.js --project=chromium
 
       - name: Upload browser failure diagnostics
         if: failure()
@@ -1278,8 +1278,8 @@ jobs:
         with:
           name: wasm-web-playwright-failure-${{ github.run_id }}
           path: |
-            demo/web/playwright-report
-            demo/web/test-results
+            apps/web-demo/playwright-report
+            apps/web-demo/test-results
           if-no-files-found: warn
           retention-days: 7
 
@@ -1395,7 +1395,7 @@ jobs:
           while IFS= read -r path; do
             [ -z "${path}" ] && continue
             case "${path}" in
-              .github/workflows/ci.yml|.github/actions/install-linux-desktop-build-deps/*|Cargo.toml|Cargo.lock|Makefile|package.json|bun.lock|generated/manifest.json|docs/BUILD_OUTPUTS.md|src/*|examples/*|python/*|packages/ruviz-web/*|crates/ruviz-web/*|demo/web/*|scripts/*)
+              .github/workflows/ci.yml|.github/actions/install-linux-desktop-build-deps/*|Cargo.toml|Cargo.lock|Makefile|package.json|bun.lock|generated/manifest.json|docs/BUILD_OUTPUTS.md|src/*|examples/*|python/*|packages/ruviz-web/*|crates/ruviz-web/*|apps/web-demo/*|scripts/*)
                 run_preview=true
                 break
                 ;;
@@ -1404,7 +1404,7 @@ jobs:
           while IFS= read -r path; do
             [ -z "${path}" ] && continue
             case "${path}" in
-              scripts/generate_gallery.rs|examples/doc_*.rs|examples/generate_golden_images.rs|examples/scientific_showcase.rs|examples/parallel_demo.rs|examples/memory_optimization_demo.rs|examples/generate_animation_gallery.rs|docs/gallery/*|docs/assets/rustdoc/*|docs/assets/gallery/*|docs/guide/*|tests/gallery_*|tests/common/visual.rs|tests/fixtures/golden/*|src/*|Makefile|.github/workflows/ci.yml)
+              scripts/generate_gallery.rs|tools/gallery/*|examples/doc_*.rs|examples/generate_golden_images.rs|examples/scientific_showcase.rs|examples/parallel_demo.rs|examples/memory_optimization_demo.rs|examples/generate_animation_gallery.rs|docs/gallery/*|docs/assets/rustdoc/*|docs/assets/gallery/*|docs/guide/*|tests/gallery_*|tests/common/visual.rs|tests/fixtures/golden/*|src/*|Makefile|.github/workflows/ci.yml)
                 run_gallery=true
                 break
                 ;;

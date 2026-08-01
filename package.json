@@ -4,16 +4,16 @@
   "packageManager": "bun@1.3.5",
   "workspaces": [
     "packages/*",
-    "demo/web"
+    "apps/*"
   ],
   "scripts": {
     "postinstall": "bash ./scripts/setup-git-hooks.sh",
-    "lint:web": "oxlint --deny-warnings packages/ruviz-web/src demo/web/src demo/web/tests demo/web/playwright.config.js",
-    "format:web": "oxfmt --check packages/ruviz-web/src demo/web/src demo/web/tests demo/web/playwright.config.js",
-    "format:web:write": "oxfmt --write packages/ruviz-web/src demo/web/src demo/web/tests demo/web/playwright.config.js",
+    "lint:web": "oxlint --deny-warnings packages/ruviz-web/src apps/web-demo/src apps/web-demo/tests apps/web-demo/playwright.config.js",
+    "format:web": "oxfmt --check packages/ruviz-web/src apps/web-demo/src apps/web-demo/tests apps/web-demo/playwright.config.js",
+    "format:web:write": "oxfmt --write packages/ruviz-web/src apps/web-demo/src apps/web-demo/tests apps/web-demo/playwright.config.js",
     "check:web": "bun run lint:web && bun run format:web",
     "build:web-sdk": "bun run --cwd packages/ruviz-web build",
-    "build:web-demo": "bun run --cwd demo/web build",
+    "build:web-demo": "bun run --cwd apps/web-demo build",
     "build:web": "bun run build:web-sdk && bun run build:web-demo",
     "build:python-widget": "bun python/scripts/build_widget.ts",
     "sync:python": "cd python && uv sync",
@@ -25,10 +25,10 @@
     "build:docs:python": "cd python && uv run maturin develop && uv run python scripts/generate_gallery.py && uv run python -m mkdocs build",
     "docs:web": "bun run --cwd packages/ruviz-web docs:dev",
     "build:docs:web": "bun run --cwd packages/ruviz-web docs:build",
-    "dev:web": "bun run --cwd demo/web dev",
-    "preview:web": "bun run --cwd demo/web preview",
-    "test:web": "bun run --cwd demo/web test:e2e",
-    "install:web-browsers": "cd demo/web && bunx playwright install --with-deps chromium firefox webkit",
+    "dev:web": "bun run --cwd apps/web-demo dev",
+    "preview:web": "bun run --cwd apps/web-demo preview",
+    "test:web": "bun run --cwd apps/web-demo test:e2e",
+    "install:web-browsers": "cd apps/web-demo && bunx playwright install --with-deps chromium firefox webkit",
     "pack:web-sdk": "bun run --cwd packages/ruviz-web verify:pack"
   },
   "devDependencies": {
