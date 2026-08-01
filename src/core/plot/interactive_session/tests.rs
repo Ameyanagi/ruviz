@@ -3166,6 +3166,7 @@ fn test_unsupported_surface_series_fall_back_to_image_capability() {
 }
 
 #[test]
+#[ignore = "large rendering validation runs in the scheduled heavy lane"]
 fn test_large_dataset_surface_frames_render_without_blackout() {
     let x: Vec<f64> = (0..100_000).map(|index| index as f64 * 0.0001).collect();
     let y: Vec<f64> = x

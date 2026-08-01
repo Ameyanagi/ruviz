@@ -109,6 +109,7 @@ impl GpuRenderer {
 
     /// Create GPU renderer with custom configuration
     pub async fn with_config(config: super::GpuConfig) -> Result<Self> {
+        let memory_limit_fraction = config.memory_limit_fraction;
         // Initialize GPU backend
         let gpu_backend = Arc::new(GpuBackend::with_config(config).await.map_err(|e| {
             PlottingError::GpuInitError {
@@ -130,10 +131,11 @@ impl GpuRenderer {
                 })?;
 
         // Initialize GPU memory pool
-        let gpu_memory_pool = GpuMemoryPool::new(
+        let gpu_memory_pool = GpuMemoryPool::with_memory_limit_fraction(
             gpu_backend.device().device().clone(),
             gpu_backend.device().queue().clone(),
             gpu_backend.capabilities(),
+            memory_limit_fraction,
         )?;
 
         // Set intelligent threshold based on GPU capabilities

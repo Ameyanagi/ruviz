@@ -79,7 +79,10 @@ pub struct GpuConfig {
     pub enable_gpu: bool,
     /// Preferred backend (Vulkan, Metal, DX12, GL)
     pub preferred_backend: Option<wgpu::Backends>,
-    /// Memory usage limit as fraction of total GPU memory
+    /// Pool limit as a fraction of the adapter's maximum buffer size.
+    ///
+    /// Wgpu does not expose total device memory portably, so this is a
+    /// conservative allocation-budget approximation rather than a VRAM ratio.
     pub memory_limit_fraction: f32,
     /// Enable debug validation layers
     pub enable_validation: bool,
@@ -136,7 +139,12 @@ impl GpuBackend {
         // Initialize buffer manager with platform-optimized settings
         let platform_optimizer = get_platform_optimizer();
         let hints = platform_optimizer.get_performance_hints();
-        let buffer_manager = BufferManager::new(&device, &capabilities, &hints)?;
+        let buffer_manager = BufferManager::with_memory_limit_fraction(
+            &device,
+            &capabilities,
+            &hints,
+            config.memory_limit_fraction,
+        )?;
 
         // Initialize pipeline cache
         let pipeline_cache = PipelineCache::new();
@@ -195,8 +203,12 @@ impl GpuBackend {
                 limits.max_compute_workgroups_per_dimension,
                 limits.max_compute_workgroups_per_dimension,
             ],
-            memory_size: None,      // wgpu doesn't expose memory info directly
-            supports_compute: true, // Assume compute shader support for now
+            memory_size: None, // wgpu doesn't expose memory info directly
+            supports_compute: device
+                .adapter()
+                .get_downlevel_capabilities()
+                .flags
+                .contains(wgpu::DownlevelFlags::COMPUTE_SHADERS),
             supports_storage_textures: features
                 .contains(wgpu::Features::STORAGE_RESOURCE_BINDING_ARRAY),
             supports_timestamps: features.contains(wgpu::Features::TIMESTAMP_QUERY),
@@ -240,7 +252,7 @@ impl GpuBackend {
     /// Validate that GPU meets minimum requirements
     fn validate_capabilities(
         capabilities: &GpuCapabilities,
-        config: &GpuConfig,
+        _config: &GpuConfig,
     ) -> Result<(), PlottingError> {
         // Check minimum texture size (need at least 4K for reasonable plots)
         if capabilities.max_texture_size < 4096 {
@@ -248,15 +260,6 @@ impl GpuBackend {
                 "Maximum texture size {} is too small (minimum 4096)",
                 capabilities.max_texture_size
             )));
-        }
-
-        // Check compute shader support if required
-        if !capabilities.supports_compute
-            && config.required_features.contains(wgpu::Features::empty())
-        {
-            return Err(PlottingError::UnsupportedGpuFeature(
-                "Compute shaders required but not supported".to_string(),
-            ));
         }
 
         // Check minimum buffer size (need at least 256MB for large datasets)

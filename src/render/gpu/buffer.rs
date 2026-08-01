@@ -4,7 +4,10 @@ use crate::core::error::PlottingError;
 use crate::data::platform::PerformanceHints;
 use crate::render::gpu::{BufferStats, GpuCapabilities, GpuDevice};
 use std::collections::{HashMap, VecDeque};
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 use wgpu::util::DeviceExt;
 
 /// GPU buffer usage patterns for optimization
@@ -28,7 +31,11 @@ impl BufferUsage {
     /// Convert to wgpu buffer usage flags
     pub fn to_wgpu_usage(self) -> wgpu::BufferUsages {
         match self {
-            BufferUsage::Static => wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::INDEX,
+            BufferUsage::Static => {
+                wgpu::BufferUsages::VERTEX
+                    | wgpu::BufferUsages::INDEX
+                    | wgpu::BufferUsages::COPY_DST
+            }
             BufferUsage::Dynamic => wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             BufferUsage::Compute => {
                 wgpu::BufferUsages::STORAGE
@@ -49,8 +56,10 @@ pub struct GpuBuffer {
     size: u64,
     usage: BufferUsage,
     label: String,
-    mapped: bool,
+    mapped: Arc<AtomicBool>,
     pool_id: Option<usize>,
+    device: Arc<wgpu::Device>,
+    queue: Arc<wgpu::Queue>,
 }
 
 impl GpuBuffer {
@@ -80,8 +89,10 @@ impl GpuBuffer {
             size,
             usage,
             label: label.to_string(),
-            mapped: false,
+            mapped: Arc::new(AtomicBool::new(false)),
             pool_id: None,
+            device: Arc::clone(device.device()),
+            queue: Arc::clone(device.queue()),
         })
     }
 
@@ -112,8 +123,10 @@ impl GpuBuffer {
             size,
             usage,
             label: label.to_string(),
-            mapped: false,
+            mapped: Arc::new(AtomicBool::new(false)),
             pool_id: None,
+            device: Arc::clone(device.device()),
+            queue: Arc::clone(device.queue()),
         })
     }
 
@@ -139,44 +152,75 @@ impl GpuBuffer {
 
     /// Check if buffer is mapped
     pub fn is_mapped(&self) -> bool {
-        self.mapped
+        self.mapped.load(Ordering::Acquire)
     }
 
     /// Map buffer for reading
-    pub async fn map_read(&mut self) -> Result<&[u8], PlottingError> {
-        if self.mapped {
+    pub async fn map_read(&mut self) -> Result<Vec<u8>, PlottingError> {
+        if !self
+            .usage
+            .to_wgpu_usage()
+            .contains(wgpu::BufferUsages::MAP_READ)
+        {
+            return Err(PlottingError::BufferError(
+                "Buffer was not created with MAP_READ usage".to_string(),
+            ));
+        }
+        if self.mapped.swap(true, Ordering::AcqRel) {
             return Err(PlottingError::BufferError(
                 "Buffer already mapped".to_string(),
             ));
         }
 
         let slice = self.buffer.slice(..);
-        slice.map_async(wgpu::MapMode::Read, |result| {
-            if let Err(e) = result {
-                log::error!("Failed to map buffer for reading: {}", e);
-            }
+        let (sender, receiver) = futures_intrusive::channel::shared::oneshot_channel();
+        slice.map_async(wgpu::MapMode::Read, move |result| {
+            let _ = sender.send(result);
         });
+        let submission = self.queue.submit(std::iter::empty());
+        if let Err(error) = self.device.poll(wgpu::PollType::Wait {
+            submission_index: Some(submission),
+            timeout: None,
+        }) {
+            self.mapped.store(false, Ordering::Release);
+            self.buffer.unmap();
+            return Err(PlottingError::BufferError(format!(
+                "Failed to poll mapped buffer: {error}"
+            )));
+        }
+        let Some(map_result) = receiver.receive().await else {
+            self.mapped.store(false, Ordering::Release);
+            self.buffer.unmap();
+            return Err(PlottingError::BufferError(
+                "Buffer mapping callback was dropped".to_string(),
+            ));
+        };
+        if let Err(error) = map_result {
+            self.mapped.store(false, Ordering::Release);
+            self.buffer.unmap();
+            return Err(PlottingError::BufferError(format!(
+                "Failed to map buffer for reading: {error}"
+            )));
+        }
 
-        // TODO: Handle async mapping properly
-        self.mapped = true;
-
-        // This is a placeholder - proper async handling would be needed
-        Err(PlottingError::BufferError(
-            "Async mapping not fully implemented".to_string(),
-        ))
+        let bytes = slice.get_mapped_range().to_vec();
+        self.unmap();
+        Ok(bytes)
     }
 
     /// Unmap buffer
     pub fn unmap(&mut self) {
-        if self.mapped {
+        if self.mapped.swap(false, Ordering::AcqRel) {
             self.buffer.unmap();
-            self.mapped = false;
         }
     }
 
     /// Write data to buffer
     pub fn write(&self, device: &GpuDevice, offset: u64, data: &[u8]) -> Result<(), PlottingError> {
-        if offset + data.len() as u64 > self.size {
+        let end = offset.checked_add(data.len() as u64).ok_or_else(|| {
+            PlottingError::BufferError("Buffer write offset overflowed".to_string())
+        })?;
+        if end > self.size {
             return Err(PlottingError::BufferError(format!(
                 "Write would exceed buffer size: {}+{} > {}",
                 offset,
@@ -187,12 +231,6 @@ impl GpuBuffer {
 
         device.write_buffer(&self.buffer, offset, data);
         Ok(())
-    }
-}
-
-impl Drop for GpuBuffer {
-    fn drop(&mut self) {
-        self.unmap();
     }
 }
 
@@ -224,7 +262,8 @@ impl BufferPool {
         device: &GpuDevice,
         size: u64,
         label: &str,
-    ) -> Result<(usize, GpuBuffer), PlottingError> {
+        max_new_bytes: u64,
+    ) -> Result<(usize, u64, u64), PlottingError> {
         // Try to reuse existing buffer of appropriate size
         if let Some(mut buffer) = self.find_suitable_buffer(size) {
             buffer.label = format!("{} (reused)", label);
@@ -232,7 +271,15 @@ impl BufferPool {
             self.next_id += 1;
             self.in_use.insert(id, buffer);
             self.reuse_count += 1;
-            return Ok((id, self.in_use.get(&id).unwrap().clone()));
+            let actual_size = self.in_use.get(&id).map_or(size, |buffer| buffer.size);
+            return Ok((id, actual_size, 0));
+        }
+
+        if size > max_new_bytes {
+            return Err(PlottingError::GpuMemoryError {
+                requested: size as usize,
+                available: Some(max_new_bytes as usize),
+            });
         }
 
         // Create new buffer
@@ -244,26 +291,29 @@ impl BufferPool {
         self.total_allocated += size;
 
         self.in_use.insert(id, buffer);
-        Ok((id, self.in_use.get(&id).unwrap().clone()))
+        Ok((id, size, size))
     }
 
     /// Return buffer to pool
-    fn deallocate(&mut self, id: usize) -> bool {
+    fn deallocate(&mut self, id: usize) -> Option<u64> {
         if let Some(buffer) = self.in_use.remove(&id) {
             // Only keep buffer if it's reasonably sized and pool isn't too full
             if buffer.size <= 64 * 1024 * 1024 && self.available.len() < 16 {
                 self.available.push_back(buffer);
+                Some(0)
+            } else {
+                self.total_allocated = self.total_allocated.saturating_sub(buffer.size);
+                Some(buffer.size)
             }
-            true
         } else {
-            false
+            None
         }
     }
 
     /// Find suitable buffer for reuse
     fn find_suitable_buffer(&mut self, required_size: u64) -> Option<GpuBuffer> {
         // Look for buffer that's at least the required size but not too much larger
-        let max_size = required_size * 2; // Don't waste more than 2x memory
+        let max_size = required_size.saturating_mul(2); // Don't waste more than 2x memory
 
         for i in 0..self.available.len() {
             if self.available[i].size >= required_size && self.available[i].size <= max_size {
@@ -314,10 +364,23 @@ impl BufferManager {
         capabilities: &GpuCapabilities,
         hints: &PerformanceHints,
     ) -> Result<Self, PlottingError> {
-        // Calculate memory limit (80% of max buffer size or platform hint)
-        let memory_limit = capabilities.max_buffer_size.min(
-            hints.optimal_chunk_size as u64 * 1024, // Conservative limit
-        );
+        Self::with_memory_limit_fraction(device, capabilities, hints, 0.8)
+    }
+
+    /// Create a buffer manager with an explicit fraction of the adapter limit.
+    pub fn with_memory_limit_fraction(
+        _device: &GpuDevice,
+        capabilities: &GpuCapabilities,
+        hints: &PerformanceHints,
+        memory_limit_fraction: f32,
+    ) -> Result<Self, PlottingError> {
+        if !memory_limit_fraction.is_finite() || !(0.0..=1.0).contains(&memory_limit_fraction) {
+            return Err(PlottingError::InvalidInput(
+                "GPU memory_limit_fraction must be finite and between 0 and 1".into(),
+            ));
+        }
+        let memory_limit =
+            (capabilities.max_buffer_size as f64 * memory_limit_fraction as f64) as u64;
 
         let mut pools = HashMap::new();
 
@@ -352,26 +415,24 @@ impl BufferManager {
         usage: BufferUsage,
         label: &str,
     ) -> Result<BufferHandle, PlottingError> {
-        // Check memory limits
-        if self.total_memory + size > self.memory_limit {
-            return Err(PlottingError::GpuMemoryError {
-                requested: size as usize,
-                available: Some((self.memory_limit - self.total_memory) as usize),
-            });
-        }
-
         let pool = self.pools.get_mut(&usage).ok_or_else(|| {
             PlottingError::BufferError(format!("No pool for usage type: {:?}", usage))
         })?;
 
-        let (id, buffer) = pool.allocate(device, size, label)?;
-        self.total_memory += size;
+        let available = self.memory_limit.saturating_sub(self.total_memory);
+        let (id, actual_size, newly_allocated) = pool.allocate(device, size, label, available)?;
+        self.total_memory = self.total_memory.checked_add(newly_allocated).ok_or(
+            PlottingError::GpuMemoryError {
+                requested: newly_allocated as usize,
+                available: Some(available as usize),
+            },
+        )?;
         self.allocation_count += 1;
 
         Ok(BufferHandle {
             id,
             usage,
-            size,
+            size: actual_size,
             _phantom: std::marker::PhantomData,
         })
     }
@@ -382,14 +443,15 @@ impl BufferManager {
             PlottingError::BufferError(format!("No pool for usage type: {:?}", handle.usage))
         })?;
 
-        if pool.deallocate(handle.id) {
-            self.total_memory = self.total_memory.saturating_sub(handle.size);
-            self.deallocation_count += 1;
-            Ok(())
-        } else {
-            Err(PlottingError::BufferError(
+        match pool.deallocate(handle.id) {
+            Some(freed) => {
+                self.total_memory = self.total_memory.saturating_sub(freed);
+                self.deallocation_count += 1;
+                Ok(())
+            }
+            None => Err(PlottingError::BufferError(
                 "Buffer not found in pool".to_string(),
-            ))
+            )),
         }
     }
 
@@ -406,8 +468,15 @@ impl BufferManager {
         usage: BufferUsage,
         label: &str,
     ) -> Result<(BufferHandle, GpuBuffer), PlottingError> {
+        if !usage.to_wgpu_usage().contains(wgpu::BufferUsages::COPY_DST) {
+            return Err(PlottingError::BufferError(format!(
+                "Buffer usage {usage:?} cannot be initialized with queue writes"
+            )));
+        }
         let handle = self.allocate(device, data.len() as u64, usage, label)?;
-        let buffer = self.get_buffer(&handle).unwrap().clone();
+        let buffer = self.get_buffer(&handle).cloned().ok_or_else(|| {
+            PlottingError::BufferError("Newly allocated buffer was not retained".to_string())
+        })?;
         buffer.write(device, 0, data)?;
         Ok((handle, buffer))
     }
@@ -418,6 +487,7 @@ impl BufferManager {
             // Keep only recent buffers in available pool
             while pool.available.len() > 8 {
                 if let Some(buffer) = pool.available.pop_front() {
+                    pool.total_allocated = pool.total_allocated.saturating_sub(buffer.size);
                     self.total_memory = self.total_memory.saturating_sub(buffer.size);
                 }
             }
@@ -465,6 +535,7 @@ impl BufferManager {
             if stats.reuse_count < stats.available_buffers / 4 {
                 while pool.available.len() > 4 {
                     if let Some(buffer) = pool.available.pop_front() {
+                        pool.total_allocated = pool.total_allocated.saturating_sub(buffer.size);
                         self.total_memory = self.total_memory.saturating_sub(buffer.size);
                     }
                 }
@@ -498,5 +569,4 @@ impl BufferHandle {
     }
 }
 
-// Note: GpuBuffer doesn't implement Clone as wgpu::Buffer doesn't support cloning
-// This is intentional to prevent accidental duplication of GPU resources
+// Handles are move-only; cloned `GpuBuffer` values share the same physical buffer.

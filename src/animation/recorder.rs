@@ -459,7 +459,7 @@ where
     let video_config = config.to_video_config();
     let mut stream = VideoStream::new(&path, video_config)?;
     let (actual_width, actual_height) = config.actual_dimensions();
-    let mut capture = FrameCapture::new(actual_width, actual_height);
+    let mut capture = FrameCapture::new(actual_width, actual_height)?;
     let mut ticker = TickGenerator::new(config.framerate as f64);
 
     // Determine figure parameters for capture (includes pre-calculated DPI)
@@ -609,7 +609,7 @@ where
     let video_config = config.to_video_config();
     let mut stream = VideoStream::new(&path, video_config)?;
     let (actual_width, actual_height) = config.actual_dimensions();
-    let mut capture = FrameCapture::new(actual_width, actual_height);
+    let mut capture = FrameCapture::new(actual_width, actual_height)?;
     let mut ticker = TickGenerator::new(config.framerate as f64);
 
     // Determine figure parameters for capture (includes pre-calculated DPI)
@@ -738,7 +738,7 @@ where
     let video_config = config.to_video_config();
     let mut stream = VideoStream::new(&path, video_config)?;
     let (actual_width, actual_height) = config.actual_dimensions();
-    let mut capture = FrameCapture::new(actual_width, actual_height);
+    let mut capture = FrameCapture::new(actual_width, actual_height)?;
     let mut ticker = TickGenerator::new(config.framerate as f64);
 
     // Determine figure parameters for capture (includes pre-calculated DPI)
@@ -814,8 +814,8 @@ pub fn record_plot_with_config<P: AsRef<Path>>(
 
     let video_config = config.to_video_config();
     let mut stream = VideoStream::new(&path, video_config)?;
-    let (width, height) = (config.width, config.height);
-    let mut capture = FrameCapture::new(width, height);
+    let (width, height) = config.actual_dimensions();
+    let mut capture = FrameCapture::new(width, height)?;
     let mut ticker = TickGenerator::new(config.framerate as f64);
 
     for frame in 0..frame_count {
@@ -826,8 +826,9 @@ pub fn record_plot_with_config<P: AsRef<Path>>(
         let sized_plot = frame_plot_for_config(plot, &config);
         let image = sized_plot.render_at(time)?;
 
-        // Convert to frame data and record
-        stream.record_frame_sized(&image.pixels, width, height, &tick)?;
+        // Convert the rendered RGBA image to the RGB format encoders accept.
+        let rgb = capture.copy_rgba(image.width, image.height, &image.pixels)?;
+        stream.record_frame_sized(rgb, width, height, &tick)?;
     }
 
     stream.save()
@@ -836,11 +837,8 @@ pub fn record_plot_with_config<P: AsRef<Path>>(
 fn frame_plot_for_config(plot: &Plot, config: &RecordConfig) -> Plot {
     let (width, height) = (config.width, config.height);
 
-    if config.preserve_figure {
-        let dpi = (width as f32 / config.figure_width).max(height as f32 / config.figure_height);
-        plot.clone()
-            .size(config.figure_width, config.figure_height)
-            .dpi(dpi as u32)
+    if let Some((figure_width, figure_height, dpi)) = config.figure_params() {
+        plot.clone().size(figure_width, figure_height).dpi(dpi)
     } else {
         plot.clone().set_output_pixels(width, height)
     }
@@ -1045,6 +1043,21 @@ mod tests {
     }
 
     #[test]
+    fn test_frame_plot_for_config_matches_rounded_preserve_figure_dimensions() {
+        let plot = Plot::new().line(&[0.0, 1.0], &[1.0, 2.0]).into();
+        let config = RecordConfig::new()
+            .dimensions(801, 601)
+            .preserve_figure_size();
+
+        let sized_plot = frame_plot_for_config(&plot, &config);
+
+        assert_eq!(
+            sized_plot.get_config().canvas_size(),
+            config.actual_dimensions()
+        );
+    }
+
+    #[test]
     fn test_frame_plot_for_config_non_preserve_reuses_plot_dpi() {
         let plot = Plot::new()
             .size(6.4, 4.8)
@@ -1245,5 +1258,18 @@ mod tests {
         assert_eq!(values.len(), 10);
         assert!((values[0] - 0.0).abs() < 1e-10);
         assert!((values[5] - 50.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_record_plot_converts_rendered_rgba_to_encoder_rgb() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("reactive.gif");
+        let plot: Plot = Plot::new().line(&[0.0, 1.0], &[0.0, 1.0]).into();
+        let config = RecordConfig::new().dimensions(100, 100).framerate(1);
+
+        record_plot_with_config(&path, &plot, 1.0, config).unwrap();
+
+        let bytes = std::fs::read(path).unwrap();
+        assert!(bytes.starts_with(b"GIF"));
     }
 }

@@ -2,7 +2,10 @@
 
 use crate::core::error::PlottingError;
 use crate::render::gpu::GpuConfig;
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 use wgpu::util::DeviceExt;
 
 /// GPU device wrapper with enhanced functionality
@@ -11,6 +14,7 @@ pub struct GpuDevice {
     queue: Arc<wgpu::Queue>,
     adapter: wgpu::Adapter,
     info: GpuDeviceInfo,
+    lost: Arc<AtomicBool>,
 }
 
 /// Information about the GPU device
@@ -42,7 +46,7 @@ impl Default for DeviceSelector {
             required_features: wgpu::Features::empty(),
             required_limits: wgpu::Limits::default(),
             prefer_integrated: false,
-            prefer_discrete: true, // Prefer discrete GPU for plotting
+            prefer_discrete: false,
         }
     }
 }
@@ -102,6 +106,8 @@ impl DeviceSelector {
             })
             .collect();
 
+        scored_adapters.retain(|(_, _, score)| *score >= 0);
+
         // Sort by score (highest first)
         scored_adapters.sort_by(|a, b| b.2.cmp(&a.2));
 
@@ -121,8 +127,18 @@ impl DeviceSelector {
 
         // Device type preference
         match info.device_type {
-            wgpu::DeviceType::DiscreteGpu if self.prefer_discrete => score += 100,
-            wgpu::DeviceType::IntegratedGpu if self.prefer_integrated => score += 100,
+            wgpu::DeviceType::DiscreteGpu if self.prefer_discrete => score += 120,
+            wgpu::DeviceType::IntegratedGpu if self.prefer_integrated => score += 120,
+            wgpu::DeviceType::DiscreteGpu
+                if self.power_preference == wgpu::PowerPreference::HighPerformance =>
+            {
+                score += 100;
+            }
+            wgpu::DeviceType::IntegratedGpu
+                if self.power_preference == wgpu::PowerPreference::LowPower =>
+            {
+                score += 100;
+            }
             wgpu::DeviceType::DiscreteGpu => score += 50,
             wgpu::DeviceType::IntegratedGpu => score += 30,
             wgpu::DeviceType::VirtualGpu => score += 10,
@@ -156,8 +172,11 @@ impl DeviceSelector {
         }
 
         // Bonus for additional useful features
-        if features.contains(wgpu::Features::empty()) {
-            // TODO: Check for actual compute shader feature
+        if adapter
+            .get_downlevel_capabilities()
+            .flags
+            .contains(wgpu::DownlevelFlags::COMPUTE_SHADERS)
+        {
             score += 30;
         }
         if features.contains(wgpu::Features::STORAGE_RESOURCE_BINDING_ARRAY) {
@@ -172,6 +191,9 @@ impl DeviceSelector {
 
         // Check limits
         let limits = adapter.limits();
+        if !self.required_limits.check_limits(&limits) {
+            return -1000;
+        }
 
         // Prefer larger texture sizes
         if limits.max_texture_dimension_2d >= 16384 {
@@ -240,6 +262,12 @@ impl GpuDevice {
         device.on_uncaptured_error(Arc::new(|error| {
             log::error!("GPU Error: {}", error);
         }));
+        let lost = Arc::new(AtomicBool::new(false));
+        let lost_callback = Arc::clone(&lost);
+        device.set_device_lost_callback(move |reason, message| {
+            lost_callback.store(true, Ordering::Release);
+            log::error!("GPU device lost ({reason:?}): {message}");
+        });
 
         let info = GpuDeviceInfo {
             name: adapter_info.name.clone(),
@@ -261,6 +289,7 @@ impl GpuDevice {
             queue: Arc::new(queue),
             adapter,
             info,
+            lost,
         })
     }
 
@@ -296,8 +325,7 @@ impl GpuDevice {
 
     /// Check if device is still valid
     pub fn is_valid(&self) -> bool {
-        // wgpu doesn't have is_lost() method in this version, assume valid
-        true
+        !self.lost.load(Ordering::Acquire)
     }
 
     /// Create buffer with device extension utility

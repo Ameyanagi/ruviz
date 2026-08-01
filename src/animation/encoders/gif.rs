@@ -69,11 +69,16 @@ impl GifEncoder {
     }
 
     /// Set frame delay from framerate
-    pub fn with_framerate(mut self, fps: f64) -> Self {
+    pub fn with_framerate(mut self, fps: f64) -> Result<Self> {
+        if !fps.is_finite() || fps <= 0.0 {
+            return Err(PlottingError::InvalidInput(
+                "GIF framerate must be finite and greater than zero".into(),
+            ));
+        }
         // Convert FPS to centiseconds delay
         // 30 FPS = 33.3ms = 3.33 centiseconds ≈ 3
         self.frame_delay = ((100.0 / fps).round() as u16).max(1);
-        self
+        Ok(self)
     }
 
     /// Quantize RGB data to indexed color
@@ -121,8 +126,23 @@ impl Encoder for GifEncoder {
             ));
         }
 
-        self.width = width as u16;
-        self.height = height as u16;
+        self.width = u16::try_from(width).map_err(|_| {
+            PlottingError::InvalidInput(format!(
+                "GIF width {width} exceeds the format maximum of {} pixels",
+                u16::MAX
+            ))
+        })?;
+        self.height = u16::try_from(height).map_err(|_| {
+            PlottingError::InvalidInput(format!(
+                "GIF height {height} exceeds the format maximum of {} pixels",
+                u16::MAX
+            ))
+        })?;
+        if self.width == 0 || self.height == 0 {
+            return Err(PlottingError::InvalidInput(
+                "GIF dimensions must be greater than zero".into(),
+            ));
+        }
 
         if let Some(parent) = self.path.parent()
             && !parent.as_os_str().is_empty()
@@ -221,15 +241,46 @@ mod tests {
 
         let encoder = GifEncoder::new(&path, Quality::Medium)
             .unwrap()
-            .with_framerate(30.0);
+            .with_framerate(30.0)
+            .unwrap();
 
         assert_eq!(encoder.frame_delay, 3);
 
         let encoder60 = GifEncoder::new(&path, Quality::Medium)
             .unwrap()
-            .with_framerate(60.0);
+            .with_framerate(60.0)
+            .unwrap();
 
         assert_eq!(encoder60.frame_delay, 2);
+    }
+
+    #[test]
+    fn test_gif_encoder_rejects_invalid_framerates() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test.gif");
+
+        assert!(
+            GifEncoder::new(&path, Quality::Medium)
+                .unwrap()
+                .with_framerate(0.0)
+                .is_err()
+        );
+        assert!(
+            GifEncoder::new(&path, Quality::Medium)
+                .unwrap()
+                .with_framerate(f64::NAN)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn test_gif_encoder_rejects_unrepresentable_dimensions() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test.gif");
+        let mut encoder = GifEncoder::new(&path, Quality::Medium).unwrap();
+
+        assert!(encoder.init(u16::MAX as u32 + 1, 100).is_err());
+        assert!(encoder.init(0, 100).is_err());
     }
 
     #[test]

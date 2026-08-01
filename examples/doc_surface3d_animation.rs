@@ -53,7 +53,7 @@ fn main() -> PlotResult<()> {
     let (x, y, z) = surface_data(41);
 
     let mut encoder =
-        GifEncoder::new(&output, Quality::Medium)?.with_framerate(FRAMES_PER_SECOND as f64);
+        GifEncoder::new(&output, Quality::Medium)?.with_framerate(FRAMES_PER_SECOND as f64)?;
     encoder.init(640, 480)?;
 
     for frame_index in 0..FRAME_COUNT {
