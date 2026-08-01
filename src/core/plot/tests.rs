@@ -4298,6 +4298,7 @@ fn test_render_to_renderer_matches_reference_render_output_for_large_scatter() {
 
 #[test]
 #[cfg(not(target_arch = "wasm32"))]
+#[ignore = "large rendering validation runs in the scheduled heavy lane"]
 fn test_large_xy_family_png_and_save_paths_stay_visually_sane() {
     let (x, y) = large_xy_data();
     let (error_x, error_y) = large_error_bar_xy_data();
@@ -4349,6 +4350,7 @@ fn test_large_xy_family_png_and_save_paths_stay_visually_sane() {
 
 #[test]
 #[cfg(not(target_arch = "wasm32"))]
+#[ignore = "large rendering validation runs in the scheduled heavy lane"]
 fn test_large_distribution_and_categorical_png_and_save_paths_stay_visually_sane() {
     let samples = large_scalar_samples();
     let (categories, values) = large_bar_data();
@@ -4398,6 +4400,7 @@ fn test_large_distribution_and_categorical_png_and_save_paths_stay_visually_sane
 
 #[test]
 #[cfg(not(target_arch = "wasm32"))]
+#[ignore = "large rendering validation runs in the scheduled heavy lane"]
 fn test_large_grid_family_png_and_save_paths_stay_visually_sane() {
     let heatmap_values = large_heatmap_matrix();
     let (contour_x, contour_y, contour_z) = large_contour_axes();

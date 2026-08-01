@@ -4,7 +4,7 @@
 
 use std::path::Path;
 
-use super::encoders::{Codec, Encoder, Quality, create_encoder};
+use super::encoders::{Codec, Encoder, Quality, create_encoder_for_codec};
 use super::tick::Tick;
 use crate::core::{Plot, PlottingError, Result};
 
@@ -76,7 +76,7 @@ impl VideoConfig {
             .and_then(|e| e.to_str())
             .unwrap_or("gif");
 
-        let codec = Codec::from_extension(ext).unwrap_or(Codec::Gif);
+        let codec = Codec::from_extension(ext).unwrap_or(Codec::Auto);
 
         Self {
             codec,
@@ -84,15 +84,59 @@ impl VideoConfig {
         }
     }
 
+    /// Validate dimensions, timing, and format-specific constraints.
+    pub fn validate(&self) -> Result<()> {
+        checked_rgb_len(self.width, self.height)?;
+        if self.framerate == 0 {
+            return Err(PlottingError::InvalidInput(
+                "Animation framerate must be greater than zero".into(),
+            ));
+        }
+        if matches!(self.codec, Codec::Gif)
+            && (self.width > u16::MAX as u32 || self.height > u16::MAX as u32)
+        {
+            return Err(PlottingError::InvalidInput(format!(
+                "GIF dimensions must not exceed {}x{} pixels",
+                u16::MAX,
+                u16::MAX
+            )));
+        }
+        Ok(())
+    }
+
     /// Get frame delay in centiseconds (for GIF)
     pub fn frame_delay_cs(&self) -> u16 {
+        if self.framerate == 0 {
+            return 0;
+        }
         ((100.0 / self.framerate as f64).round() as u16).max(1)
     }
 
     /// Get frame duration in seconds
     pub fn frame_duration(&self) -> f64 {
-        1.0 / self.framerate as f64
+        if self.framerate == 0 {
+            0.0
+        } else {
+            1.0 / self.framerate as f64
+        }
     }
+}
+
+fn checked_rgb_len(width: u32, height: u32) -> Result<usize> {
+    checked_pixel_count(width, height)?
+        .checked_mul(3)
+        .ok_or_else(|| PlottingError::InvalidInput("Animation RGB buffer size overflow".into()))
+}
+
+fn checked_pixel_count(width: u32, height: u32) -> Result<usize> {
+    if width == 0 || height == 0 {
+        return Err(PlottingError::InvalidInput(
+            "Animation dimensions must be greater than zero".into(),
+        ));
+    }
+    (width as usize)
+        .checked_mul(height as usize)
+        .ok_or_else(|| PlottingError::InvalidInput("Animation dimensions overflow".into()))
 }
 
 /// Captures rendered frames from plots
@@ -106,7 +150,7 @@ impl VideoConfig {
 /// use ruviz::animation::FrameCapture;
 /// use ruviz::prelude::*;
 ///
-/// let mut capture = FrameCapture::new(800, 600);
+/// let mut capture = FrameCapture::new(800, 600)?;
 ///
 /// let plot = Plot::new().line(&[0.0, 1.0], &[0.0, 1.0]);
 /// let frame_data = capture.capture(&plot)?;
@@ -120,13 +164,13 @@ pub struct FrameCapture {
 
 impl FrameCapture {
     /// Create a new frame capture with the given dimensions
-    pub fn new(width: u32, height: u32) -> Self {
-        let buffer_size = (width * height * 3) as usize;
-        Self {
+    pub fn new(width: u32, height: u32) -> Result<Self> {
+        let buffer_size = checked_rgb_len(width, height)?;
+        Ok(Self {
             width,
             height,
             buffer: vec![0u8; buffer_size],
-        }
+        })
     }
 
     /// Get the capture dimensions
@@ -135,13 +179,14 @@ impl FrameCapture {
     }
 
     /// Resize the capture buffer
-    pub fn resize(&mut self, width: u32, height: u32) {
+    pub fn resize(&mut self, width: u32, height: u32) -> Result<()> {
         if self.width != width || self.height != height {
+            let buffer_size = checked_rgb_len(width, height)?;
             self.width = width;
             self.height = height;
-            let buffer_size = (width * height * 3) as usize;
             self.buffer.resize(buffer_size, 0);
         }
+        Ok(())
     }
 
     /// Capture a frame from the plot
@@ -154,18 +199,7 @@ impl FrameCapture {
 
         // Render plot to RGBA buffer
         let image = sized_plot.render()?;
-        let rgba_data = &image.pixels;
-
-        // Convert RGBA to RGB
-        let pixels = (self.width * self.height) as usize;
-        for i in 0..pixels {
-            self.buffer[i * 3] = rgba_data[i * 4]; // R
-            self.buffer[i * 3 + 1] = rgba_data[i * 4 + 1]; // G
-            self.buffer[i * 3 + 2] = rgba_data[i * 4 + 2]; // B
-            // Alpha is discarded
-        }
-
-        Ok(&self.buffer)
+        self.copy_rgba(image.width, image.height, &image.pixels)
     }
 
     /// Capture a frame with figure-preserving mode
@@ -203,40 +237,44 @@ impl FrameCapture {
 
         // Render plot to RGBA buffer
         let image = sized_plot.render()?;
-        let rgba_data = &image.pixels;
-
-        // Use actual rendered dimensions
-        let actual_pixels = (image.width * image.height) as usize;
-
-        // Resize buffer if needed (safety check - dimensions should match)
-        let required_size = actual_pixels * 3;
-        if self.buffer.len() != required_size {
-            self.buffer.resize(required_size, 0);
-            self.width = image.width;
-            self.height = image.height;
-        }
-
-        // Convert RGBA to RGB
-        for i in 0..actual_pixels {
-            self.buffer[i * 3] = rgba_data[i * 4]; // R
-            self.buffer[i * 3 + 1] = rgba_data[i * 4 + 1]; // G
-            self.buffer[i * 3 + 2] = rgba_data[i * 4 + 2]; // B
-        }
-
-        Ok(&self.buffer)
+        self.resize(image.width, image.height)?;
+        self.copy_rgba(image.width, image.height, &image.pixels)
     }
 
     /// Capture with explicit dimensions
     ///
     /// Resizes if necessary before capturing.
     pub fn capture_sized(&mut self, plot: &Plot, width: u32, height: u32) -> Result<&[u8]> {
-        self.resize(width, height);
+        self.resize(width, height)?;
         self.capture(plot)
     }
 
     /// Get a copy of the buffer (for async encoding)
     pub fn buffer_copy(&self) -> Vec<u8> {
         self.buffer.clone()
+    }
+
+    pub(crate) fn copy_rgba(&mut self, width: u32, height: u32, rgba: &[u8]) -> Result<&[u8]> {
+        if width != self.width || height != self.height {
+            return Err(PlottingError::RenderError(format!(
+                "Animation frame rendered at {width}x{height}, expected {}x{}",
+                self.width, self.height
+            )));
+        }
+        let pixels = checked_pixel_count(width, height)?;
+        let expected_rgba = pixels.checked_mul(4).ok_or_else(|| {
+            PlottingError::InvalidInput("Animation RGBA buffer size overflow".into())
+        })?;
+        if rgba.len() != expected_rgba {
+            return Err(PlottingError::RenderError(format!(
+                "Animation RGBA buffer has {} bytes, expected {expected_rgba}",
+                rgba.len()
+            )));
+        }
+        for (destination, source) in self.buffer.chunks_exact_mut(3).zip(rgba.chunks_exact(4)) {
+            destination.copy_from_slice(&source[..3]);
+        }
+        Ok(&self.buffer)
     }
 }
 
@@ -271,7 +309,8 @@ pub struct VideoStream {
 impl VideoStream {
     /// Create a new video stream with the given output path and config
     pub fn new<P: AsRef<Path>>(path: P, config: VideoConfig) -> Result<Self> {
-        let encoder = create_encoder(path.as_ref(), config.quality)?;
+        config.validate()?;
+        let encoder = create_encoder_for_codec(path.as_ref(), config.quality, config.codec)?;
 
         Ok(Self {
             encoder,
@@ -392,16 +431,35 @@ mod tests {
 
     #[test]
     fn test_frame_capture_new() {
-        let capture = FrameCapture::new(100, 50);
+        let capture = FrameCapture::new(100, 50).unwrap();
         assert_eq!(capture.dimensions(), (100, 50));
         assert_eq!(capture.buffer.len(), 100 * 50 * 3);
     }
 
     #[test]
     fn test_frame_capture_resize() {
-        let mut capture = FrameCapture::new(100, 100);
-        capture.resize(200, 150);
+        let mut capture = FrameCapture::new(100, 100).unwrap();
+        capture.resize(200, 150).unwrap();
         assert_eq!(capture.dimensions(), (200, 150));
         assert_eq!(capture.buffer.len(), 200 * 150 * 3);
+    }
+
+    #[test]
+    fn video_config_rejects_zero_values_and_overflowing_buffers() {
+        assert!(VideoConfig::new().framerate(0).validate().is_err());
+        assert!(VideoConfig::new().dimensions(0, 100).validate().is_err());
+        assert!(FrameCapture::new(u32::MAX, u32::MAX).is_err());
+    }
+
+    #[test]
+    fn video_stream_honors_an_explicit_codec() {
+        let config = VideoConfig::new().codec(Codec::Gif);
+        assert!(VideoStream::new("animation.custom", config).is_ok());
+
+        let config = VideoConfig::new().codec(Codec::Av1);
+        assert!(matches!(
+            VideoStream::new("animation.gif", config),
+            Err(PlottingError::UnsupportedOperation { .. })
+        ));
     }
 }

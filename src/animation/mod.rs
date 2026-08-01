@@ -7,7 +7,7 @@
 //!
 //! - **Tick-based timing**: Deterministic frame timing with `Tick` struct
 //! - **Macro-based recording**: `record!` for frame count, duration, and config-driven capture
-//! - **Multiple formats**: GIF (default), MP4/WebM via AV1 (optional)
+//! - **GIF export**: deterministic frame capture and GIF encoding
 //! - **Observable integration**: Reactive animations with `AnimatedObservable`
 //! - **Smooth transitions**: Easing functions and plot morphing
 //! - **Compatibility wrappers**: Deprecated `record_*` helpers remain available for older code
@@ -71,7 +71,7 @@
 //! # Feature Flags
 //!
 //! - `animation` - Core animation system with GIF export
-//! - `animation-video` - MP4/WebM via pure Rust AV1 (rav1e)
+//! - `animation-video` - compatibility alias for `animation`; AV1 video is not currently available
 
 mod builder;
 mod interpolation;

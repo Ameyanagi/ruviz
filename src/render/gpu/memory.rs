@@ -17,6 +17,7 @@ pub struct GpuBuffer {
     size: u64,
     usage: wgpu::BufferUsages,
     label: Option<String>,
+    accounting: Option<Arc<MemoryAccounting>>,
 }
 
 impl GpuBuffer {
@@ -38,6 +39,7 @@ impl GpuBuffer {
             size: data.len() as u64,
             usage,
             label: label.map(|s| s.to_string()),
+            accounting: None,
         }
     }
 
@@ -60,6 +62,7 @@ impl GpuBuffer {
             size,
             usage,
             label: label.map(|s| s.to_string()),
+            accounting: None,
         }
     }
 
@@ -76,6 +79,31 @@ impl GpuBuffer {
     /// Get buffer usage flags
     pub fn usage(&self) -> wgpu::BufferUsages {
         self.usage
+    }
+
+    fn with_accounting(mut self, accounting: Arc<MemoryAccounting>) -> Self {
+        self.accounting = Some(accounting);
+        self
+    }
+}
+
+impl Drop for GpuBuffer {
+    fn drop(&mut self) {
+        let Some(accounting) = &self.accounting else {
+            return;
+        };
+        let mut total_allocated = accounting
+            .total_allocated
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *total_allocated = total_allocated.saturating_sub(self.size);
+        drop(total_allocated);
+
+        let mut stats = accounting
+            .stats
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        stats.total_allocated = stats.total_allocated.saturating_sub(self.size);
     }
 }
 
@@ -94,6 +122,7 @@ pub struct GpuMemoryPool {
     alignment: u64,
     /// Statistics
     stats: Arc<Mutex<GpuMemoryStats>>,
+    accounting: Arc<MemoryAccounting>,
 }
 
 /// GPU memory usage statistics
@@ -107,6 +136,11 @@ pub struct GpuMemoryStats {
     pub memory_limit: u64,
 }
 
+struct MemoryAccounting {
+    total_allocated: Arc<Mutex<u64>>,
+    stats: Arc<Mutex<GpuMemoryStats>>,
+}
+
 impl GpuMemoryPool {
     /// Create a new GPU memory pool
     pub fn new(
@@ -114,23 +148,46 @@ impl GpuMemoryPool {
         queue: Arc<wgpu::Queue>,
         capabilities: &GpuCapabilities,
     ) -> Result<Self> {
-        // Calculate memory limit (80% of max buffer size as approximation)
-        let memory_limit = (capabilities.max_buffer_size as f64 * 0.8) as u64;
+        Self::with_memory_limit_fraction(device, queue, capabilities, 0.8)
+    }
+
+    /// Create a GPU memory pool with an explicit fraction of the adapter limit.
+    pub fn with_memory_limit_fraction(
+        device: Arc<wgpu::Device>,
+        queue: Arc<wgpu::Queue>,
+        capabilities: &GpuCapabilities,
+        memory_limit_fraction: f32,
+    ) -> Result<Self> {
+        if !memory_limit_fraction.is_finite() || !(0.0..=1.0).contains(&memory_limit_fraction) {
+            return Err(PlottingError::InvalidInput(
+                "GPU memory_limit_fraction must be finite and between 0 and 1".into(),
+            ));
+        }
+        let memory_limit =
+            (capabilities.max_buffer_size as f64 * memory_limit_fraction as f64) as u64;
 
         // Get buffer alignment from limits
         let alignment = device.limits().min_uniform_buffer_offset_alignment as u64;
+
+        let total_allocated = Arc::new(Mutex::new(0));
+        let stats = Arc::new(Mutex::new(GpuMemoryStats {
+            memory_limit,
+            ..Default::default()
+        }));
+        let accounting = Arc::new(MemoryAccounting {
+            total_allocated: Arc::clone(&total_allocated),
+            stats: Arc::clone(&stats),
+        });
 
         Ok(Self {
             device,
             queue,
             buffer_cache: Arc::new(Mutex::new(HashMap::new())),
-            total_allocated: Arc::new(Mutex::new(0)),
+            total_allocated,
             memory_limit,
             alignment,
-            stats: Arc::new(Mutex::new(GpuMemoryStats {
-                memory_limit,
-                ..Default::default()
-            })),
+            stats,
+            accounting,
         })
     }
 
@@ -150,7 +207,10 @@ impl GpuMemoryPool {
         count: usize,
         usage: wgpu::BufferUsages,
     ) -> Result<GpuBuffer> {
-        let size = (count * std::mem::size_of::<T>()) as u64;
+        let size = count
+            .checked_mul(std::mem::size_of::<T>())
+            .and_then(|size| u64::try_from(size).ok())
+            .ok_or_else(|| PlottingError::InvalidInput("GPU buffer size overflow".into()))?;
         let aligned_size = self.align_buffer_size(size);
         self.create_buffer_empty_bytes(aligned_size, usage, None)
     }
@@ -165,20 +225,11 @@ impl GpuMemoryPool {
         let size = data.len() as u64;
         let aligned_size = self.align_buffer_size(size);
 
-        // Check memory limit
-        {
-            let total_allocated = self.total_allocated.lock().unwrap();
-            if *total_allocated + aligned_size > self.memory_limit {
-                return Err(PlottingError::GpuMemoryError {
-                    requested: aligned_size as usize,
-                    available: Some((self.memory_limit - *total_allocated) as usize),
-                });
-            }
-        }
-
         // Try to reuse existing buffer from cache
         let cache_key = (aligned_size, usage);
-        if let Some(buffer) = self.try_reuse_buffer(&cache_key) {
+        if usage.contains(wgpu::BufferUsages::COPY_DST)
+            && let Some(buffer) = self.try_reuse_buffer(&cache_key)
+        {
             // Update buffer data
             self.queue.write_buffer(buffer.buffer(), 0, data);
 
@@ -192,6 +243,21 @@ impl GpuMemoryPool {
             return Ok(buffer);
         }
 
+        // Check memory limit only when a new physical allocation is required.
+        {
+            let total_allocated = self
+                .total_allocated
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let available = self.memory_limit.saturating_sub(*total_allocated);
+            if aligned_size > available {
+                return Err(PlottingError::GpuMemoryError {
+                    requested: aligned_size as usize,
+                    available: Some(available as usize),
+                });
+            }
+        }
+
         // Create new buffer
         let buffer = if data.is_empty() {
             GpuBuffer::new_empty(&self.device, aligned_size, usage, label)
@@ -200,7 +266,8 @@ impl GpuMemoryPool {
             let mut padded_data = data.to_vec();
             padded_data.resize(aligned_size as usize, 0);
             GpuBuffer::new(&self.device, &padded_data, usage, label)
-        };
+        }
+        .with_accounting(Arc::clone(&self.accounting));
 
         // Update memory tracking
         {
@@ -231,16 +298,18 @@ impl GpuMemoryPool {
         // Check memory limit
         {
             let total_allocated = self.total_allocated.lock().unwrap();
-            if *total_allocated + aligned_size > self.memory_limit {
+            let available = self.memory_limit.saturating_sub(*total_allocated);
+            if aligned_size > available {
                 return Err(PlottingError::GpuMemoryError {
                     requested: aligned_size as usize,
-                    available: Some((self.memory_limit - *total_allocated) as usize),
+                    available: Some(available as usize),
                 });
             }
         }
 
         // Create empty buffer with proper size
-        let buffer = GpuBuffer::new_empty(&self.device, aligned_size, usage, label);
+        let buffer = GpuBuffer::new_empty(&self.device, aligned_size, usage, label)
+            .with_accounting(Arc::clone(&self.accounting));
 
         // Update memory tracking
         {
@@ -291,7 +360,7 @@ impl GpuMemoryPool {
 
         // Fast path: try zero-copy cast (works when aligned)
         if let Ok(aligned) = try_cast_slice::<u8, T>(bytes) {
-            return aligned.to_vec();
+            return aligned[..element_count].to_vec();
         }
 
         // Slow path: manual byte-by-byte reconstruction for unaligned data
@@ -302,13 +371,7 @@ impl GpuMemoryPool {
             let offset = i * element_size;
             let element_bytes = &bytes[offset..offset + element_size];
 
-            // Create properly aligned temporary storage (heap allocation guarantees alignment)
-            let mut aligned_bytes = vec![0u8; element_size];
-            aligned_bytes.copy_from_slice(element_bytes);
-
-            // Safe because aligned_bytes is properly aligned
-            let element: &T = bytemuck::from_bytes(&aligned_bytes);
-            result.push(*element);
+            result.push(bytemuck::pod_read_unaligned(element_bytes));
         }
 
         result
@@ -323,6 +386,11 @@ impl GpuMemoryPool {
         }
 
         let element_size = std::mem::size_of::<T>();
+        if element_size == 0 {
+            return Err(GpuError::OperationFailed(
+                "Zero-sized types cannot be read from GPU buffers".to_string(),
+            ));
+        }
         let element_count = (buffer.size() as usize) / element_size;
 
         // Create staging buffer for readback
@@ -415,24 +483,30 @@ impl GpuMemoryPool {
 
     /// Clear buffer cache and reset memory tracking
     pub fn clear_cache(&self) {
-        let mut cache = self.buffer_cache.lock().unwrap();
-        let mut total_allocated = self.total_allocated.lock().unwrap();
-
-        cache.clear();
-        *total_allocated = 0;
-
-        // Reset stats
-        let mut stats = self.stats.lock().unwrap();
-        *stats = GpuMemoryStats {
-            memory_limit: stats.memory_limit,
-            ..Default::default()
+        let cached_buffers = {
+            let mut cache = self
+                .buffer_cache
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            std::mem::take(&mut *cache)
         };
+        drop(cached_buffers);
+
+        // Keep live-allocation counters; reset cache activity only.
+        let mut stats = self.stats.lock().unwrap();
+        stats.cache_hits = 0;
+        stats.cache_misses = 0;
+        stats.buffers_reused = 0;
     }
 
     /// Get current memory usage as fraction of limit
     pub fn memory_usage_fraction(&self) -> f32 {
         let total_allocated = *self.total_allocated.lock().unwrap();
-        total_allocated as f32 / self.memory_limit as f32
+        if self.memory_limit == 0 {
+            0.0
+        } else {
+            total_allocated as f32 / self.memory_limit as f32
+        }
     }
 
     /// Check if GPU memory is under pressure

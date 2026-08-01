@@ -182,7 +182,7 @@ Default features are `ndarray_support` and `parallel`.
 | `pdf` | PDF export via SVG-to-PDF |
 | `typst-math` | Typst-backed text rendering |
 | `animation` | GIF recording support |
-| `animation-video` | `animation` + AV1 video encoding |
+| `animation-video` | compatibility alias for `animation`; AV1 video is not currently available |
 | `svg` | no-op, retained for compatibility (see below) |
 | `full` | broad feature set for native builds |
 

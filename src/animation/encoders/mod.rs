@@ -6,7 +6,9 @@
 //! # Available Encoders
 //!
 //! - `GifEncoder` - Animated GIF (always available with `animation` feature)
-//! - `Av1Encoder` - AV1 video via rav1e (requires `animation-video` feature)
+//!
+//! AV1/container output is represented by [`Codec::Av1`] for API compatibility,
+//! but is not currently implemented.
 
 mod gif;
 
@@ -32,8 +34,13 @@ pub enum Quality {
 }
 
 impl Quality {
-    /// Convert to rav1e speed preset (0-10, higher = faster)
+    /// Convert to the historical rav1e speed preset (0-10, higher = faster).
+    ///
+    /// Ruviz does not currently ship an AV1 encoder. This method remains so
+    /// code compiled with the compatibility `animation-video` feature keeps
+    /// building while the container/encoder contract is redesigned.
     #[cfg(feature = "animation-video")]
+    #[deprecated(note = "AV1 video output is not currently implemented")]
     pub fn to_rav1e_speed(self) -> u8 {
         match self {
             Quality::Low => 10,
@@ -59,7 +66,7 @@ impl Quality {
 pub enum Codec {
     /// Animated GIF
     Gif,
-    /// AV1 codec (pure Rust via rav1e)
+    /// AV1 codec (reserved; currently unsupported)
     Av1,
     /// Auto-detect from file extension
     #[default]
@@ -167,30 +174,41 @@ pub trait Encoder: Send {
 /// A boxed encoder ready for initialization, or an error if the format
 /// is not supported.
 pub fn create_encoder(path: &Path, quality: Quality) -> Result<Box<dyn Encoder>> {
-    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("gif");
+    let Some(extension) = path.extension() else {
+        return Ok(Box::new(GifEncoder::new(path, quality)?));
+    };
+    let ext = extension
+        .to_str()
+        .ok_or_else(|| PlottingError::UnsupportedFormat("non-UTF-8 extension".into()))?;
 
     match Codec::from_extension(ext) {
-        Some(Codec::Gif) | None => Ok(Box::new(GifEncoder::new(path, quality)?)),
-        Some(Codec::Av1) => {
-            #[cfg(feature = "animation-video")]
-            {
-                // TODO: Implement AV1 encoder
-                Err(PlottingError::RenderError(
-                    "AV1 encoder not yet implemented".into(),
-                ))
-            }
-            #[cfg(not(feature = "animation-video"))]
-            {
-                Err(PlottingError::RenderError(
-                    "AV1 encoding requires 'animation-video' feature".into(),
-                ))
-            }
-        }
+        Some(Codec::Gif) => Ok(Box::new(GifEncoder::new(path, quality)?)),
+        Some(Codec::Av1) => unsupported_av1(),
         Some(Codec::Auto) => {
             // Default to GIF
             Ok(Box::new(GifEncoder::new(path, quality)?))
         }
+        None => Err(PlottingError::UnsupportedFormat(ext.to_string())),
     }
+}
+
+pub(super) fn create_encoder_for_codec(
+    path: &Path,
+    quality: Quality,
+    codec: Codec,
+) -> Result<Box<dyn Encoder>> {
+    match codec {
+        Codec::Auto => create_encoder(path, quality),
+        Codec::Gif => Ok(Box::new(GifEncoder::new(path, quality)?)),
+        Codec::Av1 => unsupported_av1(),
+    }
+}
+
+fn unsupported_av1<T>() -> Result<T> {
+    Err(PlottingError::UnsupportedOperation {
+        operation: "AV1 animation encoding",
+        reason: "no AV1 container/muxing implementation is currently shipped".into(),
+    })
 }
 
 #[cfg(test)]
@@ -217,5 +235,34 @@ mod tests {
     fn test_codec_default_extension() {
         assert_eq!(Codec::Gif.default_extension(), "gif");
         assert_eq!(Codec::Av1.default_extension(), "mp4");
+    }
+
+    #[test]
+    fn unknown_extensions_are_rejected_instead_of_writing_gif_data() {
+        let result = create_encoder(Path::new("animation.unknown"), Quality::Medium);
+        assert!(
+            matches!(result, Err(PlottingError::UnsupportedFormat(extension)) if extension == "unknown")
+        );
+    }
+
+    #[test]
+    fn explicit_gif_codec_does_not_depend_on_the_path_extension() {
+        assert!(
+            create_encoder_for_codec(Path::new("animation.custom"), Quality::Medium, Codec::Gif)
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn av1_is_reported_as_an_unsupported_operation() {
+        let result =
+            create_encoder_for_codec(Path::new("animation.webm"), Quality::Medium, Codec::Av1);
+        assert!(matches!(
+            result,
+            Err(PlottingError::UnsupportedOperation {
+                operation: "AV1 animation encoding",
+                ..
+            })
+        ));
     }
 }

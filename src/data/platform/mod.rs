@@ -103,7 +103,7 @@ fn detect_platform_info() -> Result<PlatformInfo, crate::core::error::PlottingEr
     let os_type = detect_os_type();
     let total_memory = platform::get_total_memory()?;
     let available_memory = platform::get_available_memory()?;
-    let cpu_cores = num_cpus::get();
+    let cpu_cores = available_cpu_cores();
     let numa_nodes = platform::get_numa_nodes();
     let supports_hugepages = platform::check_hugepage_support();
     let supports_memory_mapping = platform::check_memory_mapping_support()?;
@@ -192,7 +192,7 @@ pub fn get_platform_optimizer() -> &'static PlatformOptimizer {
                 os_type: detect_os_type(),
                 total_memory: 8 * 1024 * 1024 * 1024,
                 available_memory: 4 * 1024 * 1024 * 1024,
-                cpu_cores: num_cpus::get(),
+                cpu_cores: available_cpu_cores(),
                 cache_line_size: 64,
                 page_size: 4096,
                 numa_nodes: 1,
@@ -224,6 +224,12 @@ pub fn get_platform_optimizer() -> &'static PlatformOptimizer {
             })),
         })
     })
+}
+
+fn available_cpu_cores() -> usize {
+    std::thread::available_parallelism()
+        .map(std::num::NonZeroUsize::get)
+        .unwrap_or(1)
 }
 
 pub fn initialize_platform_optimization() -> Result<(), crate::core::error::PlottingError> {

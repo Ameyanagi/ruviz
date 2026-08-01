@@ -657,9 +657,11 @@ jobs:
       - name: Run direct 3D GPU suite with a required adapter
         run: |
           mkdir -p generated/tests/render
+          cargo test --no-default-features --features gpu --test gpu_backend_test
           cargo test --no-default-features --features 3d,gpu --test three_d_gpu_test --test three_d_parity_test
         env:
           LIBGL_ALWAYS_SOFTWARE: "1"
+          RUVIZ_REQUIRE_GPU_TESTS: "1"
           RUVIZ_3D_GPU_TEST_OUTPUT: generated/tests/render/three_d_gpu_required_adapter.png
           WGPU_BACKEND: vulkan
 
@@ -706,6 +708,9 @@ jobs:
 
       - name: Run heavy validation suites
         run: cargo test --test performance_validation --verbose
+
+      - name: Run large library rendering validations
+        run: cargo test --lib test_large_ -- --ignored
 
   msrv:
     name: MSRV (1.92)
