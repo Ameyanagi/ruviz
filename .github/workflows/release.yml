@@ -117,7 +117,7 @@ jobs:
           cargo_expected = base if label is None else f"{base}-{label}{number}"
           python_expected = base if label is None else f"{base}{label}{number}"
 
-          with Path("packages/ruviz-web/package.json").open(encoding="utf-8") as fh:
+          with Path("packages/ruviz/package.json").open(encoding="utf-8") as fh:
               npm_web_version = json.load(fh)["version"]
 
           with Path("Cargo.toml").open("rb") as fh:
@@ -243,7 +243,7 @@ jobs:
           RUSTDOCFLAGS: -D warnings
 
       - name: Validate npm tarball
-        run: bun run --cwd packages/ruviz-web verify:pack
+        run: bun run --cwd packages/ruviz verify:pack
 
   build-python-sdist:
     name: Build Python sdist
@@ -799,7 +799,7 @@ jobs:
       - name: Validate npm package version matches release tag
         run: |
           TAG="${{ env.RELEASE_TAG }}"
-          VERSION="$(python3 -c "import json; print(json.load(open('packages/ruviz-web/package.json'))['version'])")"
+          VERSION="$(python3 -c "import json; print(json.load(open('packages/ruviz/package.json'))['version'])")"
 
           if [ "v${VERSION}" != "${TAG}" ]; then
             echo "Release tag ${TAG} does not match npm package version v${VERSION}"
@@ -807,13 +807,13 @@ jobs:
           fi
 
       - name: Validate npm tarball
-        run: bun run --cwd packages/ruviz-web verify:pack
+        run: bun run --cwd packages/ruviz verify:pack
 
       - name: Detect published npm package version
         id: npm-version
         run: |
-          PACKAGE_NAME="$(python3 -c "import json; print(json.load(open('packages/ruviz-web/package.json'))['name'])")"
-          VERSION="$(python3 -c "import json; print(json.load(open('packages/ruviz-web/package.json'))['version'])")"
+          PACKAGE_NAME="$(python3 -c "import json; print(json.load(open('packages/ruviz/package.json'))['name'])")"
+          VERSION="$(python3 -c "import json; print(json.load(open('packages/ruviz/package.json'))['version'])")"
           echo "package=${PACKAGE_NAME}" >> "$GITHUB_OUTPUT"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
@@ -828,7 +828,7 @@ jobs:
         # npm Trusted Publishing is configured for the `ruviz` package, so
         # GitHub OIDC supplies publish authentication and provenance here.
         run: |
-          cd packages/ruviz-web
+          cd packages/ruviz
           if [[ "${RELEASE_TAG}" == *-* ]]; then
             npm publish --access public --provenance --tag next
           else

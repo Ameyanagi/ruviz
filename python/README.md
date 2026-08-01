@@ -135,7 +135,7 @@ uv run mkdocs serve
 ```
 
 Rebuild the bundled widget frontend from the repository root when you change
-the web SDK or `packages/ruviz-web/src/python-widget.ts`:
+the web SDK or `packages/ruviz/src/python-widget.ts`:
 
 ```sh
 bun run build:python-widget

@@ -52,5 +52,5 @@ own font bytes before rendering when you need a different face.
 
 - Root crate docs: <https://docs.rs/ruviz>
 - Repository README: <https://github.com/Ameyanagi/ruviz/blob/main/README.md>
-- npm package docs: <https://github.com/Ameyanagi/ruviz/tree/main/packages/ruviz-web>
+- npm package docs: <https://github.com/Ameyanagi/ruviz/tree/main/packages/ruviz>
 - Release notes: <https://github.com/Ameyanagi/ruviz/tree/main/docs/releases>

@@ -82,9 +82,9 @@ release-docs-python:
 	cd python && uv run python -m pytest
 
 release-docs-web:
-	bun run --cwd packages/ruviz-web build
-	bun run --cwd packages/ruviz-web docs:api
-	bun run --cwd packages/ruviz-web docs:build:preview
+	bun run --cwd packages/ruviz build
+	bun run --cwd packages/ruviz docs:api
+	bun run --cwd packages/ruviz docs:build:preview
 
 build-generated-preview: clean-generated
 	$(MAKE) build-generated-preview-rust
@@ -106,9 +106,9 @@ build-generated-preview-python:
 
 build-generated-preview-web:
 	rm -rf generated/web/docs
-	bun run --cwd packages/ruviz-web build
-	bun run --cwd packages/ruviz-web docs:api
-	bun run --cwd packages/ruviz-web docs:build:preview
+	bun run --cwd packages/ruviz build
+	bun run --cwd packages/ruviz docs:api
+	bun run --cwd packages/ruviz docs:build:preview
 
 generated-manifest:
 	uv run python scripts/generate_output_manifest.py

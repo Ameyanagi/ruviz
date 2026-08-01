@@ -1,1 +1,1 @@
-import "../../../packages/ruviz-web/src/session-worker.ts";
+import "../../../packages/ruviz/src/session-worker.ts";

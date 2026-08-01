@@ -1049,7 +1049,7 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Verify npm tarball contents and bun installability
-        run: bun run --cwd packages/ruviz-web verify:pack
+        run: bun run --cwd packages/ruviz verify:pack
 
   platform-build:
     name: Build (${{ matrix.platform.name }})
@@ -1395,7 +1395,7 @@ jobs:
           while IFS= read -r path; do
             [ -z "${path}" ] && continue
             case "${path}" in
-              .github/workflows/ci.yml|.github/actions/install-linux-desktop-build-deps/*|Cargo.toml|Cargo.lock|Makefile|package.json|bun.lock|generated/manifest.json|docs/BUILD_OUTPUTS.md|src/*|examples/*|python/*|packages/ruviz-web/*|crates/ruviz-web/*|apps/web-demo/*|scripts/*)
+              .github/workflows/ci.yml|.github/actions/install-linux-desktop-build-deps/*|Cargo.toml|Cargo.lock|Makefile|package.json|bun.lock|generated/manifest.json|docs/BUILD_OUTPUTS.md|src/*|examples/*|python/*|packages/ruviz/*|crates/ruviz-web/*|apps/web-demo/*|scripts/*)
                 run_preview=true
                 break
                 ;;
@@ -1571,7 +1571,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/ruviz-tools
-          key: ${{ runner.os }}-ruviz-tools-${{ hashFiles('Cargo.lock', 'packages/ruviz-web/scripts/ensure-wasm-pack.sh', 'packages/ruviz-web/scripts/ensure-wasm-bindgen.sh') }}
+          key: ${{ runner.os }}-ruviz-tools-${{ hashFiles('Cargo.lock', 'packages/ruviz/scripts/ensure-wasm-pack.sh', 'packages/ruviz/scripts/ensure-wasm-bindgen.sh') }}
           restore-keys: ${{ runner.os }}-ruviz-tools-
 
       - name: Install Linux desktop build dependencies
@@ -1640,7 +1640,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/ruviz-tools
-          key: ${{ runner.os }}-ruviz-tools-${{ hashFiles('Cargo.lock', 'packages/ruviz-web/scripts/ensure-wasm-pack.sh', 'packages/ruviz-web/scripts/ensure-wasm-bindgen.sh') }}
+          key: ${{ runner.os }}-ruviz-tools-${{ hashFiles('Cargo.lock', 'packages/ruviz/scripts/ensure-wasm-pack.sh', 'packages/ruviz/scripts/ensure-wasm-bindgen.sh') }}
           restore-keys: ${{ runner.os }}-ruviz-tools-
 
       - name: Install wasm target

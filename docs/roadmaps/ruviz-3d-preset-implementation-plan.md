@@ -958,10 +958,10 @@ Likely touchpoints:
 - `python/ruviz_py/ruviz/__init__.py`
 - `python/tests/test_3d_api.py`
 - `crates/ruviz-web/src/lib.rs`
-- `packages/ruviz-web/src/3d.ts`
-- `packages/ruviz-web/src/index.ts`
+- `packages/ruviz/src/3d.ts`
+- `packages/ruviz/src/index.ts`
 - `apps/web-demo/tests/3d.spec.js`
-- `packages/ruviz-web/scripts/verify-npm-package.mjs`
+- `packages/ruviz/scripts/verify-npm-package.mjs`
 - `tests/fixtures/contracts/3d_presets.json`
 
 ### P3D-09 — Working examples and visual evidence
@@ -1002,7 +1002,7 @@ Likely touchpoints:
 - `docs/gallery.md`
 - `tests/golden/3d/`
 - `tests/gallery_3d_golden_test.rs`
-- `packages/ruviz-web/e2e/`
+- `packages/ruviz/e2e/`
 
 ### P3D-10 — Performance, compatibility, and release gates
 

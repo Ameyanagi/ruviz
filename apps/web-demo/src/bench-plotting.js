@@ -1,6 +1,6 @@
 import { createPlot } from "ruviz";
 import initRaw, * as raw from "ruviz/raw";
-import { buildRawPlotFromSnapshot } from "../../../packages/ruviz-web/src/plot-runtime.ts";
+import { buildRawPlotFromSnapshot } from "../../../packages/ruviz/src/plot-runtime.ts";
 
 let rawModulePromise = null;
 

@@ -4,7 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "build:sdk": "bun run --cwd ../../packages/ruviz-web build",
+    "build:sdk": "bun run --cwd ../../packages/ruviz build",
     "dev": "bun run build:sdk && vite",
     "build": "bun run build:sdk && vite build",
     "preview": "vite preview",

@@ -86,7 +86,7 @@ interactive backend can be compiled against the local desktop stack.
 
 ## Widget Bundles
 
-The widget frontend is bundled from `packages/ruviz-web/src/python-widget.ts` and
+The widget frontend is bundled from `packages/ruviz/src/python-widget.ts` and
 the web SDK. Rebuild it from the repository root after frontend changes:
 
 ```sh
