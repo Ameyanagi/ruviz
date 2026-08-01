@@ -47,6 +47,12 @@ demo/web/test-results/
 benchmarks/plotting/results/smoke/
 benchmarks/plotting/results/rust-features/smoke/
 crates/ruviz-web/pkg/
+packages/ruviz/node_modules/
+packages/ruviz/dist/
+packages/ruviz/generated/
+packages/ruviz/docs/.vitepress/cache/
+packages/ruviz/docs/.vitepress/dist/
+# Preserve ignored npm output from the retired pre-migration path.
 packages/ruviz-web/node_modules/
 packages/ruviz-web/dist/
 packages/ruviz-web/generated/

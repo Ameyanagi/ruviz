@@ -21,6 +21,6 @@ async function runBun(args: string[], env: Record<string, string> = {}) {
   }
 }
 
-await runBun(["run", "--cwd", "packages/ruviz-web", "build:raw"]);
-await runBun(["run", "--cwd", "packages/ruviz-web", "build:js"]);
+await runBun(["run", "--cwd", "packages/ruviz", "build:raw"]);
+await runBun(["run", "--cwd", "packages/ruviz", "build:js"]);
 await runBun(["python/scripts/build_widget_bundle.ts"]);

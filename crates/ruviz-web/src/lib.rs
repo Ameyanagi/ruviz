@@ -25,7 +25,7 @@
 //!
 //! Most users should not talk to these bindings directly. The recommended
 //! browser-facing surface is the npm package documented in the repo at
-//! `packages/ruviz-web/README.md`, which wraps these bindings with a higher
+//! `packages/ruviz/README.md`, which wraps these bindings with a higher
 //! level `createPlot()` builder and session APIs.
 //!
 //! If you do need the raw bridge, compile the crate for `wasm32-unknown-unknown`
@@ -34,7 +34,7 @@
 //! # Documentation
 //!
 //! - Repository README: <https://github.com/Ameyanagi/ruviz/blob/main/README.md>
-//! - npm package docs: <https://github.com/Ameyanagi/ruviz/tree/main/packages/ruviz-web>
+//! - npm package docs: <https://github.com/Ameyanagi/ruviz/tree/main/packages/ruviz>
 //! - Release notes: <https://github.com/Ameyanagi/ruviz/tree/main/docs/releases>
 
 #![allow(clippy::needless_pass_by_value)]

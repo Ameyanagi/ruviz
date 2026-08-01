@@ -42,7 +42,7 @@ from urllib.parse import unquote
 
 
 ROOT = Path(__file__).resolve().parents[1]
-WEB_PACKAGE = ROOT / "packages" / "ruviz-web"
+WEB_PACKAGE = ROOT / "packages" / "ruviz"
 WEB_SRC = WEB_PACKAGE / "src"
 MARKDOWN_ROOTS = [
     ROOT / "README.md",
@@ -50,9 +50,9 @@ MARKDOWN_ROOTS = [
     ROOT / "python" / "README.md",
     ROOT / "python" / "docs",
     ROOT / "python" / "examples" / "README.md",
-    ROOT / "packages" / "ruviz-web" / "README.md",
-    ROOT / "packages" / "ruviz-web" / "docs",
-    ROOT / "packages" / "ruviz-web" / "examples" / "README.md",
+    ROOT / "packages" / "ruviz" / "README.md",
+    ROOT / "packages" / "ruviz" / "docs",
+    ROOT / "packages" / "ruviz" / "examples" / "README.md",
 ]
 LINK_RE = re.compile(r"!?\[[^\]]*\]\(([^)]+)\)")
 FENCE_RE = re.compile(r"^```", re.MULTILINE)
@@ -735,13 +735,13 @@ def check_typescript_snippets(fences: list[CodeFence]) -> list[str]:
 
     if not WEB_SRC.is_dir():
         return [
-            "packages/ruviz-web/src is required to type-check TypeScript "
+            "packages/ruviz/src is required to type-check TypeScript "
             "Markdown snippets"
         ]
 
     with tempfile.TemporaryDirectory(prefix="ruviz-ts-doc-snippets-") as temp:
         temp_path = Path(temp)
-        web_package = temp_path / "ruviz-web"
+        web_package = temp_path / "ruviz"
         raw_dir = web_package / "generated" / "raw"
         raw_dir.mkdir(parents=True)
         shutil.copytree(WEB_SRC, web_package / "src")
@@ -771,8 +771,8 @@ def check_typescript_snippets(fences: list[CodeFence]) -> list[str]:
                         "skipLibCheck": True,
                         "baseUrl": ".",
                         "paths": {
-                            "ruviz": ["ruviz-web/src/index.ts"],
-                            "ruviz/raw": ["ruviz-web/generated/raw/ruviz_web_raw.d.ts"],
+                            "ruviz": ["ruviz/src/index.ts"],
+                            "ruviz/raw": ["ruviz/generated/raw/ruviz_web_raw.d.ts"],
                         },
                     },
                     "files": files,
