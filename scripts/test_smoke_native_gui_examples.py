@@ -25,11 +25,15 @@ def executable_script(directory: Path, name: str, contents: str) -> Path:
     return path
 
 
-def artifact_message(manifest: Path, example: str, executable: Path) -> str:
+def artifact_message(
+    manifest: Path, example: str, executable: Path, package: str = ""
+) -> str:
+    fragment = f"{package}@0.1.0" if package else "0.1.0"
     return json.dumps(
         {
             "reason": "compiler-artifact",
             "manifest_path": str(manifest),
+            "package_id": f"path+file://{manifest.parent}#{fragment}",
             "target": {"kind": ["example"], "name": example},
             "executable": str(executable),
         }
@@ -53,7 +57,10 @@ class DiscoveryTests(unittest.TestCase):
             )
             gpui_messages.write_text(
                 artifact_message(
-                    root / "ruviz-gpui/Cargo.toml", "static_embed", gpui
+                    root / "adapters/gpui/Cargo.toml",
+                    "static_embed",
+                    gpui,
+                    package="ruviz-gpui",
                 )
                 + "\n",
                 encoding="utf-8",
