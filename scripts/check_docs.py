@@ -21,7 +21,7 @@ The checks are intentionally narrow and deterministic:
 - Shell fences are syntax-checked with their declared `sh` or Bash parser and
   are never executed.
 - Ignored Rust/TypeScript/shell fences require an explicit `reason=...`.
-- Every runnable `examples/**/*.rs` and `gallery/**/*.rs` program must resolve
+- Every runnable `examples/**/*.rs` and `tools/gallery/**/*.rs` program must resolve
   to exactly one uniquely named Cargo example target.
 """
 

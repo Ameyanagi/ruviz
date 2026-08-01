@@ -157,17 +157,17 @@ check: fmt clippy check-web check-docs check-ci-test-coverage
 bench-plotting:
 	bun install --frozen-lockfile --ignore-scripts
 	cd python && uv sync --group bench && uv run maturin develop --release
-	cd python && uv run python ../benchmarks/plotting/run.py --mode full
+	cd python && uv run python ../tools/benchmarks/plotting/run.py --mode full
 
 bench-plotting-smoke:
 	bun install --frozen-lockfile --ignore-scripts
 	cd python && uv sync --group bench && uv run maturin develop --release
-	cd python && uv run python ../benchmarks/plotting/run.py --mode smoke --output-dir ../benchmarks/plotting/results/smoke --docs-output ../benchmarks/plotting/results/smoke/report.md
+	cd python && uv run python ../tools/benchmarks/plotting/run.py --mode smoke --output-dir ../tools/benchmarks/plotting/results/smoke --docs-output ../tools/benchmarks/plotting/results/smoke/report.md
 
 bench-rust-features:
 	cd python && uv sync --group bench
-	cd python && uv run python ../benchmarks/plotting/run_rust_features.py --mode full
+	cd python && uv run python ../tools/benchmarks/plotting/run_rust_features.py --mode full
 
 bench-rust-features-smoke:
 	cd python && uv sync --group bench
-	cd python && uv run python ../benchmarks/plotting/run_rust_features.py --mode smoke --output-dir ../benchmarks/plotting/results/rust-features/smoke --docs-output ../benchmarks/plotting/results/rust-features/smoke/report.md
+	cd python && uv run python ../tools/benchmarks/plotting/run_rust_features.py --mode smoke --output-dir ../tools/benchmarks/plotting/results/rust-features/smoke --docs-output ../tools/benchmarks/plotting/results/rust-features/smoke/report.md

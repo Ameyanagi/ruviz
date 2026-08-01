@@ -32,11 +32,20 @@ Thumbs.db
 
 # Web demo outputs
 node_modules/
+apps/web-demo/node_modules/
+apps/web-demo/pkg/
+apps/web-demo/dist/
+apps/web-demo/playwright-report/
+apps/web-demo/test-results/
+# Preserve ignored local output from the retired pre-migration path.
 demo/web/node_modules/
 demo/web/pkg/
 demo/web/dist/
 demo/web/playwright-report/
 demo/web/test-results/
+# Preserve ignored benchmark output from the retired pre-migration path.
+benchmarks/plotting/results/smoke/
+benchmarks/plotting/results/rust-features/smoke/
 crates/ruviz-web/pkg/
 packages/ruviz-web/node_modules/
 packages/ruviz-web/dist/

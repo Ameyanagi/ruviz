@@ -59,14 +59,14 @@ This page is generated from the Rust feature-impact plotting benchmark reference
 - Rust: `rustc 1.94.1 (e408947bf 2026-03-25)`
 
 Raw artifacts:
-- [environment.json](../../benchmarks/plotting/results/rust-features/reference/environment.json)
-- [results.csv](../../benchmarks/plotting/results/rust-features/reference/results.csv)
-- [baseline_cpu.json](../../benchmarks/plotting/results/rust-features/reference/baseline_cpu.json)
-- [default.json](../../benchmarks/plotting/results/rust-features/reference/default.json)
-- [parallel_only.json](../../benchmarks/plotting/results/rust-features/reference/parallel_only.json)
-- [parallel_simd.json](../../benchmarks/plotting/results/rust-features/reference/parallel_simd.json)
-- [performance_alias.json](../../benchmarks/plotting/results/rust-features/reference/performance_alias.json)
-- [gpu_only.json](../../benchmarks/plotting/results/rust-features/reference/gpu_only.json)
+- [environment.json](../../tools/benchmarks/plotting/results/rust-features/reference/environment.json)
+- [results.csv](../../tools/benchmarks/plotting/results/rust-features/reference/results.csv)
+- [baseline_cpu.json](../../tools/benchmarks/plotting/results/rust-features/reference/baseline_cpu.json)
+- [default.json](../../tools/benchmarks/plotting/results/rust-features/reference/default.json)
+- [parallel_only.json](../../tools/benchmarks/plotting/results/rust-features/reference/parallel_only.json)
+- [parallel_simd.json](../../tools/benchmarks/plotting/results/rust-features/reference/parallel_simd.json)
+- [performance_alias.json](../../tools/benchmarks/plotting/results/rust-features/reference/performance_alias.json)
+- [gpu_only.json](../../tools/benchmarks/plotting/results/rust-features/reference/gpu_only.json)
 
 ## Default Build Renderer Diagnostics
 

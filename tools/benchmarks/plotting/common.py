@@ -12,8 +12,8 @@ from typing import Any
 
 import numpy as np
 
-ROOT = Path(__file__).resolve().parents[2]
-MANIFEST_PATH = ROOT / "benchmarks" / "plotting" / "scenarios.json"
+ROOT = Path(__file__).resolve().parents[3]
+MANIFEST_PATH = ROOT / "tools" / "benchmarks" / "plotting" / "scenarios.json"
 
 
 def load_manifest(path: Path | None = None) -> dict[str, Any]:

@@ -410,7 +410,7 @@ Experimental WASM support is now available:
 - `crates/ruviz-web` provides browser canvas bindings for interactive rendering.
 - `ruviz` registers a bundled browser fallback font automatically for canvas sessions.
 - `ruviz` exposes `web_runtime_capabilities()` so apps can detect worker, touch, and WebGPU availability.
-- `demo/web` contains a Vite example for main-thread, OffscreenCanvas, and Observable usage.
+- `apps/web-demo` contains a Vite example for main-thread, OffscreenCanvas, and Observable usage.
 
 Current limitations:
 - Desktop-only helpers such as file-path export and native window integration are not exposed on wasm.

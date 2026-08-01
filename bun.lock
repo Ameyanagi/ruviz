@@ -11,7 +11,7 @@
         "oxlint": "^1.57.0",
       },
     },
-    "demo/web": {
+    "apps/web-demo": {
       "name": "ruviz-web-demo",
       "version": "0.0.0",
       "dependencies": {
@@ -434,7 +434,7 @@
 
     "ruviz": ["ruviz@workspace:packages/ruviz-web"],
 
-    "ruviz-web-demo": ["ruviz-web-demo@workspace:demo/web"],
+    "ruviz-web-demo": ["ruviz-web-demo@workspace:apps/web-demo"],
 
     "shiki": ["shiki@3.23.0", "", { "dependencies": { "@shikijs/core": "3.23.0", "@shikijs/engine-javascript": "3.23.0", "@shikijs/engine-oniguruma": "3.23.0", "@shikijs/langs": "3.23.0", "@shikijs/themes": "3.23.0", "@shikijs/types": "3.23.0", "@shikijs/vscode-textmate": "^10.0.2", "@types/hast": "^3.0.4" } }, "sha512-55Dj73uq9ZXL5zyeRPzHQsK7Nbyt6Y10k5s7OjuFZGMhpp4r/rsLBH0o/0fstIzX1Lep9VxefWljK/SKCzygIA=="],
 

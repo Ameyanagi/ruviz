@@ -21,7 +21,10 @@ OUTPUT_SUFFIXES = {
     ".svg",
     ".webp",
 }
-FORBIDDEN_SOURCE_ROOTS = {"examples", "gallery"}
+FORBIDDEN_OUTPUT_ROOTS = (
+    PurePosixPath("examples"),
+    PurePosixPath("tools/gallery"),
+)
 ALLOWED_GENERATED_FILES = {
     PurePosixPath("generated/README.md"),
     PurePosixPath("generated/manifest.json"),
@@ -48,6 +51,10 @@ def tracked_output_violations(paths: Iterable[str]) -> list[str]:
     violations: list[str] = []
     for raw_path in paths:
         path = PurePosixPath(raw_path)
+        if "__pycache__" in path.parts or path.suffix.lower() in {".pyc", ".pyo"}:
+            violations.append(raw_path)
+            continue
+
         if path.parts and path.parts[0] == "generated" and path not in ALLOWED_GENERATED_FILES:
             violations.append(raw_path)
             continue
@@ -59,7 +66,7 @@ def tracked_output_violations(paths: Iterable[str]) -> list[str]:
             violations.append(raw_path)
             continue
 
-        if path.parts[0] in FORBIDDEN_SOURCE_ROOTS:
+        if any(is_within(path, root) for root in FORBIDDEN_OUTPUT_ROOTS):
             violations.append(raw_path)
             continue
 
@@ -74,7 +81,7 @@ def tracked_output_violations(paths: Iterable[str]) -> list[str]:
 def gallery_output_violations(repository: Path) -> list[str]:
     """Find literal gallery save destinations outside generated/."""
 
-    gallery = repository / "gallery"
+    gallery = repository / "tools" / "gallery"
     if not gallery.is_dir():
         return []
 
@@ -109,7 +116,7 @@ def main() -> int:
     writer_violations = gallery_output_violations(repository)
 
     if tracked_violations:
-        print("Generated output must not be tracked in source-oriented paths:")
+        print("Generated output and cache files must not be tracked:")
         for violation in tracked_violations:
             print(f"  {violation}")
 

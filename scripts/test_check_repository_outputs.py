@@ -17,9 +17,10 @@ class TrackedOutputTests(unittest.TestCase):
         paths = [
             "preview.png",
             "examples/demo.svg",
-            "gallery/basic/render.png",
+            "tools/gallery/basic/render.png",
             "generated/bench/render.png",
             "generated/notes.txt",
+            "scripts/__pycache__/check.cpython-312.pyc",
             "tests/output/result.pdf",
         ]
 
@@ -41,10 +42,10 @@ class GalleryDestinationTests(unittest.TestCase):
     def test_rejects_literal_save_destination_outside_generated(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             repository = Path(temporary)
-            source = repository / "gallery" / "basic" / "demo.rs"
+            source = repository / "tools" / "gallery" / "basic" / "demo.rs"
             source.parent.mkdir(parents=True)
             source.write_text(
-                'plot.save("gallery/basic/demo.png")?;\n'
+                'plot.save("tools/gallery/basic/demo.png")?;\n'
                 'plot.save_with_size(format!("output/demo.svg"), 10, 10)?;\n',
                 encoding="utf-8",
             )
@@ -54,15 +55,15 @@ class GalleryDestinationTests(unittest.TestCase):
         self.assertEqual(
             violations,
             [
-                "gallery/basic/demo.rs:1: gallery/basic/demo.png",
-                "gallery/basic/demo.rs:2: output/demo.svg",
+                "tools/gallery/basic/demo.rs:1: tools/gallery/basic/demo.png",
+                "tools/gallery/basic/demo.rs:2: output/demo.svg",
             ],
         )
 
     def test_allows_generated_save_destination(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             repository = Path(temporary)
-            source = repository / "gallery" / "basic" / "demo.rs"
+            source = repository / "tools" / "gallery" / "basic" / "demo.rs"
             source.parent.mkdir(parents=True)
             source.write_text(
                 'plot.save("generated/bench/demo.png")?;\n', encoding="utf-8"

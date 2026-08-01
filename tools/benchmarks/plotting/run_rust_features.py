@@ -90,9 +90,9 @@ def main() -> None:
     manifest_path = args.manifest.resolve()
     if args.output_dir is None:
         default_output_dir = (
-            ROOT / "benchmarks" / "plotting" / "results" / "rust-features" / "reference"
+            ROOT / "tools" / "benchmarks" / "plotting" / "results" / "rust-features" / "reference"
             if args.mode == "full"
-            else ROOT / "benchmarks" / "plotting" / "results" / "rust-features" / "smoke"
+            else ROOT / "tools" / "benchmarks" / "plotting" / "results" / "rust-features" / "smoke"
         )
         output_dir = default_output_dir.resolve()
     else:
@@ -162,7 +162,7 @@ def main() -> None:
     docs_markdown = generate_feature_report(
         environment=environment,
         runtime_payloads=runtime_payloads,
-        raw_link_base="../../benchmarks/plotting/results/rust-features/reference"
+        raw_link_base="../../tools/benchmarks/plotting/results/rust-features/reference"
         if using_default_reference_outputs
         else ".",
         report_title="Rust Feature Impact Plotting Benchmarks",
