@@ -3,7 +3,7 @@ SHELL := /bin/bash
 RELEASE_DOCS_BRANCH := docs/release-0.4.0-refresh
 PYTHON_SITE_DIR := ../../generated/python/site
 
-.PHONY: help setup-hooks assert-release-branch clean-generated release-docs release-docs-rust release-docs-python release-docs-web rust-gallery check-rust-gallery build-generated-preview build-generated-preview-rust build-generated-preview-python build-generated-preview-web generated-manifest check-doc-asset-refs check-docs check-ci-test-coverage fmt clippy clippy-gpui check-web check bench-plotting bench-plotting-smoke bench-rust-features bench-rust-features-smoke
+.PHONY: help setup-hooks assert-release-branch clean-generated release-docs release-docs-rust release-docs-python release-docs-web rust-gallery check-rust-gallery build-generated-preview build-generated-preview-rust build-generated-preview-python build-generated-preview-web generated-manifest check-doc-asset-refs check-docs check-repository check-ci-test-coverage fmt clippy clippy-gpui check-web check bench-plotting bench-plotting-smoke bench-rust-features bench-rust-features-smoke
 
 help:
 	@echo "ruviz release documentation workflow"
@@ -30,8 +30,9 @@ help:
 	@echo "  make clippy              cargo clippy --all-targets --all-features -- -D warnings"
 	@echo "  make clippy-gpui         Lint the separate adapters/gpui workspace (pulls the zed GPUI checkout)"
 	@echo "  make check-web           bun run check:web"
+	@echo "  make check-repository    Validate tracked directory and generated-output boundaries"
 	@echo "  make check-ci-test-coverage Fail if CI compiles a test target it never runs"
-	@echo "  make check               Run fmt, clippy, check-web, check-docs, and CI test coverage"
+	@echo "  make check               Run formatting, lint, web, docs, repository, and CI policy checks"
 	@echo ""
 	@echo "Benchmark targets:"
 	@echo "  make bench-plotting"
@@ -119,6 +120,11 @@ check-doc-asset-refs:
 check-docs:
 	uv run python scripts/check_docs.py
 
+check-repository:
+	uv run python -m unittest scripts/test_check_repository_structure.py scripts/test_check_repository_outputs.py
+	uv run python scripts/check_repository_structure.py
+	uv run python scripts/check_repository_outputs.py
+
 # tests/integration/ci_test_coverage.rs fails when .github/workflows/ci.yml
 # compiles a tests/*.rs target that no pull-request job names in a `--test`
 # flag, and when a job pins a toolchain without asserting the rustc it actually
@@ -154,7 +160,7 @@ check-web:
 # `clippy-gpui` is deliberately not here: it is the one command that resolves
 # the zed GPUI checkout, and making the default local check pay for it would
 # undo the workspace split. CI runs it in its own job.
-check: fmt clippy check-web check-docs check-ci-test-coverage
+check: fmt clippy check-web check-docs check-repository check-ci-test-coverage
 
 bench-plotting:
 	bun install --frozen-lockfile --ignore-scripts
