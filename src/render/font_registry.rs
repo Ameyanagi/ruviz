@@ -192,7 +192,7 @@ pub(crate) fn load_with_registered_precedence(
 #[cfg(test)]
 fn deterministic_test_font() -> Option<Vec<u8>> {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("crates/ruviz-web/assets/NotoSans-Regular.ttf");
+        .join("bindings/wasm/assets/NotoSans-Regular.ttf");
     std::fs::read(path).ok()
 }
 

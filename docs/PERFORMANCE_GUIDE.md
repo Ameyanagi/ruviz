@@ -484,7 +484,7 @@ operations resolve the preference to Skia and report the fallback through
 **Consider alternatives if**:
 - Need production-grade interactive plots
 - Require extensive plot customization (ruviz prioritizes performance)
-- Need browser behavior beyond the current experimental `crates/ruviz-web` Web/WASM API
+- Need browser behavior beyond the current experimental `bindings/wasm` Web/WASM API
 
 ## Additional Resources
 

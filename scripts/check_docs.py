@@ -47,9 +47,9 @@ WEB_SRC = WEB_PACKAGE / "src"
 MARKDOWN_ROOTS = [
     ROOT / "README.md",
     ROOT / "docs",
-    ROOT / "python" / "README.md",
-    ROOT / "python" / "docs",
-    ROOT / "python" / "examples" / "README.md",
+    ROOT / "bindings" / "python" / "README.md",
+    ROOT / "bindings" / "python" / "docs",
+    ROOT / "bindings" / "python" / "examples" / "README.md",
     ROOT / "packages" / "ruviz" / "README.md",
     ROOT / "packages" / "ruviz" / "docs",
     ROOT / "packages" / "ruviz" / "examples" / "README.md",

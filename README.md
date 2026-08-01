@@ -217,10 +217,10 @@ Each adapter supports static and interactive 2D plots, and forwards the `3d`,
 
 | Framework | Crate and guide |
 |-----------|-----------------|
-| egui | [`ruviz-egui`](crates/gui-adapters/ruviz-egui/README.md) |
-| Iced | [`ruviz-iced`](crates/gui-adapters/ruviz-iced/README.md) |
-| Slint | [`ruviz-slint`](crates/gui-adapters/ruviz-slint/README.md) |
-| GPUI | [`ruviz-gpui`](crates/ruviz-gpui/README.md) |
+| egui | [`ruviz-egui`](adapters/gui/ruviz-egui/README.md) |
+| Iced | [`ruviz-iced`](adapters/gui/ruviz-iced/README.md) |
+| Slint | [`ruviz-slint`](adapters/gui/ruviz-slint/README.md) |
+| GPUI | [`ruviz-gpui`](adapters/gpui/README.md) |
 
 The adapters retain the last successful image while rendering newer requests
 in the background. GPU presentation remains image-backed: `3d-gpu` renders on
@@ -325,7 +325,7 @@ cargo run --features animation --example animation_wave
 - [User Guide](docs/guide/README.md)
 - [API Documentation](https://docs.rs/ruviz)
 - [Gallery](docs/gallery/README.md)
-- [Native GUI Adapters](crates/gui-adapters/README.md)
+- [Native GUI Adapters](adapters/gui/README.md)
 
 ## Development
 

@@ -31,4 +31,4 @@ If you run test suites that emit files under `generated/tests/`, those outputs
 remain local developer artifacts and are not part of the default PR preview.
 
 Published docs must continue to read from committed assets under `docs/assets/`,
-`python/docs/assets/gallery/`, and `tests/fixtures/golden/`.
+`bindings/python/docs/assets/gallery/`, and `tests/fixtures/golden/`.

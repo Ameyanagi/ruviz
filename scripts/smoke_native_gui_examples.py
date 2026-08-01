@@ -38,6 +38,28 @@ class ExampleArtifact:
 
 
 IDENTITY_PATTERN = re.compile(r"^[A-Za-z0-9_-]+:[A-Za-z0-9_-]+$")
+PACKAGE_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+def cargo_package_name(package_id: object, manifest: Path) -> str:
+    """Resolve a package name from Cargo's stable package ID representation."""
+
+    if not isinstance(package_id, str) or not package_id:
+        raise SmokeError(f"Cargo artifact for {manifest} has no package_id")
+
+    if "#" in package_id:
+        fragment = package_id.rsplit("#", maxsplit=1)[1]
+        package = fragment.rsplit("@", maxsplit=1)[0] if "@" in fragment else ""
+        # Cargo omits the name when it matches the manifest directory.
+        if not package:
+            package = manifest.parent.name
+    else:
+        # Cargo before URL-style package IDs used `name version (source)`.
+        package = package_id.split(maxsplit=1)[0]
+
+    if PACKAGE_PATTERN.fullmatch(package) is None:
+        raise SmokeError(f"invalid Cargo package identity for {manifest}: {package_id}")
+    return package
 
 
 def discover_examples(
@@ -77,7 +99,7 @@ def discover_examples(
                 continue
 
             manifest = Path(manifest_value)
-            package = manifest.parent.name
+            package = cargo_package_name(message.get("package_id"), manifest)
             executable = Path(executable_value)
             if not executable.is_absolute():
                 executable = repository / executable

@@ -136,7 +136,7 @@ fn test_ascii_text_rendering() {
 #[test]
 fn scientific_unicode_preserves_light_on_dark_edges_and_rotation() {
     let font_path =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/ruviz-web/assets/NotoSans-Regular.ttf");
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("bindings/wasm/assets/NotoSans-Regular.ttf");
     let font_bytes = std::fs::read(&font_path).unwrap_or_else(|error| {
         panic!(
             "failed to read tracked deterministic test font {}: {error}",

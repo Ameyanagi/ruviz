@@ -22,7 +22,7 @@ pip install "ruviz[polars]"
 For local contributor builds:
 
 ```sh
-cd python
+cd bindings/python
 uv sync
 uv run maturin develop
 ```
@@ -130,5 +130,5 @@ when the series is added.
 
 ## Examples
 
-Runnable examples live in `python/examples/`. The gallery page is generated from
+Runnable examples live in `bindings/python/examples/`. The gallery page is generated from
 those source files.

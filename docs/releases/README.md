@@ -41,8 +41,8 @@ Before creating a tag:
 
 1. Add or update `docs/releases/vX.Y.Z.md`
 2. Ensure `CHANGELOG.md` includes a matching `X.Y.Z` section
-3. Keep release versions aligned across `Cargo.toml`, `crates/ruviz-web`, `packages/ruviz/package.json`, `python/Cargo.toml`, and `python/pyproject.toml`
-4. For prerelease tags such as `vX.Y.Z-rc1`, use the matching PEP 440 version in `python/pyproject.toml` (`X.Y.Zrc1`)
+3. Keep release versions aligned across `Cargo.toml`, `bindings/wasm`, `packages/ruviz/package.json`, `bindings/python/Cargo.toml`, and `bindings/python/pyproject.toml`
+4. For prerelease tags such as `vX.Y.Z-rc1`, use the matching PEP 440 version in `bindings/python/pyproject.toml` (`X.Y.Zrc1`)
 5. Verify documentation snippets reflect the target release version where needed
 
 ## Release Procedure

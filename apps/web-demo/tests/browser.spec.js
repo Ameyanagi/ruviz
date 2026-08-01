@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
 
 const PYTHON_WIDGET_BUNDLE = readFileSync(
-  fileURLToPath(new URL("../../../python/ruviz_py/ruviz/widget.js", import.meta.url)),
+  fileURLToPath(new URL("../../../bindings/python/ruviz_py/ruviz/widget.js", import.meta.url)),
   "utf8",
 );
 const DEMO_READY_TIMEOUT_MS = 45_000;

@@ -1,9 +1,9 @@
 # Rust
 target/
-# Cargo.lock is NOT ignored: both the root lockfile and
-# crates/ruviz-gpui/Cargo.lock are committed on purpose. `cargo publish
-# --locked` and scripts/verify_packaged_crates.py both read them, and the
-# publish gate asserts the root lockfile carries no `git+` source.
+# Cargo.lock is NOT ignored: the root, GPUI, and GUI adapter lockfiles are
+# committed on purpose. `cargo publish --locked` and the package verifiers
+# read them, and the publish gate asserts that the root lockfile carries no
+# `git+` source.
 generated/*
 !generated/README.md
 !generated/manifest.json
@@ -46,26 +46,34 @@ demo/web/test-results/
 # Preserve ignored benchmark output from the retired pre-migration path.
 benchmarks/plotting/results/smoke/
 benchmarks/plotting/results/rust-features/smoke/
-crates/ruviz-web/pkg/
+bindings/wasm/pkg/
+bindings/python/.venv/
+bindings/python/.pytest_cache/
+bindings/python/.ruff_cache/
+bindings/python/site/
+bindings/python/ruviz_py/ruviz/_native*.so
+bindings/python/ruviz_py/ruviz/*.dSYM/
 packages/ruviz/node_modules/
 packages/ruviz/dist/
 packages/ruviz/generated/
 packages/ruviz/docs/.vitepress/cache/
 packages/ruviz/docs/.vitepress/dist/
+# Preserve ignored binding output from the retired pre-migration paths.
+crates/ruviz-web/pkg/
+python/.venv/
+python/.pytest_cache/
+python/.ruff_cache/
+python/site/
+python/ruviz_py/ruviz/_native*.so
+python/ruviz_py/ruviz/*.dSYM/
 # Preserve ignored npm output from the retired pre-migration path.
 packages/ruviz-web/node_modules/
 packages/ruviz-web/dist/
 packages/ruviz-web/generated/
 packages/ruviz-web/docs/.vitepress/cache/
 packages/ruviz-web/docs/.vitepress/dist/
-python/.venv/
-python/.pytest_cache/
-python/.ruff_cache/
-python/site/
 **/__pycache__/
 **/*.py[cod]
-python/ruviz_py/ruviz/_native*.so
-python/ruviz_py/ruviz/*.dSYM/
 
 # AI/Assistant artifacts
 .serena/

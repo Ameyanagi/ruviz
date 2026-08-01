@@ -84,7 +84,7 @@ interactive window:
 - `Cmd/Ctrl+S` to save PNG
 - `Cmd/Ctrl+C` to copy the current plot image
 
-See [`crates/ruviz-gpui/examples/static_embed.rs`](../crates/ruviz-gpui/examples/static_embed.rs)
+See [`adapters/gpui/examples/static_embed.rs`](../adapters/gpui/examples/static_embed.rs)
 for a minimal component-wiring example.
 
 ## Optional: Math Labels with Typst

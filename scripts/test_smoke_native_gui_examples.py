@@ -25,11 +25,15 @@ def executable_script(directory: Path, name: str, contents: str) -> Path:
     return path
 
 
-def artifact_message(manifest: Path, example: str, executable: Path) -> str:
+def artifact_message(
+    manifest: Path, example: str, executable: Path, package: str = ""
+) -> str:
+    fragment = f"{package}@0.1.0" if package else "0.1.0"
     return json.dumps(
         {
             "reason": "compiler-artifact",
             "manifest_path": str(manifest),
+            "package_id": f"path+file://{manifest.parent}#{fragment}",
             "target": {"kind": ["example"], "name": example},
             "executable": str(executable),
         }
@@ -53,7 +57,10 @@ class DiscoveryTests(unittest.TestCase):
             )
             gpui_messages.write_text(
                 artifact_message(
-                    root / "ruviz-gpui/Cargo.toml", "static_embed", gpui
+                    root / "adapters/gpui/Cargo.toml",
+                    "static_embed",
+                    gpui,
+                    package="ruviz-gpui",
                 )
                 + "\n",
                 encoding="utf-8",
@@ -205,10 +212,10 @@ class WorkflowContractTests(unittest.TestCase):
         )
         expected_fragments = (
             "Build all native GUI examples for smoke testing",
-            "crates/gui-adapters/Cargo.toml --package ruviz-egui --examples --all-features --locked",
-            "crates/gui-adapters/Cargo.toml --package ruviz-iced --examples --all-features --locked",
-            "crates/gui-adapters/Cargo.toml --package ruviz-slint --examples --all-features --locked",
-            "crates/ruviz-gpui/Cargo.toml --examples --all-features --locked",
+            "adapters/gui/Cargo.toml --package ruviz-egui --examples --all-features --locked",
+            "adapters/gui/Cargo.toml --package ruviz-iced --examples --all-features --locked",
+            "adapters/gui/Cargo.toml --package ruviz-slint --examples --all-features --locked",
+            "adapters/gpui/Cargo.toml --examples --all-features --locked",
             "--message-format=json-render-diagnostics",
             "smoke_native_gui_examples.py stage",
             "Smoke all native GUI examples under Xvfb",

@@ -543,7 +543,7 @@ square where radar fills ~80%.
 > `PlotArea` went with the parallel renderer in `258f3e8`, and
 > `ARCHITECTURE.md` now describes files that exist. The `thiserror` derive and
 > the `Vec<f64>` fast path and the owned-field `Styled<T>` closed in the
-> following tranches. Still open: moving `crates/ruviz-gpui` to its own
+> following tranches. Still open: moving `adapters/gpui` to its own
 > workspace, and relaxing the `rfd` pin.
 
 Do these only after Phases 1–3; several become much smaller once the duplication is gone.
@@ -664,7 +664,7 @@ Do these only after Phases 1–3; several become much smaller once the duplicati
   `Data1D::iter` was the blanket impl the hook now bypasses, so a GAT would cost a breaking
   change to a prelude-exported trait and object safety to de-box a call site that no longer
   runs.
-- **Move `crates/ruviz-gpui` into its own workspace.** The root `[patch.crates-io]` gpui
+- **Move `adapters/gpui` into its own workspace.** The root `[patch.crates-io]` gpui
   override is workspace-scoped and `default-members` does not exempt it, so even
   `cargo check -p ruviz` needs the zed checkout. `Cargo.lock` carries 38 `git+` entries from 6
   repos, two full wgpu 29 builds, and 17 glam versions; ~22 CI jobs pay for it on a cold cache.

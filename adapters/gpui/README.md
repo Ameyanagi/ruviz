@@ -133,7 +133,7 @@ headers before building desktop examples.
 Runnable examples live in the crate:
 
 ```sh
-# from crates/ruviz-gpui/ (it is its own Cargo workspace)
+# from adapters/gpui/ (it is its own Cargo workspace)
 cargo run --example static_embed
 cargo run --example observable_embed
 cargo run --example streaming_embed
@@ -186,5 +186,5 @@ Incompatible bounds are discarded and the replacement keeps its natural view.
 
 - Root crate docs: <https://docs.rs/ruviz>
 - Repository README: <https://github.com/Ameyanagi/ruviz/blob/main/README.md>
-- GPUI example directory: <https://github.com/Ameyanagi/ruviz/tree/main/crates/ruviz-gpui/examples>
+- GPUI example directory: <https://github.com/Ameyanagi/ruviz/tree/main/adapters/gpui/examples>
 - Release notes: <https://github.com/Ameyanagi/ruviz/tree/main/docs/releases>

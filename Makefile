@@ -1,7 +1,7 @@
 SHELL := /bin/bash
 
 RELEASE_DOCS_BRANCH := docs/release-0.4.0-refresh
-PYTHON_SITE_DIR := ../generated/python/site
+PYTHON_SITE_DIR := ../../generated/python/site
 
 .PHONY: help setup-hooks assert-release-branch clean-generated release-docs release-docs-rust release-docs-python release-docs-web rust-gallery check-rust-gallery build-generated-preview build-generated-preview-rust build-generated-preview-python build-generated-preview-web generated-manifest check-doc-asset-refs check-docs check-ci-test-coverage fmt clippy clippy-gpui check-web check bench-plotting bench-plotting-smoke bench-rust-features bench-rust-features-smoke
 
@@ -26,9 +26,9 @@ help:
 	@echo "  make clean-generated     Remove generated/ and retired local output roots"
 	@echo ""
 	@echo "Validation targets:"
-	@echo "  make fmt                 cargo fmt --all -- --check (both workspaces)"
+	@echo "  make fmt                 cargo fmt --all -- --check (all workspaces)"
 	@echo "  make clippy              cargo clippy --all-targets --all-features -- -D warnings"
-	@echo "  make clippy-gpui         Lint the separate crates/ruviz-gpui workspace (pulls the zed GPUI checkout)"
+	@echo "  make clippy-gpui         Lint the separate adapters/gpui workspace (pulls the zed GPUI checkout)"
 	@echo "  make check-web           bun run check:web"
 	@echo "  make check-ci-test-coverage Fail if CI compiles a test target it never runs"
 	@echo "  make check               Run fmt, clippy, check-web, check-docs, and CI test coverage"
@@ -65,7 +65,7 @@ release-docs-rust:
 	cargo test --all-features
 	cargo doc -p ruviz --all-features --no-deps
 	cargo doc -p ruviz-web --no-deps
-	cargo doc --manifest-path crates/ruviz-gpui/Cargo.toml --no-deps
+	cargo doc --manifest-path adapters/gpui/Cargo.toml --no-deps
 
 rust-gallery:
 	./scripts/generate-doc-images.sh
@@ -76,10 +76,10 @@ check-rust-gallery:
 
 release-docs-python:
 	bun run build:python-widget
-	cd python && uv run maturin develop
-	cd python && uv run python scripts/generate_gallery.py
-	cd python && uv run python -m mkdocs build --site-dir $(PYTHON_SITE_DIR)
-	cd python && uv run python -m pytest
+	cd bindings/python && uv run maturin develop
+	cd bindings/python && uv run python scripts/generate_gallery.py
+	cd bindings/python && uv run python -m mkdocs build --site-dir $(PYTHON_SITE_DIR)
+	cd bindings/python && uv run python -m pytest
 
 release-docs-web:
 	bun run --cwd packages/ruviz build
@@ -100,9 +100,9 @@ build-generated-preview-rust:
 build-generated-preview-python:
 	rm -rf generated/python/site
 	bun run build:python-widget
-	cd python && uv run maturin develop
-	cd python && uv run python scripts/generate_gallery.py
-	cd python && uv run python -m mkdocs build --site-dir $(PYTHON_SITE_DIR)
+	cd bindings/python && uv run maturin develop
+	cd bindings/python && uv run python scripts/generate_gallery.py
+	cd bindings/python && uv run python -m mkdocs build --site-dir $(PYTHON_SITE_DIR)
 
 build-generated-preview-web:
 	rm -rf generated/web/docs
@@ -129,16 +129,18 @@ check-docs:
 check-ci-test-coverage:
 	cargo test --test integration
 
-# `crates/ruviz-gpui` is its own workspace (see the root Cargo.toml), so `-p`
+# `adapters/gpui` is its own workspace (see the root Cargo.toml), so `-p`
 # and `--all` cannot reach it from here and it needs an explicit manifest path.
 # That split is what keeps every other cargo command in this repository from
 # resolving the zed GPUI checkout, so the extra line is the price of it. The
 # `fmt` half is free — `cargo fmt` never resolves dependencies.
-GPUI_MANIFEST := crates/ruviz-gpui/Cargo.toml
+GPUI_MANIFEST := adapters/gpui/Cargo.toml
+GUI_ADAPTERS_MANIFEST := adapters/gui/Cargo.toml
 
 fmt:
 	cargo fmt --all -- --check
 	cargo fmt --all --manifest-path $(GPUI_MANIFEST) -- --check
+	cargo fmt --all --manifest-path $(GUI_ADAPTERS_MANIFEST) -- --check
 
 clippy:
 	cargo clippy --all-targets --all-features -- -D warnings
@@ -156,18 +158,18 @@ check: fmt clippy check-web check-docs check-ci-test-coverage
 
 bench-plotting:
 	bun install --frozen-lockfile --ignore-scripts
-	cd python && uv sync --group bench && uv run maturin develop --release
-	cd python && uv run python ../tools/benchmarks/plotting/run.py --mode full
+	cd bindings/python && uv sync --group bench && uv run maturin develop --release
+	cd bindings/python && uv run python ../../tools/benchmarks/plotting/run.py --mode full
 
 bench-plotting-smoke:
 	bun install --frozen-lockfile --ignore-scripts
-	cd python && uv sync --group bench && uv run maturin develop --release
-	cd python && uv run python ../tools/benchmarks/plotting/run.py --mode smoke --output-dir ../tools/benchmarks/plotting/results/smoke --docs-output ../tools/benchmarks/plotting/results/smoke/report.md
+	cd bindings/python && uv sync --group bench && uv run maturin develop --release
+	cd bindings/python && uv run python ../../tools/benchmarks/plotting/run.py --mode smoke --output-dir ../../tools/benchmarks/plotting/results/smoke --docs-output ../../tools/benchmarks/plotting/results/smoke/report.md
 
 bench-rust-features:
-	cd python && uv sync --group bench
-	cd python && uv run python ../tools/benchmarks/plotting/run_rust_features.py --mode full
+	cd bindings/python && uv sync --group bench
+	cd bindings/python && uv run python ../../tools/benchmarks/plotting/run_rust_features.py --mode full
 
 bench-rust-features-smoke:
-	cd python && uv sync --group bench
-	cd python && uv run python ../tools/benchmarks/plotting/run_rust_features.py --mode smoke --output-dir ../tools/benchmarks/plotting/results/rust-features/smoke --docs-output ../tools/benchmarks/plotting/results/rust-features/smoke/report.md
+	cd bindings/python && uv sync --group bench
+	cd bindings/python && uv run python ../../tools/benchmarks/plotting/run_rust_features.py --mode smoke --output-dir ../../tools/benchmarks/plotting/results/rust-features/smoke --docs-output ../../tools/benchmarks/plotting/results/rust-features/smoke/report.md

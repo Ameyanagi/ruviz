@@ -11,7 +11,7 @@ dependencies from entering the core `ruviz` dependency graph. Build all three
 adapter crates with:
 
 ```sh
-cargo check --manifest-path crates/gui-adapters/Cargo.toml
+cargo check --manifest-path adapters/gui/Cargo.toml
 ```
 
 All three crates provide framework-native, image-backed static and interactive
@@ -22,6 +22,6 @@ or `3d-gpu` for retained GPU rendering followed by explicit image readback.
 Run the headless behavioral and documentation suites with:
 
 ```sh
-cargo test --manifest-path crates/gui-adapters/Cargo.toml --workspace --all-features
-cargo test --manifest-path crates/gui-adapters/Cargo.toml --workspace --doc --all-features
+cargo test --manifest-path adapters/gui/Cargo.toml --workspace --all-features
+cargo test --manifest-path adapters/gui/Cargo.toml --workspace --doc --all-features
 ```

@@ -25,6 +25,7 @@ for legacy_dir in \
     "$PROJECT_ROOT/test_output" \
     "$PROJECT_ROOT/export_output" \
     "$PROJECT_ROOT/export_test_output" \
+    "$PROJECT_ROOT/bindings/python/site" \
     "$PROJECT_ROOT/python/site" \
     "$PROJECT_ROOT/packages/ruviz/docs/.vitepress/dist" \
     "$PROJECT_ROOT/packages/ruviz-web/docs/.vitepress/dist"

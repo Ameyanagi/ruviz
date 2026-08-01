@@ -28,14 +28,14 @@ SUPPORTED_GPUI_TARGETS = {
 }
 WORKSPACE_ONLY_DEV_DEPENDENCIES = {"gpui_macos", "gpui_platform"}
 
-# `crates/ruviz-gpui` is its own workspace, deliberately outside the one rooted
+# `adapters/gpui` is its own workspace, deliberately outside the one rooted
 # at the repository root. `[patch.crates-io]` is workspace-scoped and
 # `default-members` does not exempt it, so as long as the adapter was a root
 # member its pin to a zed monorepo git rev applied to *every* cargo command in
 # the repository — `cargo check -p ruviz` included. The checks below assert the
 # split as strictly as the previous membership assertion did, plus the invariant
 # the split buys: the root workspace resolves entirely from crates.io.
-GPUI_CRATE_DIR = "crates/ruviz-gpui"
+GPUI_CRATE_DIR = "adapters/gpui"
 
 
 class VerificationError(RuntimeError):
@@ -151,9 +151,9 @@ def require_registry_only_lockfile(lockfile: Path) -> None:
     it is a strictly stronger statement than "the GPUI patch is not in the root
     manifest": a `git+` source can also arrive through a transitive dependency,
     a `[patch]` on some other crate, or a git dependency added to `ruviz-web` or
-    `python`. Asserting it on the lockfile catches all of those at once, and it
-    is what makes "no git source can leak into the published ruviz package"
-    true by construction rather than by inspection of the packaged archive.
+    `bindings/python`. Asserting it on the lockfile catches all of those at
+    once, and it is what makes "no git source can leak into the published ruviz
+    package" true by construction rather than by inspection of the archive.
     """
     if not lockfile.is_file():
         raise VerificationError(f"root lockfile is missing: {lockfile}")

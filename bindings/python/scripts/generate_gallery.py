@@ -39,7 +39,7 @@ def build_gallery_page(modules: list[ModuleType]) -> str:
     lines = [
         "# Gallery",
         "",
-        "This page is generated from `python/examples/` by `scripts/generate_gallery.py`.",
+        "This page is generated from `bindings/python/examples/` by `scripts/generate_gallery.py`.",
         "",
     ]
 
