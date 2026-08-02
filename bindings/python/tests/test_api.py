@@ -661,3 +661,230 @@ def test_observable_detaches_discarded_plot_listeners() -> None:
     source.replace([4.0, 5.0, 6.0])
 
     assert source._listeners == {}
+
+
+STYLE_X = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0]
+STYLE_Y = [0.5, 1.5, 1.0, 2.5, 2.0, 3.0]
+STYLE_SAMPLES = [-2.3, -1.9, -1.1, -0.4, 0.2, 0.8, 1.0, 1.4, 1.7, 2.1, 2.5, 2.9]
+STYLE_ERRORS = [0.2, 0.3, 0.1, 0.25, 0.15, 0.2]
+STYLE_GRID = [-1.0, 0.0, 1.0]
+STYLE_Z = [0.1, 0.2, 0.3, 0.2, 0.6, 0.2, 0.3, 0.2, 0.1]
+
+#: One builder per styled plot kind, so the style cases below stay derived from
+#: the single ``_SERIES_KINDS`` definition rather than restating it.
+STYLED_BUILDERS = {
+    "line": lambda plot, **style: plot.line(STYLE_X, STYLE_Y, **style),
+    "scatter": lambda plot, **style: plot.scatter(STYLE_X, STYLE_Y, **style),
+    "bar": lambda plot, **style: plot.bar(["a", "b", "c"], [1.0, 2.0, 3.0], **style),
+    "histogram": lambda plot, **style: plot.histogram(STYLE_SAMPLES, **style),
+    "boxplot": lambda plot, **style: plot.boxplot(STYLE_SAMPLES, **style),
+    "error-bars": lambda plot, **style: plot.error_bars(STYLE_X, STYLE_Y, STYLE_ERRORS, **style),
+    "error-bars-xy": lambda plot, **style: plot.error_bars_xy(
+        STYLE_X, STYLE_Y, STYLE_ERRORS, STYLE_ERRORS, **style
+    ),
+    "kde": lambda plot, **style: plot.kde(STYLE_SAMPLES, **style),
+    "ecdf": lambda plot, **style: plot.ecdf(STYLE_SAMPLES, **style),
+    "contour": lambda plot, **style: plot.contour(STYLE_GRID, STYLE_GRID, STYLE_Z, **style),
+    "violin": lambda plot, **style: plot.violin(STYLE_SAMPLES, **style),
+    "polar-line": lambda plot, **style: plot.polar_line(
+        [1.0, 2.0, 1.5, 2.5], [0.0, 1.0, 2.0, 3.0], **style
+    ),
+}
+
+STYLE_VALUES = {
+    "label": "Series",
+    "color": "#2563eb",
+    "alpha": 0.35,
+    "width": 4.0,
+    "linestyle": "dashed",
+    "marker": "square",
+    "marker_size": 12.0,
+    "bins": 7,
+    "bandwidth": 0.9,
+    "levels": 9,
+}
+
+STYLE_CASES = [
+    (kind, ruviz._api._STYLE_KEYWORDS.get(key, key))
+    for kind, builder in STYLED_BUILDERS.items()
+    for key in sorted(ruviz._api._SERIES_KINDS[kind].style)
+]
+
+
+def _styled_base() -> ruviz.Plot:
+    return ruviz.plot().size_px(320, 200).legend()
+
+
+@pytest.mark.parametrize(("kind", "keyword"), STYLE_CASES, ids=[f"{k}-{o}" for k, o in STYLE_CASES])
+def test_every_series_style_keyword_changes_the_render(kind: str, keyword: str) -> None:
+    build = STYLED_BUILDERS[kind]
+
+    plain = build(_styled_base()).render_png()
+    styled = build(_styled_base(), **{keyword: STYLE_VALUES[keyword]}).render_png()
+
+    assert styled.startswith(PNG_HEADER)
+    assert styled != plain
+
+
+@pytest.mark.parametrize(("kind", "keyword"), STYLE_CASES, ids=[f"{k}-{o}" for k, o in STYLE_CASES])
+def test_series_style_round_trips_through_snapshot_copies(kind: str, keyword: str) -> None:
+    plot = STYLED_BUILDERS[kind](_styled_base(), **{keyword: STYLE_VALUES[keyword]})
+
+    snapshot = plot.to_snapshot()
+
+    assert len(snapshot["series"][0]["style"]) == 1
+    assert plot.clone().to_snapshot() == snapshot
+    assert copy(plot).to_snapshot() == snapshot
+    assert deepcopy(plot).to_snapshot() == snapshot
+    assert ruviz.Plot._replay_snapshot(snapshot).to_snapshot() == snapshot
+
+
+@pytest.mark.parametrize("kind", sorted(STYLED_BUILDERS), ids=sorted(STYLED_BUILDERS))
+def test_unstyled_series_stay_style_free(kind: str) -> None:
+    plot = STYLED_BUILDERS[kind](_styled_base())
+
+    series = plot.to_snapshot()["series"][0]
+
+    assert "style" not in series
+    assert plot.render_png() == STYLED_BUILDERS[kind](_styled_base()).render_png()
+
+
+def test_series_style_accepts_named_colors_and_underscore_enum_names() -> None:
+    plot = ruviz.plot().line(STYLE_X, STYLE_Y, color="Red", marker="triangle_down")
+
+    assert plot.to_snapshot()["series"][0]["style"] == {
+        "color": "red",
+        "marker": "triangle-down",
+    }
+    assert plot.render_png().startswith(PNG_HEADER)
+
+
+@pytest.mark.parametrize(
+    ("style", "message"),
+    [
+        ({"color": "not-a-color"}, "unsupported color"),
+        ({"color": 12}, "color must be a string"),
+        ({"marker": "blob"}, "unsupported marker"),
+        ({"linestyle": "wavy"}, "unsupported linestyle"),
+        ({"alpha": 1.5}, "alpha must be between"),
+        ({"width": 0.0}, "width must be a finite positive number"),
+        ({"marker_size": -1.0}, "marker_size must be a finite positive number"),
+        ({"label": 7}, "label must be a string"),
+    ],
+)
+def test_invalid_series_style_values_are_rejected_at_the_call(
+    style: dict[str, object], message: str
+) -> None:
+    with pytest.raises((ValueError, TypeError), match=message):
+        ruviz.plot().line(STYLE_X, STYLE_Y, **style)
+
+
+def test_unsupported_style_keyword_is_rejected_per_kind() -> None:
+    with pytest.raises(TypeError, match="unexpected keyword argument 'linestyle'"):
+        ruviz.plot().bar(["a"], [1.0], linestyle="dashed")
+
+
+@pytest.mark.parametrize(
+    ("keyword", "value", "message"),
+    [
+        ("bins", 0, "bins must be an integer >= 1"),
+        ("bandwidth", 0.0, "bandwidth must be a finite positive number"),
+        ("levels", 1, "levels must be an integer >= 2"),
+    ],
+)
+def test_invalid_series_config_values_are_rejected(
+    keyword: str, value: object, message: str
+) -> None:
+    builders = {
+        "bins": lambda **style: ruviz.plot().histogram(STYLE_SAMPLES, **style),
+        "bandwidth": lambda **style: ruviz.plot().kde(STYLE_SAMPLES, **style),
+        "levels": lambda **style: ruviz.plot().contour(STYLE_GRID, STYLE_GRID, STYLE_Z, **style),
+    }
+
+    with pytest.raises(ValueError, match=message):
+        builders[keyword](**{keyword: value})
+
+
+PLOT_SETTING_CASES = [
+    ("legend", lambda plot: plot.legend("upper_left"), "legend", "upper_left"),
+    ("grid", lambda plot: plot.grid(False), "grid", False),
+    ("xlim", lambda plot: plot.xlim(0.0, 2000.0), "xLim", [0.0, 2000.0]),
+    ("ylim", lambda plot: plot.ylim(-5.0, 10.0), "yLim", [-5.0, 10.0]),
+    ("xscale", lambda plot: plot.xscale("log"), "xScale", ["log"]),
+    ("yscale", lambda plot: plot.yscale("symlog", 2.0), "yScale", ["symlog", 2.0]),
+]
+
+
+def _plot_setting_base() -> ruviz.Plot:
+    return (
+        ruviz.plot()
+        .size_px(320, 200)
+        .line([1.0, 10.0, 100.0, 1000.0], [1.0, 2.0, 3.0, 4.0], label="L")
+    )
+
+
+@pytest.mark.parametrize(
+    ("name", "apply", "key", "stored"),
+    PLOT_SETTING_CASES,
+    ids=[case[0] for case in PLOT_SETTING_CASES],
+)
+def test_plot_level_setting_renders_and_round_trips(
+    name: str, apply: object, key: str, stored: object
+) -> None:
+    plot = apply(_plot_setting_base())
+
+    snapshot = plot.to_snapshot()
+    assert snapshot[key] == stored
+    assert plot.render_png() != _plot_setting_base().render_png()
+    assert plot.clone().to_snapshot() == snapshot
+    assert deepcopy(plot).to_snapshot() == snapshot
+    assert ruviz.Plot._replay_snapshot(snapshot).to_snapshot() == snapshot
+
+
+def test_plot_level_settings_default_to_absent() -> None:
+    snapshot = _plot_setting_base().to_snapshot()
+
+    assert not {"legend", "grid", "xLim", "yLim", "xScale", "yScale"} & set(snapshot)
+
+
+@pytest.mark.parametrize(
+    ("apply", "message"),
+    [
+        (lambda plot: plot.legend("nowhere"), "unsupported legend position"),
+        (lambda plot: plot.xscale("logarithmic"), "unsupported axis scale"),
+        (lambda plot: plot.xscale("symlog", 0.0), "linthresh must be a finite positive number"),
+        (lambda plot: plot.xscale("log", 2.0), "linthresh only applies to the symlog scale"),
+        (lambda plot: plot.xlim(1.0, 1.0), "x limits must be finite and strictly ascending"),
+        (
+            lambda plot: plot.ylim(float("inf"), 1.0),
+            "y limits must be finite and strictly ascending",
+        ),
+    ],
+)
+def test_invalid_plot_level_settings_are_rejected(apply: object, message: str) -> None:
+    with pytest.raises(ValueError, match=message):
+        apply(ruviz.plot())
+
+
+def test_styling_and_axis_settings_compose_in_one_snapshot() -> None:
+    plot = (
+        ruviz.plot()
+        .size_px(320, 200)
+        .line(STYLE_X, STYLE_Y, label="Revenue", color="#2563eb", width=2.0)
+        .scatter(STYLE_X, STYLE_Y, label="Samples", marker="diamond", marker_size=8.0)
+        .legend("upper_right")
+        .grid(True)
+        .ylim(0.0, 4.0)
+    )
+
+    snapshot = plot.to_snapshot()
+
+    assert snapshot["series"][0]["style"] == {"label": "Revenue", "color": "#2563eb", "width": 2.0}
+    assert snapshot["series"][1]["style"] == {
+        "label": "Samples",
+        "marker": "diamond",
+        "markerSize": 8.0,
+    }
+    assert snapshot["legend"] == "upper_right"
+    assert plot.render_png().startswith(PNG_HEADER)
+    assert ruviz.Plot._replay_snapshot(snapshot).to_snapshot() == snapshot

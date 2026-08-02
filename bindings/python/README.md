@@ -40,6 +40,53 @@ y = x**2
 )
 ```
 
+## Styling
+
+Series take keyword-only style arguments, and the plot takes legend, grid,
+limit, and scale settings:
+
+```python,check
+import ruviz
+
+(
+    ruviz.plot()
+    .line([0, 1, 2], [1.0, 2.5, 4.0], label="Revenue", color="#2563eb", width=2.0)
+    .scatter([0, 1, 2], [1.2, 2.2, 3.6], label="Samples", marker="diamond", marker_size=8.0)
+    .legend("upper_left")
+    .grid(True)
+    .ylim(0.0, 5.0)
+    .yscale("log")
+    .save("styled.png")
+)
+```
+
+- `color` takes a hex string (`"#2563eb"`, `"#25f"`, `"#2563eb80"`) or a named
+  color such as `"red"`.
+- `linestyle` is one of `solid`, `dashed`, `dotted`, `dash-dot`, `dash-dot-dot`.
+- `marker` is one of `circle`, `square`, `triangle`, `triangle-down`, `diamond`,
+  `plus`, `cross`, `star`, and the `-open` variants.
+- Unsupported names raise `ValueError` listing the accepted values at the call
+  that used them.
+- Supported per series kind:
+
+| method | keywords |
+| --- | --- |
+| `line` | `label`, `color`, `alpha`, `width`, `linestyle`, `marker`, `marker_size` |
+| `scatter` | `label`, `color`, `alpha`, `marker`, `marker_size` |
+| `bar` | `label`, `color`, `alpha` |
+| `histogram` | `label`, `color`, `alpha`, `bins` |
+| `boxplot` | `label`, `color`, `alpha`, `width`, `linestyle` |
+| `kde` | `label`, `color`, `alpha`, `width`, `bandwidth` |
+| `ecdf`, `violin`, `polar_line`, `error_bars`, `error_bars_xy` | `label`, `color`, `alpha`, `width` |
+| `contour` | `alpha`, `width`, `levels` |
+
+Plot-level settings are `legend(position="best")`, `grid(enabled=True)`,
+`xlim(min, max)`, `ylim(min, max)`, and `xscale(scale, linthresh=None)` /
+`yscale(...)` with `"linear"`, `"log"`, or `"symlog"`.
+
+Notebook widgets carry these settings in their snapshot but do not paint them
+yet; the WASM runtime renders styled series in a later phase.
+
 ## Notebook and Desktop Usage
 
 - In Jupyter, `plot.show()` displays a static PNG in the cell output.

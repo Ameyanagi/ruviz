@@ -174,6 +174,76 @@ def _heatmap_matrix(series: dict[str, Any]) -> list[list[float]]:
     return [values[start : start + cols] for start in range(0, len(values), cols)]
 
 
+def _style_text(name: str) -> Callable[[Any], str]:
+    """Accept a string; the native layer maps it onto the matching core enum."""
+
+    def normalize(value: Any) -> str:
+        if not isinstance(value, str):
+            raise TypeError(f"{name} must be a string")
+        return value.strip().lower().replace("_", "-")
+
+    return normalize
+
+
+def _style_label(value: Any) -> str:
+    if not isinstance(value, str):
+        raise TypeError("label must be a string")
+    return value
+
+
+def _style_color(value: Any) -> str:
+    if not isinstance(value, str):
+        raise TypeError("color must be a string such as '#2563eb' or 'red'")
+    return value.strip().lower()
+
+
+def _style_alpha(value: Any) -> float:
+    alpha = float(value)
+    if not 0.0 <= alpha <= 1.0:
+        raise ValueError("alpha must be between 0.0 and 1.0")
+    return alpha
+
+
+def _style_positive(name: str) -> Callable[[Any], float]:
+    def normalize(value: Any) -> float:
+        number = float(value)
+        if not np.isfinite(number) or number <= 0.0:
+            raise ValueError(f"{name} must be a finite positive number")
+        return number
+
+    return normalize
+
+
+def _style_count(name: str, minimum: int) -> Callable[[Any], int]:
+    def normalize(value: Any) -> int:
+        count = int(value)
+        if count < minimum:
+            raise ValueError(f"{name} must be an integer >= {minimum}")
+        return count
+
+    return normalize
+
+
+#: Snapshot style key -> validator. Keys are camelCase to match the snapshot's
+#: existing ``sizePx``/``xLabel`` spelling; :data:`_STYLE_KEYWORDS` maps them
+#: back to the Python keyword arguments.
+_STYLE_OPTIONS: dict[str, Callable[[Any], Any]] = {
+    "label": _style_label,
+    "color": _style_color,
+    "alpha": _style_alpha,
+    "width": _style_positive("width"),
+    "linestyle": _style_text("linestyle"),
+    "marker": _style_text("marker"),
+    "markerSize": _style_positive("marker_size"),
+    "bins": _style_count("bins", 1),
+    "bandwidth": _style_positive("bandwidth"),
+    "levels": _style_count("levels", 2),
+}
+
+#: Snapshot style key -> Python keyword, for the keys whose spellings differ.
+_STYLE_KEYWORDS = {"markerSize": "marker_size"}
+
+
 @dataclass(frozen=True)
 class _SeriesKind:
     """How one snapshot series maps onto the ``Plot``/native method of the same name.
@@ -181,25 +251,42 @@ class _SeriesKind:
     ``args`` are snapshot keys in positional call order and ``sources`` names the
     subset holding ``{"kind", "values"}`` numeric sources that may be backed by an
     observable. ``native_args``/``public_args`` override the derived arguments for
-    the kinds whose stored shape differs from the method signature.
+    the kinds whose stored shape differs from the method signature. ``style`` lists
+    the :data:`_STYLE_OPTIONS` keys the core builder for this kind actually honors.
     """
 
     args: tuple[str, ...] = ()
     sources: frozenset[str] = frozenset()
     native_args: Callable[[dict[str, Any]], list[Any]] | None = None
     public_args: Callable[[dict[str, Any]], list[Any]] | None = None
+    style: frozenset[str] = frozenset()
 
 
 def _pie_args(series: dict[str, Any]) -> list[Any]:
     return [series["values"], series.get("labels")]
 
 
+_COMMON_STYLE = frozenset({"label", "color", "alpha"})
+_LINE_STYLE = _COMMON_STYLE | {"width"}
+
 _SERIES_KINDS: dict[str, _SeriesKind] = {
-    "line": _SeriesKind(("x", "y"), frozenset({"x", "y"})),
-    "scatter": _SeriesKind(("x", "y"), frozenset({"x", "y"})),
-    "bar": _SeriesKind(("categories", "values"), frozenset({"values"})),
-    "histogram": _SeriesKind(("data",), frozenset({"data"})),
-    "boxplot": _SeriesKind(("data",), frozenset({"data"})),
+    "line": _SeriesKind(
+        ("x", "y"),
+        frozenset({"x", "y"}),
+        style=_LINE_STYLE | {"linestyle", "marker", "markerSize"},
+    ),
+    "scatter": _SeriesKind(
+        ("x", "y"),
+        frozenset({"x", "y"}),
+        style=_COMMON_STYLE | {"marker", "markerSize"},
+    ),
+    "bar": _SeriesKind(("categories", "values"), frozenset({"values"}), style=_COMMON_STYLE),
+    "histogram": _SeriesKind(("data",), frozenset({"data"}), style=_COMMON_STYLE | {"bins"}),
+    "boxplot": _SeriesKind(
+        ("data",),
+        frozenset({"data"}),
+        style=_LINE_STYLE | {"linestyle"},
+    ),
     "heatmap": _SeriesKind(
         native_args=lambda series: [
             series["values"],
@@ -208,14 +295,19 @@ _SERIES_KINDS: dict[str, _SeriesKind] = {
         ],
         public_args=lambda series: [_heatmap_matrix(series)],
     ),
-    "error-bars": _SeriesKind(("x", "y", "yErrors"), frozenset({"x", "y", "yErrors"})),
+    "error-bars": _SeriesKind(
+        ("x", "y", "yErrors"),
+        frozenset({"x", "y", "yErrors"}),
+        style=_LINE_STYLE,
+    ),
     "error-bars-xy": _SeriesKind(
         ("x", "y", "xErrors", "yErrors"),
         frozenset({"x", "y", "xErrors", "yErrors"}),
+        style=_LINE_STYLE,
     ),
-    "kde": _SeriesKind(("data",)),
-    "ecdf": _SeriesKind(("data",)),
-    "contour": _SeriesKind(("x", "y", "z")),
+    "kde": _SeriesKind(("data",), style=_LINE_STYLE | {"bandwidth"}),
+    "ecdf": _SeriesKind(("data",), style=_LINE_STYLE),
+    "contour": _SeriesKind(("x", "y", "z"), style=frozenset({"alpha", "width", "levels"})),
     "pie": _SeriesKind(native_args=_pie_args, public_args=_pie_args),
     "radar": _SeriesKind(
         ("labels", "series"),
@@ -224,8 +316,8 @@ _SERIES_KINDS: dict[str, _SeriesKind] = {
             [(item.get("name"), item["values"]) for item in series["series"]],
         ],
     ),
-    "violin": _SeriesKind(("data",)),
-    "polar-line": _SeriesKind(("r", "theta")),
+    "violin": _SeriesKind(("data",), style=_LINE_STYLE),
+    "polar-line": _SeriesKind(("r", "theta"), style=_LINE_STYLE),
 }
 
 
@@ -236,6 +328,51 @@ def _series_kind(series: dict[str, Any]) -> tuple[_SeriesKind, str]:
     if spec is None:
         raise ValueError(f"unsupported plot snapshot kind: {kind}")
     return spec, kind.replace("-", "_")
+
+
+def _styled_series(kind: str, fields: dict[str, Any], options: dict[str, Any]) -> dict[str, Any]:
+    """Build one series snapshot, validating and attaching the style the caller set."""
+    supported = _SERIES_KINDS[kind].style
+    style: dict[str, Any] = {}
+    for key, value in options.items():
+        if value is None:
+            continue
+        if key not in supported:
+            accepted = ", ".join(sorted(_STYLE_KEYWORDS.get(name, name) for name in supported))
+            raise ValueError(
+                f"{kind} does not support {_STYLE_KEYWORDS.get(key, key)}=; "
+                f"accepted: {accepted or 'none'}"
+            )
+        style[key] = _STYLE_OPTIONS[key](value)
+
+    series = {"kind": kind, **fields}
+    if style:
+        series["style"] = style
+    return series
+
+
+def _style_keywords(series: dict[str, Any]) -> dict[str, Any]:
+    """Turn a stored style back into the keyword arguments that produced it."""
+    return {_STYLE_KEYWORDS.get(key, key): value for key, value in series.get("style", {}).items()}
+
+
+#: Snapshot key -> (method name shared by ``Plot`` and the native handle, whether
+#: the stored value is an argument list). Applied before the series so replayed
+#: plots and rebuilt native handles configure the axes identically.
+_PLOT_SETTINGS: tuple[tuple[str, str, bool], ...] = (
+    ("sizePx", "size_px", True),
+    ("theme", "theme", False),
+    ("ticks", "ticks", False),
+    ("title", "title", False),
+    ("xLabel", "xlabel", False),
+    ("yLabel", "ylabel", False),
+    ("legend", "legend", False),
+    ("grid", "grid", False),
+    ("xLim", "xlim", True),
+    ("yLim", "ylim", True),
+    ("xScale", "xscale", True),
+    ("yScale", "yscale", True),
+)
 
 
 @dataclass
@@ -520,6 +657,8 @@ class Plot:
                 else series[key]
                 for key in spec.args
             ]
+        if spec.style:
+            args.append(series.get("style", {}))
         getattr(native_plot, method)(*args)
 
     def _append_series_snapshot(self, series: dict[str, Any]) -> None:
@@ -534,25 +673,7 @@ class Plot:
         static copy and does not retain live observable links.
         """
         native_plot = _native.NativePlotHandle()
-
-        size = snapshot.get("sizePx")
-        if size is not None:
-            native_plot.size_px(int(size[0]), int(size[1]))
-        theme = snapshot.get("theme")
-        if theme is not None:
-            native_plot.theme(str(theme))
-        ticks = snapshot.get("ticks")
-        if ticks is not None:
-            native_plot.ticks(bool(ticks))
-        title = snapshot.get("title")
-        if title is not None:
-            native_plot.title(str(title))
-        x_label = snapshot.get("xLabel")
-        if x_label is not None:
-            native_plot.xlabel(str(x_label))
-        y_label = snapshot.get("yLabel")
-        if y_label is not None:
-            native_plot.ylabel(str(y_label))
+        self._apply_snapshot_metadata(native_plot, snapshot)
 
         for series in snapshot["series"]:
             self._apply_native_series(native_plot, series)
@@ -560,25 +681,14 @@ class Plot:
         self._native_plot = native_plot
 
     @staticmethod
-    def _apply_snapshot_metadata(plot: "Plot", snapshot: dict[str, Any]) -> None:
-        size = snapshot.get("sizePx")
-        if size is not None:
-            plot.size_px(int(size[0]), int(size[1]))
-        theme = snapshot.get("theme")
-        if theme is not None:
-            plot.theme(str(theme))
-        ticks = snapshot.get("ticks")
-        if ticks is not None:
-            plot.ticks(bool(ticks))
-        title = snapshot.get("title")
-        if title is not None:
-            plot.title(str(title))
-        x_label = snapshot.get("xLabel")
-        if x_label is not None:
-            plot.xlabel(str(x_label))
-        y_label = snapshot.get("yLabel")
-        if y_label is not None:
-            plot.ylabel(str(y_label))
+    def _apply_snapshot_metadata(target: Any, snapshot: dict[str, Any]) -> None:
+        """Replay plot-level settings onto a ``Plot`` or a native handle."""
+        for key, method, unpack in _PLOT_SETTINGS:
+            value = snapshot.get(key)
+            if value is None:
+                continue
+            setter = getattr(target, method)
+            setter(*value) if unpack else setter(value)
 
     @staticmethod
     def _resolve_numeric_source(
@@ -610,7 +720,7 @@ class Plot:
                     else series[key]
                     for key in spec.args
                 ]
-            getattr(plot, method)(*args)
+            getattr(plot, method)(*args, **_style_keywords(series))
 
         return plot
 
@@ -696,8 +806,88 @@ class Plot:
         self._invalidate_snapshot_cache()
         return self
 
-    def line(self, x: Any, y: Any, *, data: Any = None) -> "Plot":
-        """Add a line series from x/y arrays or dataframe columns."""
+    def legend(self, position: str = "best") -> "Plot":
+        """Show the legend at ``position``.
+
+        Accepts ``"best"`` plus the core legend positions as lowercase names,
+        such as ``"upper_right"``, ``"center"``, or ``"outside_right"``.
+        """
+        normalized = str(position).strip().lower().replace("-", "_").replace(" ", "_")
+        self._native_plot.legend(normalized)
+        self._state["legend"] = normalized
+        self._invalidate_snapshot_cache()
+        return self
+
+    def grid(self, enabled: bool = True) -> "Plot":
+        """Show or hide the axis grid."""
+        normalized = bool(enabled)
+        self._native_plot.grid(normalized)
+        self._state["grid"] = normalized
+        self._invalidate_snapshot_cache()
+        return self
+
+    def _set_limit(self, axis: str, minimum: float, maximum: float) -> "Plot":
+        lower = float(minimum)
+        upper = float(maximum)
+        if not np.isfinite(lower) or not np.isfinite(upper) or lower >= upper:
+            raise ValueError(f"{axis} limits must be finite and strictly ascending")
+        getattr(self._native_plot, f"{axis}lim")(lower, upper)
+        self._state[f"{axis}Lim"] = [lower, upper]
+        self._invalidate_snapshot_cache()
+        return self
+
+    def xlim(self, minimum: float, maximum: float) -> "Plot":
+        """Set finite ascending x-axis limits."""
+        return self._set_limit("x", minimum, maximum)
+
+    def ylim(self, minimum: float, maximum: float) -> "Plot":
+        """Set finite ascending y-axis limits."""
+        return self._set_limit("y", minimum, maximum)
+
+    def _set_scale(self, axis: str, scale: str, linthresh: float | None) -> "Plot":
+        normalized = str(scale).strip().lower()
+        args: list[Any] = [normalized]
+        if normalized == "symlog":
+            threshold = 1.0 if linthresh is None else float(linthresh)
+            if not np.isfinite(threshold) or threshold <= 0.0:
+                raise ValueError("symlog linthresh must be a finite positive number")
+            args.append(threshold)
+        elif linthresh is not None:
+            raise ValueError("linthresh only applies to the symlog scale")
+        getattr(self._native_plot, f"{axis}scale")(*args)
+        self._state[f"{axis}Scale"] = args
+        self._invalidate_snapshot_cache()
+        return self
+
+    def xscale(self, scale: str, linthresh: float | None = None) -> "Plot":
+        """Set the x-axis scale to ``linear``, ``log``, or ``symlog``."""
+        return self._set_scale("x", scale, linthresh)
+
+    def yscale(self, scale: str, linthresh: float | None = None) -> "Plot":
+        """Set the y-axis scale to ``linear``, ``log``, or ``symlog``."""
+        return self._set_scale("y", scale, linthresh)
+
+    def line(
+        self,
+        x: Any,
+        y: Any,
+        *,
+        data: Any = None,
+        label: str | None = None,
+        color: str | None = None,
+        width: float | None = None,
+        alpha: float | None = None,
+        linestyle: str | None = None,
+        marker: str | None = None,
+        marker_size: float | None = None,
+    ) -> "Plot":
+        """Add a line series from x/y arrays or dataframe columns.
+
+        ``color`` takes a hex string (``"#2563eb"``) or a named color,
+        ``linestyle`` one of solid/dashed/dotted/dash-dot/dash-dot-dot, and
+        ``marker`` one of circle/square/triangle/diamond/plus/cross/star and
+        their ``-open``/``-down`` variants.
+        """
         x_values, native_x, x_observable = self._build_native_numeric_source(
             _column_values(data, x), "line x"
         )
@@ -705,7 +895,19 @@ class Plot:
             _column_values(data, y), "line y"
         )
         self._ensure_equal_length("line", x_values, y_values)
-        series = {"kind": "line", "x": x_values, "y": y_values}
+        series = _styled_series(
+            "line",
+            {"x": x_values, "y": y_values},
+            {
+                "label": label,
+                "color": color,
+                "width": width,
+                "alpha": alpha,
+                "linestyle": linestyle,
+                "marker": marker,
+                "markerSize": marker_size,
+            },
+        )
         self._apply_native_series(self._native_plot, series, native_sources={"x": native_x, "y": native_y})
         if x_observable is not None:
             self._track_observable(x_observable, x_values)
@@ -714,7 +916,18 @@ class Plot:
         self._append_series_snapshot(series)
         return self
 
-    def scatter(self, x: Any, y: Any, *, data: Any = None) -> "Plot":
+    def scatter(
+        self,
+        x: Any,
+        y: Any,
+        *,
+        data: Any = None,
+        label: str | None = None,
+        color: str | None = None,
+        alpha: float | None = None,
+        marker: str | None = None,
+        marker_size: float | None = None,
+    ) -> "Plot":
         """Add a scatter series from x/y arrays or dataframe columns."""
         x_values, native_x, x_observable = self._build_native_numeric_source(
             _column_values(data, x), "scatter x"
@@ -723,7 +936,17 @@ class Plot:
             _column_values(data, y), "scatter y"
         )
         self._ensure_equal_length("scatter", x_values, y_values)
-        series = {"kind": "scatter", "x": x_values, "y": y_values}
+        series = _styled_series(
+            "scatter",
+            {"x": x_values, "y": y_values},
+            {
+                "label": label,
+                "color": color,
+                "alpha": alpha,
+                "marker": marker,
+                "markerSize": marker_size,
+            },
+        )
         self._apply_native_series(self._native_plot, series, native_sources={"x": native_x, "y": native_y})
         if x_observable is not None:
             self._track_observable(x_observable, x_values)
@@ -732,7 +955,16 @@ class Plot:
         self._append_series_snapshot(series)
         return self
 
-    def bar(self, x: Any, y: Any, *, data: Any = None) -> "Plot":
+    def bar(
+        self,
+        x: Any,
+        y: Any,
+        *,
+        data: Any = None,
+        label: str | None = None,
+        color: str | None = None,
+        alpha: float | None = None,
+    ) -> "Plot":
         """Add a categorical bar series."""
         categories = _to_string_list(_column_values(data, x), "bar categories")
         values, native_values, observable = self._build_native_numeric_source(
@@ -740,31 +972,68 @@ class Plot:
         )
         if len(categories) != len(values["values"]):
             raise ValueError("bar categories and values must have the same length")
-        series = {"kind": "bar", "categories": categories, "values": values}
+        series = _styled_series(
+            "bar",
+            {"categories": categories, "values": values},
+            {"label": label, "color": color, "alpha": alpha},
+        )
         self._apply_native_series(self._native_plot, series, native_sources={"values": native_values})
         if observable is not None:
             self._track_observable(observable, values)
         self._append_series_snapshot(series)
         return self
 
-    def histogram(self, x: Any, *, data: Any = None) -> "Plot":
+    def histogram(
+        self,
+        x: Any,
+        *,
+        data: Any = None,
+        bins: int | None = None,
+        label: str | None = None,
+        color: str | None = None,
+        alpha: float | None = None,
+    ) -> "Plot":
         """Add a histogram from one numeric sample vector."""
         series_data, native_data, observable = self._build_native_numeric_source(
             _column_values(data, x), "histogram x"
         )
-        series = {"kind": "histogram", "data": series_data}
+        series = _styled_series(
+            "histogram",
+            {"data": series_data},
+            {"bins": bins, "label": label, "color": color, "alpha": alpha},
+        )
         self._apply_native_series(self._native_plot, series, native_sources={"data": native_data})
         if observable is not None:
             self._track_observable(observable, series_data)
         self._append_series_snapshot(series)
         return self
 
-    def boxplot(self, x: Any, *, data: Any = None) -> "Plot":
+    def boxplot(
+        self,
+        x: Any,
+        *,
+        data: Any = None,
+        label: str | None = None,
+        color: str | None = None,
+        alpha: float | None = None,
+        width: float | None = None,
+        linestyle: str | None = None,
+    ) -> "Plot":
         """Add a boxplot from one numeric sample vector."""
         series_data, native_data, observable = self._build_native_numeric_source(
             _column_values(data, x), "boxplot x"
         )
-        series = {"kind": "boxplot", "data": series_data}
+        series = _styled_series(
+            "boxplot",
+            {"data": series_data},
+            {
+                "label": label,
+                "color": color,
+                "alpha": alpha,
+                "width": width,
+                "linestyle": linestyle,
+            },
+        )
         self._apply_native_series(self._native_plot, series, native_sources={"data": native_data})
         if observable is not None:
             self._track_observable(observable, series_data)
@@ -791,7 +1060,18 @@ class Plot:
         self._append_series_snapshot(series)
         return self
 
-    def error_bars(self, x: Any, y: Any, y_errors: Any, *, data: Any = None) -> "Plot":
+    def error_bars(
+        self,
+        x: Any,
+        y: Any,
+        y_errors: Any,
+        *,
+        data: Any = None,
+        label: str | None = None,
+        color: str | None = None,
+        alpha: float | None = None,
+        width: float | None = None,
+    ) -> "Plot":
         """Add a series with vertical error bars."""
         x_values, native_x, x_observable = self._build_native_numeric_source(
             _column_values(data, x), "error_bars x"
@@ -803,7 +1083,11 @@ class Plot:
             _column_values(data, y_errors), "error_bars y_errors"
         )
         self._ensure_equal_length("error-bars", x_values, y_values, error_values)
-        series = {"kind": "error-bars", "x": x_values, "y": y_values, "yErrors": error_values}
+        series = _styled_series(
+            "error-bars",
+            {"x": x_values, "y": y_values, "yErrors": error_values},
+            {"label": label, "color": color, "alpha": alpha, "width": width},
+        )
         self._apply_native_series(
             self._native_plot,
             series,
@@ -826,6 +1110,10 @@ class Plot:
         y_errors: Any,
         *,
         data: Any = None,
+        label: str | None = None,
+        color: str | None = None,
+        alpha: float | None = None,
+        width: float | None = None,
     ) -> "Plot":
         """Add a series with both horizontal and vertical error bars."""
         x_values, native_x, x_observable = self._build_native_numeric_source(
@@ -841,13 +1129,16 @@ class Plot:
             _column_values(data, y_errors), "error_bars_xy y_errors"
         )
         self._ensure_equal_length("error-bars-xy", x_values, y_values, x_error_values, y_error_values)
-        series = {
-            "kind": "error-bars-xy",
-            "x": x_values,
-            "y": y_values,
-            "xErrors": x_error_values,
-            "yErrors": y_error_values,
-        }
+        series = _styled_series(
+            "error-bars-xy",
+            {
+                "x": x_values,
+                "y": y_values,
+                "xErrors": x_error_values,
+                "yErrors": y_error_values,
+            },
+            {"label": label, "color": color, "alpha": alpha, "width": width},
+        )
         self._apply_native_series(
             self._native_plot,
             series,
@@ -869,30 +1160,81 @@ class Plot:
         self._append_series_snapshot(series)
         return self
 
-    def kde(self, x: Any, *, data: Any = None) -> "Plot":
+    def kde(
+        self,
+        x: Any,
+        *,
+        data: Any = None,
+        bandwidth: float | None = None,
+        label: str | None = None,
+        color: str | None = None,
+        alpha: float | None = None,
+        width: float | None = None,
+    ) -> "Plot":
         """Add a kernel density estimate for a numeric sample vector."""
         values = _to_static_numeric_1d(_column_values(data, x), "kde", "x")
-        series = {"kind": "kde", "data": values}
+        series = _styled_series(
+            "kde",
+            {"data": values},
+            {
+                "bandwidth": bandwidth,
+                "label": label,
+                "color": color,
+                "alpha": alpha,
+                "width": width,
+            },
+        )
         self._apply_native_series(self._native_plot, series)
         self._append_series_snapshot(series)
         return self
 
-    def ecdf(self, x: Any, *, data: Any = None) -> "Plot":
+    def ecdf(
+        self,
+        x: Any,
+        *,
+        data: Any = None,
+        label: str | None = None,
+        color: str | None = None,
+        alpha: float | None = None,
+        width: float | None = None,
+    ) -> "Plot":
         """Add an empirical cumulative distribution plot."""
         values = _to_static_numeric_1d(_column_values(data, x), "ecdf", "x")
-        series = {"kind": "ecdf", "data": values}
+        series = _styled_series(
+            "ecdf",
+            {"data": values},
+            {"label": label, "color": color, "alpha": alpha, "width": width},
+        )
         self._apply_native_series(self._native_plot, series)
         self._append_series_snapshot(series)
         return self
 
-    def contour(self, x: Any, y: Any, z: Any, *, data: Any = None) -> "Plot":
-        """Add a contour plot from x/y axes and a flattened z grid."""
+    def contour(
+        self,
+        x: Any,
+        y: Any,
+        z: Any,
+        *,
+        data: Any = None,
+        levels: int | None = None,
+        alpha: float | None = None,
+        width: float | None = None,
+    ) -> "Plot":
+        """Add a contour plot from x/y axes and a flattened z grid.
+
+        Contour lines take their colors from the colormap, so ``label`` and
+        ``color`` are not offered here.
+        """
         x_values = _to_static_numeric_1d(_column_values(data, x), "contour", "x")
         y_values = _to_static_numeric_1d(_column_values(data, y), "contour", "y")
         z_values = _to_static_numeric_1d(_column_values(data, z), "contour", "z")
         if len(z_values) != len(x_values) * len(y_values):
             raise ValueError("contour z must contain x.length * y.length values")
-        series = {"kind": "contour", "x": x_values, "y": y_values, "z": z_values}
+        series = _styled_series(
+            "contour",
+            {"x": x_values, "y": y_values, "z": z_values},
+            {"levels": levels, "alpha": alpha, "width": width},
+        )
         self._apply_native_series(self._native_plot, series)
         self._append_series_snapshot(series)
         return self
@@ -926,21 +1268,48 @@ class Plot:
         self._append_series_snapshot(plot_series)
         return self
 
-    def violin(self, x: Any, *, data: Any = None) -> "Plot":
+    def violin(
+        self,
+        x: Any,
+        *,
+        data: Any = None,
+        label: str | None = None,
+        color: str | None = None,
+        alpha: float | None = None,
+        width: float | None = None,
+    ) -> "Plot":
         """Add a violin plot from one numeric sample vector."""
         values = _to_static_numeric_1d(_column_values(data, x), "violin", "x")
-        series = {"kind": "violin", "data": values}
+        series = _styled_series(
+            "violin",
+            {"data": values},
+            {"label": label, "color": color, "alpha": alpha, "width": width},
+        )
         self._apply_native_series(self._native_plot, series)
         self._append_series_snapshot(series)
         return self
 
-    def polar_line(self, r: Any, theta: Any, *, data: Any = None) -> "Plot":
+    def polar_line(
+        self,
+        r: Any,
+        theta: Any,
+        *,
+        data: Any = None,
+        label: str | None = None,
+        color: str | None = None,
+        alpha: float | None = None,
+        width: float | None = None,
+    ) -> "Plot":
         """Add a polar line from radius and angle vectors."""
         r_values = _to_static_numeric_1d(_column_values(data, r), "polar_line", "r")
         theta_values = _to_static_numeric_1d(_column_values(data, theta), "polar_line", "theta")
         if len(r_values) != len(theta_values):
             raise ValueError("polar r and theta must have the same length")
-        series = {"kind": "polar-line", "r": r_values, "theta": theta_values}
+        series = _styled_series(
+            "polar-line",
+            {"r": r_values, "theta": theta_values},
+            {"label": label, "color": color, "alpha": alpha, "width": width},
+        )
         self._apply_native_series(self._native_plot, series)
         self._append_series_snapshot(series)
         return self
