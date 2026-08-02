@@ -914,6 +914,9 @@ jobs:
       - name: Run Python lint
         run: cd bindings/python && uv run python -m ruff check
 
+      - name: Run Python type check
+        run: cd bindings/python && uv run python -m pyright
+
   python-packaging:
     name: Python Packaging
     runs-on: ubuntu-latest

@@ -8,15 +8,30 @@ display outside notebooks.
 from __future__ import annotations
 
 import weakref
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
+import numpy.typing as npt
 
 from . import _native
+from ._typing import (
+    ArrayLike,
+    DataSource,
+    LabelsLike,
+    LegendPositionName,
+    LineStyleName,
+    MarkerName,
+    MatrixLike,
+    Plot3DSnapshot,
+    PlotSnapshot,
+    RadarSeriesDict,
+    ScaleName,
+    Theme,
+)
 
 if TYPE_CHECKING:
     from ._widget import RuvizWidget
@@ -24,7 +39,9 @@ if TYPE_CHECKING:
 
 def _is_notebook() -> bool:
     try:
-        from IPython import get_ipython
+        # Imported from its defining module: the IPython package re-export is
+        # not visible to type checkers.
+        from IPython.core.getipython import get_ipython
     except ImportError:
         return False
 
@@ -353,7 +370,8 @@ def _styled_series(kind: str, fields: dict[str, Any], options: dict[str, Any]) -
 
 def _style_keywords(series: dict[str, Any]) -> dict[str, Any]:
     """Turn a stored style back into the keyword arguments that produced it."""
-    return {_STYLE_KEYWORDS.get(key, key): value for key, value in series.get("style", {}).items()}
+    style: dict[str, Any] = series.get("style", {})
+    return {_STYLE_KEYWORDS.get(key, key): value for key, value in style.items()}
 
 
 #: Snapshot key -> (method name shared by ``Plot`` and the native handle, whether
@@ -387,7 +405,7 @@ class ObservableSeries:
 
     __array_priority__ = 1000
 
-    def __init__(self, values: Any) -> None:
+    def __init__(self, values: ArrayLike) -> None:
         """Create an observable numeric series from array-like values."""
         self._initialize(_to_numeric_1d(values, "observable values"))
 
@@ -499,7 +517,7 @@ class ObservableSeries:
         memo[id(self)] = clone
         return clone
 
-    def replace(self, values: Any) -> None:
+    def replace(self, values: ArrayLike) -> None:
         """Replace the entire series and notify attached widgets."""
         next_values = _to_numeric_1d(values, "observable values")
         self._ensure_detached()
@@ -517,7 +535,7 @@ class ObservableSeries:
         self._native_observable.set_at(index, normalized_value)
         self._notify()
 
-    def values(self) -> np.ndarray:
+    def values(self) -> npt.NDArray[np.float64]:
         """Return the current values as a NumPy array."""
         return np.asarray(self._values, dtype=float)
 
@@ -525,7 +543,7 @@ class ObservableSeries:
         """Return the current values as a plain Python list."""
         return list(self._values)
 
-    def __array__(self, dtype: Any = None) -> np.ndarray:
+    def __array__(self, dtype: Any = None) -> npt.NDArray[Any]:
         array = np.asarray(self._values, dtype=float)
         if dtype is not None:
             array = array.astype(dtype)
@@ -551,40 +569,40 @@ class ObservableSeries:
     def __abs__(self) -> "ObservableSeries":
         return type(self)._from_ufunc(np.absolute, self)
 
-    def __add__(self, other: Any) -> "ObservableSeries":
+    def __add__(self, other: float | ArrayLike) -> "ObservableSeries":
         return type(self)._from_ufunc(np.add, self, other)
 
-    def __radd__(self, other: Any) -> "ObservableSeries":
+    def __radd__(self, other: float | ArrayLike) -> "ObservableSeries":
         return type(self)._from_ufunc(np.add, other, self)
 
-    def __sub__(self, other: Any) -> "ObservableSeries":
+    def __sub__(self, other: float | ArrayLike) -> "ObservableSeries":
         return type(self)._from_ufunc(np.subtract, self, other)
 
-    def __rsub__(self, other: Any) -> "ObservableSeries":
+    def __rsub__(self, other: float | ArrayLike) -> "ObservableSeries":
         return type(self)._from_ufunc(np.subtract, other, self)
 
-    def __mul__(self, other: Any) -> "ObservableSeries":
+    def __mul__(self, other: float | ArrayLike) -> "ObservableSeries":
         return type(self)._from_ufunc(np.multiply, self, other)
 
-    def __rmul__(self, other: Any) -> "ObservableSeries":
+    def __rmul__(self, other: float | ArrayLike) -> "ObservableSeries":
         return type(self)._from_ufunc(np.multiply, other, self)
 
-    def __truediv__(self, other: Any) -> "ObservableSeries":
+    def __truediv__(self, other: float | ArrayLike) -> "ObservableSeries":
         return type(self)._from_ufunc(np.true_divide, self, other)
 
-    def __rtruediv__(self, other: Any) -> "ObservableSeries":
+    def __rtruediv__(self, other: float | ArrayLike) -> "ObservableSeries":
         return type(self)._from_ufunc(np.true_divide, other, self)
 
-    def __floordiv__(self, other: Any) -> "ObservableSeries":
+    def __floordiv__(self, other: float | ArrayLike) -> "ObservableSeries":
         return type(self)._from_ufunc(np.floor_divide, self, other)
 
-    def __rfloordiv__(self, other: Any) -> "ObservableSeries":
+    def __rfloordiv__(self, other: float | ArrayLike) -> "ObservableSeries":
         return type(self)._from_ufunc(np.floor_divide, other, self)
 
-    def __pow__(self, other: Any) -> "ObservableSeries":
+    def __pow__(self, other: float | ArrayLike) -> "ObservableSeries":
         return type(self)._from_ufunc(np.power, self, other)
 
-    def __rpow__(self, other: Any) -> "ObservableSeries":
+    def __rpow__(self, other: float | ArrayLike) -> "ObservableSeries":
         return type(self)._from_ufunc(np.power, other, self)
 
     def _snapshot(self) -> dict[str, Any]:
@@ -747,7 +765,7 @@ class Plot:
         same current data but does not stay linked to later observable updates.
         """
         clone = Plot()
-        clone._state = self.to_snapshot()
+        clone._state = cast("dict[str, Any]", self.to_snapshot())
         clone._rebuild_native_plot(clone._state)
         clone._snapshot_cache = deepcopy(clone._state)
         clone._snapshot_dirty = False
@@ -764,7 +782,7 @@ class Plot:
         self._invalidate_snapshot_cache()
         return self
 
-    def theme(self, theme: str) -> "Plot":
+    def theme(self, theme: Theme) -> "Plot":
         """Set the built-in ``light`` or ``dark`` theme (case-insensitive)."""
         normalized = str(theme).lower()
         if normalized not in {"light", "dark"}:
@@ -806,7 +824,7 @@ class Plot:
         self._invalidate_snapshot_cache()
         return self
 
-    def legend(self, position: str = "best") -> "Plot":
+    def legend(self, position: LegendPositionName = "best") -> "Plot":
         """Show the legend at ``position``.
 
         Accepts ``"best"`` plus the core legend positions as lowercase names,
@@ -844,7 +862,7 @@ class Plot:
         """Set finite ascending y-axis limits."""
         return self._set_limit("y", minimum, maximum)
 
-    def _set_scale(self, axis: str, scale: str, linthresh: float | None) -> "Plot":
+    def _set_scale(self, axis: str, scale: ScaleName, linthresh: float | None) -> "Plot":
         normalized = str(scale).strip().lower()
         args: list[Any] = [normalized]
         if normalized == "symlog":
@@ -859,26 +877,26 @@ class Plot:
         self._invalidate_snapshot_cache()
         return self
 
-    def xscale(self, scale: str, linthresh: float | None = None) -> "Plot":
+    def xscale(self, scale: ScaleName, linthresh: float | None = None) -> "Plot":
         """Set the x-axis scale to ``linear``, ``log``, or ``symlog``."""
         return self._set_scale("x", scale, linthresh)
 
-    def yscale(self, scale: str, linthresh: float | None = None) -> "Plot":
+    def yscale(self, scale: ScaleName, linthresh: float | None = None) -> "Plot":
         """Set the y-axis scale to ``linear``, ``log``, or ``symlog``."""
         return self._set_scale("y", scale, linthresh)
 
     def line(
         self,
-        x: Any,
-        y: Any,
+        x: ArrayLike | str,
+        y: ArrayLike | str,
         *,
-        data: Any = None,
+        data: DataSource = None,
         label: str | None = None,
         color: str | None = None,
         width: float | None = None,
         alpha: float | None = None,
-        linestyle: str | None = None,
-        marker: str | None = None,
+        linestyle: LineStyleName | None = None,
+        marker: MarkerName | None = None,
         marker_size: float | None = None,
     ) -> "Plot":
         """Add a line series from x/y arrays or dataframe columns.
@@ -918,14 +936,14 @@ class Plot:
 
     def scatter(
         self,
-        x: Any,
-        y: Any,
+        x: ArrayLike | str,
+        y: ArrayLike | str,
         *,
-        data: Any = None,
+        data: DataSource = None,
         label: str | None = None,
         color: str | None = None,
         alpha: float | None = None,
-        marker: str | None = None,
+        marker: MarkerName | None = None,
         marker_size: float | None = None,
     ) -> "Plot":
         """Add a scatter series from x/y arrays or dataframe columns."""
@@ -957,10 +975,10 @@ class Plot:
 
     def bar(
         self,
-        x: Any,
-        y: Any,
+        x: LabelsLike | str,
+        y: ArrayLike | str,
         *,
-        data: Any = None,
+        data: DataSource = None,
         label: str | None = None,
         color: str | None = None,
         alpha: float | None = None,
@@ -985,9 +1003,9 @@ class Plot:
 
     def histogram(
         self,
-        x: Any,
+        x: ArrayLike | str,
         *,
-        data: Any = None,
+        data: DataSource = None,
         bins: int | None = None,
         label: str | None = None,
         color: str | None = None,
@@ -1010,14 +1028,14 @@ class Plot:
 
     def boxplot(
         self,
-        x: Any,
+        x: ArrayLike | str,
         *,
-        data: Any = None,
+        data: DataSource = None,
         label: str | None = None,
         color: str | None = None,
         alpha: float | None = None,
         width: float | None = None,
-        linestyle: str | None = None,
+        linestyle: LineStyleName | None = None,
     ) -> "Plot":
         """Add a boxplot from one numeric sample vector."""
         series_data, native_data, observable = self._build_native_numeric_source(
@@ -1040,7 +1058,7 @@ class Plot:
         self._append_series_snapshot(series)
         return self
 
-    def heatmap(self, values: Any, *, data: Any = None) -> "Plot":
+    def heatmap(self, values: MatrixLike | str, *, data: DataSource = None) -> "Plot":
         """Add a heatmap from a rectangular 2D numeric matrix.
 
         With ``data=``, ``values`` may name a matrix column/key to look up.
@@ -1062,11 +1080,11 @@ class Plot:
 
     def error_bars(
         self,
-        x: Any,
-        y: Any,
-        y_errors: Any,
+        x: ArrayLike | str,
+        y: ArrayLike | str,
+        y_errors: ArrayLike | str,
         *,
-        data: Any = None,
+        data: DataSource = None,
         label: str | None = None,
         color: str | None = None,
         alpha: float | None = None,
@@ -1104,12 +1122,12 @@ class Plot:
 
     def error_bars_xy(
         self,
-        x: Any,
-        y: Any,
-        x_errors: Any,
-        y_errors: Any,
+        x: ArrayLike | str,
+        y: ArrayLike | str,
+        x_errors: ArrayLike | str,
+        y_errors: ArrayLike | str,
         *,
-        data: Any = None,
+        data: DataSource = None,
         label: str | None = None,
         color: str | None = None,
         alpha: float | None = None,
@@ -1162,9 +1180,9 @@ class Plot:
 
     def kde(
         self,
-        x: Any,
+        x: ArrayLike | str,
         *,
-        data: Any = None,
+        data: DataSource = None,
         bandwidth: float | None = None,
         label: str | None = None,
         color: str | None = None,
@@ -1190,9 +1208,9 @@ class Plot:
 
     def ecdf(
         self,
-        x: Any,
+        x: ArrayLike | str,
         *,
-        data: Any = None,
+        data: DataSource = None,
         label: str | None = None,
         color: str | None = None,
         alpha: float | None = None,
@@ -1211,11 +1229,11 @@ class Plot:
 
     def contour(
         self,
-        x: Any,
-        y: Any,
-        z: Any,
+        x: ArrayLike | str,
+        y: ArrayLike | str,
+        z: ArrayLike | str,
         *,
-        data: Any = None,
+        data: DataSource = None,
         levels: int | None = None,
         alpha: float | None = None,
         width: float | None = None,
@@ -1239,7 +1257,13 @@ class Plot:
         self._append_series_snapshot(series)
         return self
 
-    def pie(self, values: Any, labels: Any = None, *, data: Any = None) -> "Plot":
+    def pie(
+        self,
+        values: ArrayLike | str,
+        labels: LabelsLike | str | None = None,
+        *,
+        data: DataSource = None,
+    ) -> "Plot":
         """Add a pie chart with optional labels."""
         numeric = _to_static_numeric_1d(_column_values(data, values), "pie", "values")
         label_values = (
@@ -1254,7 +1278,7 @@ class Plot:
         self._append_series_snapshot(series)
         return self
 
-    def radar(self, labels: Any, series: list[dict[str, Any]]) -> "Plot":
+    def radar(self, labels: LabelsLike, series: Sequence[RadarSeriesDict]) -> "Plot":
         """Add a radar chart from axis labels and named series."""
         label_values = _to_string_list(labels, "radar labels")
         normalized = []
@@ -1270,9 +1294,9 @@ class Plot:
 
     def violin(
         self,
-        x: Any,
+        x: ArrayLike | str,
         *,
-        data: Any = None,
+        data: DataSource = None,
         label: str | None = None,
         color: str | None = None,
         alpha: float | None = None,
@@ -1291,10 +1315,10 @@ class Plot:
 
     def polar_line(
         self,
-        r: Any,
-        theta: Any,
+        r: ArrayLike | str,
+        theta: ArrayLike | str,
         *,
-        data: Any = None,
+        data: DataSource = None,
         label: str | None = None,
         color: str | None = None,
         alpha: float | None = None,
@@ -1345,7 +1369,7 @@ class Plot:
 
         return Image(data=self.render_png(), format="png")
 
-    def show(self) -> Any:
+    def show(self) -> None:
         """Display a static image in Jupyter or open a native interactive window when available."""
         if _is_notebook():
             from IPython.display import display
@@ -1357,13 +1381,13 @@ class Plot:
         self._native_plot.show_native()
         return None
 
-    def to_snapshot(self) -> dict[str, Any]:
+    def to_snapshot(self) -> PlotSnapshot:
         """Serialize the current plot state to a JSON-friendly snapshot."""
         self._sync_observables()
         if self._snapshot_dirty or self._snapshot_cache is None:
             self._snapshot_cache = deepcopy(self._state)
             self._snapshot_dirty = False
-        return deepcopy(self._snapshot_cache)
+        return cast(PlotSnapshot, deepcopy(self._snapshot_cache))
 
     def _track_observable(self, observable: ObservableSeries, snapshot: dict[str, Any]) -> None:
         self._observable_bindings.append((observable, snapshot))
@@ -1405,7 +1429,14 @@ class Plot3D:
         self._state: dict[str, Any] = {"schemaVersion": _SNAPSHOT_SCHEMA_VERSION, "series": []}
         self._native_plot = _native.NativePlot3DHandle()
 
-    def _add_points(self, kind: str, x: Any, y: Any, z: Any, data: Any) -> "Plot3D":
+    def _add_points(
+        self,
+        kind: str,
+        x: ArrayLike | str,
+        y: ArrayLike | str,
+        z: ArrayLike | str,
+        data: DataSource,
+    ) -> "Plot3D":
         x_values = _to_numeric_1d(_column_values(data, x), f"{kind} x")
         y_values = _to_numeric_1d(_column_values(data, y), f"{kind} y")
         z_values = _to_numeric_1d(_column_values(data, z), f"{kind} z")
@@ -1415,7 +1446,14 @@ class Plot3D:
         self._state["series"].append({"kind": kind, "x": x_values, "y": y_values, "z": z_values})
         return self
 
-    def _add_grid(self, kind: str, x: Any, y: Any, z: Any, data: Any) -> "Plot3D":
+    def _add_grid(
+        self,
+        kind: str,
+        x: ArrayLike | str,
+        y: ArrayLike | str,
+        z: MatrixLike | str,
+        data: DataSource,
+    ) -> "Plot3D":
         x_values = _to_numeric_1d(_column_values(data, x), f"{kind} x")
         y_values = _to_numeric_1d(_column_values(data, y), f"{kind} y")
         z_values = _to_numeric_2d(_column_values(data, z), f"{kind} z")
@@ -1429,19 +1467,47 @@ class Plot3D:
         self._state["series"].append({"kind": kind, "x": x_values, "y": y_values, "z": z_values})
         return self
 
-    def scatter3d(self, x: Any, y: Any, z: Any, *, data: Any = None) -> "Plot3D":
+    def scatter3d(
+        self,
+        x: ArrayLike | str,
+        y: ArrayLike | str,
+        z: ArrayLike | str,
+        *,
+        data: DataSource = None,
+    ) -> "Plot3D":
         """Add an opaque 3D scatter series from equal-length coordinate vectors."""
         return self._add_points("scatter3d", x, y, z, data)
 
-    def line3d(self, x: Any, y: Any, z: Any, *, data: Any = None) -> "Plot3D":
+    def line3d(
+        self,
+        x: ArrayLike | str,
+        y: ArrayLike | str,
+        z: ArrayLike | str,
+        *,
+        data: DataSource = None,
+    ) -> "Plot3D":
         """Add a 3D polyline from equal-length coordinate vectors."""
         return self._add_points("line3d", x, y, z, data)
 
-    def surface(self, x: Any, y: Any, z: Any, *, data: Any = None) -> "Plot3D":
+    def surface(
+        self,
+        x: ArrayLike | str,
+        y: ArrayLike | str,
+        z: MatrixLike | str,
+        *,
+        data: DataSource = None,
+    ) -> "Plot3D":
         """Add a regular-grid surface where ``z.shape == (len(y), len(x))``."""
         return self._add_grid("surface", x, y, z, data)
 
-    def wireframe(self, x: Any, y: Any, z: Any, *, data: Any = None) -> "Plot3D":
+    def wireframe(
+        self,
+        x: ArrayLike | str,
+        y: ArrayLike | str,
+        z: MatrixLike | str,
+        *,
+        data: DataSource = None,
+    ) -> "Plot3D":
         """Add a regular-grid wireframe where ``z.shape == (len(y), len(x))``."""
         return self._add_grid("wireframe", x, y, z, data)
 
@@ -1461,7 +1527,7 @@ class Plot3D:
         self._state["dpi"] = int(dpi)
         return self
 
-    def theme(self, theme: str) -> "Plot3D":
+    def theme(self, theme: Theme) -> "Plot3D":
         """Use the ``light`` or ``dark`` theme."""
         normalized = str(theme).lower()
         if normalized not in {"light", "dark"}:
@@ -1555,9 +1621,9 @@ class Plot3D:
         self._native_plot.save(str(output))
         return output
 
-    def to_snapshot(self) -> dict[str, Any]:
+    def to_snapshot(self) -> Plot3DSnapshot:
         """Return a JSON-friendly static copy of the 3D plot state."""
-        return deepcopy(self._state)
+        return cast(Plot3DSnapshot, deepcopy(self._state))
 
     def _repr_png_(self) -> bytes:
         """Return PNG bytes for notebook rich display."""
@@ -1574,26 +1640,50 @@ def plot3d() -> Plot3D:
     return Plot3D()
 
 
-def scatter3d(x: Any, y: Any, z: Any, *, data: Any = None) -> Plot3D:
+def scatter3d(
+    x: ArrayLike | str,
+    y: ArrayLike | str,
+    z: ArrayLike | str,
+    *,
+    data: DataSource = None,
+) -> Plot3D:
     """Create a 3D scatter plot."""
     return Plot3D().scatter3d(x, y, z, data=data)
 
 
-def line3d(x: Any, y: Any, z: Any, *, data: Any = None) -> Plot3D:
+def line3d(
+    x: ArrayLike | str,
+    y: ArrayLike | str,
+    z: ArrayLike | str,
+    *,
+    data: DataSource = None,
+) -> Plot3D:
     """Create a 3D line plot."""
     return Plot3D().line3d(x, y, z, data=data)
 
 
-def surface(x: Any, y: Any, z: Any, *, data: Any = None) -> Plot3D:
+def surface(
+    x: ArrayLike | str,
+    y: ArrayLike | str,
+    z: MatrixLike | str,
+    *,
+    data: DataSource = None,
+) -> Plot3D:
     """Create a regular-grid 3D surface."""
     return Plot3D().surface(x, y, z, data=data)
 
 
-def wireframe(x: Any, y: Any, z: Any, *, data: Any = None) -> Plot3D:
+def wireframe(
+    x: ArrayLike | str,
+    y: ArrayLike | str,
+    z: MatrixLike | str,
+    *,
+    data: DataSource = None,
+) -> Plot3D:
     """Create a regular-grid 3D wireframe."""
     return Plot3D().wireframe(x, y, z, data=data)
 
 
-def observable(values: Any) -> ObservableSeries:
+def observable(values: ArrayLike) -> ObservableSeries:
     """Create an :class:`ObservableSeries` from array-like numeric input."""
     return ObservableSeries(values)

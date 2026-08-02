@@ -1,0 +1,258 @@
+"""Public type aliases and snapshot shapes for the ruviz Python API.
+
+Nothing here imports pandas, polars, or IPython: dataframe support is described
+structurally so the optional dependencies stay optional for type checkers too.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Iterator, Mapping, Sequence
+from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeAlias, TypedDict
+
+if TYPE_CHECKING:
+    from ._api import ObservableSeries
+
+
+class NumericVector(Protocol):
+    """Structural stand-in for NumPy arrays and pandas/polars Series."""
+
+    def __len__(self) -> int: ...
+
+    def __iter__(self) -> Iterator[Any]: ...
+
+
+class ColumnSource(Protocol):
+    """Structural stand-in for objects indexed by column name, such as DataFrames."""
+
+    def __getitem__(self, key: str) -> Any: ...
+
+
+#: A numeric vector: a sequence, a NumPy array, a pandas/polars Series, or an
+#: :class:`~ruviz.ObservableSeries`.
+ArrayLike: TypeAlias = "Sequence[float] | NumericVector | ObservableSeries"
+
+#: A rectangular numeric matrix, such as a nested sequence or a 2D NumPy array.
+MatrixLike: TypeAlias = "Sequence[Sequence[float]] | NumericVector"
+
+#: A vector of labels; values are stringified when they are not already strings.
+LabelsLike: TypeAlias = "Sequence[object] | NumericVector"
+
+#: A ``data=`` source whose columns are looked up by name.
+DataSource: TypeAlias = "Mapping[str, Any] | ColumnSource | None"
+
+#: Built-in theme names.
+Theme: TypeAlias = Literal["light", "dark"]
+
+#: Line style names accepted by ``linestyle=``.
+LineStyleName: TypeAlias = Literal["solid", "dashed", "dotted", "dash-dot", "dash-dot-dot"]
+
+#: Marker names accepted by ``marker=``.
+MarkerName: TypeAlias = Literal[
+    "circle",
+    "square",
+    "triangle",
+    "triangle-down",
+    "diamond",
+    "plus",
+    "cross",
+    "star",
+    "circle-open",
+    "square-open",
+    "triangle-open",
+    "diamond-open",
+]
+
+#: Legend placements accepted by :meth:`ruviz.Plot.legend`; ``"best"`` auto-places.
+LegendPositionName: TypeAlias = Literal[
+    "best",
+    "upper_right",
+    "upper_left",
+    "lower_left",
+    "lower_right",
+    "right",
+    "center_left",
+    "center_right",
+    "lower_center",
+    "upper_center",
+    "center",
+    "outside_right",
+    "outside_left",
+    "outside_upper",
+    "outside_lower",
+]
+
+#: Axis scales accepted by :meth:`ruviz.Plot.xscale` and :meth:`ruviz.Plot.yscale`.
+ScaleName: TypeAlias = Literal["linear", "log", "symlog"]
+
+#: Snapshot ``kind`` discriminators for 2D series.
+SeriesKindName: TypeAlias = Literal[
+    "line",
+    "scatter",
+    "bar",
+    "histogram",
+    "boxplot",
+    "heatmap",
+    "error-bars",
+    "error-bars-xy",
+    "kde",
+    "ecdf",
+    "contour",
+    "pie",
+    "radar",
+    "violin",
+    "polar-line",
+]
+
+#: Snapshot ``kind`` discriminators for 3D series.
+Series3DKindName: TypeAlias = Literal["scatter3d", "line3d", "surface", "wireframe"]
+
+
+class NumericSourceDict(TypedDict):
+    """One numeric column of a snapshot series, static or observable-backed."""
+
+    kind: Literal["static", "observable"]
+    values: list[float]
+
+
+#: A snapshot numeric field: tracked kinds store a source dict, the rest a plain list.
+NumericField: TypeAlias = "NumericSourceDict | list[float]"
+
+
+class StyleDict(TypedDict, total=False):
+    """Per-series styling as stored in a snapshot.
+
+    Keys are camelCase to match the snapshot spelling; the matching Python
+    keyword for ``markerSize`` is ``marker_size``.
+    """
+
+    label: str
+    color: str
+    alpha: float
+    width: float
+    linestyle: LineStyleName
+    marker: MarkerName
+    markerSize: float
+    bins: int
+    bandwidth: float
+    levels: int
+
+
+class _RadarSeries(TypedDict):
+    values: ArrayLike
+
+
+class RadarSeriesDict(_RadarSeries, total=False):
+    """One named radar series; ``name`` is optional and may be ``None``."""
+
+    name: str | None
+
+
+class _SeriesSnapshot(TypedDict):
+    kind: SeriesKindName
+
+
+class SeriesSnapshot(_SeriesSnapshot, total=False):
+    """One serialized 2D series; only the keys its ``kind`` uses are present."""
+
+    style: StyleDict
+    x: NumericField
+    y: NumericField
+    z: list[float]
+    r: list[float]
+    theta: list[float]
+    data: NumericField
+    values: NumericField
+    categories: list[str]
+    labels: list[str]
+    series: list[RadarSeriesDict]
+    xErrors: NumericField
+    yErrors: NumericField
+    rows: int
+    cols: int
+
+
+class _PlotSnapshot(TypedDict):
+    schemaVersion: int
+    series: list[SeriesSnapshot]
+
+
+class PlotSnapshot(_PlotSnapshot, total=False):
+    """JSON-friendly snapshot of a :class:`ruviz.Plot`.
+
+    Consumers must ignore keys they do not know; ``schemaVersion`` tracks the
+    layout, and every plot-level setting is absent until it is set.
+    """
+
+    sizePx: list[int]
+    theme: Theme
+    ticks: bool
+    title: str
+    xLabel: str
+    yLabel: str
+    legend: LegendPositionName
+    grid: bool
+    xLim: list[float]
+    yLim: list[float]
+    xScale: list[str | float]
+    yScale: list[str | float]
+
+
+class _Series3DSnapshot(TypedDict):
+    kind: Series3DKindName
+
+
+class Series3DSnapshot(_Series3DSnapshot, total=False):
+    """One serialized 3D series; ``z`` is a grid for surface and wireframe."""
+
+    x: list[float]
+    y: list[float]
+    z: list[float] | list[list[float]]
+
+
+class _Plot3DSnapshot(TypedDict):
+    schemaVersion: int
+    series: list[Series3DSnapshot]
+
+
+class Plot3DSnapshot(_Plot3DSnapshot, total=False):
+    """JSON-friendly snapshot of a :class:`ruviz.Plot3D`."""
+
+    sizePx: list[int]
+    dpi: int
+    theme: Theme
+    title: str
+    xLabel: str
+    yLabel: str
+    zLabel: str
+    xLim: list[float]
+    yLim: list[float]
+    zLim: list[float]
+    azimuthDeg: float
+    elevationDeg: float
+    projection: Literal["orthographic", "perspective"]
+    perspectiveDeg: float
+
+
+__all__ = [
+    "ArrayLike",
+    "ColumnSource",
+    "DataSource",
+    "LabelsLike",
+    "LegendPositionName",
+    "LineStyleName",
+    "MarkerName",
+    "MatrixLike",
+    "NumericField",
+    "NumericSourceDict",
+    "NumericVector",
+    "Plot3DSnapshot",
+    "PlotSnapshot",
+    "RadarSeriesDict",
+    "ScaleName",
+    "Series3DKindName",
+    "Series3DSnapshot",
+    "SeriesKindName",
+    "SeriesSnapshot",
+    "StyleDict",
+    "Theme",
+]

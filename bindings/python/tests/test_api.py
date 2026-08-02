@@ -888,3 +888,14 @@ def test_styling_and_axis_settings_compose_in_one_snapshot() -> None:
     assert snapshot["legend"] == "upper_right"
     assert plot.render_png().startswith(PNG_HEADER)
     assert ruviz.Plot._replay_snapshot(snapshot).to_snapshot() == snapshot
+
+
+def test_version_matches_the_compiled_extension() -> None:
+    assert ruviz.__version__ == ruviz._native.version()
+
+
+def test_package_ships_inline_typing_markers() -> None:
+    package = Path(ruviz.__file__).parent
+
+    assert (package / "py.typed").is_file()
+    assert (package / "_native.pyi").is_file()

@@ -9,6 +9,7 @@ to PyPI:
 - `scatter3d()`, `line3d()`, `surface()`, and `wireframe()` for direct 3D construction
 - `observable()` and `ObservableSeries` for synced notebook data, elementwise arithmetic, and NumPy ufuncs
 - `RuvizWidget` for explicit notebook widget embedding
+- `__version__` plus the exported type aliases and snapshot `TypedDict`s
 
 The public import surface is:
 
@@ -27,6 +28,16 @@ from ruviz import (
     wireframe,
 )
 ```
+
+The package ships inline types with a `py.typed` marker, so type checkers read
+the annotations directly. Alongside the classes above, `ruviz` exports the
+aliases used in those annotations — `ArrayLike`, `MatrixLike`, `LabelsLike`,
+`DataSource`, `Theme`, `LineStyleName`, `MarkerName`, `LegendPositionName`,
+`ScaleName` — and the snapshot shapes `PlotSnapshot`, `SeriesSnapshot`,
+`StyleDict`, `RadarSeriesDict`, `Plot3DSnapshot`, and `Series3DSnapshot`.
+Style and axis names are typed as literal unions, so a checker rejects an
+unsupported `marker=`, `linestyle=`, `theme=`, legend position, or axis scale
+before the call reaches the renderer.
 
 `Plot3D` currently provides deterministic CPU PNG and hybrid SVG/PDF export.
 It uses orthographic projection by default and requires regular surface grids
