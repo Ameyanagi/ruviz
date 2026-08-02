@@ -47,7 +47,8 @@ png_bytes = plot.render_png()
 ```
 
 `save(path)` writes PNG, SVG, or PDF according to the file extension and returns
-the output `Path`. `render_png()` returns `bytes`; `render_svg()` returns `str`.
+the output `Path`. Any other extension, or a path without one, raises
+`ValueError`. `render_png()` returns `bytes`; `render_svg()` returns `str`.
 
 ## DataFrame Inputs
 
@@ -61,16 +62,20 @@ frame = pd.DataFrame({"time": [0, 1, 2], "value": [0.2, 0.8, 1.1]})
 plot = ruviz.plot().line("time", "value", data=frame)
 ```
 
-This works with:
+`data=` accepts a pandas `DataFrame`, a Polars `DataFrame`, or a `dict` of
+columns. A pandas or Polars `Series`, a NumPy array, or a list is a direct x/y
+input instead — pass it positionally without `data=`:
 
-- pandas `DataFrame` and `Series`
-- Polars `DataFrame` and `Series`
-- `dict`-backed column data
-- plain NumPy arrays, lists, and other array-like inputs
+```python
+plot = ruviz.plot().line(frame["time"], frame["value"])
+```
 
 The `data=` column lookup is available on `line`, `scatter`, `bar`,
-`histogram`, `boxplot`, `error_bars`, `error_bars_xy`, `kde`, `ecdf`,
-`contour`, `pie`, `violin`, and `polar_line`.
+`histogram`, `boxplot`, `heatmap`, `error_bars`, `error_bars_xy`, `kde`,
+`ecdf`, `contour`, `pie`, `violin`, and `polar_line`.
+
+Numeric inputs must be one-dimensional; `heatmap` takes a 2D matrix and
+`contour` takes a flattened `z` grid.
 
 ## Plot Types
 
@@ -125,8 +130,8 @@ detaches from `source` and becomes its own mutable observable.
 
 Live observables are passed through to the native renderer for `line`,
 `scatter`, `bar`, `histogram`, `boxplot`, `error_bars`, and `error_bars_xy`.
-Other plot types accept observable values as array-like input but snapshot them
-when the series is added.
+Other plot types cannot track observables and raise `TypeError` when given one;
+pass `series.snapshot_values()` if you want a static copy.
 
 ## Examples
 

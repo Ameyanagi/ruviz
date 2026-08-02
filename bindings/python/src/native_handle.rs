@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use pyo3::{
-    exceptions::{PyRuntimeError, PyValueError},
+    exceptions::{PyRuntimeError, PyTypeError, PyValueError},
     prelude::*,
     types::{PyAny, PyBytes},
 };
@@ -294,6 +294,26 @@ fn apply_series(plot: Plot, series: NativeSeriesState) -> Result<Plot, String> {
     }
 }
 
+const SUPPORTED_SAVE_EXTENSIONS: &str = ".png, .svg, or .pdf";
+
+/// Validate an export path extension against the supported writer set.
+pub(crate) fn save_extension(path: &str) -> PyResult<String> {
+    let extension = Path::new(path)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.to_ascii_lowercase());
+
+    match extension {
+        Some(extension) if matches!(extension.as_str(), "png" | "svg" | "pdf") => Ok(extension),
+        Some(extension) => Err(PyValueError::new_err(format!(
+            "unsupported save extension '.{extension}'; expected {SUPPORTED_SAVE_EXTENSIONS}"
+        ))),
+        None => Err(PyValueError::new_err(format!(
+            "save path '{path}' has no extension; expected {SUPPORTED_SAVE_EXTENSIONS}"
+        ))),
+    }
+}
+
 fn extract_numeric_source(source: &Bound<'_, PyAny>) -> PyResult<NumericSourceState> {
     if let Ok(observable) = source.extract::<PyRef<'_, NativeObservable1D>>() {
         return Ok(NumericSourceState::Observable(observable.inner.clone()));
@@ -302,7 +322,7 @@ fn extract_numeric_source(source: &Bound<'_, PyAny>) -> PyResult<NumericSourceSt
     source
         .extract::<Vec<f64>>()
         .map(NumericSourceState::Static)
-        .map_err(|_| PyValueError::new_err("expected a numeric list or NativeObservable1D source"))
+        .map_err(|_| PyTypeError::new_err("expected a numeric list or NativeObservable1D source"))
 }
 
 #[pyclass(module = "ruviz._native", unsendable)]
@@ -386,7 +406,12 @@ impl NativePlotHandle {
     }
 
     fn size_px(&mut self, width: u32, height: u32) -> PyResult<()> {
-        self.state.size_px = Some((width.max(1), height.max(1)));
+        if width == 0 || height == 0 {
+            return Err(PyValueError::new_err(
+                "plot dimensions must be greater than zero",
+            ));
+        }
+        self.state.size_px = Some((width, height));
         self.mark_dirty();
         Ok(())
     }
@@ -643,13 +668,9 @@ impl NativePlotHandle {
     }
 
     fn save(&mut self, path: &str) -> PyResult<()> {
+        let extension = save_extension(path)?;
         self.ensure_built()?;
         let output = Path::new(path);
-        let extension = output
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .map(|ext| ext.to_ascii_lowercase())
-            .unwrap_or_else(|| "png".to_string());
 
         match extension.as_str() {
             "svg" => self

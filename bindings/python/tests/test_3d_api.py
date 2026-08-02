@@ -101,3 +101,50 @@ def test_point_series_reject_matrix_coordinates() -> None:
 def test_empty_plot3d_reports_a_clear_error() -> None:
     with pytest.raises(ValueError, match="must contain at least one series"):
         ruviz.plot3d().render_png()
+
+
+def test_plot3d_save_rejects_unknown_extension(tmp_path: Path) -> None:
+    plot = ruviz.scatter3d([0.0, 1.0], [0.0, 1.0], [0.0, 1.0]).size_px(160, 120)
+
+    with pytest.raises(ValueError, match=r"unsupported save extension '\.jpg'"):
+        plot.save(tmp_path / "scene.jpg")
+
+
+def test_plot3d_save_rejects_path_without_extension(tmp_path: Path) -> None:
+    plot = ruviz.scatter3d([0.0, 1.0], [0.0, 1.0], [0.0, 1.0]).size_px(160, 120)
+
+    with pytest.raises(ValueError, match="has no extension"):
+        plot.save(tmp_path / "scene")
+
+
+def test_plot3d_save_accepts_uppercase_extensions(tmp_path: Path) -> None:
+    plot = ruviz.scatter3d([0.0, 1.0], [0.0, 1.0], [0.0, 1.0]).size_px(160, 120)
+
+    assert plot.save(tmp_path / "scene.PNG").read_bytes().startswith(PNG_HEADER)
+
+
+def test_plot3d_theme_normalizes_case_and_rejects_unknown_themes() -> None:
+    assert ruviz.plot3d().theme("Dark").to_snapshot()["theme"] == "dark"
+
+    with pytest.raises(ValueError, match="unsupported theme: solarized"):
+        ruviz.plot3d().theme("solarized")
+
+
+@pytest.mark.parametrize(("width", "height"), [(0, 100), (100, 0), (-1, 100)])
+def test_plot3d_size_px_rejects_non_positive_dimensions(width: int, height: int) -> None:
+    with pytest.raises(ValueError, match="greater than zero"):
+        ruviz.plot3d().size_px(width, height)
+
+
+def test_plot3d_rejects_observable_and_dataframe_inputs() -> None:
+    pd = pytest.importorskip("pandas")
+    frame = pd.DataFrame({"x": [0.0, 1.0], "y": [0.0, 1.0], "z": [0.0, 1.0]})
+
+    plot = ruviz.plot3d().scatter3d("x", "y", "z", data=frame)
+    assert plot.to_snapshot()["series"][0]["x"] == [0.0, 1.0]
+
+    with pytest.raises(TypeError, match="select a column or pass data="):
+        ruviz.scatter3d(frame, frame, frame)
+
+    with pytest.raises(TypeError, match="data= expects a DataFrame or dict"):
+        ruviz.plot3d().scatter3d("x", "y", "z", data=frame["x"])

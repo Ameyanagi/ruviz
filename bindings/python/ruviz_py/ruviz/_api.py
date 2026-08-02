@@ -32,13 +32,30 @@ def _is_notebook() -> bool:
     return shell is not None and shell.__class__.__name__ == "ZMQInteractiveShell"
 
 
+def _is_dataframe(value: Any) -> bool:
+    return _is_pandas_dataframe(value) or _is_polars_dataframe(value)
+
+
+def _is_series(value: Any) -> bool:
+    return _is_pandas_series(value) or _is_polars_series(value)
+
+
 def _is_pandas_dataframe(value: Any) -> bool:
     try:
         import pandas as pd
     except ImportError:
         return False
 
-    return isinstance(value, (pd.DataFrame, pd.Series))
+    return isinstance(value, pd.DataFrame)
+
+
+def _is_pandas_series(value: Any) -> bool:
+    try:
+        import pandas as pd
+    except ImportError:
+        return False
+
+    return isinstance(value, pd.Series)
 
 
 def _is_polars_dataframe(value: Any) -> bool:
@@ -47,7 +64,16 @@ def _is_polars_dataframe(value: Any) -> bool:
     except ImportError:
         return False
 
-    return isinstance(value, (pl.DataFrame, pl.Series))
+    return isinstance(value, pl.DataFrame)
+
+
+def _is_polars_series(value: Any) -> bool:
+    try:
+        import polars as pl
+    except ImportError:
+        return False
+
+    return isinstance(value, pl.Series)
 
 
 def _column_values(data: Any, column: Any) -> Any:
@@ -55,32 +81,39 @@ def _column_values(data: Any, column: Any) -> Any:
         return column
 
     if isinstance(column, str):
-        if _is_pandas_dataframe(data):
-            return data[column]
-        if _is_polars_dataframe(data):
-            return data[column]
-        if isinstance(data, dict):
+        if _is_series(data):
+            raise TypeError(
+                "data= expects a DataFrame or dict; pass a Series directly as the value instead"
+            )
+        if _is_dataframe(data) or isinstance(data, dict):
             return data[column]
         raise TypeError(f"unsupported data source for column lookup: {type(data)!r}")
 
     return column
 
 
-def _to_numeric_list(values: Any) -> list[float]:
+# Plot kinds that forward an ObservableSeries to the native renderer.
+_OBSERVABLE_KINDS = "line, scatter, bar, histogram, boxplot, error_bars, error_bars_xy"
+
+
+def _reject_observable(values: Any, kind: str) -> Any:
     if isinstance(values, ObservableSeries):
-        return values.snapshot_values()
-    if _is_pandas_dataframe(values) or _is_polars_dataframe(values):
-        return _to_numeric_list(values.to_list())
+        raise TypeError(
+            f"{kind} does not support ObservableSeries; pass static values "
+            f"(observables are supported by {_OBSERVABLE_KINDS})"
+        )
+    return values
 
-    array = np.asarray(values, dtype=float)
-    return array.astype(float).reshape(-1).tolist()
 
-
-def _to_numeric_1d(values: Any, name: str) -> list[float]:
-    """Normalize a static 3D coordinate vector without flattening matrices."""
+def _to_numeric_1d(values: Any, name: str = "numeric input") -> list[float]:
+    """Normalize a numeric vector without flattening matrices."""
     if isinstance(values, ObservableSeries):
         values = values.snapshot_values()
-    if _is_pandas_dataframe(values) or _is_polars_dataframe(values):
+    if _is_dataframe(values):
+        raise TypeError(
+            f"{name} must be a 1D numeric array; select a column or pass data=<DataFrame>"
+        )
+    if _is_series(values):
         values = values.to_list()
 
     array = np.asarray(values, dtype=float)
@@ -89,9 +122,14 @@ def _to_numeric_1d(values: Any, name: str) -> list[float]:
     return array.astype(float).tolist()
 
 
+def _to_static_numeric_1d(values: Any, kind: str, name: str) -> list[float]:
+    """Normalize a numeric vector for plot kinds that cannot track observables."""
+    return _to_numeric_1d(_reject_observable(values, kind), f"{kind} {name}")
+
+
 def _to_numeric_2d(values: Any, name: str) -> list[list[float]]:
     """Normalize a regular 3D grid while preserving its row/column shape."""
-    if _is_pandas_dataframe(values) or _is_polars_dataframe(values):
+    if _is_dataframe(values) or _is_series(values):
         values = values.to_numpy()
 
     array = np.asarray(values, dtype=float)
@@ -100,8 +138,10 @@ def _to_numeric_2d(values: Any, name: str) -> list[list[float]]:
     return array.astype(float).tolist()
 
 
-def _to_string_list(values: Any) -> list[str]:
-    if _is_pandas_dataframe(values) or _is_polars_dataframe(values):
+def _to_string_list(values: Any, name: str = "label input") -> list[str]:
+    if _is_dataframe(values):
+        raise TypeError(f"{name} must be 1D; select a column or pass data=<DataFrame>")
+    if _is_series(values):
         values = values.to_list()
     return [str(value) for value in values]
 
@@ -109,7 +149,7 @@ def _to_string_list(values: Any) -> list[str]:
 def _normalize_observable_math_input(value: Any) -> Any:
     if isinstance(value, ObservableSeries):
         return value
-    if _is_pandas_dataframe(value) or _is_polars_dataframe(value):
+    if _is_series(value):
         value = value.to_list()
 
     array = np.asarray(value, dtype=float)
@@ -137,7 +177,7 @@ class ObservableSeries:
 
     def __init__(self, values: Any) -> None:
         """Create an observable numeric series from array-like values."""
-        self._initialize(_to_numeric_list(values))
+        self._initialize(_to_numeric_1d(values, "observable values"))
 
     def _initialize(self, values: list[float]) -> None:
         self._values = list(values)
@@ -249,7 +289,7 @@ class ObservableSeries:
 
     def replace(self, values: Any) -> None:
         """Replace the entire series and notify attached widgets."""
-        next_values = _to_numeric_list(values)
+        next_values = _to_numeric_1d(values, "observable values")
         self._ensure_detached()
         self._values = next_values
         self._native_observable.replace(self._values)
@@ -378,13 +418,13 @@ class Plot:
         self._snapshot_cache = None
 
     def _build_native_numeric_source(
-        self, value: Any
+        self, value: Any, name: str = "numeric input"
     ) -> tuple[dict[str, Any], list[float] | Any, ObservableSeries | None]:
         if isinstance(value, ObservableSeries):
             snapshot = value._snapshot()
             return snapshot, value._native_observable, value
 
-        values = _to_numeric_list(value)
+        values = _to_numeric_1d(value, name)
         return {"kind": "static", "values": values}, values, None
 
     @staticmethod
@@ -615,19 +655,22 @@ class Plot:
 
     def size_px(self, width: int, height: int) -> "Plot":
         """Set the pixel size used for export and notebook rendering."""
-        normalized_width = max(1, int(width))
-        normalized_height = max(1, int(height))
+        normalized_width = int(width)
+        normalized_height = int(height)
+        if normalized_width <= 0 or normalized_height <= 0:
+            raise ValueError("plot dimensions must be greater than zero")
         self._native_plot.size_px(normalized_width, normalized_height)
         self._state["sizePx"] = [normalized_width, normalized_height]
         self._invalidate_snapshot_cache()
         return self
 
     def theme(self, theme: str) -> "Plot":
-        """Set the built-in light or dark theme."""
-        if theme not in {"light", "dark"}:
-            raise ValueError("theme must be 'light' or 'dark'")
-        self._native_plot.theme(theme)
-        self._state["theme"] = theme
+        """Set the built-in ``light`` or ``dark`` theme (case-insensitive)."""
+        normalized = str(theme).lower()
+        if normalized not in {"light", "dark"}:
+            raise ValueError(f"unsupported theme: {theme}")
+        self._native_plot.theme(normalized)
+        self._state["theme"] = normalized
         self._invalidate_snapshot_cache()
         return self
 
@@ -665,8 +708,12 @@ class Plot:
 
     def line(self, x: Any, y: Any, *, data: Any = None) -> "Plot":
         """Add a line series from x/y arrays or dataframe columns."""
-        x_values, native_x, x_observable = self._build_native_numeric_source(_column_values(data, x))
-        y_values, native_y, y_observable = self._build_native_numeric_source(_column_values(data, y))
+        x_values, native_x, x_observable = self._build_native_numeric_source(
+            _column_values(data, x), "line x"
+        )
+        y_values, native_y, y_observable = self._build_native_numeric_source(
+            _column_values(data, y), "line y"
+        )
         self._ensure_equal_length("line", x_values, y_values)
         series = {"kind": "line", "x": x_values, "y": y_values}
         self._apply_native_series(self._native_plot, series, native_sources={"x": native_x, "y": native_y})
@@ -679,8 +726,12 @@ class Plot:
 
     def scatter(self, x: Any, y: Any, *, data: Any = None) -> "Plot":
         """Add a scatter series from x/y arrays or dataframe columns."""
-        x_values, native_x, x_observable = self._build_native_numeric_source(_column_values(data, x))
-        y_values, native_y, y_observable = self._build_native_numeric_source(_column_values(data, y))
+        x_values, native_x, x_observable = self._build_native_numeric_source(
+            _column_values(data, x), "scatter x"
+        )
+        y_values, native_y, y_observable = self._build_native_numeric_source(
+            _column_values(data, y), "scatter y"
+        )
         self._ensure_equal_length("scatter", x_values, y_values)
         series = {"kind": "scatter", "x": x_values, "y": y_values}
         self._apply_native_series(self._native_plot, series, native_sources={"x": native_x, "y": native_y})
@@ -693,8 +744,10 @@ class Plot:
 
     def bar(self, x: Any, y: Any, *, data: Any = None) -> "Plot":
         """Add a categorical bar series."""
-        categories = _to_string_list(_column_values(data, x))
-        values, native_values, observable = self._build_native_numeric_source(_column_values(data, y))
+        categories = _to_string_list(_column_values(data, x), "bar categories")
+        values, native_values, observable = self._build_native_numeric_source(
+            _column_values(data, y), "bar values"
+        )
         if len(categories) != len(values["values"]):
             raise ValueError("bar categories and values must have the same length")
         series = {"kind": "bar", "categories": categories, "values": values}
@@ -706,7 +759,9 @@ class Plot:
 
     def histogram(self, x: Any, *, data: Any = None) -> "Plot":
         """Add a histogram from one numeric sample vector."""
-        series_data, native_data, observable = self._build_native_numeric_source(_column_values(data, x))
+        series_data, native_data, observable = self._build_native_numeric_source(
+            _column_values(data, x), "histogram x"
+        )
         series = {"kind": "histogram", "data": series_data}
         self._apply_native_series(self._native_plot, series, native_sources={"data": native_data})
         if observable is not None:
@@ -716,7 +771,9 @@ class Plot:
 
     def boxplot(self, x: Any, *, data: Any = None) -> "Plot":
         """Add a boxplot from one numeric sample vector."""
-        series_data, native_data, observable = self._build_native_numeric_source(_column_values(data, x))
+        series_data, native_data, observable = self._build_native_numeric_source(
+            _column_values(data, x), "boxplot x"
+        )
         series = {"kind": "boxplot", "data": series_data}
         self._apply_native_series(self._native_plot, series, native_sources={"data": native_data})
         if observable is not None:
@@ -724,9 +781,15 @@ class Plot:
         self._append_series_snapshot(series)
         return self
 
-    def heatmap(self, values: Any) -> "Plot":
-        """Add a heatmap from a rectangular numeric matrix."""
-        rows = [_to_numeric_list(row) for row in values]
+    def heatmap(self, values: Any, *, data: Any = None) -> "Plot":
+        """Add a heatmap from a rectangular 2D numeric matrix.
+
+        With ``data=``, ``values`` may name a matrix column/key to look up.
+        """
+        matrix = _reject_observable(_column_values(data, values), "heatmap")
+        if _is_dataframe(matrix):
+            raise TypeError("heatmap values must be a 2D numeric matrix; pass DataFrame.to_numpy()")
+        rows = [_to_static_numeric_1d(row, "heatmap", "row") for row in matrix]
         if not rows or not rows[0]:
             raise ValueError("heatmap input must be a non-empty 2D numeric matrix")
         cols = len(rows[0])
@@ -740,10 +803,14 @@ class Plot:
 
     def error_bars(self, x: Any, y: Any, y_errors: Any, *, data: Any = None) -> "Plot":
         """Add a series with vertical error bars."""
-        x_values, native_x, x_observable = self._build_native_numeric_source(_column_values(data, x))
-        y_values, native_y, y_observable = self._build_native_numeric_source(_column_values(data, y))
+        x_values, native_x, x_observable = self._build_native_numeric_source(
+            _column_values(data, x), "error_bars x"
+        )
+        y_values, native_y, y_observable = self._build_native_numeric_source(
+            _column_values(data, y), "error_bars y"
+        )
         error_values, native_errors, error_observable = self._build_native_numeric_source(
-            _column_values(data, y_errors)
+            _column_values(data, y_errors), "error_bars y_errors"
         )
         self._ensure_equal_length("error-bars", x_values, y_values, error_values)
         series = {"kind": "error-bars", "x": x_values, "y": y_values, "yErrors": error_values}
@@ -771,13 +838,17 @@ class Plot:
         data: Any = None,
     ) -> "Plot":
         """Add a series with both horizontal and vertical error bars."""
-        x_values, native_x, x_observable = self._build_native_numeric_source(_column_values(data, x))
-        y_values, native_y, y_observable = self._build_native_numeric_source(_column_values(data, y))
+        x_values, native_x, x_observable = self._build_native_numeric_source(
+            _column_values(data, x), "error_bars_xy x"
+        )
+        y_values, native_y, y_observable = self._build_native_numeric_source(
+            _column_values(data, y), "error_bars_xy y"
+        )
         x_error_values, native_x_errors, x_error_observable = self._build_native_numeric_source(
-            _column_values(data, x_errors)
+            _column_values(data, x_errors), "error_bars_xy x_errors"
         )
         y_error_values, native_y_errors, y_error_observable = self._build_native_numeric_source(
-            _column_values(data, y_errors)
+            _column_values(data, y_errors), "error_bars_xy y_errors"
         )
         self._ensure_equal_length("error-bars-xy", x_values, y_values, x_error_values, y_error_values)
         series = {
@@ -810,7 +881,7 @@ class Plot:
 
     def kde(self, x: Any, *, data: Any = None) -> "Plot":
         """Add a kernel density estimate for a numeric sample vector."""
-        values = _to_numeric_list(_column_values(data, x))
+        values = _to_static_numeric_1d(_column_values(data, x), "kde", "x")
         series = {"kind": "kde", "data": values}
         self._apply_native_series(self._native_plot, series)
         self._append_series_snapshot(series)
@@ -818,7 +889,7 @@ class Plot:
 
     def ecdf(self, x: Any, *, data: Any = None) -> "Plot":
         """Add an empirical cumulative distribution plot."""
-        values = _to_numeric_list(_column_values(data, x))
+        values = _to_static_numeric_1d(_column_values(data, x), "ecdf", "x")
         series = {"kind": "ecdf", "data": values}
         self._apply_native_series(self._native_plot, series)
         self._append_series_snapshot(series)
@@ -826,9 +897,9 @@ class Plot:
 
     def contour(self, x: Any, y: Any, z: Any, *, data: Any = None) -> "Plot":
         """Add a contour plot from x/y axes and a flattened z grid."""
-        x_values = _to_numeric_list(_column_values(data, x))
-        y_values = _to_numeric_list(_column_values(data, y))
-        z_values = _to_numeric_list(_column_values(data, z))
+        x_values = _to_static_numeric_1d(_column_values(data, x), "contour", "x")
+        y_values = _to_static_numeric_1d(_column_values(data, y), "contour", "y")
+        z_values = _to_static_numeric_1d(_column_values(data, z), "contour", "z")
         if len(z_values) != len(x_values) * len(y_values):
             raise ValueError("contour z must contain x.length * y.length values")
         series = {"kind": "contour", "x": x_values, "y": y_values, "z": z_values}
@@ -838,8 +909,10 @@ class Plot:
 
     def pie(self, values: Any, labels: Any = None, *, data: Any = None) -> "Plot":
         """Add a pie chart with optional labels."""
-        numeric = _to_numeric_list(_column_values(data, values))
-        label_values = None if labels is None else _to_string_list(_column_values(data, labels))
+        numeric = _to_static_numeric_1d(_column_values(data, values), "pie", "values")
+        label_values = (
+            None if labels is None else _to_string_list(_column_values(data, labels), "pie labels")
+        )
         if label_values is not None and len(label_values) != len(numeric):
             raise ValueError("pie values and labels must have the same length")
         series = {"kind": "pie", "values": numeric}
@@ -851,10 +924,10 @@ class Plot:
 
     def radar(self, labels: Any, series: list[dict[str, Any]]) -> "Plot":
         """Add a radar chart from axis labels and named series."""
-        label_values = _to_string_list(labels)
+        label_values = _to_string_list(labels, "radar labels")
         normalized = []
         for item in series:
-            values = _to_numeric_list(item["values"])
+            values = _to_static_numeric_1d(item["values"], "radar", "series values")
             if len(values) != len(label_values):
                 raise ValueError("each radar series must match the labels length")
             normalized.append({"name": item.get("name"), "values": values})
@@ -865,7 +938,7 @@ class Plot:
 
     def violin(self, x: Any, *, data: Any = None) -> "Plot":
         """Add a violin plot from one numeric sample vector."""
-        values = _to_numeric_list(_column_values(data, x))
+        values = _to_static_numeric_1d(_column_values(data, x), "violin", "x")
         series = {"kind": "violin", "data": values}
         self._apply_native_series(self._native_plot, series)
         self._append_series_snapshot(series)
@@ -873,8 +946,8 @@ class Plot:
 
     def polar_line(self, r: Any, theta: Any, *, data: Any = None) -> "Plot":
         """Add a polar line from radius and angle vectors."""
-        r_values = _to_numeric_list(_column_values(data, r))
-        theta_values = _to_numeric_list(_column_values(data, theta))
+        r_values = _to_static_numeric_1d(_column_values(data, r), "polar_line", "r")
+        theta_values = _to_static_numeric_1d(_column_values(data, theta), "polar_line", "theta")
         if len(r_values) != len(theta_values):
             raise ValueError("polar r and theta must have the same length")
         series = {"kind": "polar-line", "r": r_values, "theta": theta_values}

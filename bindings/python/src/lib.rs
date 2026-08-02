@@ -13,7 +13,7 @@ use serde::Deserialize;
 
 mod native_handle;
 
-use native_handle::{NativeObservable1D, NativePlotHandle};
+use native_handle::{NativeObservable1D, NativePlotHandle, save_extension};
 
 #[cfg(feature = "native-interactive")]
 use ruviz::interactive::show_interactive;
@@ -745,6 +745,7 @@ impl NativePlot3DHandle {
     }
 
     fn save(&self, path: &str) -> PyResult<()> {
+        save_extension(path)?;
         self.builder()?
             .save(path)
             .map_err(|error| PyRuntimeError::new_err(error.to_string()))

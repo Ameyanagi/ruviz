@@ -52,7 +52,7 @@ y = x**2
 - Outside notebooks, `plot.show()` opens the native interactive window.
 - The published Linux wheel focuses on static rendering and notebook widgets. Install from source on Linux if you need the native desktop `plot.show()` window.
 - `plot.render_png()` returns PNG bytes and `plot.render_svg()` returns an SVG string.
-- `plot.save(path)` writes PNG, SVG, or PDF according to the file extension and returns the output `Path`.
+- `plot.save(path)` writes PNG, SVG, or PDF according to the file extension and returns the output `Path`; any other extension raises `ValueError`.
 
 ## Reactive Notebook Data
 
@@ -73,7 +73,8 @@ widget = plot.widget()
 `ObservableSeries` supports elementwise arithmetic and NumPy ufuncs. Derived
 observables stay live until you write to them directly. Live observable series
 are supported by `line`, `scatter`, `bar`, `histogram`, `boxplot`,
-`error_bars`, and `error_bars_xy`; other plot types snapshot their inputs.
+`error_bars`, and `error_bars_xy`; other plot types reject them with a
+`TypeError` and expect static values.
 
 ```python,check
 import numpy as np

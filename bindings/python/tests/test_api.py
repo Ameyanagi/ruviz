@@ -460,6 +460,171 @@ def test_widget_esm_uses_generated_bundle() -> None:
     assert str(ruviz.RuvizWidget._esm) == expected_path.read_text(encoding="utf-8")
 
 
+MATRIX = [[1.0, 2.0], [3.0, 4.0]]
+
+NON_1D_CASES = [
+    ("line x", lambda values: ruviz.plot().line(values, [0.0, 1.0])),
+    ("line y", lambda values: ruviz.plot().line([0.0, 1.0], values)),
+    ("scatter x", lambda values: ruviz.plot().scatter(values, [0.0, 1.0])),
+    ("bar values", lambda values: ruviz.plot().bar(["a", "b"], values)),
+    ("histogram x", lambda values: ruviz.plot().histogram(values)),
+    ("boxplot x", lambda values: ruviz.plot().boxplot(values)),
+    ("error_bars x", lambda values: ruviz.plot().error_bars(values, [0.0, 1.0], [0.1, 0.1])),
+    (
+        "error_bars_xy y_errors",
+        lambda values: ruviz.plot().error_bars_xy([0.0, 1.0], [0.0, 1.0], [0.1, 0.1], values),
+    ),
+    ("kde x", lambda values: ruviz.plot().kde(values)),
+    ("ecdf x", lambda values: ruviz.plot().ecdf(values)),
+    ("contour z", lambda values: ruviz.plot().contour([0.0, 1.0], [0.0, 1.0], values)),
+    ("pie values", lambda values: ruviz.plot().pie(values)),
+    ("violin x", lambda values: ruviz.plot().violin(values)),
+    ("polar_line r", lambda values: ruviz.plot().polar_line(values, [0.0, 1.0])),
+    (
+        "radar series values",
+        lambda values: ruviz.plot().radar(["a", "b"], [{"name": "s", "values": values}]),
+    ),
+    ("observable values", lambda values: ruviz.observable(values)),
+]
+
+NON_TRACKING_OBSERVABLE_CASES = [
+    ("kde", lambda source: ruviz.plot().kde(source)),
+    ("ecdf", lambda source: ruviz.plot().ecdf(source)),
+    ("contour", lambda source: ruviz.plot().contour([0.0, 1.0], [0.0, 1.0], source)),
+    ("pie", lambda source: ruviz.plot().pie(source)),
+    ("violin", lambda source: ruviz.plot().violin(source)),
+    ("polar_line", lambda source: ruviz.plot().polar_line(source, [0.0, 1.0, 2.0, 3.0])),
+    ("heatmap", lambda source: ruviz.plot().heatmap(source)),
+    (
+        "radar",
+        lambda source: ruviz.plot().radar(["a", "b", "c", "d"], [{"name": "s", "values": source}]),
+    ),
+]
+
+
+@pytest.mark.parametrize(("name", "builder"), NON_1D_CASES, ids=[name for name, _ in NON_1D_CASES])
+def test_numeric_inputs_reject_non_1d_values(name: str, builder: object) -> None:
+    with pytest.raises(TypeError, match=f"{name} must be a 1D numeric array"):
+        builder(MATRIX)
+
+    with pytest.raises(TypeError, match=f"{name} must be a 1D numeric array"):
+        builder(np.asarray(MATRIX))
+
+
+def test_heatmap_still_accepts_a_2d_matrix() -> None:
+    snapshot = ruviz.plot().heatmap(MATRIX).to_snapshot()["series"][0]
+
+    assert snapshot["rows"] == 2
+    assert snapshot["cols"] == 2
+    assert snapshot["values"] == [1.0, 2.0, 3.0, 4.0]
+
+
+def test_heatmap_accepts_a_data_keyword() -> None:
+    snapshot = ruviz.plot().heatmap("grid", data={"grid": MATRIX}).to_snapshot()["series"][0]
+
+    assert snapshot["values"] == [1.0, 2.0, 3.0, 4.0]
+
+
+@pytest.mark.parametrize(
+    ("kind", "builder"),
+    NON_TRACKING_OBSERVABLE_CASES,
+    ids=[kind for kind, _ in NON_TRACKING_OBSERVABLE_CASES],
+)
+def test_non_tracking_kinds_reject_observables(kind: str, builder: object) -> None:
+    source = ruviz.observable([1.0, 2.0, 3.0, 4.0])
+
+    with pytest.raises(TypeError, match=f"{kind} does not support ObservableSeries"):
+        builder(source)
+
+
+def test_tracking_kinds_still_accept_observables() -> None:
+    source = ruviz.observable([1.0, 2.0, 3.0])
+    plot = ruviz.plot().line([0.0, 1.0, 2.0], source)
+
+    assert plot.to_snapshot()["series"][0]["y"]["kind"] == "observable"
+
+
+@pytest.mark.parametrize("extension", ["png", "svg", "pdf", "PNG"])
+def test_save_accepts_supported_extensions(extension: str, tmp_path: Path) -> None:
+    plot = ruviz.plot().size_px(200, 150).line([0, 1, 2], [0, 1, 4])
+
+    output = plot.save(tmp_path / f"out.{extension}")
+
+    assert output.is_file()
+
+
+def test_save_rejects_unknown_extension(tmp_path: Path) -> None:
+    plot = ruviz.plot().line([0, 1, 2], [0, 1, 4])
+
+    with pytest.raises(ValueError, match=r"unsupported save extension '\.jpg'"):
+        plot.save(tmp_path / "out.jpg")
+
+
+def test_save_rejects_path_without_extension(tmp_path: Path) -> None:
+    plot = ruviz.plot().line([0, 1, 2], [0, 1, 4])
+
+    with pytest.raises(ValueError, match="has no extension"):
+        plot.save(tmp_path / "out")
+
+
+@pytest.mark.parametrize(("width", "height"), [(0, 100), (100, 0), (-1, 100), (100, -1)])
+def test_size_px_rejects_non_positive_dimensions(width: int, height: int) -> None:
+    with pytest.raises(ValueError, match="greater than zero"):
+        ruviz.plot().size_px(width, height)
+
+
+def test_theme_normalizes_case_and_rejects_unknown_themes() -> None:
+    assert ruviz.plot().theme("Dark").to_snapshot()["theme"] == "dark"
+    assert ruviz.plot().theme("LIGHT").to_snapshot()["theme"] == "light"
+
+    with pytest.raises(ValueError, match="unsupported theme: solarized"):
+        ruviz.plot().theme("solarized")
+
+
+def test_pandas_series_are_direct_inputs() -> None:
+    pd = pytest.importorskip("pandas")
+    frame = pd.DataFrame({"time": [0.0, 1.0, 2.0], "value": [1.0, 2.0, 3.0]})
+
+    plot = ruviz.plot().line(frame["time"], frame["value"])
+
+    assert plot.to_snapshot()["series"][0]["x"]["values"] == [0.0, 1.0, 2.0]
+
+
+def test_polars_series_are_direct_inputs() -> None:
+    pl = pytest.importorskip("polars")
+    frame = pl.DataFrame({"time": [0.0, 1.0, 2.0], "value": [1.0, 2.0, 3.0]})
+
+    plot = ruviz.plot().line(frame["time"], frame["value"])
+
+    assert plot.to_snapshot()["series"][0]["y"]["values"] == [1.0, 2.0, 3.0]
+
+
+def test_dataframe_column_lookup_works_for_pandas_polars_and_dicts() -> None:
+    pd = pytest.importorskip("pandas")
+    pl = pytest.importorskip("polars")
+    columns = {"time": [0.0, 1.0, 2.0], "value": [1.0, 2.0, 3.0]}
+
+    for data in (pd.DataFrame(columns), pl.DataFrame(columns), columns):
+        plot = ruviz.plot().line("time", "value", data=data)
+        assert plot.to_snapshot()["series"][0]["y"]["values"] == [1.0, 2.0, 3.0]
+
+
+def test_dataframe_as_a_direct_numeric_input_is_rejected() -> None:
+    pd = pytest.importorskip("pandas")
+    frame = pd.DataFrame({"time": [0.0, 1.0, 2.0], "value": [1.0, 2.0, 3.0]})
+
+    with pytest.raises(TypeError, match="select a column or pass data="):
+        ruviz.plot().line(frame, frame)
+
+
+def test_series_passed_as_data_is_rejected() -> None:
+    pd = pytest.importorskip("pandas")
+    frame = pd.DataFrame({"time": [0.0, 1.0, 2.0], "value": [1.0, 2.0, 3.0]})
+
+    with pytest.raises(TypeError, match="data= expects a DataFrame or dict"):
+        ruviz.plot().line("time", "value", data=frame["time"])
+
+
 def test_observable_detaches_discarded_plot_listeners() -> None:
     source = ruviz.observable([1.0, 2.0, 3.0])
 
