@@ -5392,8 +5392,6 @@ dependencies = [
  "pollster",
  "pyo3",
  "ruviz",
- "serde",
- "serde_json",
 ]
 
 [[package]]

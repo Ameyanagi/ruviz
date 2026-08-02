@@ -76,13 +76,24 @@ def test_plot3d_combines_series_and_exports_png_svg_and_pdf(tmp_path: Path) -> N
     assert pdf_path.read_bytes().startswith(b"%PDF")
 
 
-def test_plot3d_render_uses_native_handle_without_json_roundtrip() -> None:
+def test_plot3d_render_delegates_to_the_native_handle() -> None:
     plot = ruviz.scatter3d([0.0, 1.0], [0.0, 1.0], [0.0, 1.0]).size_px(240, 180)
 
-    with patch("ruviz._api.json.dumps", side_effect=AssertionError("JSON path should not run")):
-        png = plot.render_png()
+    with patch.object(
+        type(plot._native_plot), "render_png_bytes", return_value=b"native-png"
+    ) as render:
+        assert plot.render_png() == b"native-png"
 
-    assert png.startswith(PNG_HEADER)
+    render.assert_called_once()
+
+
+def test_plot3d_reuses_the_cached_builder_across_renders() -> None:
+    plot = ruviz.scatter3d([0.0, 1.0], [0.0, 1.0], [0.0, 1.0]).size_px(240, 180)
+
+    first = plot.render_png()
+    assert plot.render_png() == first
+
+    assert plot.title("changed").render_png() != first
 
 
 def test_surface_requires_y_rows_by_x_columns() -> None:
@@ -148,3 +159,9 @@ def test_plot3d_rejects_observable_and_dataframe_inputs() -> None:
 
     with pytest.raises(TypeError, match="data= expects a DataFrame or dict"):
         ruviz.plot3d().scatter3d("x", "y", "z", data=frame["x"])
+
+
+def test_plot3d_snapshot_carries_schema_version() -> None:
+    plot = ruviz.scatter3d([0, 1], [0, 1], [0, 1]).title("versioned")
+
+    assert plot.to_snapshot()["schemaVersion"] == 1

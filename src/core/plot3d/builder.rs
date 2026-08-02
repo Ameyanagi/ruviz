@@ -17,7 +17,7 @@ use super::prepared::render_resolved_gpu_layer;
 use super::prepared::render_resolved_software_layer;
 use super::{AxisAspect3D, Camera3D, Point3D};
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct Plot3D {
     pub(super) series: Vec<Series3D>,
     pub(super) camera: Camera3D,
@@ -732,7 +732,7 @@ macro_rules! impl_common_builder {
 }
 
 /// Builder returned by [`crate::scatter3d`].
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Scatter3DBuilder {
     plot: Plot3D,
     data: Option<Points3DData>,
@@ -808,7 +808,7 @@ impl Scatter3DBuilder {
 impl_common_builder!(Scatter3DBuilder);
 
 /// Builder returned by [`crate::line3d`].
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Line3DBuilder {
     plot: Plot3D,
     data: Option<Points3DData>,
@@ -884,7 +884,7 @@ impl Line3DBuilder {
 impl_common_builder!(Line3DBuilder);
 
 /// Builder returned by [`crate::surface`].
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Surface3DBuilder {
     plot: Plot3D,
     data: Option<Grid3DData>,
@@ -992,7 +992,7 @@ impl Surface3DBuilder {
 impl_common_builder!(Surface3DBuilder);
 
 /// Builder returned by [`crate::wireframe`].
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Wireframe3DBuilder {
     plot: Plot3D,
     data: Option<Grid3DData>,

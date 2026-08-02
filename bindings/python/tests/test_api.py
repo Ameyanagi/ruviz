@@ -205,35 +205,54 @@ def test_empty_plot_repr_png_succeeds() -> None:
     assert png.startswith(PNG_HEADER)
 
 
-def test_render_png_uses_native_handle_not_snapshot_json() -> None:
+def test_render_png_delegates_to_the_native_handle() -> None:
     plot = ruviz.plot().line([0, 1, 2], [0, 1, 4]).title("demo")
 
-    with patch.object(plot, "_snapshot_json", side_effect=AssertionError("snapshot path should not run")):
-        png = plot.render_png()
+    with patch.object(
+        type(plot._native_plot), "render_png_bytes", return_value=b"native-png"
+    ) as render:
+        assert plot.render_png() == b"native-png"
 
-    assert png.startswith(PNG_HEADER)
+    render.assert_called_once()
 
 
-def test_render_svg_uses_native_handle_not_snapshot_json() -> None:
+def test_render_svg_delegates_to_the_native_handle() -> None:
     plot = ruviz.plot().line([0, 1, 2], [0, 1, 4]).title("demo")
 
-    with patch.object(plot, "_snapshot_json", side_effect=AssertionError("snapshot path should not run")):
-        svg = plot.render_svg()
+    with patch.object(
+        type(plot._native_plot), "render_svg", return_value="<?xml native-svg"
+    ) as render:
+        assert plot.render_svg() == "<?xml native-svg"
 
-    assert svg.startswith("<?xml")
+    render.assert_called_once()
 
 
-def test_observable_render_updates_native_plot_without_snapshot_roundtrip() -> None:
+def test_observable_render_updates_native_plot() -> None:
     source = ruviz.observable([1.0, 2.0, 3.0])
     plot = ruviz.plot().line([0.0, 1.0, 2.0], source)
 
     first_png = plot.render_png()
     source.replace([3.0, 2.0, 1.0])
-
-    with patch.object(plot, "_snapshot_json", side_effect=AssertionError("snapshot path should not run")):
-        second_png = plot.render_png()
+    second_png = plot.render_png()
 
     assert first_png != second_png
+
+
+def test_snapshot_carries_schema_version_through_copies_and_replay() -> None:
+    plot = ruviz.plot().line([0, 1, 2], [0, 1, 4]).title("versioned")
+
+    assert plot.to_snapshot()["schemaVersion"] == 1
+    assert plot.clone().to_snapshot()["schemaVersion"] == 1
+    assert copy(plot).to_snapshot()["schemaVersion"] == 1
+    assert deepcopy(plot).to_snapshot()["schemaVersion"] == 1
+
+
+def test_replay_tolerates_and_reemits_schema_version() -> None:
+    snapshot = ruviz.plot().line([0, 1, 2], [0, 1, 4]).to_snapshot()
+
+    replayed = ruviz.Plot._replay_snapshot(snapshot)
+
+    assert replayed.to_snapshot() == snapshot
 
 
 def test_clone_rebuilds_native_plot_from_mixed_series_shapes() -> None:

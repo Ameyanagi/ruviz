@@ -708,3 +708,282 @@ impl NativePlotHandle {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use image::RgbaImage;
+
+    fn decode_png(bytes: &[u8]) -> RgbaImage {
+        image::load_from_memory(bytes)
+            .expect("expected valid PNG bytes")
+            .to_rgba8()
+    }
+
+    fn assert_pngs_equal(name: &str, actual: &[u8], expected: &[u8]) {
+        let actual = decode_png(actual);
+        let expected = decode_png(expected);
+
+        assert_eq!(
+            actual.dimensions(),
+            expected.dimensions(),
+            "{name}: PNG dimensions differ"
+        );
+
+        let diff_pixels = actual
+            .pixels()
+            .zip(expected.pixels())
+            .filter(|(left, right)| left != right)
+            .count();
+
+        assert_eq!(
+            diff_pixels, 0,
+            "{name}: rendered PNG differs at {diff_pixels} pixel(s)"
+        );
+    }
+
+    fn render_state_png(state: NativePlotState) -> Vec<u8> {
+        state
+            .build_plot()
+            .expect("state should build")
+            .render_png_bytes()
+            .expect("state render should succeed")
+    }
+
+    fn render_direct_png(plot: Plot) -> Vec<u8> {
+        plot.render_png_bytes()
+            .expect("direct render should succeed")
+    }
+
+    fn base_state(title: &str, series: Vec<NativeSeriesState>) -> NativePlotState {
+        NativePlotState {
+            size_px: Some((320, 200)),
+            theme: Some("light".to_string()),
+            ticks: Some(true),
+            title: Some(title.to_string()),
+            x_label: Some("x".to_string()),
+            y_label: Some("y".to_string()),
+            series,
+        }
+    }
+
+    fn base_plot(title: &str) -> Plot {
+        Plot::new()
+            .size_px(320, 200)
+            .theme(Theme::light())
+            .ticks(true)
+            .title(title)
+            .xlabel("x")
+            .ylabel("y")
+    }
+
+    fn static_source(values: &[f64]) -> NumericSourceState {
+        NumericSourceState::Static(values.to_vec())
+    }
+
+    #[test]
+    fn state_render_matches_direct_plot_for_xy_series() {
+        let state = base_state(
+            "XY parity",
+            vec![
+                NativeSeriesState::Line {
+                    x: static_source(&[0.0, 1.0, 2.0, 3.0]),
+                    y: static_source(&[0.2, 1.1, 0.7, 1.8]),
+                },
+                NativeSeriesState::Scatter {
+                    x: static_source(&[0.0, 1.0, 2.0, 3.0]),
+                    y: static_source(&[0.3, 1.0, 0.9, 1.6]),
+                },
+            ],
+        );
+
+        let expected = base_plot("XY parity")
+            .line(&[0.0, 1.0, 2.0, 3.0], &[0.2, 1.1, 0.7, 1.8])
+            .scatter(&[0.0, 1.0, 2.0, 3.0], &[0.3, 1.0, 0.9, 1.6])
+            .into_plot();
+
+        assert_pngs_equal(
+            "xy_series",
+            &render_state_png(state),
+            &render_direct_png(expected),
+        );
+    }
+
+    #[test]
+    fn state_render_matches_direct_plot_for_statistical_series() {
+        let samples = [
+            -2.3, -1.9, -1.1, -0.4, 0.2, 0.8, 1.0, 1.4, 1.7, 2.1, 2.5, 2.9,
+        ];
+
+        let mut state = base_state(
+            "Histogram parity",
+            vec![NativeSeriesState::Histogram {
+                data: static_source(&samples),
+            }],
+        );
+        state.x_label = Some("value".to_string());
+        state.y_label = Some("count".to_string());
+
+        let expected = base_plot("Histogram parity")
+            .xlabel("value")
+            .ylabel("count")
+            .histogram(&samples)
+            .into_plot();
+
+        assert_pngs_equal(
+            "histogram",
+            &render_state_png(state),
+            &render_direct_png(expected),
+        );
+    }
+
+    #[test]
+    fn state_render_matches_direct_plot_for_matrix_and_errorbar_series() {
+        let heatmap_matrix = vec![
+            vec![0.1, 0.4, 0.8],
+            vec![0.3, 0.5, 0.7],
+            vec![0.2, 0.6, 0.9],
+        ];
+
+        let heatmap_state = NativePlotState {
+            size_px: Some((320, 200)),
+            theme: Some("dark".to_string()),
+            ticks: Some(false),
+            title: Some("Heatmap parity".to_string()),
+            series: vec![NativeSeriesState::Heatmap {
+                values: vec![0.1, 0.4, 0.8, 0.3, 0.5, 0.7, 0.2, 0.6, 0.9],
+                rows: 3,
+                cols: 3,
+            }],
+            ..NativePlotState::default()
+        };
+
+        let heatmap_expected = Plot::new()
+            .size_px(320, 200)
+            .theme(Theme::dark())
+            .ticks(false)
+            .title("Heatmap parity")
+            .heatmap(&heatmap_matrix)
+            .into_plot();
+
+        assert_pngs_equal(
+            "heatmap",
+            &render_state_png(heatmap_state),
+            &render_direct_png(heatmap_expected),
+        );
+
+        let error_state = base_state(
+            "Error parity",
+            vec![NativeSeriesState::ErrorBarsXy {
+                x: static_source(&[1.0, 2.0, 3.0]),
+                y: static_source(&[1.2, 1.8, 1.4]),
+                x_errors: static_source(&[0.1, 0.15, 0.12]),
+                y_errors: static_source(&[0.2, 0.18, 0.16]),
+            }],
+        );
+
+        let error_expected = base_plot("Error parity")
+            .error_bars_xy(
+                &[1.0, 2.0, 3.0],
+                &[1.2, 1.8, 1.4],
+                &[0.1, 0.15, 0.12],
+                &[0.2, 0.18, 0.16],
+            )
+            .into_plot();
+
+        assert_pngs_equal(
+            "error_bars_xy",
+            &render_state_png(error_state),
+            &render_direct_png(error_expected),
+        );
+    }
+
+    #[test]
+    fn state_render_matches_direct_plot_for_specialized_series() {
+        let titled_state = |title: &str, series| NativePlotState {
+            size_px: Some((320, 200)),
+            theme: Some("light".to_string()),
+            ticks: Some(true),
+            title: Some(title.to_string()),
+            series: vec![series],
+            ..NativePlotState::default()
+        };
+        let titled_plot = |title: &str| {
+            Plot::new()
+                .size_px(320, 200)
+                .theme(Theme::light())
+                .ticks(true)
+                .title(title)
+        };
+
+        let contour_state = titled_state(
+            "Contour parity",
+            NativeSeriesState::Contour {
+                x: vec![-1.0, 0.0, 1.0],
+                y: vec![-1.0, 0.0, 1.0],
+                z: vec![0.1, 0.2, 0.3, 0.2, 0.6, 0.2, 0.3, 0.2, 0.1],
+            },
+        );
+        let contour_expected = titled_plot("Contour parity")
+            .contour(
+                &[-1.0, 0.0, 1.0],
+                &[-1.0, 0.0, 1.0],
+                &[0.1, 0.2, 0.3, 0.2, 0.6, 0.2, 0.3, 0.2, 0.1],
+            )
+            .into_plot();
+
+        assert_pngs_equal(
+            "contour",
+            &render_state_png(contour_state),
+            &render_direct_png(contour_expected),
+        );
+
+        let pie_state = titled_state(
+            "Pie parity",
+            NativeSeriesState::Pie {
+                values: vec![30.0, 25.0, 20.0, 25.0],
+                labels: Some(vec![
+                    "A".to_string(),
+                    "B".to_string(),
+                    "C".to_string(),
+                    "D".to_string(),
+                ]),
+            },
+        );
+        let pie_expected = titled_plot("Pie parity")
+            .pie(&[30.0, 25.0, 20.0, 25.0])
+            .labels(&["A", "B", "C", "D"])
+            .into_plot();
+
+        assert_pngs_equal(
+            "pie",
+            &render_state_png(pie_state),
+            &render_direct_png(pie_expected),
+        );
+
+        let radar_state = titled_state(
+            "Radar parity",
+            NativeSeriesState::Radar {
+                labels: ["API", "Docs", "Export", "Interactive", "Scale"]
+                    .map(str::to_string)
+                    .to_vec(),
+                series: vec![
+                    (Some("Python".to_string()), vec![4.5, 4.7, 4.8, 4.3, 4.0]),
+                    (Some("Web".to_string()), vec![4.2, 4.1, 4.0, 4.8, 4.6]),
+                ],
+            },
+        );
+        let radar_expected = titled_plot("Radar parity")
+            .radar(&["API", "Docs", "Export", "Interactive", "Scale"])
+            .add_series("Python", &[4.5, 4.7, 4.8, 4.3, 4.0])
+            .add_series("Web", &[4.2, 4.1, 4.0, 4.8, 4.6])
+            .into_plot();
+
+        assert_pngs_equal(
+            "radar",
+            &render_state_png(radar_state),
+            &render_direct_png(radar_expected),
+        );
+    }
+}

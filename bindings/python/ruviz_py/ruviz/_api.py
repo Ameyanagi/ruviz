@@ -7,8 +7,8 @@ display outside notebooks.
 
 from __future__ import annotations
 
-import json
 import weakref
+from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
@@ -161,6 +161,81 @@ def _normalize_observable_math_input(value: Any) -> Any:
     raise TypeError(
         "ObservableSeries math only supports real scalars, 1D numeric arrays, and other observables"
     )
+
+
+#: Snapshot layout version carried by :meth:`Plot.to_snapshot` and
+#: :meth:`Plot3D.to_snapshot`; consumers must ignore fields they do not know.
+_SNAPSHOT_SCHEMA_VERSION = 1
+
+
+def _heatmap_matrix(series: dict[str, Any]) -> list[list[float]]:
+    cols = int(series["cols"])
+    values = series["values"]
+    return [values[start : start + cols] for start in range(0, len(values), cols)]
+
+
+@dataclass(frozen=True)
+class _SeriesKind:
+    """How one snapshot series maps onto the ``Plot``/native method of the same name.
+
+    ``args`` are snapshot keys in positional call order and ``sources`` names the
+    subset holding ``{"kind", "values"}`` numeric sources that may be backed by an
+    observable. ``native_args``/``public_args`` override the derived arguments for
+    the kinds whose stored shape differs from the method signature.
+    """
+
+    args: tuple[str, ...] = ()
+    sources: frozenset[str] = frozenset()
+    native_args: Callable[[dict[str, Any]], list[Any]] | None = None
+    public_args: Callable[[dict[str, Any]], list[Any]] | None = None
+
+
+def _pie_args(series: dict[str, Any]) -> list[Any]:
+    return [series["values"], series.get("labels")]
+
+
+_SERIES_KINDS: dict[str, _SeriesKind] = {
+    "line": _SeriesKind(("x", "y"), frozenset({"x", "y"})),
+    "scatter": _SeriesKind(("x", "y"), frozenset({"x", "y"})),
+    "bar": _SeriesKind(("categories", "values"), frozenset({"values"})),
+    "histogram": _SeriesKind(("data",), frozenset({"data"})),
+    "boxplot": _SeriesKind(("data",), frozenset({"data"})),
+    "heatmap": _SeriesKind(
+        native_args=lambda series: [
+            series["values"],
+            int(series["rows"]),
+            int(series["cols"]),
+        ],
+        public_args=lambda series: [_heatmap_matrix(series)],
+    ),
+    "error-bars": _SeriesKind(("x", "y", "yErrors"), frozenset({"x", "y", "yErrors"})),
+    "error-bars-xy": _SeriesKind(
+        ("x", "y", "xErrors", "yErrors"),
+        frozenset({"x", "y", "xErrors", "yErrors"}),
+    ),
+    "kde": _SeriesKind(("data",)),
+    "ecdf": _SeriesKind(("data",)),
+    "contour": _SeriesKind(("x", "y", "z")),
+    "pie": _SeriesKind(native_args=_pie_args, public_args=_pie_args),
+    "radar": _SeriesKind(
+        ("labels", "series"),
+        native_args=lambda series: [
+            series["labels"],
+            [(item.get("name"), item["values"]) for item in series["series"]],
+        ],
+    ),
+    "violin": _SeriesKind(("data",)),
+    "polar-line": _SeriesKind(("r", "theta")),
+}
+
+
+def _series_kind(series: dict[str, Any]) -> tuple[_SeriesKind, str]:
+    """Return the series spec and the method name shared by ``Plot`` and the handle."""
+    kind = series["kind"]
+    spec = _SERIES_KINDS.get(kind)
+    if spec is None:
+        raise ValueError(f"unsupported plot snapshot kind: {kind}")
+    return spec, kind.replace("-", "_")
 
 
 @dataclass
@@ -404,7 +479,7 @@ class Plot:
     """Fluent plot builder for static and interactive ruviz rendering."""
 
     def __init__(self) -> None:
-        self._state: dict[str, Any] = {"series": []}
+        self._state: dict[str, Any] = {"schemaVersion": _SNAPSHOT_SCHEMA_VERSION, "series": []}
         self._native_plot = _native.NativePlotHandle()
         self._widgets: "weakref.WeakSet[Any]" = weakref.WeakSet()
         self._observables: list[ObservableSeries] = []
@@ -435,60 +510,17 @@ class Plot:
         native_sources: dict[str, Any] | None = None,
     ) -> None:
         native_sources = native_sources or {}
-        kind = series["kind"]
-        if kind == "line":
-            native_plot.line(
-                native_sources.get("x", series["x"]["values"]),
-                native_sources.get("y", series["y"]["values"]),
-            )
-        elif kind == "scatter":
-            native_plot.scatter(
-                native_sources.get("x", series["x"]["values"]),
-                native_sources.get("y", series["y"]["values"]),
-            )
-        elif kind == "bar":
-            native_plot.bar(
-                series["categories"],
-                native_sources.get("values", series["values"]["values"]),
-            )
-        elif kind == "histogram":
-            native_plot.histogram(native_sources.get("data", series["data"]["values"]))
-        elif kind == "boxplot":
-            native_plot.boxplot(native_sources.get("data", series["data"]["values"]))
-        elif kind == "heatmap":
-            native_plot.heatmap(series["values"], int(series["rows"]), int(series["cols"]))
-        elif kind == "error-bars":
-            native_plot.error_bars(
-                native_sources.get("x", series["x"]["values"]),
-                native_sources.get("y", series["y"]["values"]),
-                native_sources.get("yErrors", series["yErrors"]["values"]),
-            )
-        elif kind == "error-bars-xy":
-            native_plot.error_bars_xy(
-                native_sources.get("x", series["x"]["values"]),
-                native_sources.get("y", series["y"]["values"]),
-                native_sources.get("xErrors", series["xErrors"]["values"]),
-                native_sources.get("yErrors", series["yErrors"]["values"]),
-            )
-        elif kind == "kde":
-            native_plot.kde(series["data"])
-        elif kind == "ecdf":
-            native_plot.ecdf(series["data"])
-        elif kind == "contour":
-            native_plot.contour(series["x"], series["y"], series["z"])
-        elif kind == "pie":
-            native_plot.pie(series["values"], series.get("labels"))
-        elif kind == "radar":
-            native_plot.radar(
-                series["labels"],
-                [(item.get("name"), item["values"]) for item in series["series"]],
-            )
-        elif kind == "violin":
-            native_plot.violin(series["data"])
-        elif kind == "polar-line":
-            native_plot.polar_line(series["r"], series["theta"])
+        spec, method = _series_kind(series)
+        if spec.native_args is not None:
+            args = spec.native_args(series)
         else:
-            raise ValueError(f"unsupported plot snapshot kind: {kind}")
+            args = [
+                native_sources.get(key, series[key]["values"])
+                if key in spec.sources
+                else series[key]
+                for key in spec.args
+            ]
+        getattr(native_plot, method)(*args)
 
     def _append_series_snapshot(self, series: dict[str, Any]) -> None:
         self._state["series"].append(series)
@@ -568,59 +600,17 @@ class Plot:
         cls._apply_snapshot_metadata(plot, snapshot)
 
         for series in snapshot["series"]:
-            kind = series["kind"]
-            if kind == "line":
-                plot.line(
-                    cls._resolve_numeric_source(series["x"], observable_lookup),
-                    cls._resolve_numeric_source(series["y"], observable_lookup),
-                )
-            elif kind == "scatter":
-                plot.scatter(
-                    cls._resolve_numeric_source(series["x"], observable_lookup),
-                    cls._resolve_numeric_source(series["y"], observable_lookup),
-                )
-            elif kind == "bar":
-                plot.bar(series["categories"], cls._resolve_numeric_source(series["values"], observable_lookup))
-            elif kind == "histogram":
-                plot.histogram(cls._resolve_numeric_source(series["data"], observable_lookup))
-            elif kind == "boxplot":
-                plot.boxplot(cls._resolve_numeric_source(series["data"], observable_lookup))
-            elif kind == "heatmap":
-                cols = int(series["cols"])
-                rows = [
-                    series["values"][row_start : row_start + cols]
-                    for row_start in range(0, len(series["values"]), cols)
-                ]
-                plot.heatmap(rows)
-            elif kind == "error-bars":
-                plot.error_bars(
-                    cls._resolve_numeric_source(series["x"], observable_lookup),
-                    cls._resolve_numeric_source(series["y"], observable_lookup),
-                    cls._resolve_numeric_source(series["yErrors"], observable_lookup),
-                )
-            elif kind == "error-bars-xy":
-                plot.error_bars_xy(
-                    cls._resolve_numeric_source(series["x"], observable_lookup),
-                    cls._resolve_numeric_source(series["y"], observable_lookup),
-                    cls._resolve_numeric_source(series["xErrors"], observable_lookup),
-                    cls._resolve_numeric_source(series["yErrors"], observable_lookup),
-                )
-            elif kind == "kde":
-                plot.kde(series["data"])
-            elif kind == "ecdf":
-                plot.ecdf(series["data"])
-            elif kind == "contour":
-                plot.contour(series["x"], series["y"], series["z"])
-            elif kind == "pie":
-                plot.pie(series["values"], series.get("labels"))
-            elif kind == "radar":
-                plot.radar(series["labels"], series["series"])
-            elif kind == "violin":
-                plot.violin(series["data"])
-            elif kind == "polar-line":
-                plot.polar_line(series["r"], series["theta"])
+            spec, method = _series_kind(series)
+            if spec.public_args is not None:
+                args = spec.public_args(series)
             else:
-                raise ValueError(f"unsupported plot snapshot kind: {kind}")
+                args = [
+                    cls._resolve_numeric_source(series[key], observable_lookup)
+                    if key in spec.sources
+                    else series[key]
+                    for key in spec.args
+                ]
+            getattr(plot, method)(*args)
 
         return plot
 
@@ -1006,9 +996,6 @@ class Plot:
             self._snapshot_dirty = False
         return deepcopy(self._snapshot_cache)
 
-    def _snapshot_json(self) -> str:
-        return json.dumps(self.to_snapshot())
-
     def _track_observable(self, observable: ObservableSeries, snapshot: dict[str, Any]) -> None:
         self._observable_bindings.append((observable, snapshot))
         if observable in self._observables:
@@ -1046,7 +1033,7 @@ class Plot3D:
     """
 
     def __init__(self) -> None:
-        self._state: dict[str, Any] = {"series": []}
+        self._state: dict[str, Any] = {"schemaVersion": _SNAPSHOT_SCHEMA_VERSION, "series": []}
         self._native_plot = _native.NativePlot3DHandle()
 
     def _add_points(self, kind: str, x: Any, y: Any, z: Any, data: Any) -> "Plot3D":
