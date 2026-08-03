@@ -17,6 +17,7 @@ name = "_native"
 crate-type = ["cdylib"]
 
 [dependencies]
+numpy = "0.24"
 pollster = "0.4"
 pyo3 = { version = "0.24", features = ["abi3-py310"] }
 ruviz = { path = "../..", version = "0.6.0", default-features = false, features = ["3d", "pdf", "svg"] }

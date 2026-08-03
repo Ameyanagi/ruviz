@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import gc
 from functools import lru_cache
 import weakref
@@ -471,6 +472,51 @@ def test_observable_updates_widget_snapshot() -> None:
     source.replace([4.0, 5.0, 6.0])
 
     assert widget.snapshot["series"][0]["y"]["values"] == [4.0, 5.0, 6.0]
+
+
+def test_widget_refresh_stays_synchronous_without_an_event_loop() -> None:
+    source = ruviz.observable([1.0, 2.0, 3.0])
+    plot = ruviz.plot().line([0.0, 1.0, 2.0], source)
+    widget = plot.widget()
+
+    with patch.object(type(widget), "refresh") as refresh:
+        for index in range(5):
+            source.set_at(0, float(index))
+
+        assert refresh.call_count == 5
+
+    source.set_at(0, 9.0)
+
+    assert widget.snapshot["series"][0]["y"]["values"] == [9.0, 2.0, 3.0]
+
+
+def test_widget_refresh_is_coalesced_under_a_running_event_loop() -> None:
+    source = ruviz.observable([1.0, 2.0, 3.0])
+    plot = ruviz.plot().line([0.0, 1.0, 2.0], source)
+    widget = plot.widget()
+
+    async def burst() -> int:
+        with patch.object(type(widget), "refresh") as refresh:
+            for index in range(20):
+                source.set_at(0, float(index))
+            assert refresh.call_count == 0
+
+            await asyncio.sleep(0)
+            return int(refresh.call_count)
+
+    calls = asyncio.run(burst())
+
+    assert calls == 1
+    assert widget.snapshot["series"][0]["y"]["values"] == [1.0, 2.0, 3.0]
+
+    asyncio.run(_refresh_once(source))
+
+    assert widget.snapshot["series"][0]["y"]["values"] == [7.0, 2.0, 3.0]
+
+
+async def _refresh_once(source: ruviz.ObservableSeries) -> None:
+    source.set_at(0, 7.0)
+    await asyncio.sleep(0)
 
 
 def test_widget_esm_uses_generated_bundle() -> None:

@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use numpy::{PyReadonlyArray1, PyReadonlyArray2};
 use pyo3::{
     exceptions::{PyRuntimeError, PyTypeError, PyValueError},
     prelude::*,
@@ -564,13 +565,39 @@ pub(crate) fn save_extension(path: &str) -> PyResult<String> {
     }
 }
 
+/// Copy a numeric vector, taking a single `memcpy` from a float64 NumPy array
+/// and falling back to element-wise sequence extraction for anything else.
+pub(crate) fn extract_f64_vec(values: &Bound<'_, PyAny>) -> PyResult<Vec<f64>> {
+    if let Ok(array) = values.extract::<PyReadonlyArray1<'_, f64>>() {
+        return Ok(match array.as_slice() {
+            Ok(slice) => slice.to_vec(),
+            Err(_) => array.as_array().iter().copied().collect(),
+        });
+    }
+
+    values.extract()
+}
+
+/// Copy a numeric matrix row by row, fast-pathing a 2D float64 NumPy array.
+pub(crate) fn extract_f64_rows(values: &Bound<'_, PyAny>) -> PyResult<Vec<Vec<f64>>> {
+    if let Ok(array) = values.extract::<PyReadonlyArray2<'_, f64>>() {
+        return Ok(array
+            .as_array()
+            .rows()
+            .into_iter()
+            .map(|row| row.to_vec())
+            .collect());
+    }
+
+    values.extract()
+}
+
 fn extract_numeric_source(source: &Bound<'_, PyAny>) -> PyResult<NumericSourceState> {
     if let Ok(observable) = source.extract::<PyRef<'_, NativeObservable1D>>() {
         return Ok(NumericSourceState::Observable(observable.inner.clone()));
     }
 
-    source
-        .extract::<Vec<f64>>()
+    extract_f64_vec(source)
         .map(NumericSourceState::Static)
         .map_err(|_| PyTypeError::new_err("expected a numeric list or NativeObservable1D source"))
 }
@@ -583,14 +610,15 @@ pub struct NativeObservable1D {
 #[pymethods]
 impl NativeObservable1D {
     #[new]
-    fn new(values: Vec<f64>) -> Self {
-        Self {
-            inner: Observable::new(values),
-        }
+    fn new(values: &Bound<'_, PyAny>) -> PyResult<Self> {
+        Ok(Self {
+            inner: Observable::new(extract_f64_vec(values)?),
+        })
     }
 
-    fn replace(&self, values: Vec<f64>) {
-        self.inner.set(values);
+    fn replace(&self, values: &Bound<'_, PyAny>) -> PyResult<()> {
+        self.inner.set(extract_f64_vec(values)?);
+        Ok(())
     }
 
     fn set_at(&self, index: usize, value: f64) -> PyResult<()> {
@@ -613,18 +641,22 @@ pub struct NativePlotHandle {
 }
 
 impl NativePlotHandle {
-    fn rebuild(&mut self) -> PyResult<()> {
-        let plot = self.state.build_plot().map_err(PyValueError::new_err)?;
+    /// Rebuild the core plot when a mutator ran since the last render.
+    ///
+    /// `Plot` and `PreparedPlot` are `Send + Sync`, so the copy-heavy rebuild
+    /// runs with the GIL released.
+    fn ensure_built(&mut self, py: Python<'_>) -> PyResult<()> {
+        if !self.dirty {
+            return Ok(());
+        }
+
+        let state = &self.state;
+        let plot = py
+            .allow_threads(|| state.build_plot())
+            .map_err(PyValueError::new_err)?;
         self.prepared = plot.prepare();
         self.plot = plot;
         self.dirty = false;
-        Ok(())
-    }
-
-    fn ensure_built(&mut self) -> PyResult<()> {
-        if self.dirty {
-            self.rebuild()?;
-        }
         Ok(())
     }
 
@@ -643,13 +675,6 @@ impl NativePlotHandle {
         self.state.series.push(NativeSeries { data, style });
         self.mark_dirty();
         Ok(())
-    }
-
-    fn render_png_vec(&mut self) -> PyResult<Vec<u8>> {
-        self.ensure_built()?;
-        self.prepared
-            .render_png_bytes()
-            .map_err(|err| PyRuntimeError::new_err(err.to_string()))
     }
 }
 
@@ -820,7 +845,8 @@ impl NativePlotHandle {
         self.push_series(NativeSeriesState::Boxplot { data }, style)
     }
 
-    fn heatmap(&mut self, values: Vec<f64>, rows: usize, cols: usize) -> PyResult<()> {
+    fn heatmap(&mut self, values: &Bound<'_, PyAny>, rows: usize, cols: usize) -> PyResult<()> {
+        let values = extract_f64_vec(values)?;
         if rows == 0 || cols == 0 || values.len() != rows.saturating_mul(cols) {
             return Err(PyValueError::new_err(
                 "heatmap values length must match rows * cols",
@@ -878,23 +904,30 @@ impl NativePlotHandle {
     }
 
     #[pyo3(signature = (data, style=None))]
-    fn kde(&mut self, data: Vec<f64>, style: Option<&Bound<'_, PyDict>>) -> PyResult<()> {
+    fn kde(&mut self, data: &Bound<'_, PyAny>, style: Option<&Bound<'_, PyDict>>) -> PyResult<()> {
+        let data = extract_f64_vec(data)?;
         self.push_series(NativeSeriesState::Kde { data }, style)
     }
 
     #[pyo3(signature = (data, style=None))]
-    fn ecdf(&mut self, data: Vec<f64>, style: Option<&Bound<'_, PyDict>>) -> PyResult<()> {
+    fn ecdf(&mut self, data: &Bound<'_, PyAny>, style: Option<&Bound<'_, PyDict>>) -> PyResult<()> {
+        let data = extract_f64_vec(data)?;
         self.push_series(NativeSeriesState::Ecdf { data }, style)
     }
 
     #[pyo3(signature = (x, y, z, style=None))]
     fn contour(
         &mut self,
-        x: Vec<f64>,
-        y: Vec<f64>,
-        z: Vec<f64>,
+        x: &Bound<'_, PyAny>,
+        y: &Bound<'_, PyAny>,
+        z: &Bound<'_, PyAny>,
         style: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<()> {
+        let (x, y, z) = (
+            extract_f64_vec(x)?,
+            extract_f64_vec(y)?,
+            extract_f64_vec(z)?,
+        );
         if x.is_empty() || y.is_empty() || z.len() != x.len() * y.len() {
             return Err(PyValueError::new_err(
                 "contour z must contain x.length * y.length values",
@@ -903,7 +936,8 @@ impl NativePlotHandle {
         self.push_series(NativeSeriesState::Contour { x, y, z }, style)
     }
 
-    fn pie(&mut self, values: Vec<f64>, labels: Option<Vec<String>>) -> PyResult<()> {
+    fn pie(&mut self, values: &Bound<'_, PyAny>, labels: Option<Vec<String>>) -> PyResult<()> {
+        let values = extract_f64_vec(values)?;
         if let Some(labels) = &labels {
             ensure_same_len(
                 &[values.len(), labels.len()],
@@ -933,17 +967,23 @@ impl NativePlotHandle {
     }
 
     #[pyo3(signature = (data, style=None))]
-    fn violin(&mut self, data: Vec<f64>, style: Option<&Bound<'_, PyDict>>) -> PyResult<()> {
+    fn violin(
+        &mut self,
+        data: &Bound<'_, PyAny>,
+        style: Option<&Bound<'_, PyDict>>,
+    ) -> PyResult<()> {
+        let data = extract_f64_vec(data)?;
         self.push_series(NativeSeriesState::Violin { data }, style)
     }
 
     #[pyo3(signature = (r, theta, style=None))]
     fn polar_line(
         &mut self,
-        r: Vec<f64>,
-        theta: Vec<f64>,
+        r: &Bound<'_, PyAny>,
+        theta: &Bound<'_, PyAny>,
         style: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<()> {
+        let (r, theta) = (extract_f64_vec(r)?, extract_f64_vec(theta)?);
         ensure_same_len(
             &[r.len(), theta.len()],
             "polar r and theta must have the same length",
@@ -953,63 +993,59 @@ impl NativePlotHandle {
     }
 
     fn render_png_bytes<'py>(&mut self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
-        let bytes = self.render_png_vec()?;
-        Ok(PyBytes::new(py, &bytes))
-    }
-
-    fn render_png_bytes_uncached<'py>(&mut self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
-        self.ensure_built()?;
-        let bytes = self
-            .prepared
-            .render_png_bytes_uncached()
+        self.ensure_built(py)?;
+        let prepared = &self.prepared;
+        let bytes = py
+            .allow_threads(|| prepared.render_png_bytes())
             .map_err(|err| PyRuntimeError::new_err(err.to_string()))?;
         Ok(PyBytes::new(py, &bytes))
     }
 
-    fn render_svg(&mut self) -> PyResult<String> {
-        self.ensure_built()?;
-        self.plot
-            .render_to_svg()
+    fn render_png_bytes_uncached<'py>(&mut self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
+        self.ensure_built(py)?;
+        let prepared = &self.prepared;
+        let bytes = py
+            .allow_threads(|| prepared.render_png_bytes_uncached())
+            .map_err(|err| PyRuntimeError::new_err(err.to_string()))?;
+        Ok(PyBytes::new(py, &bytes))
+    }
+
+    fn render_svg(&mut self, py: Python<'_>) -> PyResult<String> {
+        self.ensure_built(py)?;
+        let plot = &self.plot;
+        py.allow_threads(|| plot.render_to_svg())
             .map_err(|err| PyRuntimeError::new_err(err.to_string()))
     }
 
-    fn save(&mut self, path: &str) -> PyResult<()> {
+    fn save(&mut self, py: Python<'_>, path: &str) -> PyResult<()> {
         let extension = save_extension(path)?;
-        self.ensure_built()?;
+        self.ensure_built(py)?;
+        let plot = &self.plot;
         let output = Path::new(path);
 
-        match extension.as_str() {
-            "svg" => self
-                .plot
-                .clone()
-                .export_svg(output)
-                .map_err(|err| PyRuntimeError::new_err(err.to_string())),
-            "pdf" => self
-                .plot
-                .clone()
-                .save_pdf(output)
-                .map_err(|err| PyRuntimeError::new_err(err.to_string())),
-            _ => self
-                .plot
-                .clone()
-                .save(output)
-                .map_err(|err| PyRuntimeError::new_err(err.to_string())),
-        }
+        py.allow_threads(|| match extension.as_str() {
+            "svg" => plot.clone().export_svg(output),
+            "pdf" => plot.clone().save_pdf(output),
+            _ => plot.clone().save(output),
+        })
+        .map_err(|err| PyRuntimeError::new_err(err.to_string()))
     }
 
-    fn show_native(&mut self) -> PyResult<()> {
+    fn show_native(&mut self, py: Python<'_>) -> PyResult<()> {
         #[cfg(not(feature = "native-interactive"))]
         {
+            let _ = py;
             return Err(PyRuntimeError::new_err(
                 NATIVE_INTERACTIVE_UNAVAILABLE_MESSAGE,
             ));
         }
 
         #[cfg(feature = "native-interactive")]
-        self.ensure_built()?;
+        self.ensure_built(py)?;
         #[cfg(feature = "native-interactive")]
         {
-            pollster::block_on(show_interactive(self.plot.clone()))
+            let plot = &self.plot;
+            py.allow_threads(|| pollster::block_on(show_interactive(plot.clone())))
                 .map_err(|err| PyRuntimeError::new_err(err.to_string()))
         }
     }

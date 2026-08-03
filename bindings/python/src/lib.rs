@@ -10,7 +10,9 @@ use ruviz::{
 
 mod native_handle;
 
-use native_handle::{NativeObservable1D, NativePlotHandle, save_extension};
+use native_handle::{
+    NativeObservable1D, NativePlotHandle, extract_f64_rows, extract_f64_vec, save_extension,
+};
 
 #[cfg(not(feature = "native-interactive"))]
 pub(crate) const NATIVE_INTERACTIVE_UNAVAILABLE_MESSAGE: &str = "native interactive windows are unavailable in this wheel; install ruviz from source on Linux to enable plot.show()";
@@ -247,16 +249,18 @@ struct NativePlot3DHandle {
 }
 
 impl NativePlot3DHandle {
-    fn builder(&mut self) -> PyResult<Plot3DBuilderState> {
+    /// Build (and cache) the core builder, then hand back the clone a render
+    /// consumes. The 3D builders are `Send`, so both run with the GIL released.
+    fn builder(&mut self, py: Python<'_>) -> PyResult<Plot3DBuilderState> {
         if self.cached.is_none() {
+            let snapshot = self.snapshot.clone();
             self.cached = Some(
-                self.snapshot
-                    .clone()
-                    .into_builder()
+                py.allow_threads(|| snapshot.into_builder())
                     .map_err(PyValueError::new_err)?,
             );
         }
-        Ok(self.cached.clone().expect("builder cached above"))
+        let cached = self.cached.as_ref().expect("builder cached above");
+        Ok(py.allow_threads(|| cached.clone()))
     }
 
     fn mark_dirty(&mut self) {
@@ -274,32 +278,64 @@ impl NativePlot3DHandle {
         }
     }
 
-    fn scatter3d(&mut self, x: Vec<f64>, y: Vec<f64>, z: Vec<f64>) {
-        self.snapshot
-            .series
-            .push(Series3DSnapshot::Scatter3d { x, y, z });
+    fn scatter3d(
+        &mut self,
+        x: &Bound<'_, PyAny>,
+        y: &Bound<'_, PyAny>,
+        z: &Bound<'_, PyAny>,
+    ) -> PyResult<()> {
+        self.snapshot.series.push(Series3DSnapshot::Scatter3d {
+            x: extract_f64_vec(x)?,
+            y: extract_f64_vec(y)?,
+            z: extract_f64_vec(z)?,
+        });
         self.mark_dirty();
+        Ok(())
     }
 
-    fn line3d(&mut self, x: Vec<f64>, y: Vec<f64>, z: Vec<f64>) {
-        self.snapshot
-            .series
-            .push(Series3DSnapshot::Line3d { x, y, z });
+    fn line3d(
+        &mut self,
+        x: &Bound<'_, PyAny>,
+        y: &Bound<'_, PyAny>,
+        z: &Bound<'_, PyAny>,
+    ) -> PyResult<()> {
+        self.snapshot.series.push(Series3DSnapshot::Line3d {
+            x: extract_f64_vec(x)?,
+            y: extract_f64_vec(y)?,
+            z: extract_f64_vec(z)?,
+        });
         self.mark_dirty();
+        Ok(())
     }
 
-    fn surface(&mut self, x: Vec<f64>, y: Vec<f64>, z: Vec<Vec<f64>>) {
-        self.snapshot
-            .series
-            .push(Series3DSnapshot::Surface { x, y, z });
+    fn surface(
+        &mut self,
+        x: &Bound<'_, PyAny>,
+        y: &Bound<'_, PyAny>,
+        z: &Bound<'_, PyAny>,
+    ) -> PyResult<()> {
+        self.snapshot.series.push(Series3DSnapshot::Surface {
+            x: extract_f64_vec(x)?,
+            y: extract_f64_vec(y)?,
+            z: extract_f64_rows(z)?,
+        });
         self.mark_dirty();
+        Ok(())
     }
 
-    fn wireframe(&mut self, x: Vec<f64>, y: Vec<f64>, z: Vec<Vec<f64>>) {
-        self.snapshot
-            .series
-            .push(Series3DSnapshot::Wireframe { x, y, z });
+    fn wireframe(
+        &mut self,
+        x: &Bound<'_, PyAny>,
+        y: &Bound<'_, PyAny>,
+        z: &Bound<'_, PyAny>,
+    ) -> PyResult<()> {
+        self.snapshot.series.push(Series3DSnapshot::Wireframe {
+            x: extract_f64_vec(x)?,
+            y: extract_f64_vec(y)?,
+            z: extract_f64_rows(z)?,
+        });
         self.mark_dirty();
+        Ok(())
     }
 
     fn size_px(&mut self, width: u32, height: u32) {
@@ -379,23 +415,23 @@ impl NativePlot3DHandle {
     }
 
     fn render_png_bytes<'py>(&mut self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
-        let bytes = self
-            .builder()?
-            .render_png_bytes()
+        let builder = self.builder(py)?;
+        let bytes = py
+            .allow_threads(|| builder.render_png_bytes())
             .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
         Ok(PyBytes::new(py, &bytes))
     }
 
-    fn render_svg(&mut self) -> PyResult<String> {
-        self.builder()?
-            .render_to_svg()
+    fn render_svg(&mut self, py: Python<'_>) -> PyResult<String> {
+        let builder = self.builder(py)?;
+        py.allow_threads(|| builder.render_to_svg())
             .map_err(|error| PyRuntimeError::new_err(error.to_string()))
     }
 
-    fn save(&mut self, path: &str) -> PyResult<()> {
+    fn save(&mut self, py: Python<'_>, path: &str) -> PyResult<()> {
         save_extension(path)?;
-        self.builder()?
-            .save(path)
+        let builder = self.builder(py)?;
+        py.allow_threads(|| builder.save(path))
             .map_err(|error| PyRuntimeError::new_err(error.to_string()))
     }
 }

@@ -7,12 +7,13 @@ display outside notebooks.
 
 from __future__ import annotations
 
+import asyncio
 import weakref
 from collections.abc import Callable, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
 import numpy as np
 import numpy.typing as npt
@@ -35,6 +36,9 @@ from ._typing import (
 
 if TYPE_CHECKING:
     from ._widget import RuvizWidget
+
+#: Internal storage for every numeric vector: an owned C-contiguous float64 array.
+_F64Array: TypeAlias = "npt.NDArray[np.float64]"
 
 
 def _is_notebook() -> bool:
@@ -122,10 +126,15 @@ def _reject_observable(values: Any, kind: str) -> Any:
     return values
 
 
-def _to_numeric_1d(values: Any, name: str = "numeric input") -> list[float]:
-    """Normalize a numeric vector without flattening matrices."""
+def _to_numeric_1d(values: Any, name: str = "numeric input") -> _F64Array:
+    """Normalize a numeric vector into an owned C-contiguous float64 array.
+
+    The array is what reaches the native handle, which copies it with a single
+    ``memcpy``; ``np.array`` always copies, so stored state never aliases a
+    caller-owned buffer.
+    """
     if isinstance(values, ObservableSeries):
-        values = values.snapshot_values()
+        values = values.values()
     if _is_dataframe(values):
         raise TypeError(
             f"{name} must be a 1D numeric array; select a column or pass data=<DataFrame>"
@@ -133,26 +142,41 @@ def _to_numeric_1d(values: Any, name: str = "numeric input") -> list[float]:
     if _is_series(values):
         values = values.to_list()
 
-    array = np.asarray(values, dtype=float)
+    array = np.array(values, dtype=np.float64, order="C")
     if array.ndim != 1:
         raise TypeError(f"{name} must be a 1D numeric array")
-    return array.astype(float).tolist()
+    return array
 
 
-def _to_static_numeric_1d(values: Any, kind: str, name: str) -> list[float]:
+def _to_static_numeric_1d(values: Any, kind: str, name: str) -> _F64Array:
     """Normalize a numeric vector for plot kinds that cannot track observables."""
     return _to_numeric_1d(_reject_observable(values, kind), f"{kind} {name}")
 
 
-def _to_numeric_2d(values: Any, name: str) -> list[list[float]]:
+def _to_numeric_2d(values: Any, name: str) -> _F64Array:
     """Normalize a regular 3D grid while preserving its row/column shape."""
     if _is_dataframe(values) or _is_series(values):
         values = values.to_numpy()
 
-    array = np.asarray(values, dtype=float)
+    array = np.array(values, dtype=np.float64, order="C")
     if array.ndim != 2:
         raise TypeError(f"{name} must be a 2D numeric array")
-    return array.astype(float).tolist()
+    return array
+
+
+def _materialize(value: Any) -> Any:
+    """Deep-copy stored state into the snapshot's plain JSON-friendly types.
+
+    Numeric state is held as float64 arrays; snapshots stay plain ``list``s of
+    Python floats, so this runs once per snapshot rebuild and is then cached.
+    """
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, dict):
+        return {key: _materialize(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_materialize(item) for item in value]
+    return value
 
 
 def _to_string_list(values: Any, name: str = "label input") -> list[str]:
@@ -169,11 +193,11 @@ def _normalize_observable_math_input(value: Any) -> Any:
     if _is_series(value):
         value = value.to_list()
 
-    array = np.asarray(value, dtype=float)
+    array = np.array(value, dtype=np.float64, order="C")
     if array.ndim == 0:
         return float(array.item())
     if array.ndim == 1:
-        return array.astype(float).tolist()
+        return array
 
     raise TypeError(
         "ObservableSeries math only supports real scalars, 1D numeric arrays, and other observables"
@@ -409,15 +433,15 @@ class ObservableSeries:
         """Create an observable numeric series from array-like values."""
         self._initialize(_to_numeric_1d(values, "observable values"))
 
-    def _initialize(self, values: list[float]) -> None:
-        self._values = list(values)
+    def _initialize(self, values: _F64Array) -> None:
+        self._values = values
         self._native_observable = _native.NativeObservable1D(self._values)
         self._listeners: dict[int, weakref.ReferenceType[Any] | weakref.WeakMethod[Any]] = {}
         self._next_listener_token = 0
         self._derivation: _ObservableDerivation | None = None
 
     @classmethod
-    def _from_values(cls, values: list[float]) -> "ObservableSeries":
+    def _from_values(cls, values: _F64Array) -> "ObservableSeries":
         observable = cls.__new__(cls)
         observable._initialize(values)
         return observable
@@ -449,20 +473,20 @@ class ObservableSeries:
     def _input_length(value: Any) -> int | None:
         if isinstance(value, ObservableSeries):
             return len(value._values)
-        if isinstance(value, list):
+        if isinstance(value, np.ndarray):
             return len(value)
         return None
 
     @staticmethod
-    def _materialize_input(value: Any) -> float | np.ndarray:
+    def _materialize_input(value: Any) -> float | _F64Array:
         if isinstance(value, ObservableSeries):
-            return np.asarray(value._values, dtype=float)
-        if isinstance(value, list):
-            return np.asarray(value, dtype=float)
+            return value._values
+        if isinstance(value, np.ndarray):
+            return value
         return float(value)
 
     @classmethod
-    def _evaluate_ufunc(cls, ufunc: np.ufunc, inputs: tuple[Any, ...]) -> list[float]:
+    def _evaluate_ufunc(cls, ufunc: np.ufunc, inputs: tuple[Any, ...]) -> _F64Array:
         lengths = {length for value in inputs if (length := cls._input_length(value)) is not None}
         if len(lengths) > 1:
             raise ValueError("observable math operands must have the same length")
@@ -474,10 +498,10 @@ class ObservableSeries:
         except TypeError as err:
             raise TypeError("unsupported observable math operation") from err
 
-        array = np.asarray(result, dtype=float)
+        array = np.array(result, dtype=np.float64, order="C")
         if array.ndim != 1:
             raise TypeError("observable math must produce a 1D numeric result")
-        return array.astype(float).tolist()
+        return array
 
     def _detach_derivation(self) -> None:
         if self._derivation is None:
@@ -537,17 +561,14 @@ class ObservableSeries:
 
     def values(self) -> npt.NDArray[np.float64]:
         """Return the current values as a NumPy array."""
-        return np.asarray(self._values, dtype=float)
+        return self._values.copy()
 
     def snapshot_values(self) -> list[float]:
         """Return the current values as a plain Python list."""
-        return list(self._values)
+        return cast("list[float]", self._values.tolist())
 
     def __array__(self, dtype: Any = None) -> npt.NDArray[Any]:
-        array = np.asarray(self._values, dtype=float)
-        if dtype is not None:
-            array = array.astype(dtype)
-        return array
+        return self._values.astype(float if dtype is None else dtype)
 
     def __array_ufunc__(self, ufunc: np.ufunc, method: str, *inputs: Any, **kwargs: Any) -> Any:
         if method != "__call__":
@@ -606,7 +627,7 @@ class ObservableSeries:
         return type(self)._from_ufunc(np.power, other, self)
 
     def _snapshot(self) -> dict[str, Any]:
-        return {"kind": "observable", "values": self.snapshot_values()}
+        return {"kind": "observable", "values": self._values}
 
     def _attach(self, listener: Any) -> int:
         token = self._next_listener_token
@@ -642,6 +663,7 @@ class Plot:
         self._observable_bindings: list[tuple[ObservableSeries, dict[str, Any]]] = []
         self._snapshot_cache: dict[str, Any] | None = None
         self._snapshot_dirty = True
+        self._refresh_scheduled = False
 
     def _invalidate_snapshot_cache(self) -> None:
         self._snapshot_dirty = True
@@ -649,7 +671,7 @@ class Plot:
 
     def _build_native_numeric_source(
         self, value: Any, name: str = "numeric input"
-    ) -> tuple[dict[str, Any], list[float] | Any, ObservableSeries | None]:
+    ) -> tuple[dict[str, Any], _F64Array | Any, ObservableSeries | None]:
         if isinstance(value, ObservableSeries):
             snapshot = value._snapshot()
             return snapshot, value._native_observable, value
@@ -764,11 +786,10 @@ class Plot:
         Observable-backed series are copied by value, so the clone renders the
         same current data but does not stay linked to later observable updates.
         """
+        self._sync_observables()
         clone = Plot()
-        clone._state = cast("dict[str, Any]", self.to_snapshot())
+        clone._state = deepcopy(self._state)
         clone._rebuild_native_plot(clone._state)
-        clone._snapshot_cache = deepcopy(clone._state)
-        clone._snapshot_dirty = False
         return clone
 
     def size_px(self, width: int, height: int) -> "Plot":
@@ -1067,13 +1088,13 @@ class Plot:
         if _is_dataframe(matrix):
             raise TypeError("heatmap values must be a 2D numeric matrix; pass DataFrame.to_numpy()")
         rows = [_to_static_numeric_1d(row, "heatmap", "row") for row in matrix]
-        if not rows or not rows[0]:
+        if not rows or len(rows[0]) == 0:
             raise ValueError("heatmap input must be a non-empty 2D numeric matrix")
         cols = len(rows[0])
         if any(len(row) != cols for row in rows):
             raise ValueError("heatmap rows must all have the same length")
-        values = [value for row in rows for value in row]
-        series = {"kind": "heatmap", "values": values, "rows": len(rows), "cols": cols}
+        flattened = np.concatenate(rows)
+        series = {"kind": "heatmap", "values": flattened, "rows": len(rows), "cols": cols}
         self._apply_native_series(self._native_plot, series)
         self._append_series_snapshot(series)
         return self
@@ -1385,7 +1406,7 @@ class Plot:
         """Serialize the current plot state to a JSON-friendly snapshot."""
         self._sync_observables()
         if self._snapshot_dirty or self._snapshot_cache is None:
-            self._snapshot_cache = deepcopy(self._state)
+            self._snapshot_cache = _materialize(self._state)
             self._snapshot_dirty = False
         return cast(PlotSnapshot, deepcopy(self._snapshot_cache))
 
@@ -1400,10 +1421,30 @@ class Plot:
 
     def _sync_observables(self) -> None:
         for observable, snapshot in self._observable_bindings:
-            snapshot["values"] = observable.snapshot_values()
+            snapshot["values"] = observable._values
 
     def _notify_widgets(self) -> None:
+        """Refresh attached widgets, coalescing bursts under a running event loop."""
         self._invalidate_snapshot_cache()
+        if not self._widgets:
+            return
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self._refresh_widgets()
+            return
+
+        if self._refresh_scheduled:
+            return
+        self._refresh_scheduled = True
+        loop.call_soon(self._flush_widget_refresh)
+
+    def _flush_widget_refresh(self) -> None:
+        self._refresh_scheduled = False
+        self._refresh_widgets()
+
+    def _refresh_widgets(self) -> None:
         for widget in list(self._widgets):
             widget.refresh()
 
@@ -1457,7 +1498,7 @@ class Plot3D:
         x_values = _to_numeric_1d(_column_values(data, x), f"{kind} x")
         y_values = _to_numeric_1d(_column_values(data, y), f"{kind} y")
         z_values = _to_numeric_2d(_column_values(data, z), f"{kind} z")
-        shape = (len(z_values), len(z_values[0]) if z_values else 0)
+        shape = (int(z_values.shape[0]), int(z_values.shape[1]))
         expected = (len(y_values), len(x_values))
         if shape != expected:
             raise ValueError(
@@ -1623,7 +1664,7 @@ class Plot3D:
 
     def to_snapshot(self) -> Plot3DSnapshot:
         """Return a JSON-friendly static copy of the 3D plot state."""
-        return cast(Plot3DSnapshot, deepcopy(self._state))
+        return cast(Plot3DSnapshot, _materialize(self._state))
 
     def _repr_png_(self) -> bytes:
         """Return PNG bytes for notebook rich display."""
