@@ -20,8 +20,10 @@ API with three main workflows:
 pip install ruviz
 ```
 
-Install `ruviz[dataframes]`, `ruviz[pandas]`, or `ruviz[polars]` when you want
-named dataframe column inputs. The package requires Python 3.10 or newer.
+Install `ruviz[widget]` for notebook widgets, and `ruviz[dataframes]`,
+`ruviz[pandas]`, or `ruviz[polars]` when you want named dataframe column
+inputs; `ruviz[all]` installs every extra. The package requires Python 3.10 or
+newer.
 
 ## First Plot
 

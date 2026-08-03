@@ -274,6 +274,9 @@ jobs:
           args: --out dist
           working-directory: bindings/python
 
+      # The sdist is not smoke tested here: installing it compiles the crate from
+      # source and needs the Linux desktop build dependencies, so CI covers that
+      # install in the `Python Packaging` job instead.
       - name: Upload Python sdist
         uses: actions/upload-artifact@v4
         with:
@@ -310,6 +313,13 @@ jobs:
           rust-toolchain: 1.94.1
           working-directory: bindings/python
           args: --release --out dist
+
+      - name: Smoke test macOS Intel wheel
+        run: |
+          python3 -m venv "${RUNNER_TEMP}/smoke"
+          "${RUNNER_TEMP}/smoke/bin/python" -m pip install --quiet bindings/python/dist/*.whl
+          "${RUNNER_TEMP}/smoke/bin/python" bindings/python/scripts/smoke_test_wheel.py \
+            --label "macOS Intel wheel"
 
       - name: Upload macOS Intel wheel
         uses: actions/upload-artifact@v4
@@ -348,6 +358,13 @@ jobs:
           working-directory: bindings/python
           args: --release --out dist
 
+      - name: Smoke test macOS Apple Silicon wheel
+        run: |
+          python3 -m venv "${RUNNER_TEMP}/smoke"
+          "${RUNNER_TEMP}/smoke/bin/python" -m pip install --quiet bindings/python/dist/*.whl
+          "${RUNNER_TEMP}/smoke/bin/python" bindings/python/scripts/smoke_test_wheel.py \
+            --label "macOS Apple Silicon wheel"
+
       - name: Upload macOS Apple Silicon wheel
         uses: actions/upload-artifact@v4
         with:
@@ -385,6 +402,17 @@ jobs:
           working-directory: bindings/python
           args: --release --out dist
 
+      - name: Smoke test Windows wheel
+        shell: pwsh
+        run: |
+          python -m venv "$env:RUNNER_TEMP\smoke"
+          $smoke_python = "$env:RUNNER_TEMP\smoke\Scripts\python.exe"
+          $wheel = (Get-ChildItem bindings/python/dist/*.whl | Select-Object -First 1).FullName
+          & $smoke_python -m pip install --quiet $wheel
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $smoke_python bindings/python/scripts/smoke_test_wheel.py --label "Windows wheel"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Upload Windows wheel
         uses: actions/upload-artifact@v4
         with:
@@ -419,10 +447,60 @@ jobs:
           working-directory: bindings/python
           args: --release --out dist --compatibility pypi --interpreter python3.10 --no-default-features --features pyo3/extension-module
 
+      - name: Smoke test Linux wheel
+        run: |
+          python3 -m venv "${RUNNER_TEMP}/smoke"
+          "${RUNNER_TEMP}/smoke/bin/python" -m pip install --quiet bindings/python/dist/*.whl
+          "${RUNNER_TEMP}/smoke/bin/python" bindings/python/scripts/smoke_test_wheel.py \
+            --label "Linux x86_64 wheel" --no-native-show
+
       - name: Upload Linux wheel
         uses: actions/upload-artifact@v4
         with:
           name: python-dist-linux
+          path: bindings/python/dist/*.whl
+          if-no-files-found: error
+
+  build-python-wheel-linux-aarch64:
+    name: Build Python wheel (Linux aarch64)
+    # Native arm64 runner: the manylinux container builds and the wheel can be
+    # smoke tested in place, so no QEMU emulation is needed.
+    runs-on: ubuntu-24.04-arm
+    needs: [check-ci, build-release, build-python-widget-bundle]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.check-ci.outputs.release_sha }}
+
+      - name: Download canonical widget bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: python-widget-bundle
+          path: .
+
+      - name: Build Linux aarch64 wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          command: build
+          maturin-version: v1.12.6
+          rust-toolchain: 1.94.1
+          manylinux: 2_28
+          target: aarch64-unknown-linux-gnu
+          working-directory: bindings/python
+          args: --release --out dist --compatibility pypi --interpreter python3.10 --no-default-features --features pyo3/extension-module
+
+      - name: Smoke test Linux aarch64 wheel
+        run: |
+          python3 -m venv "${RUNNER_TEMP}/smoke"
+          "${RUNNER_TEMP}/smoke/bin/python" -m pip install --quiet bindings/python/dist/*.whl
+          "${RUNNER_TEMP}/smoke/bin/python" bindings/python/scripts/smoke_test_wheel.py \
+            --label "Linux aarch64 wheel" --no-native-show
+
+      - name: Upload Linux aarch64 wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-dist-linux-aarch64
           path: bindings/python/dist/*.whl
           if-no-files-found: error
 
@@ -846,6 +924,7 @@ jobs:
       - check-ci
       - build-python-sdist
       - build-python-wheel-linux
+      - build-python-wheel-linux-aarch64
       - build-python-wheel-macos-intel
       - build-python-wheel-macos-arm
       - build-python-wheel-windows

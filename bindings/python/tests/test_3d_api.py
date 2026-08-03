@@ -1,12 +1,17 @@
 from __future__ import annotations
 
-import tomllib
+import sys
 from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
 import pytest
 import ruviz
+
+if sys.version_info >= (3, 11):
+    import tomllib
+else:  # Python 3.10 has no stdlib tomllib
+    import tomli as tomllib
 
 PNG_HEADER = b"\x89PNG\r\n\x1a\n"
 

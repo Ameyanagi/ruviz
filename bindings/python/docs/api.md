@@ -8,7 +8,7 @@ to PyPI:
 - `plot3d()` and `Plot3D` for the static opaque 3D alpha
 - `scatter3d()`, `line3d()`, `surface()`, and `wireframe()` for direct 3D construction
 - `observable()` and `ObservableSeries` for synced notebook data, elementwise arithmetic, and NumPy ufuncs
-- `RuvizWidget` for explicit notebook widget embedding
+- `RuvizWidget` for explicit notebook widget embedding (needs the `ruviz[widget]` extra)
 - `__version__` plus the exported type aliases and snapshot `TypedDict`s
 
 The public import surface is:

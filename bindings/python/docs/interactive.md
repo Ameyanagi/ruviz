@@ -17,6 +17,10 @@ plot.show()
 
 ## Explicit Widgets
 
+Widgets live in the optional `widget` extra (`pip install "ruviz[widget]"`),
+which adds `anywidget` and `traitlets`. Without it, `plot.widget()` and
+`ruviz.RuvizWidget` raise an `ImportError` naming the extra.
+
 Use `plot.widget()` when you want the synced browser/WASM widget:
 
 ```python

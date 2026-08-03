@@ -2157,13 +2157,18 @@ name = "ruviz"
 version = "0.6.0"
 source = { editable = "." }
 dependencies = [
-    { name = "anywidget" },
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.4.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "traitlets" },
 ]
 
 [package.optional-dependencies]
+all = [
+    { name = "anywidget" },
+    { name = "pandas", version = "2.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "pandas", version = "3.0.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "polars" },
+    { name = "traitlets" },
+]
 dataframes = [
     { name = "pandas", version = "2.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "pandas", version = "3.0.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
@@ -2176,12 +2181,17 @@ pandas = [
 polars = [
     { name = "polars" },
 ]
+widget = [
+    { name = "anywidget" },
+    { name = "traitlets" },
+]
 
 [package.dev-dependencies]
 bench = [
     { name = "matplotlib" },
 ]
 dev = [
+    { name = "anywidget" },
     { name = "ipykernel" },
     { name = "maturin" },
     { name = "mkdocs" },
@@ -2193,23 +2203,30 @@ dev = [
     { name = "pyright" },
     { name = "pytest" },
     { name = "ruff" },
+    { name = "tomli", marker = "python_full_version < '3.11'" },
+    { name = "traitlets" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "anywidget", specifier = ">=0.9" },
-    { name = "numpy", specifier = ">=2.0" },
+    { name = "anywidget", marker = "extra == 'all'", specifier = ">=0.9" },
+    { name = "anywidget", marker = "extra == 'widget'", specifier = ">=0.9" },
+    { name = "numpy", specifier = ">=1.26" },
+    { name = "pandas", marker = "extra == 'all'", specifier = ">=2.2" },
     { name = "pandas", marker = "extra == 'dataframes'", specifier = ">=2.2" },
     { name = "pandas", marker = "extra == 'pandas'", specifier = ">=2.2" },
+    { name = "polars", marker = "extra == 'all'", specifier = ">=1.0" },
     { name = "polars", marker = "extra == 'dataframes'", specifier = ">=1.0" },
     { name = "polars", marker = "extra == 'polars'", specifier = ">=1.0" },
-    { name = "traitlets", specifier = ">=5.14" },
+    { name = "traitlets", marker = "extra == 'all'", specifier = ">=5.14" },
+    { name = "traitlets", marker = "extra == 'widget'", specifier = ">=5.14" },
 ]
-provides-extras = ["dataframes", "pandas", "polars"]
+provides-extras = ["widget", "dataframes", "pandas", "polars", "all"]
 
 [package.metadata.requires-dev]
 bench = [{ name = "matplotlib", specifier = ">=3.10" }]
 dev = [
+    { name = "anywidget", specifier = ">=0.9" },
     { name = "ipykernel", specifier = ">=6.0" },
     { name = "maturin", specifier = ">=1.8,<2.0" },
     { name = "mkdocs", specifier = ">=1.6" },
@@ -2220,6 +2237,8 @@ dev = [
     { name = "pyright", specifier = ">=1.1.400" },
     { name = "pytest", specifier = ">=8.0" },
     { name = "ruff", specifier = ">=0.12" },
+    { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2.0" },
+    { name = "traitlets", specifier = ">=5.14" },
 ]
 
 [[package]]

@@ -2,13 +2,20 @@
 
 `ruviz` for Python wraps the Rust plotting runtime with a fluent Python API,
 static export helpers, native desktop `show()`, and notebook widget support.
-It requires Python 3.10 or newer and installs the runtime dependencies needed
-for NumPy inputs, static rendering, and AnyWidget notebooks.
+It requires Python 3.10 or newer, and the base install only needs NumPy for
+inputs and static rendering.
 
 ## Install
 
 ```sh
 pip install ruviz
+```
+
+Notebook widgets (`plot.widget()` and `RuvizWidget`) need the optional
+`widget` extra:
+
+```sh
+pip install "ruviz[widget]"
 ```
 
 If you want pandas or Polars dataframe inputs, install the matching optional
@@ -19,6 +26,8 @@ pip install "ruviz[dataframes]"
 # or only one dataframe backend:
 pip install "ruviz[pandas]"
 pip install "ruviz[polars]"
+# or everything at once:
+pip install "ruviz[all]"
 ```
 
 ## Quick Start
@@ -168,7 +177,7 @@ arbitrary meshes, and mixed 2D/3D axes are not yet exposed.
 
 ## Documentation
 
-- Python docs source: `python/docs/`
+- Python docs source: `bindings/python/docs/`
 - Python examples: `bindings/python/examples/`
 - Root project README: <https://github.com/Ameyanagi/ruviz/blob/main/README.md>
 

@@ -1378,7 +1378,11 @@ class Plot:
         return output
 
     def widget(self) -> "RuvizWidget":
-        """Create an explicit synced Jupyter widget for this plot."""
+        """Create an explicit synced Jupyter widget for this plot.
+
+        Requires the optional widget extra (``pip install "ruviz[widget]"``);
+        without it this raises :class:`ImportError`.
+        """
         from ._widget import RuvizWidget
 
         widget = RuvizWidget(self)

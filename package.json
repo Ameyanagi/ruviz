@@ -22,7 +22,7 @@
     "test:python": "cd bindings/python && uv run cargo test && uv run python -m pytest",
     "gallery:python": "cd bindings/python && uv run maturin develop && uv run python scripts/generate_gallery.py",
     "docs:python": "cd bindings/python && uv run maturin develop && uv run python scripts/generate_gallery.py && uv run python -m mkdocs serve",
-    "build:docs:python": "cd bindings/python && uv run maturin develop && uv run python scripts/generate_gallery.py && uv run python -m mkdocs build",
+    "build:docs:python": "cd bindings/python && uv run maturin develop && uv run python scripts/generate_gallery.py && uv run python -m mkdocs build --strict",
     "docs:web": "bun run --cwd packages/ruviz docs:dev",
     "build:docs:web": "bun run --cwd packages/ruviz docs:build",
     "dev:web": "bun run --cwd apps/web-demo dev",

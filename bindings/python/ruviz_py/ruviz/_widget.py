@@ -5,8 +5,14 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-import anywidget
-import traitlets
+try:
+    import anywidget
+    import traitlets
+except ModuleNotFoundError as exc:  # pragma: no cover - covered by a subprocess test
+    raise ImportError(
+        "ruviz notebook widgets need anywidget and traitlets. "
+        'Install them with `pip install "ruviz[widget]"`.'
+    ) from exc
 
 if TYPE_CHECKING:
     from ._api import Plot

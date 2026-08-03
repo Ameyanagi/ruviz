@@ -1,6 +1,7 @@
 """Python bindings and notebook widgets for ruviz."""
 
 from importlib.metadata import PackageNotFoundError, version as _installed_version
+from typing import TYPE_CHECKING, Any
 
 from . import _native
 from ._api import (
@@ -34,7 +35,21 @@ from ._typing import (
     StyleDict,
     Theme,
 )
-from ._widget import RuvizWidget
+
+if TYPE_CHECKING:
+    # Imported lazily at runtime: notebook widgets live in the optional
+    # `ruviz[widget]` extra, so importing ruviz must not require anywidget.
+    from ._widget import RuvizWidget
+
+
+def __getattr__(name: str) -> Any:
+    """Resolve ``RuvizWidget`` on first access so the widget extra stays optional."""
+    if name == "RuvizWidget":
+        from ._widget import RuvizWidget
+
+        return RuvizWidget
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 try:
     #: Installed distribution version; matches the compiled extension.

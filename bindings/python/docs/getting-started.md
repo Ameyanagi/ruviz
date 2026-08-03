@@ -8,16 +8,21 @@ For normal use:
 pip install ruviz
 ```
 
-Install dataframe extras if you want pandas or Polars inputs:
+Install the widget extra for notebook widgets, and the dataframe extras if you
+want pandas or Polars inputs:
 
 ```sh
+pip install "ruviz[widget]"
 pip install "ruviz[dataframes]"
 pip install "ruviz[pandas]"
 pip install "ruviz[polars]"
+pip install "ruviz[all]"
 ```
 
-`ruviz` requires Python 3.10 or newer. The base install includes `anywidget`,
-`numpy`, and `traitlets`; pandas and Polars are optional.
+`ruviz` requires Python 3.10 or newer. The base install only pulls in `numpy`;
+`anywidget` and `traitlets` come with `ruviz[widget]`, and pandas and Polars
+are optional. Calling `plot.widget()` or importing `ruviz.RuvizWidget` without
+the widget extra raises an `ImportError` that names the extra to install.
 
 For local contributor builds:
 
