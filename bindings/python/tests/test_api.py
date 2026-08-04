@@ -2,11 +2,20 @@ from __future__ import annotations
 
 import asyncio
 import gc
+import importlib
+import inspect
+import re
+import subprocess
+import sys
 import threading
+import typing
+import warnings
+from collections import UserDict
 from functools import lru_cache
 import weakref
 from copy import copy, deepcopy
 from pathlib import Path
+from types import MappingProxyType
 from unittest.mock import patch
 
 import numpy as np
@@ -898,16 +907,22 @@ def test_plot_level_settings_default_to_absent() -> None:
 @pytest.mark.parametrize(
     ("apply", "message"),
     [
-        (lambda plot: plot.dpi(0), "plot dpi must be greater than zero"),
-        (lambda plot: plot.dpi(0.5), "plot dpi must be greater than zero"),
+        (lambda plot: plot.dpi(0), "plot dpi must be an integer greater than zero"),
+        (lambda plot: plot.dpi(0.5), "plot dpi must be an integer greater than zero"),
+        (lambda plot: plot.dpi(True), "plot dpi must be an integer greater than zero"),
+        (
+            lambda plot: plot.size_px(200.5, 150),
+            "plot dimensions must be integers greater than zero",
+        ),
+        (lambda plot: plot.size_px(0, 150), "plot dimensions must be integers greater than zero"),
         (lambda plot: plot.legend("nowhere"), "unsupported legend position"),
         (lambda plot: plot.xscale("logarithmic"), "unsupported axis scale"),
         (lambda plot: plot.xscale("symlog", 0.0), "linthresh must be a finite positive number"),
         (lambda plot: plot.xscale("log", 2.0), "linthresh only applies to the symlog scale"),
-        (lambda plot: plot.xlim(1.0, 1.0), "x limits must be finite and strictly ascending"),
+        (lambda plot: plot.xlim(1.0, 1.0), "x limits must be finite and different"),
         (
             lambda plot: plot.ylim(float("inf"), 1.0),
-            "y limits must be finite and strictly ascending",
+            "y limits must be finite and different",
         ),
     ],
 )
@@ -1113,7 +1128,7 @@ def test_native_handle_validates_numeric_style_ranges(method, args, style, messa
 def test_native_handle_rejects_zero_dpi() -> None:
     handle = ruviz._native.NativePlotHandle()
 
-    with pytest.raises(ValueError, match="plot dpi must be greater than zero"):
+    with pytest.raises(ValueError, match="plot dpi must be an integer greater than zero"):
         handle.dpi(0)
 
 
@@ -1273,3 +1288,261 @@ def test_observable_supports_len_and_integer_indexing() -> None:
 
     with pytest.raises(TypeError, match="indices must be integers"):
         source[0:2]
+
+
+def test_observable_array_protocol_follows_the_numpy_copy_contract() -> None:
+    source = ruviz.observable([1.0, 2.0, 3.0])
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        copied = np.array(source)
+
+    assert copied.flags.writeable
+    assert not np.shares_memory(copied, source._values)
+
+    view = np.array(source, copy=False)
+
+    assert not view.flags.writeable
+    assert np.shares_memory(view, source._values)
+
+    forced = np.array(source, copy=True)
+
+    assert forced.flags.writeable
+    assert not np.shares_memory(forced, source._values)
+
+    with pytest.raises(ValueError, match="without copying"):
+        np.array(source, dtype=np.int64, copy=False)
+
+    np.testing.assert_array_equal(np.asarray(source, dtype=np.int64), [1, 2, 3])
+
+
+PUBLIC_HINT_OWNERS = [ruviz.Plot, ruviz.Plot3D, ruviz.ObservableSeries]
+
+
+@pytest.mark.parametrize("owner", PUBLIC_HINT_OWNERS, ids=lambda owner: owner.__name__)
+def test_public_methods_expose_resolvable_type_hints(owner: type) -> None:
+    methods = [
+        (name, member)
+        for name, member in vars(owner).items()
+        if inspect.isfunction(member) and not name.startswith("_")
+    ]
+
+    assert methods
+
+    for name, member in methods:
+        assert typing.get_type_hints(member), f"{owner.__name__}.{name} exposed no hints"
+
+
+def test_downstream_module_can_resolve_the_public_aliases(tmp_path: Path) -> None:
+    module_path = tmp_path / "downstream_consumer.py"
+    module_path.write_text(
+        "from __future__ import annotations\n"
+        "\n"
+        "import ruviz\n"
+        "\n"
+        "\n"
+        "def render(\n"
+        "    x: ruviz.ArrayLike,\n"
+        "    y: ruviz.ArrayLike,\n"
+        "    labels: ruviz.LabelsLike,\n"
+        "    grid: ruviz.MatrixLike,\n"
+        "    data: ruviz.DataSource = None,\n"
+        ") -> ruviz.PlotSnapshot:\n"
+        "    return ruviz.plot().line(x, y, data=data).to_snapshot()\n"
+    )
+    sys.path.insert(0, str(tmp_path))
+    try:
+        module = importlib.import_module("downstream_consumer")
+        hints = typing.get_type_hints(module.render)
+    finally:
+        sys.path.remove(str(tmp_path))
+        sys.modules.pop("downstream_consumer", None)
+
+    assert ruviz.ObservableSeries in typing.get_args(hints["x"])
+    assert hints["return"] is ruviz.PlotSnapshot
+
+
+def test_importing_ruviz_does_not_import_dataframe_libraries() -> None:
+    source = "import sys, ruviz; print(sorted({'pandas', 'polars'} & set(sys.modules)))"
+    result = subprocess.run(
+        [sys.executable, "-c", source], capture_output=True, text=True, check=True
+    )
+
+    assert result.stdout.strip() == "[]"
+
+
+class _ColumnLookup:
+    """Minimal structural ``ColumnSource``: indexable by column name only."""
+
+    def __init__(self, columns: dict[str, list[float]]) -> None:
+        self._columns = columns
+
+    def __getitem__(self, key: str) -> list[float]:
+        return self._columns[key]
+
+
+DATA_SOURCE_CASES = [
+    ("mapping-proxy", lambda columns: MappingProxyType(columns)),
+    ("user-dict", lambda columns: UserDict(columns)),
+    ("column-source", _ColumnLookup),
+]
+
+
+@pytest.mark.parametrize(
+    ("name", "build"),
+    DATA_SOURCE_CASES,
+    ids=[name for name, _ in DATA_SOURCE_CASES],
+)
+def test_data_accepts_any_source_indexed_by_column_name(name: str, build) -> None:
+    data = build({"time": [0.0, 1.0, 2.0], "value": [1.0, 4.0, 9.0]})
+
+    series = ruviz.plot().line("time", "value", data=data).to_snapshot()["series"][0]
+
+    assert series["x"]["values"] == [0.0, 1.0, 2.0]
+    assert series["y"]["values"] == [1.0, 4.0, 9.0]
+
+
+def test_data_reports_a_missing_column_by_name() -> None:
+    data = MappingProxyType({"time": [0.0, 1.0]})
+
+    with pytest.raises(KeyError, match="column 'value' is not in the data= source"):
+        ruviz.plot().line("time", "value", data=data)
+
+
+def test_data_rejects_a_source_that_cannot_be_indexed_by_name() -> None:
+    with pytest.raises(TypeError, match="unsupported data source for column lookup"):
+        ruviz.plot().line("time", "value", data=42)
+
+    with pytest.raises(TypeError, match="unsupported data source for column lookup"):
+        ruviz.plot().line("time", "value", data=[1.0, 2.0])
+
+
+@pytest.mark.parametrize(
+    ("build", "message"),
+    [
+        (lambda: ruviz.plot().histogram([0.0, 1.0, 2.0], bins=2.9), "bins must be an integer >= 1"),
+        (lambda: ruviz.plot().histogram([0.0, 1.0, 2.0], bins=2.0), "bins must be an integer >= 1"),
+        (lambda: ruviz.plot().histogram([0.0, 1.0, 2.0], bins=True), "bins must be an integer >= 1"),
+        (
+            lambda: ruviz.plot().contour([0.0, 1.0], [0.0, 1.0], [0.0, 1.0, 2.0, 3.0], levels=2.5),
+            "levels must be an integer >= 2",
+        ),
+    ],
+    ids=["bins-fraction", "bins-float", "bins-bool", "levels-fraction"],
+)
+def test_fractional_integer_options_are_rejected_not_truncated(build, message: str) -> None:
+    with pytest.raises(ValueError, match=message):
+        build()
+
+
+def test_numpy_integer_scalars_stay_valid_integer_options() -> None:
+    plot = ruviz.plot().histogram([0.0, 1.0, 2.0], bins=np.int64(3)).size_px(np.int32(320), 200)
+
+    snapshot = plot.to_snapshot()
+
+    assert snapshot["series"][0]["style"]["bins"] == 3
+    assert snapshot["sizePx"] == [320, 200]
+
+
+@pytest.mark.parametrize("axis", ["x", "y"], ids=["x", "y"])
+def test_inverted_axis_limits_render_a_descending_axis(axis: str) -> None:
+    def build(limits: tuple[float, float]) -> ruviz.Plot:
+        plot = ruviz.plot().size_px(320, 200).line([0.0, 5.0, 10.0], [0.0, 1.0, 0.0])
+        return getattr(plot, f"{axis}lim")(*limits)
+
+    descending = build((10.0, 0.0))
+
+    assert descending.to_snapshot()[f"{axis}Lim"] == [10.0, 0.0]
+    assert descending.render_png() != build((0.0, 10.0)).render_png()
+    assert ruviz.Plot._replay_snapshot(descending.to_snapshot()).to_snapshot() == (
+        descending.to_snapshot()
+    )
+
+
+NATIVE_STYLE_KIND_CASES = [
+    ("line", ([0.0, 1.0], [0.0, 1.0]), {"bins": 3}, "line does not support bins="),
+    ("scatter", ([0.0, 1.0], [0.0, 1.0]), {"width": 2.0}, "scatter does not support width="),
+    (
+        "histogram",
+        ([0.0, 1.0, 2.0],),
+        {"marker": "circle"},
+        "histogram does not support marker=",
+    ),
+    (
+        "contour",
+        ([0.0, 1.0], [0.0, 1.0], [0.0, 1.0, 2.0, 3.0]),
+        {"label": "z"},
+        "contour does not support label=",
+    ),
+    ("kde", ([0.0, 1.0, 2.0],), {"markerSize": 4.0}, "kde does not support marker_size="),
+]
+
+
+@pytest.mark.parametrize(
+    ("method", "args", "style", "message"),
+    NATIVE_STYLE_KIND_CASES,
+    ids=[case[0] for case in NATIVE_STYLE_KIND_CASES],
+)
+def test_native_handle_rejects_style_keys_the_kind_ignores(
+    method: str, args: tuple, style: dict[str, object], message: str
+) -> None:
+    handle = ruviz._native.NativePlotHandle()
+
+    with pytest.raises(ValueError, match=re.escape(message)):
+        getattr(handle, method)(*args, style)
+
+
+def test_native_handle_still_rejects_unknown_style_keys() -> None:
+    handle = ruviz._native.NativePlotHandle()
+
+    with pytest.raises(ValueError, match="unsupported style option: futureStyle"):
+        handle.line([0.0, 1.0], [0.0, 1.0], {"futureStyle": 1})
+
+
+def test_native_handle_accepted_style_list_matches_the_public_api() -> None:
+    with pytest.raises(ValueError) as native:
+        ruviz._native.NativePlotHandle().line([0.0, 1.0], [0.0, 1.0], {"bins": 3})
+
+    with pytest.raises(ValueError) as public:
+        ruviz._api._styled_series("line", {}, {"bins": 3})
+
+    assert str(native.value) == str(public.value)
+
+
+def test_deepcopy_of_a_diamond_graph_stays_live_and_independent() -> None:
+    source = ruviz.observable([1.0, 2.0, 3.0])
+    doubled = source * 2.0
+    shifted = source + 1.0
+    combined = doubled + shifted
+
+    clone_source, clone_combined = deepcopy((source, combined))
+
+    assert clone_source is not source
+    assert clone_combined.snapshot_values() == combined.snapshot_values()
+
+    clone_source.replace([4.0, 5.0, 6.0])
+
+    assert clone_combined.snapshot_values() == [13.0, 16.0, 19.0]
+    assert combined.snapshot_values() == [4.0, 7.0, 10.0]
+
+    source.replace([0.0, 0.0, 0.0])
+
+    assert combined.snapshot_values() == [1.0, 1.0, 1.0]
+    assert clone_combined.snapshot_values() == [13.0, 16.0, 19.0]
+
+
+def test_resize_vetoed_by_the_second_of_two_plots_is_atomic() -> None:
+    source = ruviz.observable([1.0, 2.0, 3.0])
+    derived = source * 2.0
+    permissive = ruviz.plot().histogram(derived)
+    strict = ruviz.plot().line([0.0, 1.0, 2.0], derived)
+
+    with pytest.raises(ValueError, match="cannot resize observable to 4 values"):
+        source.replace([1.0, 2.0, 3.0, 4.0])
+
+    assert source.snapshot_values() == [1.0, 2.0, 3.0]
+    assert derived.snapshot_values() == [2.0, 4.0, 6.0]
+    assert permissive.to_snapshot()["series"][0]["data"]["values"] == [2.0, 4.0, 6.0]
+    assert strict.to_snapshot()["series"][0]["y"]["values"] == [2.0, 4.0, 6.0]
+    assert permissive.render_png().startswith(PNG_HEADER)
+    assert strict.render_png().startswith(PNG_HEADER)

@@ -133,7 +133,19 @@ fn parse_color(value: &str) -> PyResult<Color> {
         })
 }
 
-fn ascending_limits(axis: &str, min: f64, max: f64) -> PyResult<(f64, f64)> {
+/// Validate 2D axis limits. Inverted bounds are passed through: the core keeps
+/// them and renders a descending axis, matching matplotlib and the web surface.
+fn distinct_limits(axis: &str, min: f64, max: f64) -> PyResult<(f64, f64)> {
+    if !min.is_finite() || !max.is_finite() || min == max {
+        return Err(PyValueError::new_err(format!(
+            "{axis} limits must be finite and different"
+        )));
+    }
+    Ok((min, max))
+}
+
+/// Validate 3D axis limits, which the 3D camera requires to be ascending.
+pub(crate) fn ascending_limits(axis: &str, min: f64, max: f64) -> PyResult<(f64, f64)> {
     if !min.is_finite() || !max.is_finite() || min >= max {
         return Err(PyValueError::new_err(format!(
             "{axis} limits must be finite and strictly ascending"
@@ -183,7 +195,71 @@ fn count_at_least(value: &Bound<'_, PyAny>, name: &str, minimum: i64) -> PyResul
     Ok(count as usize)
 }
 
-fn extract_style(style: Option<&Bound<'_, PyDict>>) -> PyResult<SeriesStyle> {
+/// Every style key any plot kind understands, in snapshot spelling.
+const STYLE_KEYS: [&str; 10] = [
+    "label",
+    "color",
+    "alpha",
+    "width",
+    "linestyle",
+    "marker",
+    "markerSize",
+    "bins",
+    "bandwidth",
+    "levels",
+];
+
+/// The style keys each plot kind's core builder honors, mirroring the Python
+/// `_SERIES_KINDS[kind].style` sets so both layers reject the same combinations.
+mod style_keys {
+    pub(super) const COMMON: &[&str] = &["label", "color", "alpha"];
+    pub(super) const STROKED: &[&str] = &["label", "color", "alpha", "width"];
+    pub(super) const LINE: &[&str] = &[
+        "label",
+        "color",
+        "alpha",
+        "width",
+        "linestyle",
+        "marker",
+        "markerSize",
+    ];
+    pub(super) const SCATTER: &[&str] = &["label", "color", "alpha", "marker", "markerSize"];
+    pub(super) const HISTOGRAM: &[&str] = &["label", "color", "alpha", "bins"];
+    pub(super) const BOXPLOT: &[&str] = &["label", "color", "alpha", "width", "linestyle"];
+    pub(super) const KDE: &[&str] = &["label", "color", "alpha", "width", "bandwidth"];
+    pub(super) const CONTOUR: &[&str] = &["alpha", "width", "levels"];
+    pub(super) const NONE: &[&str] = &[];
+}
+
+/// The Python keyword spelling of a snapshot style key, for error messages.
+fn style_keyword(key: &str) -> &str {
+    if key == "markerSize" {
+        "marker_size"
+    } else {
+        key
+    }
+}
+
+/// Report a style key a different plot kind supports, matching the Python message.
+fn unsupported_for_kind(kind: &str, key: &str, allowed: &[&str]) -> PyErr {
+    let mut accepted: Vec<&str> = allowed.iter().copied().map(style_keyword).collect();
+    accepted.sort_unstable();
+    let accepted = if accepted.is_empty() {
+        "none".to_string()
+    } else {
+        accepted.join(", ")
+    };
+    PyValueError::new_err(format!(
+        "{kind} does not support {}=; accepted: {accepted}",
+        style_keyword(key)
+    ))
+}
+
+fn extract_style(
+    style: Option<&Bound<'_, PyDict>>,
+    kind: &str,
+    allowed: &[&str],
+) -> PyResult<SeriesStyle> {
     let mut parsed = SeriesStyle::default();
     let Some(style) = style else {
         return Ok(parsed);
@@ -191,6 +267,15 @@ fn extract_style(style: Option<&Bound<'_, PyDict>>) -> PyResult<SeriesStyle> {
 
     for (key, value) in style.iter() {
         let key: String = key.extract()?;
+        if !allowed.contains(&key.as_str()) {
+            // Producer-side validator: a key this kind ignores is a caller
+            // mistake, whether another kind uses it or nothing does.
+            return Err(if STYLE_KEYS.contains(&key.as_str()) {
+                unsupported_for_kind(kind, &key, allowed)
+            } else {
+                PyValueError::new_err(format!("unsupported style option: {key}"))
+            });
+        }
         match key.as_str() {
             "label" => parsed.label = Some(value.extract()?),
             "color" => parsed.color = Some(parse_color(&value.extract::<String>()?)?),
@@ -222,6 +307,7 @@ fn extract_style(style: Option<&Bound<'_, PyDict>>) -> PyResult<SeriesStyle> {
             "bins" => parsed.bins = Some(count_at_least(&value, "bins", 1)?),
             "bandwidth" => parsed.bandwidth = Some(finite_positive(&value, "bandwidth")?),
             "levels" => parsed.levels = Some(count_at_least(&value, "levels", 2)?),
+            // Unreachable: `allowed` is a subset of `STYLE_KEYS`, checked above.
             other => {
                 return Err(PyValueError::new_err(format!(
                     "unsupported style option: {other}"
@@ -681,17 +767,21 @@ impl NativePlotHandle {
     /// Rebuild the core plot when a mutator ran since the last render.
     ///
     /// `Plot` and `PreparedPlot` are `Send + Sync`, so the copy-heavy rebuild
-    /// runs with the GIL released.
+    /// *and* the layout pass in `prepare` both run with the GIL released.
     fn ensure_built(&mut self, py: Python<'_>) -> PyResult<()> {
         if !self.dirty {
             return Ok(());
         }
 
         let state = &self.state;
-        let plot = py
-            .allow_threads(|| state.build_plot())
+        let (plot, prepared) = py
+            .allow_threads(|| {
+                let plot = state.build_plot()?;
+                let prepared = plot.prepare();
+                Ok::<_, String>((plot, prepared))
+            })
             .map_err(PyValueError::new_err)?;
-        self.prepared = plot.prepare();
+        self.prepared = prepared;
         self.plot = plot;
         self.dirty = false;
         Ok(())
@@ -701,14 +791,17 @@ impl NativePlotHandle {
         self.dirty = true;
     }
 
-    /// Store one series with its parsed style, rejecting bad style values here
-    /// so they surface at the add-series call rather than at render time.
+    /// Store one series with its parsed style, rejecting bad style values and
+    /// keys this kind does not honor here, so they surface at the add-series
+    /// call rather than being silently ignored at render time.
     fn push_series(
         &mut self,
+        kind: &str,
+        allowed: &[&str],
         data: NativeSeriesState,
         style: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<()> {
-        let style = extract_style(style)?;
+        let style = extract_style(style, kind, allowed)?;
         self.state.series.push(NativeSeries { data, style });
         self.mark_dirty();
         Ok(())
@@ -733,7 +826,7 @@ impl NativePlotHandle {
     fn size_px(&mut self, width: u32, height: u32) -> PyResult<()> {
         if width == 0 || height == 0 {
             return Err(PyValueError::new_err(
-                "plot dimensions must be greater than zero",
+                "plot dimensions must be integers greater than zero",
             ));
         }
         self.state.size_px = Some((width, height));
@@ -743,7 +836,9 @@ impl NativePlotHandle {
 
     fn dpi(&mut self, dpi: u32) -> PyResult<()> {
         if dpi == 0 {
-            return Err(PyValueError::new_err("plot dpi must be greater than zero"));
+            return Err(PyValueError::new_err(
+                "plot dpi must be an integer greater than zero",
+            ));
         }
         self.state.dpi = Some(dpi);
         self.mark_dirty();
@@ -796,13 +891,13 @@ impl NativePlotHandle {
     }
 
     fn xlim(&mut self, min: f64, max: f64) -> PyResult<()> {
-        self.state.x_limits = Some(ascending_limits("x", min, max)?);
+        self.state.x_limits = Some(distinct_limits("x", min, max)?);
         self.mark_dirty();
         Ok(())
     }
 
     fn ylim(&mut self, min: f64, max: f64) -> PyResult<()> {
-        self.state.y_limits = Some(ascending_limits("y", min, max)?);
+        self.state.y_limits = Some(distinct_limits("y", min, max)?);
         self.mark_dirty();
         Ok(())
     }
@@ -835,7 +930,12 @@ impl NativePlotHandle {
             "line x and y must have the same length",
         )
         .map_err(PyValueError::new_err)?;
-        self.push_series(NativeSeriesState::Line { x, y }, style)
+        self.push_series(
+            "line",
+            style_keys::LINE,
+            NativeSeriesState::Line { x, y },
+            style,
+        )
     }
 
     #[pyo3(signature = (x, y, style=None))]
@@ -852,7 +952,12 @@ impl NativePlotHandle {
             "scatter x and y must have the same length",
         )
         .map_err(PyValueError::new_err)?;
-        self.push_series(NativeSeriesState::Scatter { x, y }, style)
+        self.push_series(
+            "scatter",
+            style_keys::SCATTER,
+            NativeSeriesState::Scatter { x, y },
+            style,
+        )
     }
 
     #[pyo3(signature = (categories, values, style=None))]
@@ -868,7 +973,12 @@ impl NativePlotHandle {
             "bar categories and values must have the same length",
         )
         .map_err(PyValueError::new_err)?;
-        self.push_series(NativeSeriesState::Bar { categories, values }, style)
+        self.push_series(
+            "bar",
+            style_keys::COMMON,
+            NativeSeriesState::Bar { categories, values },
+            style,
+        )
     }
 
     #[pyo3(signature = (data, style=None))]
@@ -878,7 +988,12 @@ impl NativePlotHandle {
         style: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<()> {
         let data = extract_numeric_source(data)?;
-        self.push_series(NativeSeriesState::Histogram { data }, style)
+        self.push_series(
+            "histogram",
+            style_keys::HISTOGRAM,
+            NativeSeriesState::Histogram { data },
+            style,
+        )
     }
 
     #[pyo3(signature = (data, style=None))]
@@ -888,7 +1003,12 @@ impl NativePlotHandle {
         style: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<()> {
         let data = extract_numeric_source(data)?;
-        self.push_series(NativeSeriesState::Boxplot { data }, style)
+        self.push_series(
+            "boxplot",
+            style_keys::BOXPLOT,
+            NativeSeriesState::Boxplot { data },
+            style,
+        )
     }
 
     fn heatmap(&mut self, values: &Bound<'_, PyAny>, rows: usize, cols: usize) -> PyResult<()> {
@@ -898,7 +1018,12 @@ impl NativePlotHandle {
                 "heatmap values length must match rows * cols",
             ));
         }
-        self.push_series(NativeSeriesState::Heatmap { values, rows, cols }, None)
+        self.push_series(
+            "heatmap",
+            style_keys::NONE,
+            NativeSeriesState::Heatmap { values, rows, cols },
+            None,
+        )
     }
 
     #[pyo3(signature = (x, y, y_errors, style=None))]
@@ -917,7 +1042,12 @@ impl NativePlotHandle {
             "error bar x, y, and y_errors must have the same length",
         )
         .map_err(PyValueError::new_err)?;
-        self.push_series(NativeSeriesState::ErrorBars { x, y, y_errors }, style)
+        self.push_series(
+            "error-bars",
+            style_keys::STROKED,
+            NativeSeriesState::ErrorBars { x, y, y_errors },
+            style,
+        )
     }
 
     #[pyo3(signature = (x, y, x_errors, y_errors, style=None))]
@@ -939,6 +1069,8 @@ impl NativePlotHandle {
         )
         .map_err(PyValueError::new_err)?;
         self.push_series(
+            "error-bars-xy",
+            style_keys::STROKED,
             NativeSeriesState::ErrorBarsXy {
                 x,
                 y,
@@ -952,13 +1084,23 @@ impl NativePlotHandle {
     #[pyo3(signature = (data, style=None))]
     fn kde(&mut self, data: &Bound<'_, PyAny>, style: Option<&Bound<'_, PyDict>>) -> PyResult<()> {
         let data = extract_f64_vec(data)?;
-        self.push_series(NativeSeriesState::Kde { data }, style)
+        self.push_series(
+            "kde",
+            style_keys::KDE,
+            NativeSeriesState::Kde { data },
+            style,
+        )
     }
 
     #[pyo3(signature = (data, style=None))]
     fn ecdf(&mut self, data: &Bound<'_, PyAny>, style: Option<&Bound<'_, PyDict>>) -> PyResult<()> {
         let data = extract_f64_vec(data)?;
-        self.push_series(NativeSeriesState::Ecdf { data }, style)
+        self.push_series(
+            "ecdf",
+            style_keys::STROKED,
+            NativeSeriesState::Ecdf { data },
+            style,
+        )
     }
 
     #[pyo3(signature = (x, y, z, style=None))]
@@ -979,7 +1121,12 @@ impl NativePlotHandle {
                 "contour z must contain x.length * y.length values",
             ));
         }
-        self.push_series(NativeSeriesState::Contour { x, y, z }, style)
+        self.push_series(
+            "contour",
+            style_keys::CONTOUR,
+            NativeSeriesState::Contour { x, y, z },
+            style,
+        )
     }
 
     fn pie(&mut self, values: &Bound<'_, PyAny>, labels: Option<Vec<String>>) -> PyResult<()> {
@@ -991,7 +1138,12 @@ impl NativePlotHandle {
             )
             .map_err(PyValueError::new_err)?;
         }
-        self.push_series(NativeSeriesState::Pie { values, labels }, None)
+        self.push_series(
+            "pie",
+            style_keys::NONE,
+            NativeSeriesState::Pie { values, labels },
+            None,
+        )
     }
 
     fn radar(
@@ -1009,7 +1161,12 @@ impl NativePlotHandle {
             )
             .map_err(PyValueError::new_err)?;
         }
-        self.push_series(NativeSeriesState::Radar { labels, series }, None)
+        self.push_series(
+            "radar",
+            style_keys::NONE,
+            NativeSeriesState::Radar { labels, series },
+            None,
+        )
     }
 
     #[pyo3(signature = (data, style=None))]
@@ -1019,7 +1176,12 @@ impl NativePlotHandle {
         style: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<()> {
         let data = extract_f64_vec(data)?;
-        self.push_series(NativeSeriesState::Violin { data }, style)
+        self.push_series(
+            "violin",
+            style_keys::STROKED,
+            NativeSeriesState::Violin { data },
+            style,
+        )
     }
 
     #[pyo3(signature = (r, theta, style=None))]
@@ -1035,7 +1197,12 @@ impl NativePlotHandle {
             "polar r and theta must have the same length",
         )
         .map_err(PyValueError::new_err)?;
-        self.push_series(NativeSeriesState::PolarLine { r, theta }, style)
+        self.push_series(
+            "polar-line",
+            style_keys::STROKED,
+            NativeSeriesState::PolarLine { r, theta },
+            style,
+        )
     }
 
     fn render_png_bytes<'py>(&mut self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
@@ -1462,6 +1629,30 @@ mod tests {
         );
     }
 
+    /// The 2D API forwards inverted bounds instead of rejecting them, so this
+    /// pins the core behavior the relaxed validation depends on.
+    #[test]
+    fn inverted_axis_limits_render_differently_from_ascending_ones() {
+        let render = |limits: (f64, f64)| {
+            render_state_png(NativePlotState {
+                x_limits: Some(limits),
+                ..base_state(
+                    "Descending",
+                    vec![NativeSeriesState::Line {
+                        x: static_source(&[0.0, 1.0, 2.0, 3.0]),
+                        y: static_source(&[0.2, 1.1, 0.7, 1.8]),
+                    }],
+                )
+            })
+        };
+
+        assert_ne!(
+            render((0.0, 3.0)),
+            render((3.0, 0.0)),
+            "the core should honor inverted x limits as a descending axis"
+        );
+    }
+
     #[test]
     fn style_lookups_reject_unknown_names() {
         assert!(parse_color("not-a-color").is_err());
@@ -1470,7 +1661,9 @@ mod tests {
         assert!(lookup(&LEGEND_POSITIONS, "legend position", "nowhere").is_err());
         assert!(parse_axis_scale("logarithmic", None).is_err());
         assert!(parse_axis_scale("symlog", Some(0.0)).is_err());
-        assert!(ascending_limits("x", 1.0, 1.0).is_err());
-        assert!(ascending_limits("x", f64::NAN, 1.0).is_err());
+        assert!(distinct_limits("x", 1.0, 1.0).is_err());
+        assert!(distinct_limits("x", f64::NAN, 1.0).is_err());
+        assert!(distinct_limits("x", 10.0, 0.0).is_ok());
+        assert!(ascending_limits("z", 10.0, 0.0).is_err());
     }
 }

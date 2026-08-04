@@ -4,44 +4,58 @@ export type SessionMode = "main-thread" | "worker";
 export type PlotTheme = "light" | "dark";
 export type PlotSaveFormat = "png" | "svg";
 
+/**
+ * The accepted names, listed in the order the wasm lookup tables use so a
+ * rejection here reports exactly what the renderer would have reported.
+ */
+export const LINE_STYLE_NAMES = ["solid", "dashed", "dotted", "dash-dot", "dash-dot-dot"] as const;
+
+export const MARKER_NAMES = [
+  "circle",
+  "square",
+  "triangle",
+  "triangle-down",
+  "diamond",
+  "plus",
+  "cross",
+  "star",
+  "circle-open",
+  "square-open",
+  "triangle-open",
+  "diamond-open",
+] as const;
+
+export const LEGEND_POSITION_NAMES = [
+  "best",
+  "upper_right",
+  "upper_left",
+  "lower_left",
+  "lower_right",
+  "right",
+  "center_left",
+  "center_right",
+  "lower_center",
+  "upper_center",
+  "center",
+  "outside_right",
+  "outside_left",
+  "outside_upper",
+  "outside_lower",
+] as const;
+
+export const AXIS_SCALE_NAMES = ["linear", "log", "symlog"] as const;
+
 /** Line dash pattern accepted by `style.linestyle`. */
-export type LineStyleName = "solid" | "dashed" | "dotted" | "dash-dot" | "dash-dot-dot";
+export type LineStyleName = (typeof LINE_STYLE_NAMES)[number];
 
 /** Marker shape accepted by `style.marker`. */
-export type MarkerName =
-  | "circle"
-  | "square"
-  | "triangle"
-  | "triangle-down"
-  | "diamond"
-  | "plus"
-  | "cross"
-  | "star"
-  | "circle-open"
-  | "square-open"
-  | "triangle-open"
-  | "diamond-open";
+export type MarkerName = (typeof MARKER_NAMES)[number];
 
 /** Legend placement; `best` auto-places the legend. */
-export type LegendPositionName =
-  | "best"
-  | "upper_right"
-  | "upper_left"
-  | "lower_left"
-  | "lower_right"
-  | "right"
-  | "center_left"
-  | "center_right"
-  | "lower_center"
-  | "upper_center"
-  | "center"
-  | "outside_right"
-  | "outside_left"
-  | "outside_upper"
-  | "outside_lower";
+export type LegendPositionName = (typeof LEGEND_POSITION_NAMES)[number];
 
 /** Axis scale accepted by `xScale`/`yScale`. */
-export type AxisScaleName = "linear" | "log" | "symlog";
+export type AxisScaleName = (typeof AXIS_SCALE_NAMES)[number];
 
 /** Serialized axis scale; the trailing threshold applies to `symlog` only. */
 export type AxisScaleSnapshot = [scale: AxisScaleName, linthresh?: number];
@@ -272,6 +286,8 @@ export interface PlotSnapshot {
   /** Snapshot layout version; absent on snapshots written before it existed. */
   schemaVersion?: number;
   sizePx?: [number, number];
+  /** Output DPI; applied after `sizePx`, so raising it scales the exported pixels. */
+  dpi?: number;
   theme?: PlotTheme;
   ticks?: boolean;
   title?: string;
@@ -284,6 +300,130 @@ export interface PlotSnapshot {
   xScale?: AxisScaleSnapshot;
   yScale?: AxisScaleSnapshot;
   series: PlotSeriesSnapshot[];
+}
+
+/**
+ * Color names the core renderer resolves, mirroring `Color::named`. Keeping the
+ * list here lets the builder reject a bad color at the call instead of at the
+ * next async render, with the message the renderer would have produced.
+ */
+const COLOR_NAMES = new Set([
+  "red",
+  "green",
+  "blue",
+  "yellow",
+  "orange",
+  "purple",
+  "cyan",
+  "magenta",
+  "black",
+  "white",
+  "gray",
+  "grey",
+  "lightgray",
+  "lightgrey",
+  "light_gray",
+  "light_grey",
+  "darkgray",
+  "darkgrey",
+  "dark_gray",
+  "dark_grey",
+  "pink",
+  "brown",
+  "lime",
+  "navy",
+  "teal",
+  "olive",
+  "maroon",
+  "aqua",
+  "fuchsia",
+  "silver",
+  "coral",
+  "salmon",
+  "gold",
+  "indigo",
+  "violet",
+  "crimson",
+]);
+
+/** The names `Color::suggest_named` searches, in its order. */
+const SUGGESTED_COLOR_NAMES = [
+  "red",
+  "green",
+  "blue",
+  "yellow",
+  "orange",
+  "purple",
+  "cyan",
+  "magenta",
+  "black",
+  "white",
+  "gray",
+  "grey",
+  "pink",
+  "brown",
+  "lime",
+  "navy",
+  "teal",
+  "olive",
+  "maroon",
+  "aqua",
+  "fuchsia",
+  "silver",
+  "coral",
+  "salmon",
+  "gold",
+  "indigo",
+  "violet",
+  "crimson",
+];
+
+const HEX_COLOR = /^#?(?:[0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
+
+/** Port of `Color::suggest_named`, so a typo gets the same hint everywhere. */
+function suggestColorName(name: string): string | undefined {
+  const lowered = name.toLowerCase();
+  for (const candidate of SUGGESTED_COLOR_NAMES) {
+    if (candidate.startsWith(lowered) && candidate.length <= lowered.length + 2) {
+      return candidate;
+    }
+    if (lowered.startsWith(candidate) && lowered.length <= candidate.length + 2) {
+      return candidate;
+    }
+    if (lowered.length === candidate.length) {
+      let differences = 0;
+      for (let index = 0; index < candidate.length; index += 1) {
+        if (lowered[index] !== candidate[index]) {
+          differences += 1;
+        }
+      }
+      if (differences <= 1) {
+        return candidate;
+      }
+    }
+  }
+  return undefined;
+}
+
+/** Reject a color the renderer could not resolve, with the renderer's message. */
+export function validateColor(value: string): void {
+  if (COLOR_NAMES.has(value.toLowerCase()) || HEX_COLOR.test(value)) {
+    return;
+  }
+
+  const suggestion = suggestColorName(value);
+  throw new RangeError(
+    `unsupported color '${value}'; expected a hex string like '#2563eb' ` +
+      "or a named color such as red, green, blue, orange, purple, black, white, gray" +
+      (suggestion ? ` (did you mean '${suggestion}'?)` : ""),
+  );
+}
+
+/** Reject a name absent from a lookup table, with the renderer's message. */
+export function validateName(table: readonly string[], kind: string, name: string): void {
+  if (!table.includes(name)) {
+    throw new RangeError(`unsupported ${kind} '${name}'; expected one of: ${table.join(", ")}`);
+  }
 }
 
 export function toNumberArray(values: NumericArray): number[] {

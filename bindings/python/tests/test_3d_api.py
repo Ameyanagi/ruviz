@@ -154,28 +154,28 @@ def test_plot3d_size_px_rejects_non_positive_dimensions(width: int, height: int)
 
 @pytest.mark.parametrize(
     ("width", "height"),
-    [(0.5, 200), (200, 0.5)],
-    ids=["width", "height"],
+    [(0.5, 200), (200, 0.5), (200.5, 150), (True, 150)],
+    ids=["width", "height", "fractional", "bool"],
 )
-def test_plot3d_size_px_rejects_dimensions_that_truncate_to_zero(
-    width: float, height: float
+def test_plot3d_size_px_rejects_non_integer_dimensions(
+    width: float | bool, height: float | bool
 ) -> None:
-    with pytest.raises(ValueError, match="3D plot dimensions must be greater than zero"):
+    with pytest.raises(ValueError, match="3D plot dimensions must be integers greater than zero"):
         ruviz.plot3d().size_px(width, height)
 
 
-@pytest.mark.parametrize("dpi", [0, -1, 0.5])
-def test_plot3d_dpi_rejects_non_positive_values(dpi: float) -> None:
-    with pytest.raises(ValueError, match="3D plot dpi must be greater than zero"):
+@pytest.mark.parametrize("dpi", [0, -1, 0.5, 200.5, True])
+def test_plot3d_dpi_rejects_non_positive_or_fractional_values(dpi: float | bool) -> None:
+    with pytest.raises(ValueError, match="3D plot dpi must be an integer greater than zero"):
         ruviz.plot3d().dpi(dpi)
 
 
 @pytest.mark.parametrize(
     ("method", "args", "message"),
     [
-        ("size_px", (0, 200), "3D plot dimensions must be greater than zero"),
-        ("size_px", (200, 0), "3D plot dimensions must be greater than zero"),
-        ("dpi", (0,), "3D plot dpi must be greater than zero"),
+        ("size_px", (0, 200), "3D plot dimensions must be integers greater than zero"),
+        ("size_px", (200, 0), "3D plot dimensions must be integers greater than zero"),
+        ("dpi", (0,), "3D plot dpi must be an integer greater than zero"),
     ],
     ids=["width", "height", "dpi"],
 )
@@ -226,3 +226,14 @@ def test_plot3d_snapshot_carries_schema_version() -> None:
     plot = ruviz.scatter3d([0, 1], [0, 1], [0, 1]).title("versioned")
 
     assert plot.to_snapshot()["schemaVersion"] == 1
+
+
+@pytest.mark.parametrize("axis", ["x", "y", "z"], ids=["x", "y", "z"])
+def test_plot3d_axis_limits_stay_strictly_ascending(axis: str) -> None:
+    message = f"{axis} limits must be finite and strictly ascending"
+
+    with pytest.raises(ValueError, match=message):
+        getattr(ruviz.plot3d(), f"{axis}lim")(10.0, 0.0)
+
+    with pytest.raises(ValueError, match=message):
+        getattr(ruviz._native.NativePlot3DHandle(), f"{axis}lim")(10.0, 0.0)

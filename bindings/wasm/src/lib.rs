@@ -461,9 +461,74 @@ mod wasm {
         Ok(count as usize)
     }
 
+    /// Every style key any plot kind understands, in snapshot spelling.
+    const STYLE_KEYS: [&str; 10] = [
+        "label",
+        "color",
+        "alpha",
+        "width",
+        "linestyle",
+        "marker",
+        "markerSize",
+        "bins",
+        "bandwidth",
+        "levels",
+    ];
+
+    /// The style keys each plot kind's core builder honors, mirroring the Python
+    /// binding's per-kind sets so both surfaces reject the same combinations.
+    mod style_keys {
+        pub(super) const COMMON: &[&str] = &["label", "color", "alpha"];
+        pub(super) const STROKED: &[&str] = &["label", "color", "alpha", "width"];
+        pub(super) const LINE: &[&str] = &[
+            "label",
+            "color",
+            "alpha",
+            "width",
+            "linestyle",
+            "marker",
+            "markerSize",
+        ];
+        pub(super) const SCATTER: &[&str] = &["label", "color", "alpha", "marker", "markerSize"];
+        pub(super) const HISTOGRAM: &[&str] = &["label", "color", "alpha", "bins"];
+        pub(super) const BOXPLOT: &[&str] = &["label", "color", "alpha", "width", "linestyle"];
+        pub(super) const KDE: &[&str] = &["label", "color", "alpha", "width", "bandwidth"];
+        pub(super) const CONTOUR: &[&str] = &["alpha", "width", "levels"];
+    }
+
+    /// The Python keyword spelling of a snapshot style key, for error messages.
+    fn style_keyword(key: &str) -> &str {
+        if key == "markerSize" {
+            "marker_size"
+        } else {
+            key
+        }
+    }
+
+    /// Report a style key a different plot kind supports, matching the Python message.
+    fn unsupported_for_kind(kind: &str, key: &str, allowed: &[&str]) -> JsValue {
+        let mut accepted: Vec<&str> = allowed.iter().copied().map(style_keyword).collect();
+        accepted.sort_unstable();
+        let accepted = if accepted.is_empty() {
+            "none".to_string()
+        } else {
+            accepted.join(", ")
+        };
+        JsValue::from_str(&format!(
+            "{kind} does not support {}=; accepted: {accepted}",
+            style_keyword(key)
+        ))
+    }
+
     impl SeriesStyle {
-        /// Parse a JS `style` object, rejecting unknown keys like the Python binding.
-        fn from_js(style: Option<Object>) -> Result<Self, JsValue> {
+        /// Parse a JS `style` object from a snapshot.
+        ///
+        /// Keys this build has never heard of are ignored: a snapshot written by
+        /// a newer ruviz must still render everything this build understands. A
+        /// *known* key the plot kind does not honor is still an error, because
+        /// silently dropping it would misrender a snapshot this build does
+        /// understand.
+        fn from_js(style: Option<Object>, kind: &str, allowed: &[&str]) -> Result<Self, JsValue> {
             let mut parsed = Self::default();
             let Some(style) = style else {
                 return Ok(parsed);
@@ -475,6 +540,13 @@ mod wasm {
                 let value = entry.get(1);
                 // Optional TypeScript fields serialize as `undefined`; treat them as unset.
                 if value.is_undefined() || value.is_null() {
+                    continue;
+                }
+
+                if !allowed.contains(&key.as_str()) {
+                    if STYLE_KEYS.contains(&key.as_str()) {
+                        return Err(unsupported_for_kind(kind, &key, allowed));
+                    }
                     continue;
                 }
 
@@ -509,11 +581,8 @@ mod wasm {
                     "bins" => parsed.bins = Some(count_at_least(&value, "bins", 1)?),
                     "bandwidth" => parsed.bandwidth = Some(finite_positive(&value, "bandwidth")?),
                     "levels" => parsed.levels = Some(count_at_least(&value, "levels", 2)?),
-                    other => {
-                        return Err(JsValue::from_str(&format!(
-                            "unsupported style option: {other}"
-                        )));
-                    }
+                    // Unreachable: `allowed` is a subset of `STYLE_KEYS`, checked above.
+                    _ => {}
                 }
             }
 
@@ -656,7 +725,7 @@ mod wasm {
                 return Err(JsValue::from_str("x and y must have the same length"));
             }
 
-            let style = SeriesStyle::from_js(style)?;
+            let style = SeriesStyle::from_js(style, "line", style_keys::LINE)?;
             self.replace_with_series(|plot| {
                 styled(line_markers(plot.line(&x, &y), &style), &style).into_plot()
             });
@@ -673,7 +742,7 @@ mod wasm {
                 return Err(JsValue::from_str("x and y must have the same length"));
             }
 
-            let style = SeriesStyle::from_js(style)?;
+            let style = SeriesStyle::from_js(style, "scatter", style_keys::SCATTER)?;
             self.replace_with_series(|plot| {
                 styled(scatter_markers(plot.scatter(&x, &y), &style), &style).into_plot()
             });
@@ -692,7 +761,7 @@ mod wasm {
                 ));
             }
 
-            let style = SeriesStyle::from_js(style)?;
+            let style = SeriesStyle::from_js(style, "bar", style_keys::COMMON)?;
             self.replace_with_series(|plot| {
                 styled(plot.bar(&categories, &values), &style).into_plot()
             });
@@ -711,7 +780,7 @@ mod wasm {
                 ));
             }
 
-            let style = SeriesStyle::from_js(style)?;
+            let style = SeriesStyle::from_js(style, "bar", style_keys::COMMON)?;
             let value_source = values.inner.clone();
             self.replace_with_series(|plot| {
                 styled(plot.bar_source(&categories, value_source), &style).into_plot()
@@ -720,7 +789,7 @@ mod wasm {
         }
 
         pub fn histogram(&mut self, data: Vec<f64>, style: Option<Object>) -> Result<(), JsValue> {
-            let style = SeriesStyle::from_js(style)?;
+            let style = SeriesStyle::from_js(style, "histogram", style_keys::HISTOGRAM)?;
             self.replace_with_series(|plot| {
                 let mut builder = plot.histogram(&data);
                 if let Some(bins) = style.bins {
@@ -736,7 +805,7 @@ mod wasm {
             data: &ObservableVecF64,
             style: Option<Object>,
         ) -> Result<(), JsValue> {
-            let style = SeriesStyle::from_js(style)?;
+            let style = SeriesStyle::from_js(style, "histogram", style_keys::HISTOGRAM)?;
             let data_source = data.inner.clone();
             self.replace_with_series(|plot| {
                 let mut builder = plot.histogram_source(data_source);
@@ -749,7 +818,7 @@ mod wasm {
         }
 
         pub fn boxplot(&mut self, data: Vec<f64>, style: Option<Object>) -> Result<(), JsValue> {
-            let style = SeriesStyle::from_js(style)?;
+            let style = SeriesStyle::from_js(style, "boxplot", style_keys::BOXPLOT)?;
             self.replace_with_series(|plot| styled(plot.boxplot(&data), &style).into_plot());
             Ok(())
         }
@@ -759,7 +828,7 @@ mod wasm {
             data: &ObservableVecF64,
             style: Option<Object>,
         ) -> Result<(), JsValue> {
-            let style = SeriesStyle::from_js(style)?;
+            let style = SeriesStyle::from_js(style, "boxplot", style_keys::BOXPLOT)?;
             let data_source = data.inner.clone();
             self.replace_with_series(|plot| {
                 styled(plot.boxplot_source(data_source), &style).into_plot()
@@ -790,7 +859,7 @@ mod wasm {
                 "x, y, and y_errors must have the same length",
             )?;
 
-            let style = SeriesStyle::from_js(style)?;
+            let style = SeriesStyle::from_js(style, "error-bars", style_keys::STROKED)?;
             self.replace_with_series(|plot| {
                 styled(plot.error_bars(&x, &y, &y_errors), &style).into_plot()
             });
@@ -809,7 +878,7 @@ mod wasm {
                 "observable x, y, and y_errors must have the same length",
             )?;
 
-            let style = SeriesStyle::from_js(style)?;
+            let style = SeriesStyle::from_js(style, "error-bars", style_keys::STROKED)?;
             self.replace_with_series(|plot| {
                 styled(
                     plot.error_bars_source(
@@ -837,7 +906,7 @@ mod wasm {
                 "x, y, x_errors, and y_errors must have the same length",
             )?;
 
-            let style = SeriesStyle::from_js(style)?;
+            let style = SeriesStyle::from_js(style, "error-bars-xy", style_keys::STROKED)?;
             self.replace_with_series(|plot| {
                 styled(plot.error_bars_xy(&x, &y, &x_errors, &y_errors), &style).into_plot()
             });
@@ -857,7 +926,7 @@ mod wasm {
                 "observable x, y, x_errors, and y_errors must have the same length",
             )?;
 
-            let style = SeriesStyle::from_js(style)?;
+            let style = SeriesStyle::from_js(style, "error-bars-xy", style_keys::STROKED)?;
             self.replace_with_series(|plot| {
                 styled(
                     plot.error_bars_xy_source(
@@ -874,7 +943,7 @@ mod wasm {
         }
 
         pub fn kde(&mut self, data: Vec<f64>, style: Option<Object>) -> Result<(), JsValue> {
-            let style = SeriesStyle::from_js(style)?;
+            let style = SeriesStyle::from_js(style, "kde", style_keys::KDE)?;
             self.replace_with_series(|plot| {
                 let mut builder = plot.kde(&data);
                 if let Some(bandwidth) = style.bandwidth {
@@ -886,7 +955,7 @@ mod wasm {
         }
 
         pub fn ecdf(&mut self, data: Vec<f64>, style: Option<Object>) -> Result<(), JsValue> {
-            let style = SeriesStyle::from_js(style)?;
+            let style = SeriesStyle::from_js(style, "ecdf", style_keys::STROKED)?;
             self.replace_with_series(|plot| styled(plot.ecdf(&data), &style).into_plot());
             Ok(())
         }
@@ -908,7 +977,7 @@ mod wasm {
                 ));
             }
 
-            let style = SeriesStyle::from_js(style)?;
+            let style = SeriesStyle::from_js(style, "contour", style_keys::CONTOUR)?;
             self.replace_with_series(|plot| {
                 let mut builder = plot.contour(&x, &y, &z);
                 if let Some(levels) = style.levels {
@@ -977,7 +1046,7 @@ mod wasm {
         }
 
         pub fn violin(&mut self, data: Vec<f64>, style: Option<Object>) -> Result<(), JsValue> {
-            let style = SeriesStyle::from_js(style)?;
+            let style = SeriesStyle::from_js(style, "violin", style_keys::STROKED)?;
             self.replace_with_series(|plot| styled(plot.violin(&data), &style).into_plot());
             Ok(())
         }
@@ -993,7 +1062,7 @@ mod wasm {
                 "polar r and theta must have the same length",
             )?;
 
-            let style = SeriesStyle::from_js(style)?;
+            let style = SeriesStyle::from_js(style, "polar-line", style_keys::STROKED)?;
             self.replace_with_series(|plot| {
                 styled(plot.polar_line(&r, &theta), &style).into_plot()
             });
@@ -1012,7 +1081,7 @@ mod wasm {
                 ));
             }
 
-            let style = SeriesStyle::from_js(style)?;
+            let style = SeriesStyle::from_js(style, "line", style_keys::LINE)?;
             let y_signal = y.inner.clone();
             self.replace_with_series(|plot| {
                 styled(line_markers(plot.line_source(x, y_signal), &style), &style).into_plot()
@@ -1032,7 +1101,7 @@ mod wasm {
                 ));
             }
 
-            let style = SeriesStyle::from_js(style)?;
+            let style = SeriesStyle::from_js(style, "scatter", style_keys::SCATTER)?;
             let y_signal = y.inner.clone();
             self.replace_with_series(|plot| {
                 styled(
@@ -1056,7 +1125,7 @@ mod wasm {
                 ));
             }
 
-            let style = SeriesStyle::from_js(style)?;
+            let style = SeriesStyle::from_js(style, "line", style_keys::LINE)?;
             self.replace_with_series(|plot| {
                 styled(
                     line_markers(plot.line_source(x.inner.clone(), y.inner.clone()), &style),
@@ -1079,7 +1148,7 @@ mod wasm {
                 ));
             }
 
-            let style = SeriesStyle::from_js(style)?;
+            let style = SeriesStyle::from_js(style, "scatter", style_keys::SCATTER)?;
             self.replace_with_series(|plot| {
                 styled(
                     scatter_markers(
@@ -1107,6 +1176,18 @@ mod wasm {
 
         pub fn size_px(&mut self, width: u32, height: u32) {
             self.update_plot(|plot| plot.size_px(width, height));
+        }
+
+        /// Sets the output DPI, which scales the exported pixels from `size_px`.
+        /// Apply it after `size_px`, which fixes the figure size in inches.
+        pub fn dpi(&mut self, dpi: u32) -> Result<(), JsValue> {
+            if dpi == 0 {
+                return Err(JsValue::from_str(
+                    "plot dpi must be an integer greater than zero",
+                ));
+            }
+            self.update_plot(|plot| plot.dpi(dpi));
+            Ok(())
         }
 
         /// Sets the x-axis limits. Inverted bounds keep a descending axis.

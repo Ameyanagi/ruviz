@@ -6,11 +6,17 @@ import type {
   WebCanvasSession as RawWebCanvasSession,
 } from "../generated/raw/ruviz_web_raw.js";
 import {
+  AXIS_SCALE_NAMES,
   cloneSeriesSnapshot,
   clonePlotSnapshot,
+  LEGEND_POSITION_NAMES,
+  LINE_STYLE_NAMES,
+  MARKER_NAMES,
   normalizeSineSignalOptions,
   SNAPSHOT_SCHEMA_VERSION,
   toNumberArray,
+  validateColor,
+  validateName,
   type AxisScaleName,
   type AxisScaleSnapshot,
   type BackendPreference,
@@ -253,6 +259,7 @@ type PlotSeriesDefinition =
 
 interface PlotState {
   sizePx?: [number, number];
+  dpi?: number;
   theme?: PlotTheme;
   ticks?: boolean;
   title?: string;
@@ -547,8 +554,13 @@ async function ephemeralObservable(
 
 /** Copy the plot-level settings, keeping keys this build does not name. */
 function clonePlotMetadata(state: PlotState | PlotSnapshot): Omit<PlotState, "series"> {
+  return structuredClone(clonePlotMetadataUnchecked(state));
+}
+
+/** Split the plot-level settings off a snapshot that is already owned. */
+function clonePlotMetadataUnchecked(state: PlotState | PlotSnapshot): Omit<PlotState, "series"> {
   const { series: _series, ...metadata } = state;
-  return structuredClone(metadata);
+  return metadata;
 }
 
 /** Reject the style values the wasm layer would only catch at render time. */
@@ -557,9 +569,20 @@ function normalizeSeriesStyle<T extends SeriesStyleSnapshot>(style: T | undefine
     return undefined;
   }
 
-  const { alpha, width, markerSize, bandwidth, bins, levels } = style as SeriesStyleSnapshot;
+  const { alpha, width, markerSize, bandwidth, bins, levels, color, marker, linestyle } =
+    style as SeriesStyleSnapshot;
   if (alpha !== undefined && !(alpha >= 0 && alpha <= 1)) {
     throw new RangeError("alpha must be between 0.0 and 1.0");
+  }
+
+  if (color !== undefined) {
+    validateColor(color);
+  }
+  if (marker !== undefined) {
+    validateName(MARKER_NAMES, "marker", marker);
+  }
+  if (linestyle !== undefined) {
+    validateName(LINE_STYLE_NAMES, "linestyle", linestyle);
   }
 
   for (const [name, value] of [
@@ -949,9 +972,15 @@ export class PlotBuilder {
     return new PlotBuilder(PlotBuilder.#stateFromSnapshot(snapshot));
   }
 
-  static #stateFromSnapshot(snapshot: PlotSnapshot): PlotState {
+  static #stateFromSnapshot(input: PlotSnapshot): PlotState {
+    // Snapshots arrive as caller-owned JSON, possibly written by a newer ruviz.
+    // One deep clone up front is what keeps fields this build does not name --
+    // including nested ones -- and guarantees no part of the builder's state
+    // ever aliases the caller's object.
+    const snapshot = clonePlotSnapshot(input);
+
     return {
-      ...clonePlotMetadata(snapshot),
+      ...clonePlotMetadataUnchecked(snapshot),
       series: snapshot.series.map((series) => {
         switch (series.kind) {
           case "line":
@@ -989,7 +1018,7 @@ export class PlotBuilder {
               yErrors: PlotBuilder.#sourceFromSnapshot(series.yErrors),
             };
           default:
-            return cloneSeriesSnapshot(series) as PlotSeriesDefinition;
+            return series as PlotSeriesDefinition;
         }
       }),
     };
@@ -998,25 +1027,30 @@ export class PlotBuilder {
   static #sourceFromSnapshot(
     source: NumericReactiveSourceSnapshot | XSourceSnapshot,
   ): NumericReactiveSourceDefinition {
+    // `extras` carries whatever a newer producer wrote alongside kind/values,
+    // so serializing the builder back out reproduces the source it was given.
+    const { kind: _kind, values, ...extras } = source;
     if (source.kind === "observable") {
-      return { kind: "observable", source: new ObservableSeries(source.values) };
+      return { ...extras, kind: "observable", source: new ObservableSeries(values) };
     }
 
-    return { kind: "static", values: [...source.values] };
+    return { ...extras, kind: "static", values: [...values] };
   }
 
   static #ySourceFromSnapshot(source: YSourceSnapshot): YSourceDefinition {
     if (source.kind === "sine-signal") {
+      const { kind: _kind, options, ...extras } = source;
       return {
+        ...extras,
         kind: "sine-signal",
         source: new SineSignal({
-          points: source.options.points,
-          domain: [source.options.domainStart, source.options.domainEnd],
-          amplitude: source.options.amplitude,
-          cycles: source.options.cycles,
-          phaseVelocity: source.options.phaseVelocity,
-          phaseOffset: source.options.phaseOffset,
-          verticalOffset: source.options.verticalOffset,
+          points: options.points,
+          domain: [options.domainStart, options.domainEnd],
+          amplitude: options.amplitude,
+          cycles: options.cycles,
+          phaseVelocity: options.phaseVelocity,
+          phaseOffset: options.phaseOffset,
+          verticalOffset: options.verticalOffset,
         }),
       };
     }
@@ -1066,7 +1100,12 @@ export class PlotBuilder {
   }
 
   static #cloneSource(source: NumericReactiveSourceDefinition): NumericReactiveSourceDefinition {
-    return source.kind === "observable" ? source : { kind: "static", values: [...source.values] };
+    if (source.kind === "observable") {
+      return { ...source };
+    }
+
+    const { kind: _kind, values, ...extras } = source;
+    return { ...extras, kind: "static", values: [...values] };
   }
 
   sizePx(width: number, height: number): this {
@@ -1075,6 +1114,20 @@ export class PlotBuilder {
 
   setSizePx(width: number, height: number): this {
     this.#state.sizePx = [Math.max(1, Math.round(width)), Math.max(1, Math.round(height))];
+    this.#markDirty();
+    return this;
+  }
+
+  /** Sets the output DPI, scaling the pixels exported from `sizePx`. */
+  dpi(dpi: number): this {
+    return this.setDpi(dpi);
+  }
+
+  setDpi(dpi: number): this {
+    if (!(Number.isInteger(dpi) && dpi > 0)) {
+      throw new RangeError("plot dpi must be an integer greater than zero");
+    }
+    this.#state.dpi = dpi;
     this.#markDirty();
     return this;
   }
@@ -1134,6 +1187,7 @@ export class PlotBuilder {
   }
 
   setLegend(position: LegendPositionName = "best"): this {
+    validateName(LEGEND_POSITION_NAMES, "legend position", position);
     this.#state.legend = position;
     this.#markDirty();
     return this;
@@ -1198,6 +1252,7 @@ export class PlotBuilder {
   }
 
   static #scale(scale: AxisScaleName, linthresh: number | undefined): AxisScaleSnapshot {
+    validateName(AXIS_SCALE_NAMES, "axis scale", scale);
     if (scale !== "symlog") {
       if (linthresh !== undefined) {
         throw new RangeError("linthresh only applies to the symlog scale");
@@ -1617,16 +1672,21 @@ export class PlotBuilder {
     return this.#serializeReactiveSource(source);
   }
 
+  /** Serialize a source, carrying back the fields this build does not name. */
   #serializeReactiveSource(source: NumericReactiveSourceDefinition): NumericReactiveSourceSnapshot {
     if (source.kind === "observable") {
-      return { kind: "observable", values: source.source.snapshotValues() };
+      const { kind: _kind, source: observable, ...extras } = source;
+      return { ...extras, kind: "observable", values: observable.snapshotValues() };
     }
-    return { kind: "static", values: [...source.values] };
+
+    const { kind: _kind, values, ...extras } = source;
+    return { ...extras, kind: "static", values: [...values] };
   }
 
   #serializeYSource(source: YSourceDefinition): YSourceSnapshot {
     if (source.kind === "sine-signal") {
-      return { kind: "sine-signal", options: { ...source.source.options } };
+      const { kind: _kind, source: signal, ...extras } = source;
+      return { ...extras, kind: "sine-signal", options: { ...signal.options } };
     }
 
     return this.#serializeReactiveSource(source);

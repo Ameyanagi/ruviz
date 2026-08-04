@@ -49,10 +49,21 @@ const plot = createPlot()
   .legend("upper_left")
   .grid(true)
   .xlim(0, 4)
-  .yscale("symlog", 1);
+  .yscale("symlog", 1)
+  .sizePx(640, 480)
+  .dpi(200);
 
 await plot.renderPng();
 ```
+
+`dpi` applies after `sizePx`, so it scales the exported pixels:
+`sizePx(640, 480).dpi(200)` renders a 1280x960 image. `xlim`/`ylim` require
+finite, different bounds and keep inverted ones, which render a descending axis.
+
+Style values and axis names are checked at the builder call, not at the next
+async render: an unknown color, marker, line style, legend position, or axis
+scale throws a `RangeError` listing what the renderer accepts, with the same
+message the renderer would have produced.
 
 ## Snapshots
 
@@ -63,6 +74,7 @@ await plot.renderPng();
 type PlotSnapshot = {
   schemaVersion?: number;
   sizePx?: [number, number];
+  dpi?: number;
   theme?: "light" | "dark";
   ticks?: boolean;
   title?: string;
@@ -89,7 +101,10 @@ carries its options under `style`. Rehydrate snapshots with
 `createPlotFromSnapshot(snapshot)` or `PlotBuilder.fromSnapshot(snapshot)`.
 
 Snapshots are interchangeable with the ones `ruviz.Plot.to_snapshot()` emits in
-the Python binding. Keys a build does not know are ignored and preserved across
-clones, so older and newer snapshots both render.
+the Python binding. Keys a build does not know -- including nested ones, and
+including unknown `style` keys -- are ignored when rendering and preserved
+across clones and round-trips, so older and newer snapshots both render.
+`fromSnapshot` deep-copies its input, so a snapshot you keep mutating never
+changes what the builder holds.
 
 <PlotGallery :categories="['basic', 'statistical', 'matrix', 'categorical', 'specialized']" />

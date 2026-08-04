@@ -7,7 +7,16 @@ structurally so the optional dependencies stay optional for type checkers too.
 from __future__ import annotations
 
 from collections.abc import Iterator, Mapping, Sequence
-from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeAlias, TypedDict
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    ForwardRef,
+    Literal,
+    Protocol,
+    TypeAlias,
+    TypedDict,
+    Union,
+)
 
 if TYPE_CHECKING:
     from ._api import ObservableSeries
@@ -36,23 +45,39 @@ class NumericMatrix(Protocol):
 
 
 class ColumnSource(Protocol):
-    """Structural stand-in for objects indexed by column name, such as DataFrames."""
+    """Structural stand-in for objects indexed by column name, such as DataFrames.
 
-    def __getitem__(self, key: str) -> Any: ...
+    ``key`` is position-only, which is how ``dict``, ``MappingProxyType``, and
+    the dataframe libraries all declare it.
+    """
+
+    def __getitem__(self, key: str, /) -> Any: ...
 
 
-#: A numeric vector: a sequence, a NumPy array, a pandas/polars Series, or an
-#: :class:`~ruviz.ObservableSeries`.
-ArrayLike: TypeAlias = "Sequence[float] | NumericVector | ObservableSeries"
+if TYPE_CHECKING:
+    #: A numeric vector: a sequence, a NumPy array, a pandas/polars Series, or an
+    #: :class:`~ruviz.ObservableSeries`.
+    ArrayLike: TypeAlias = Sequence[float] | NumericVector | ObservableSeries
+else:
+    # The aliases are real runtime objects so ``typing.get_type_hints`` works on
+    # the annotated public methods. ``ObservableSeries`` lives in ``_api``, which
+    # imports this module, so it is named through a forward reference bound to
+    # *this* module: ``_api`` injects the class here once it exists, and the
+    # reference then resolves no matter which module asks for the hints.
+    # ``Union[...]`` rather than ``|``: only it accepts a ``ForwardRef`` operand
+    # on every supported Python version.
+    ArrayLike = Union[
+        Sequence[float], NumericVector, ForwardRef("ObservableSeries", module=__name__)
+    ]
 
 #: A rectangular numeric matrix, such as a nested sequence or a 2D NumPy array.
-MatrixLike: TypeAlias = "Sequence[Sequence[float]] | NumericMatrix"
+MatrixLike: TypeAlias = Sequence[Sequence[float]] | NumericMatrix
 
 #: A vector of labels; values are stringified when they are not already strings.
-LabelsLike: TypeAlias = "Sequence[object] | NumericVector"
+LabelsLike: TypeAlias = Sequence[object] | NumericVector
 
 #: A ``data=`` source whose columns are looked up by name.
-DataSource: TypeAlias = "Mapping[str, Any] | ColumnSource | None"
+DataSource: TypeAlias = Mapping[str, Any] | ColumnSource | None
 
 #: Built-in theme names.
 Theme: TypeAlias = Literal["light", "dark"]
@@ -149,7 +174,7 @@ class NumericSourceDict(TypedDict):
 
 
 #: A snapshot numeric field: tracked kinds store a source dict, the rest a plain list.
-NumericField: TypeAlias = "NumericSourceDict | list[float]"
+NumericField: TypeAlias = NumericSourceDict | list[float]
 
 
 class StyleDict(TypedDict, total=False):

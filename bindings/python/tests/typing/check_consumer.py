@@ -13,7 +13,9 @@ that the annotation still rejects the bad call.
 
 from __future__ import annotations
 
+from collections import UserDict
 from pathlib import Path
+from types import MappingProxyType
 
 import numpy as np
 
@@ -166,6 +168,19 @@ def exports_and_widgets(chart: Plot) -> RuvizWidget:
 def helpers_stay_generic(values: ArrayLike, data: DataSource, style: LineStyleName) -> Plot:
     """The exported aliases are usable in downstream signatures."""
     return ruviz.plot().line(values, values, data=data, linestyle=style)
+
+
+def data_accepts_every_column_source() -> Plot:
+    """``data=`` takes a mapping or anything else indexed by column name."""
+    columns = {"x": [0.0, 1.0], "y": [1.0, 0.0]}
+    lookup: ruviz.ColumnSource = MappingProxyType(columns)
+    return (
+        ruviz.plot()
+        .line("x", "y", data=columns)
+        .line("x", "y", data=MappingProxyType(columns))
+        .line("x", "y", data=UserDict(columns))
+        .line("x", "y", data=lookup)
+    )
 
 
 def rejected_calls() -> None:

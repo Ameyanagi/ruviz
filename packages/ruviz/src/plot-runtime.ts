@@ -66,6 +66,12 @@ export function applySnapshotMetadata(rawPlot: RawJsPlot, snapshot: PlotSnapshot
     rawPlot.size_px(snapshot.sizePx[0], snapshot.sizePx[1]);
   }
 
+  // After `size_px`, which fixes the figure size in inches: raising the DPI
+  // then scales the exported pixels instead of reshaping the figure.
+  if (typeof snapshot.dpi === "number") {
+    rawPlot.dpi(snapshot.dpi);
+  }
+
   if (snapshot.theme === "dark") {
     rawPlot.theme_dark();
   } else if (snapshot.theme === "light") {

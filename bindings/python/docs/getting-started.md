@@ -68,9 +68,11 @@ frame = pd.DataFrame({"time": [0, 1, 2], "value": [0.2, 0.8, 1.1]})
 plot = ruviz.plot().line("time", "value", data=frame)
 ```
 
-`data=` accepts a pandas `DataFrame`, a Polars `DataFrame`, or a `dict` of
-columns. A pandas or Polars `Series`, a NumPy array, or a list is a direct x/y
-input instead — pass it positionally without `data=`:
+`data=` accepts anything indexable by column name: a pandas or Polars
+`DataFrame`, any `Mapping` (a `dict`, a `MappingProxyType`, a `UserDict`), or
+any other object with a `__getitem__`. A name that is not in the source raises
+`KeyError`. A pandas or Polars `Series`, a NumPy array, or a list is a direct
+x/y input instead — pass it positionally without `data=`:
 
 ```python
 plot = ruviz.plot().line(frame["time"], frame["value"])
@@ -159,7 +161,8 @@ Plot-level settings:
 - `grid(enabled=True)`
 - `dpi(dpi)` — scales the exported pixels from `size_px(...)`, so
   `size_px(640, 480).dpi(200)` exports a 1280×960 image
-- `xlim(min, max)` / `ylim(min, max)` — finite and strictly ascending
+- `xlim(min, max)` / `ylim(min, max)` — finite and different; inverted bounds
+  such as `xlim(10, 0)` render a descending axis
 - `xscale(scale, linthresh=None)` / `yscale(...)` — `"linear"`, `"log"`, or
   `"symlog"`, where `linthresh` (default `1.0`) applies to `"symlog"` only
 
@@ -178,15 +181,18 @@ time, so a mistake surfaces with the arguments still in scope.
   that is already flattened row-major (`len(z) == len(x) * len(y)`).
 - **A DataFrame is never a vector.** Passing one positionally raises
   `TypeError`; select a column or use `data=`.
-- **`data=` takes a DataFrame or a dict**, not a Series. A pandas or Polars
-  `Series` is a direct value — pass it positionally.
+- **`data=` takes a column source**, not a Series: a DataFrame, a `Mapping`,
+  or anything else indexable by name. A pandas or Polars `Series` is a direct
+  value — pass it positionally.
 - **`save()` accepts `.png`, `.svg`, and `.pdf` only.** Any other extension, or
   a path without one, raises `ValueError`.
-- **`size_px(width, height)`** and **`dpi(dpi)`** raise `ValueError` on a
-  non-positive value, including one that truncates to zero.
+- **`size_px(width, height)`** and **`dpi(dpi)`** take whole numbers and raise
+  `ValueError` on a non-positive or fractional value; `bins=` and `levels=` are
+  the same, so `bins=2.9` is rejected rather than truncated to `2`.
 - **`theme()`** is case-insensitive and raises `ValueError` on an unknown name.
-- **Axis limits** must be finite and strictly ascending, and `linthresh` must be
-  a finite positive number that only applies to the `"symlog"` scale.
+- **2D axis limits** must be finite and different; passing them inverted keeps
+  a descending axis. `Plot3D` limits stay strictly ascending. `linthresh` must
+  be a finite positive number that only applies to the `"symlog"` scale.
 - **Style names are checked eagerly.** An unknown color, line style, marker,
   legend position, or scale raises `ValueError` listing the accepted values,
   and an unknown color adds a "did you mean" suggestion.

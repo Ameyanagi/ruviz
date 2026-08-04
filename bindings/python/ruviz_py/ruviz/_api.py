@@ -8,6 +8,7 @@ display outside notebooks.
 from __future__ import annotations
 
 import asyncio
+import operator
 import sys
 import weakref
 from collections.abc import Callable, Mapping, Sequence
@@ -19,7 +20,7 @@ from typing import TYPE_CHECKING, Any, TypeAlias, cast
 import numpy as np
 import numpy.typing as npt
 
-from . import _native
+from . import _native, _typing
 from ._typing import (
     ArrayLike,
     DataSource,
@@ -37,6 +38,12 @@ from ._typing import (
 
 if TYPE_CHECKING:
     from ._widget import RuvizWidget
+else:
+    # ``widget()`` imports ``_widget`` on demand so the optional widget extra
+    # stays optional. The name still has to exist here for
+    # :func:`typing.get_type_hints`; ``_widget`` replaces it with the real class
+    # as soon as it loads.
+    RuvizWidget = Any
 
 #: Internal storage for every numeric vector: an owned C-contiguous float64 array.
 _F64Array: TypeAlias = "npt.NDArray[np.float64]"
@@ -113,19 +120,28 @@ def _is_polars_series(value: Any) -> bool:
 
 
 def _column_values(data: Any, column: Any) -> Any:
-    if data is None:
+    """Look one named column up in a ``data=`` source.
+
+    Anything indexable by column name works: a DataFrame, any
+    :class:`~collections.abc.Mapping`, or any other object implementing
+    ``__getitem__`` — which is what the :data:`~ruviz.DataSource` alias promises.
+    """
+    if data is None or not isinstance(column, str):
         return column
 
-    if isinstance(column, str):
-        if _is_series(data):
-            raise TypeError(
-                "data= expects a DataFrame or dict; pass a Series directly as the value instead"
-            )
-        if _is_dataframe(data) or isinstance(data, dict):
-            return data[column]
+    if _is_series(data):
+        raise TypeError(
+            "data= expects a DataFrame or dict; pass a Series directly as the value instead"
+        )
+    if not (_is_dataframe(data) or isinstance(data, Mapping) or hasattr(data, "__getitem__")):
         raise TypeError(f"unsupported data source for column lookup: {type(data)!r}")
 
-    return column
+    try:
+        return data[column]
+    except KeyError as err:
+        raise KeyError(f"column {column!r} is not in the data= source") from err
+    except TypeError as err:
+        raise TypeError(f"unsupported data source for column lookup: {type(data)!r}") from err
 
 
 # Plot kinds that forward an ObservableSeries to the native renderer.
@@ -240,6 +256,12 @@ def _normalize_observable_math_input(value: Any) -> Any:
     )
 
 
+#: Messages for the whole-number plot dimensions, shared with the native handle.
+_SIZE_PX_MESSAGE = "plot dimensions must be integers greater than zero"
+_DPI_MESSAGE = "plot dpi must be an integer greater than zero"
+_SIZE_PX_3D_MESSAGE = "3D plot dimensions must be integers greater than zero"
+_DPI_3D_MESSAGE = "3D plot dpi must be an integer greater than zero"
+
 #: Snapshot layout version carried by :meth:`Plot.to_snapshot` and
 #: :meth:`Plot3D.to_snapshot`; consumers must ignore fields they do not know.
 _SNAPSHOT_SCHEMA_VERSION = 1
@@ -313,11 +335,27 @@ def _style_positive(name: str) -> Callable[[Any], float]:
     return normalize
 
 
+def _exact_int(value: Any, message: str) -> int:
+    """Convert an integer option exactly, so a fraction is rejected, not truncated.
+
+    ``operator.index`` accepts Python and NumPy integers and nothing else;
+    booleans are rejected on top of that because ``True`` is not a count.
+    """
+    if isinstance(value, bool):
+        raise ValueError(message)
+    try:
+        return operator.index(value)
+    except TypeError:
+        raise ValueError(message) from None
+
+
 def _style_count(name: str, minimum: int) -> Callable[[Any], int]:
+    message = f"{name} must be an integer >= {minimum}"
+
     def normalize(value: Any) -> int:
-        count = int(value)
+        count = _exact_int(value, message)
         if count < minimum:
-            raise ValueError(f"{name} must be an integer >= {minimum}")
+            raise ValueError(message)
         return count
 
     return normalize
@@ -804,8 +842,25 @@ class ObservableSeries:
             raise TypeError("ObservableSeries indices must be integers; slicing is not supported")
         return float(self._values[index])
 
-    def __array__(self, dtype: Any = None) -> npt.NDArray[Any]:
-        return self._values.astype(float if dtype is None else dtype)
+    def __array__(self, dtype: Any = None, copy: bool | None = None) -> npt.NDArray[Any]:
+        """Expose the series to NumPy, honoring the NumPy 2 ``copy`` contract.
+
+        ``copy=False`` means *never copy*: it returns a read-only view of the
+        stored float64 buffer, or raises when a dtype conversion would force a
+        copy. ``copy=None`` (the default) and ``copy=True`` both copy, so the
+        caller can never write through to the series.
+        """
+        if copy is False:
+            if dtype is not None and np.dtype(dtype) != self._values.dtype:
+                raise ValueError(
+                    "cannot return an ObservableSeries view with a different dtype "
+                    "without copying"
+                )
+            view = self._values.view()
+            view.flags.writeable = False
+            return view
+
+        return self._values.astype(np.float64 if dtype is None else dtype)
 
     def __array_ufunc__(self, ufunc: np.ufunc, method: str, *inputs: Any, **kwargs: Any) -> Any:
         if method != "__call__":
@@ -886,6 +941,12 @@ class ObservableSeries:
                 self._listeners.pop(token, None)
                 continue
             listener()
+
+
+#: ``_typing.ArrayLike`` names this class through a forward reference bound to
+#: the ``_typing`` module; publishing it there is what lets
+#: :func:`typing.get_type_hints` resolve the alias from any calling module.
+_typing.ObservableSeries = ObservableSeries
 
 
 class Plot:
@@ -1031,10 +1092,10 @@ class Plot:
 
     def size_px(self, width: int, height: int) -> "Plot":
         """Set the pixel size used for export and notebook rendering."""
-        normalized_width = int(width)
-        normalized_height = int(height)
+        normalized_width = _exact_int(width, _SIZE_PX_MESSAGE)
+        normalized_height = _exact_int(height, _SIZE_PX_MESSAGE)
         if normalized_width <= 0 or normalized_height <= 0:
-            raise ValueError("plot dimensions must be greater than zero")
+            raise ValueError(_SIZE_PX_MESSAGE)
         self._native_plot.size_px(normalized_width, normalized_height)
         self._state["sizePx"] = [normalized_width, normalized_height]
         self._invalidate_snapshot_cache()
@@ -1042,9 +1103,9 @@ class Plot:
 
     def dpi(self, dpi: int) -> "Plot":
         """Set output dots per inch, scaling the exported pixels from ``size_px``."""
-        normalized = int(dpi)
+        normalized = _exact_int(dpi, _DPI_MESSAGE)
         if normalized < 1:
-            raise ValueError("plot dpi must be greater than zero")
+            raise ValueError(_DPI_MESSAGE)
         self._native_plot.dpi(normalized)
         self._state["dpi"] = normalized
         self._invalidate_snapshot_cache()
@@ -1115,19 +1176,19 @@ class Plot:
     def _set_limit(self, axis: str, minimum: float, maximum: float) -> "Plot":
         lower = float(minimum)
         upper = float(maximum)
-        if not np.isfinite(lower) or not np.isfinite(upper) or lower >= upper:
-            raise ValueError(f"{axis} limits must be finite and strictly ascending")
+        if not np.isfinite(lower) or not np.isfinite(upper) or lower == upper:
+            raise ValueError(f"{axis} limits must be finite and different")
         getattr(self._native_plot, f"{axis}lim")(lower, upper)
         self._state[f"{axis}Lim"] = [lower, upper]
         self._invalidate_snapshot_cache()
         return self
 
     def xlim(self, minimum: float, maximum: float) -> "Plot":
-        """Set finite ascending x-axis limits."""
+        """Set finite, unequal x-axis limits; inverted bounds render a descending axis."""
         return self._set_limit("x", minimum, maximum)
 
     def ylim(self, minimum: float, maximum: float) -> "Plot":
-        """Set finite ascending y-axis limits."""
+        """Set finite, unequal y-axis limits; inverted bounds render a descending axis."""
         return self._set_limit("y", minimum, maximum)
 
     def _set_scale(self, axis: str, scale: ScaleName, linthresh: float | None) -> "Plot":
@@ -1850,19 +1911,19 @@ class Plot3D:
 
     def size_px(self, width: int, height: int) -> "Plot3D":
         """Set the exported image dimensions in pixels."""
-        normalized_width = int(width)
-        normalized_height = int(height)
+        normalized_width = _exact_int(width, _SIZE_PX_3D_MESSAGE)
+        normalized_height = _exact_int(height, _SIZE_PX_3D_MESSAGE)
         if normalized_width <= 0 or normalized_height <= 0:
-            raise ValueError("3D plot dimensions must be greater than zero")
+            raise ValueError(_SIZE_PX_3D_MESSAGE)
         self._native_plot.size_px(normalized_width, normalized_height)
         self._state["sizePx"] = [normalized_width, normalized_height]
         return self
 
     def dpi(self, dpi: int) -> "Plot3D":
         """Set output dots per inch while preserving ``size_px`` dimensions."""
-        normalized = int(dpi)
+        normalized = _exact_int(dpi, _DPI_3D_MESSAGE)
         if normalized <= 0:
-            raise ValueError("3D plot dpi must be greater than zero")
+            raise ValueError(_DPI_3D_MESSAGE)
         self._native_plot.dpi(normalized)
         self._state["dpi"] = normalized
         return self

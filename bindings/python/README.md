@@ -66,7 +66,8 @@ slow = 6.0 * np.exp(-x * 0.22)
   you the synced, zoomable WASM widget with the `ruviz[widget]` extra.
 - **Live data** — `ruviz.observable(...)` series support elementwise arithmetic
   and NumPy ufuncs, and push updates into attached widgets.
-- **DataFrames** — pandas, Polars, and plain dicts through `data=`.
+- **DataFrames** — pandas, Polars, plain dicts, and anything else indexable by
+  column name through `data=`.
 - **Experimental 3D alpha** — deterministic static export for `scatter3d`,
   `line3d`, `surface`, and `wireframe`.
 - **Typed** — inline annotations with a `py.typed` marker, so a type checker
@@ -112,10 +113,13 @@ position names such as `"upper_right"`, `"center"`, or `"outside_right"` —
 `grid(enabled=True)`, `dpi(dpi)`, `xlim(min, max)`, `ylim(min, max)`, and
 `xscale(scale, linthresh=None)` / `yscale(...)` with `"linear"`, `"log"`, or
 `"symlog"`. `dpi` scales the exported pixels from `size_px(...)`, so
-`size_px(640, 480).dpi(200)` writes a 1280×960 image.
+`size_px(640, 480).dpi(200)` writes a 1280×960 image. Axis limits must be finite
+and different; passing them inverted, as in `xlim(10, 0)`, renders a descending
+axis (`Plot3D` limits stay strictly ascending).
 
 Notebook widgets render these settings too: the WASM runtime applies series
-styles, `legend`, `grid`, axis limits, and axis scales from the snapshot.
+styles, `dpi`, `legend`, `grid`, axis limits, and axis scales from the
+snapshot.
 
 ## Notebook and Desktop Usage
 

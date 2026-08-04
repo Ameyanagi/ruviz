@@ -11,7 +11,8 @@ use ruviz::{
 mod native_handle;
 
 use native_handle::{
-    NativeObservable1D, NativePlotHandle, extract_f64_rows, extract_f64_vec, save_extension,
+    NativeObservable1D, NativePlotHandle, ascending_limits, extract_f64_rows, extract_f64_vec,
+    save_extension,
 };
 
 #[cfg(not(feature = "native-interactive"))]
@@ -341,7 +342,7 @@ impl NativePlot3DHandle {
     fn size_px(&mut self, width: u32, height: u32) -> PyResult<()> {
         if width == 0 || height == 0 {
             return Err(PyValueError::new_err(
-                "3D plot dimensions must be greater than zero",
+                "3D plot dimensions must be integers greater than zero",
             ));
         }
         self.snapshot.size_px = Some([width, height]);
@@ -352,7 +353,7 @@ impl NativePlot3DHandle {
     fn dpi(&mut self, dpi: u32) -> PyResult<()> {
         if dpi == 0 {
             return Err(PyValueError::new_err(
-                "3D plot dpi must be greater than zero",
+                "3D plot dpi must be an integer greater than zero",
             ));
         }
         self.snapshot.dpi = Some(dpi);
@@ -389,19 +390,25 @@ impl NativePlot3DHandle {
         self.mark_dirty();
     }
 
-    fn xlim(&mut self, minimum: f64, maximum: f64) {
+    fn xlim(&mut self, minimum: f64, maximum: f64) -> PyResult<()> {
+        let (minimum, maximum) = ascending_limits("x", minimum, maximum)?;
         self.snapshot.x_lim = Some([minimum, maximum]);
         self.mark_dirty();
+        Ok(())
     }
 
-    fn ylim(&mut self, minimum: f64, maximum: f64) {
+    fn ylim(&mut self, minimum: f64, maximum: f64) -> PyResult<()> {
+        let (minimum, maximum) = ascending_limits("y", minimum, maximum)?;
         self.snapshot.y_lim = Some([minimum, maximum]);
         self.mark_dirty();
+        Ok(())
     }
 
-    fn zlim(&mut self, minimum: f64, maximum: f64) {
+    fn zlim(&mut self, minimum: f64, maximum: f64) -> PyResult<()> {
+        let (minimum, maximum) = ascending_limits("z", minimum, maximum)?;
         self.snapshot.z_lim = Some([minimum, maximum]);
         self.mark_dirty();
+        Ok(())
     }
 
     fn azimuth_deg(&mut self, degrees: f32) {
