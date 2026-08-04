@@ -57,10 +57,22 @@ DataSource: TypeAlias = "Mapping[str, Any] | ColumnSource | None"
 #: Built-in theme names.
 Theme: TypeAlias = Literal["light", "dark"]
 
-#: Line style names accepted by ``linestyle=``.
-LineStyleName: TypeAlias = Literal["solid", "dashed", "dotted", "dash-dot", "dash-dot-dot"]
+#: Line style names accepted by ``linestyle=``; the last four are the matplotlib
+#: shorthands, and a snapshot always stores the canonical name they resolve to.
+LineStyleName: TypeAlias = Literal[
+    "solid",
+    "dashed",
+    "dotted",
+    "dash-dot",
+    "dash-dot-dot",
+    "-",
+    "--",
+    ":",
+    "-.",
+]
 
-#: Marker names accepted by ``marker=``.
+#: Marker names accepted by ``marker=``; the last eight are the matplotlib
+#: shorthands, and a snapshot always stores the canonical name they resolve to.
 MarkerName: TypeAlias = Literal[
     "circle",
     "square",
@@ -74,6 +86,14 @@ MarkerName: TypeAlias = Literal[
     "square-open",
     "triangle-open",
     "diamond-open",
+    "o",
+    "s",
+    "^",
+    "v",
+    "D",
+    "+",
+    "x",
+    "*",
 ]
 
 #: Legend placements accepted by :meth:`ruviz.Plot.legend`; ``"best"`` auto-places.
@@ -198,6 +218,7 @@ class PlotSnapshot(_PlotSnapshot, total=False):
     """
 
     sizePx: list[int]
+    dpi: int
     theme: Theme
     ticks: bool
     title: str

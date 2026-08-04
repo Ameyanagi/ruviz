@@ -53,8 +53,12 @@ def fluent_chain_returns_a_plot() -> Plot:
         .xscale("symlog", 0.5)
         .yscale("linear")
         .legend("upper_right")
+        .dpi(150)
         .line(x, y, label="sin", color="#2563eb", width=2.0, linestyle="dashed", marker="circle")
         .scatter([0.0, 1.0], [1.0, 0.0], marker="triangle-down", marker_size=8.0, alpha=0.5)
+        # The matplotlib shorthands are aliases for the canonical names.
+        .line(x, y, linestyle="--", marker="o")
+        .scatter(x, y, marker="D")
     )
     png: bytes = chart.render_png()
     svg: str = chart.render_svg()
@@ -105,7 +109,8 @@ def observables_are_array_inputs() -> ObservableSeries:
     source.set_at(0, 9.0)
     values: np.ndarray = source.values()
     snapshot: list[float] = source.snapshot_values()
-    assert values.size == len(snapshot)
+    first: float = source[0]
+    assert values.size == len(snapshot) == len(source) and first == first
     return source
 
 

@@ -327,6 +327,7 @@ enum NativeSeriesState {
 #[derive(Clone, Default)]
 struct NativePlotState {
     size_px: Option<(u32, u32)>,
+    dpi: Option<u32>,
     theme: Option<String>,
     ticks: Option<bool>,
     title: Option<String>,
@@ -347,6 +348,12 @@ impl NativePlotState {
 
         if let Some((width, height)) = self.size_px {
             plot = plot.size_px(width, height);
+        }
+
+        // After `size_px`, which fixes the figure size in inches: raising the DPI
+        // then scales the exported pixels instead of reshaping the figure.
+        if let Some(dpi) = self.dpi {
+            plot = plot.dpi(dpi);
         }
 
         if let Some(theme) = &self.theme {
@@ -632,7 +639,7 @@ fn extract_numeric_source(source: &Bound<'_, PyAny>) -> PyResult<NumericSourceSt
         .map_err(|_| PyTypeError::new_err("expected a numeric list or NativeObservable1D source"))
 }
 
-#[pyclass(module = "ruviz._native", unsendable)]
+#[pyclass(module = "ruviz._native")]
 pub struct NativeObservable1D {
     inner: Observable<Vec<f64>>,
 }
@@ -662,7 +669,7 @@ impl NativeObservable1D {
     }
 }
 
-#[pyclass(module = "ruviz._native", unsendable)]
+#[pyclass(module = "ruviz._native")]
 pub struct NativePlotHandle {
     state: NativePlotState,
     plot: Plot,
@@ -730,6 +737,15 @@ impl NativePlotHandle {
             ));
         }
         self.state.size_px = Some((width, height));
+        self.mark_dirty();
+        Ok(())
+    }
+
+    fn dpi(&mut self, dpi: u32) -> PyResult<()> {
+        if dpi == 0 {
+            return Err(PyValueError::new_err("plot dpi must be greater than zero"));
+        }
+        self.state.dpi = Some(dpi);
         self.mark_dirty();
         Ok(())
     }

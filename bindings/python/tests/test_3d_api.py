@@ -152,6 +152,62 @@ def test_plot3d_size_px_rejects_non_positive_dimensions(width: int, height: int)
         ruviz.plot3d().size_px(width, height)
 
 
+@pytest.mark.parametrize(
+    ("width", "height"),
+    [(0.5, 200), (200, 0.5)],
+    ids=["width", "height"],
+)
+def test_plot3d_size_px_rejects_dimensions_that_truncate_to_zero(
+    width: float, height: float
+) -> None:
+    with pytest.raises(ValueError, match="3D plot dimensions must be greater than zero"):
+        ruviz.plot3d().size_px(width, height)
+
+
+@pytest.mark.parametrize("dpi", [0, -1, 0.5])
+def test_plot3d_dpi_rejects_non_positive_values(dpi: float) -> None:
+    with pytest.raises(ValueError, match="3D plot dpi must be greater than zero"):
+        ruviz.plot3d().dpi(dpi)
+
+
+@pytest.mark.parametrize(
+    ("method", "args", "message"),
+    [
+        ("size_px", (0, 200), "3D plot dimensions must be greater than zero"),
+        ("size_px", (200, 0), "3D plot dimensions must be greater than zero"),
+        ("dpi", (0,), "3D plot dpi must be greater than zero"),
+    ],
+    ids=["width", "height", "dpi"],
+)
+def test_native_3d_handle_rejects_zero_dimensions(method: str, args: tuple, message: str) -> None:
+    handle = ruviz._native.NativePlot3DHandle()
+
+    with pytest.raises(ValueError, match=message):
+        getattr(handle, method)(*args)
+
+
+OBSERVABLE_3D_CASES = [
+    ("scatter3d", lambda source: ruviz.plot3d().scatter3d(source, [0.0, 1.0], [0.0, 1.0])),
+    ("line3d", lambda source: ruviz.plot3d().line3d(source, [0.0, 1.0], [0.0, 1.0])),
+    ("surface", lambda source: ruviz.plot3d().surface(source, [0.0, 1.0], np.zeros((2, 2)))),
+    ("wireframe", lambda source: ruviz.plot3d().wireframe(source, [0.0, 1.0], np.zeros((2, 2)))),
+    ("surface", lambda source: ruviz.plot3d().surface([0.0, 1.0], [0.0, 1.0], source)),
+    ("wireframe", lambda source: ruviz.plot3d().wireframe([0.0, 1.0], [0.0, 1.0], source)),
+]
+
+
+@pytest.mark.parametrize(
+    ("kind", "build"),
+    OBSERVABLE_3D_CASES,
+    ids=[f"{kind}-{index}" for index, (kind, _) in enumerate(OBSERVABLE_3D_CASES)],
+)
+def test_3d_series_reject_observables(kind: str, build: object) -> None:
+    source = ruviz.observable([0.0, 1.0])
+
+    with pytest.raises(TypeError, match=f"{kind} does not support ObservableSeries"):
+        build(source)
+
+
 def test_plot3d_rejects_observable_and_dataframe_inputs() -> None:
     pd = pytest.importorskip("pandas")
     frame = pd.DataFrame({"x": [0.0, 1.0], "y": [0.0, 1.0], "z": [0.0, 1.0]})

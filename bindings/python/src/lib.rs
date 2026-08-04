@@ -240,7 +240,7 @@ fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
 
-#[pyclass(module = "ruviz._native", unsendable)]
+#[pyclass(module = "ruviz._native")]
 struct NativePlot3DHandle {
     snapshot: Plot3DSnapshot,
     /// Built builder reused across renders; `None` whenever a mutator ran since
@@ -338,14 +338,26 @@ impl NativePlot3DHandle {
         Ok(())
     }
 
-    fn size_px(&mut self, width: u32, height: u32) {
+    fn size_px(&mut self, width: u32, height: u32) -> PyResult<()> {
+        if width == 0 || height == 0 {
+            return Err(PyValueError::new_err(
+                "3D plot dimensions must be greater than zero",
+            ));
+        }
         self.snapshot.size_px = Some([width, height]);
         self.mark_dirty();
+        Ok(())
     }
 
-    fn dpi(&mut self, dpi: u32) {
+    fn dpi(&mut self, dpi: u32) -> PyResult<()> {
+        if dpi == 0 {
+            return Err(PyValueError::new_err(
+                "3D plot dpi must be greater than zero",
+            ));
+        }
         self.snapshot.dpi = Some(dpi);
         self.mark_dirty();
+        Ok(())
     }
 
     fn theme(&mut self, theme: &str) -> PyResult<()> {

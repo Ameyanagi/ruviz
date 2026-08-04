@@ -8,8 +8,9 @@ display outside notebooks.
 from __future__ import annotations
 
 import asyncio
+import sys
 import weakref
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
@@ -62,6 +63,11 @@ def _is_series(value: Any) -> bool:
 
 
 def _is_pandas_dataframe(value: Any) -> bool:
+    # A value can only be a pandas type once pandas is imported, so checking
+    # ``sys.modules`` first keeps a plain list from paying the import.
+    if "pandas" not in sys.modules:
+        return False
+
     try:
         import pandas as pd
     except ImportError:
@@ -71,6 +77,9 @@ def _is_pandas_dataframe(value: Any) -> bool:
 
 
 def _is_pandas_series(value: Any) -> bool:
+    if "pandas" not in sys.modules:
+        return False
+
     try:
         import pandas as pd
     except ImportError:
@@ -80,6 +89,9 @@ def _is_pandas_series(value: Any) -> bool:
 
 
 def _is_polars_dataframe(value: Any) -> bool:
+    if "polars" not in sys.modules:
+        return False
+
     try:
         import polars as pl
     except ImportError:
@@ -89,6 +101,9 @@ def _is_polars_dataframe(value: Any) -> bool:
 
 
 def _is_polars_series(value: Any) -> bool:
+    if "polars" not in sys.modules:
+        return False
+
     try:
         import polars as pl
     except ImportError:
@@ -135,6 +150,8 @@ def _to_numeric_1d(values: Any, name: str = "numeric input") -> _F64Array:
     """
     if isinstance(values, ObservableSeries):
         values = values.values()
+    if isinstance(values, str):
+        raise TypeError(f"{name} is a string; pass data= to look up columns by name")
     if _is_dataframe(values):
         raise TypeError(
             f"{name} must be a 1D numeric array; select a column or pass data=<DataFrame>"
@@ -179,7 +196,26 @@ def _materialize(value: Any) -> Any:
     return value
 
 
+def _copy_materialized(value: Any) -> Any:
+    """Copy a materialized snapshot without :func:`deepcopy`'s per-element cost.
+
+    A materialized snapshot only holds plain dicts, lists, and scalars, and every
+    list in it is homogeneous, so a numeric or label vector is copied by one
+    ``list()`` call instead of element by element.
+    """
+    if isinstance(value, dict):
+        return {key: _copy_materialized(item) for key, item in value.items()}
+    if isinstance(value, list):
+        if value and isinstance(value[0], (dict, list)):
+            return [_copy_materialized(item) for item in value]
+        return list(value)
+    return value
+
+
 def _to_string_list(values: Any, name: str = "label input") -> list[str]:
+    _reject_observable(values, name)
+    if isinstance(values, str):
+        raise TypeError(f"{name} is a string; pass data= to look up columns by name")
     if _is_dataframe(values):
         raise TypeError(f"{name} must be 1D; select a column or pass data=<DataFrame>")
     if _is_series(values):
@@ -215,13 +251,35 @@ def _heatmap_matrix(series: dict[str, Any]) -> list[list[float]]:
     return [values[start : start + cols] for start in range(0, len(values), cols)]
 
 
-def _style_text(name: str) -> Callable[[Any], str]:
-    """Accept a string; the native layer maps it onto the matching core enum."""
+#: matplotlib shorthands accepted by ``marker=``, mapped onto the core names.
+_MARKER_ALIASES = {
+    "o": "circle",
+    "s": "square",
+    "^": "triangle",
+    "v": "triangle-down",
+    "d": "diamond",
+    "+": "plus",
+    "x": "cross",
+    "*": "star",
+}
+
+#: matplotlib shorthands accepted by ``linestyle=``, mapped onto the core names.
+_LINESTYLE_ALIASES = {"-": "solid", "--": "dashed", ":": "dotted", "-.": "dash-dot"}
+
+
+def _style_text(name: str, aliases: Mapping[str, str] | None = None) -> Callable[[Any], str]:
+    """Accept a string; the native layer maps it onto the matching core enum.
+
+    ``aliases`` resolves the matplotlib shorthands here, so a snapshot only ever
+    stores the canonical name.
+    """
+    shorthands: Mapping[str, str] = aliases or {}
 
     def normalize(value: Any) -> str:
         if not isinstance(value, str):
             raise TypeError(f"{name} must be a string")
-        return value.strip().lower().replace("_", "-")
+        normalized = value.strip().lower().replace("_", "-")
+        return shorthands.get(normalized, normalized)
 
     return normalize
 
@@ -273,8 +331,8 @@ _STYLE_OPTIONS: dict[str, Callable[[Any], Any]] = {
     "color": _style_color,
     "alpha": _style_alpha,
     "width": _style_positive("width"),
-    "linestyle": _style_text("linestyle"),
-    "marker": _style_text("marker"),
+    "linestyle": _style_text("linestyle", _LINESTYLE_ALIASES),
+    "marker": _style_text("marker", _MARKER_ALIASES),
     "markerSize": _style_positive("marker_size"),
     "bins": _style_count("bins", 1),
     "bandwidth": _style_positive("bandwidth"),
@@ -392,6 +450,21 @@ def _styled_series(kind: str, fields: dict[str, Any], options: dict[str, Any]) -
     return series
 
 
+def _freeze_observable_sources(state: dict[str, Any]) -> dict[str, Any]:
+    """Mark every numeric source in a copied state static.
+
+    A cloned plot holds values, not live observables, so its snapshot must not
+    keep claiming ``kind: "observable"``.
+    """
+    for series in state["series"]:
+        spec, _ = _series_kind(series)
+        for key in spec.sources:
+            source = series[key]
+            if source["kind"] == "observable":
+                source["kind"] = "static"
+    return state
+
+
 def _style_keywords(series: dict[str, Any]) -> dict[str, Any]:
     """Turn a stored style back into the keyword arguments that produced it."""
     style: dict[str, Any] = series.get("style", {})
@@ -403,6 +476,7 @@ def _style_keywords(series: dict[str, Any]) -> dict[str, Any]:
 #: plots and rebuilt native handles configure the axes identically.
 _PLOT_SETTINGS: tuple[tuple[str, str, bool], ...] = (
     ("sizePx", "size_px", True),
+    ("dpi", "dpi", False),
     ("theme", "theme", False),
     ("ticks", "ticks", False),
     ("title", "title", False),
@@ -421,7 +495,9 @@ _PLOT_SETTINGS: tuple[tuple[str, str, bool], ...] = (
 class _ObservableDerivation:
     ufunc: np.ufunc
     inputs: tuple[Any, ...]
-    bindings: list[tuple["ObservableSeries", int, int]]
+    #: One ``(source, token)`` pair per distinct observable operand, so the
+    #: derived series can unregister itself from each source.
+    bindings: list[tuple["ObservableSeries", int]]
 
 
 class ObservableSeries:
@@ -455,7 +531,7 @@ class ObservableSeries:
             return cls(cls._evaluate_ufunc(ufunc, normalized_inputs))
 
         observable = cls._from_values(cls._evaluate_ufunc(ufunc, normalized_inputs))
-        bindings: list[tuple[ObservableSeries, int, int]] = []
+        bindings: list[tuple[ObservableSeries, int]] = []
         attached_sources: set[int] = set()
         for value in normalized_inputs:
             if not isinstance(value, ObservableSeries):
@@ -464,11 +540,9 @@ class ObservableSeries:
             if source_id in attached_sources:
                 continue
             attached_sources.add(source_id)
-            token = value._attach(observable._refresh_from_derivation)
-            child_token = value._register_derived(observable)
-            bindings.append((value, token, child_token))
-            weakref.finalize(observable, value._detach, token)
-            weakref.finalize(observable, value._unregister_derived, child_token)
+            token = value._register_derived(observable)
+            bindings.append((value, token))
+            weakref.finalize(observable, value._unregister_derived, token)
 
         observable._derivation = _ObservableDerivation(ufunc=ufunc, inputs=normalized_inputs, bindings=bindings)
         return observable
@@ -511,20 +585,17 @@ class ObservableSeries:
         if self._derivation is None:
             return
 
-        for source, token, child_token in self._derivation.bindings:
-            source._detach(token)
-            source._unregister_derived(child_token)
+        for source, token in self._derivation.bindings:
+            source._unregister_derived(token)
         self._derivation = None
 
-    def _refresh_from_derivation(self) -> None:
+    def _recompute(self) -> None:
+        """Re-evaluate this derived series from its (already updated) sources."""
         if self._derivation is None:
             return
 
-        next_values = self._evaluate_ufunc(self._derivation.ufunc, self._derivation.inputs)
-        self._check_resize(len(next_values))
-        self._values = next_values
+        self._values = self._evaluate_ufunc(self._derivation.ufunc, self._derivation.inputs)
         self._native_observable.replace(self._values)
-        self._notify()
 
     def _ensure_detached(self) -> None:
         if self._derivation is not None:
@@ -548,7 +619,7 @@ class ObservableSeries:
     def _unregister_derived(self, token: int) -> None:
         self._derived_children.pop(token, None)
 
-    def _check_resize(self, new_length: int) -> None:
+    def _check_resize(self, new_length: int, prospective: dict[int, int]) -> None:
         """Let bound plots veto a length change before it is applied."""
         if new_length == len(self._values):
             return
@@ -557,40 +628,107 @@ class ObservableSeries:
             if guard is None:
                 self._resize_guards.pop(token, None)
                 continue
-            guard(self, new_length)
+            guard(self, new_length, prospective)
 
-    def _prevalidate_resize(
-        self, new_length: int, prospective: dict[int, int] | None = None
-    ) -> None:
-        """Validate a resize across the whole derivation graph before committing.
-
-        Walks every derived observable transitively, checking plot guards and
-        operand-length compatibility with the prospective lengths, so a vetoed
-        resize raises before any observable in the graph has mutated.
-        """
-        prospective = {} if prospective is None else prospective
-        if prospective.get(id(self)) == new_length:
-            return
-        prospective[id(self)] = new_length
-        self._check_resize(new_length)
+    def _live_derived_children(self) -> list["ObservableSeries"]:
+        """Return the derived observables still tracking this one, pruning dead refs."""
+        children: list[ObservableSeries] = []
         for token, child_ref in list(self._derived_children.items()):
             child = child_ref()
             if child is None:
                 self._derived_children.pop(token, None)
                 continue
-            if child._derivation is None:
-                continue
-            lengths = {
-                prospective.get(id(value), len(value._values))
-                if isinstance(value, ObservableSeries)
-                else len(value)
-                for value in child._derivation.inputs
-                if isinstance(value, (ObservableSeries, np.ndarray))
-            }
-            if len(lengths) > 1:
-                raise ValueError("observable math operands must have the same length")
-            if lengths:
-                child._prevalidate_resize(lengths.pop(), prospective)
+            if child._derivation is not None:
+                children.append(child)
+        return children
+
+    def _derivation_plan(self, new_length: int) -> tuple[list["ObservableSeries"], dict[int, int]]:
+        """Plan an update: every reachable observable, in dependency order.
+
+        Returns the affected observables topologically sorted (this one first)
+        together with the length each will hold afterwards. Sizing a derived
+        observable only once *all* of its affected operands are known is what
+        keeps a diamond-shaped graph — two derived siblings feeding one child —
+        from reporting an operand mismatch that the completed update would not
+        have. Derivation graphs are acyclic, so the sort always completes.
+        """
+        affected: dict[int, ObservableSeries] = {id(self): self}
+        children: dict[int, list[ObservableSeries]] = {}
+        frontier: list[ObservableSeries] = [self]
+        while frontier:
+            node = frontier.pop()
+            children[id(node)] = node._live_derived_children()
+            for child in children[id(node)]:
+                if id(child) in affected:
+                    continue
+                affected[id(child)] = child
+                frontier.append(child)
+
+        # How many affected operands each derived node is still waiting for.
+        pending = {
+            key: len(
+                {
+                    id(value)
+                    for value in cast(_ObservableDerivation, node._derivation).inputs
+                    if isinstance(value, ObservableSeries) and id(value) in affected
+                }
+            )
+            for key, node in affected.items()
+            if node is not self
+        }
+
+        order: list[ObservableSeries] = [self]
+        prospective = {id(self): new_length}
+        queue: list[ObservableSeries] = [self]
+        while queue:
+            node = queue.pop()
+            for child in children[id(node)]:
+                pending[id(child)] -= 1
+                if pending[id(child)] > 0:
+                    continue
+                prospective[id(child)] = self._planned_length(child, prospective)
+                order.append(child)
+                queue.append(child)
+
+        return order, prospective
+
+    @staticmethod
+    def _planned_length(child: "ObservableSeries", prospective: dict[int, int]) -> int:
+        """Return the length ``child`` takes once its planned operands are applied."""
+        derivation = cast(_ObservableDerivation, child._derivation)
+        lengths = {
+            prospective.get(id(value), len(value._values))
+            if isinstance(value, ObservableSeries)
+            else len(value)
+            for value in derivation.inputs
+            if isinstance(value, (ObservableSeries, np.ndarray))
+        }
+        if len(lengths) > 1:
+            raise ValueError("observable math operands must have the same length")
+        return lengths.pop()
+
+    def _prevalidate_resize(
+        self, order: list["ObservableSeries"], prospective: dict[int, int]
+    ) -> None:
+        """Let every affected plot veto the planned lengths before anything mutates.
+
+        Guards run only once the whole plan exists, so a series input that
+        resizes alongside its siblings is judged at its planned length rather
+        than the one it still has.
+        """
+        for observable in order:
+            observable._check_resize(prospective[id(observable)], prospective)
+
+    def _propagate(self, order: list["ObservableSeries"]) -> None:
+        """Recompute derived observables in dependency order, then notify listeners.
+
+        Recomputing before notifying keeps every operand of a derived series at
+        its post-update length, which a listener-driven cascade cannot guarantee.
+        """
+        for observable in order[1:]:
+            observable._recompute()
+        for observable in order:
+            observable._notify()
 
     def __copy__(self) -> "ObservableSeries":
         return self.__deepcopy__({})
@@ -616,24 +754,33 @@ class ObservableSeries:
         Raises ValueError before any state changes when the new length would
         break a bound plot series whose inputs must stay equal-length (line,
         scatter, bar, error bars) — including series bound to observables
-        derived from this one.
+        derived from this one. Observables derived from this one resize with it.
+
+        On a derived observable this permanently detaches it from its sources:
+        it keeps the values you set and stops tracking later source updates.
         """
         next_values = _to_numeric_1d(values, "observable values")
-        self._prevalidate_resize(len(next_values))
+        order, prospective = self._derivation_plan(len(next_values))
+        self._prevalidate_resize(order, prospective)
         self._ensure_detached()
         self._values = next_values
         self._native_observable.replace(self._values)
-        self._notify()
+        self._propagate(order)
 
     def set_at(self, index: int, value: float) -> None:
-        """Update a single element in-place and notify attached widgets."""
+        """Update a single element in-place and notify attached widgets.
+
+        On a derived observable this permanently detaches it from its sources:
+        it keeps the value you set and stops tracking later source updates.
+        """
         if index < 0 or index >= len(self._values):
             raise IndexError("observable index is out of bounds")
         normalized_value = float(value)
+        order, _ = self._derivation_plan(len(self._values))
         self._ensure_detached()
         self._values[index] = normalized_value
         self._native_observable.set_at(index, normalized_value)
-        self._notify()
+        self._propagate(order)
 
     def values(self) -> npt.NDArray[np.float64]:
         """Return the current values as a NumPy array."""
@@ -642,6 +789,20 @@ class ObservableSeries:
     def snapshot_values(self) -> list[float]:
         """Return the current values as a plain Python list."""
         return cast("list[float]", self._values.tolist())
+
+    def __len__(self) -> int:
+        """Return the number of values currently in the series."""
+        return len(self._values)
+
+    def __getitem__(self, index: int) -> float:
+        """Return one value by index; negative indices count from the end.
+
+        Slices are intentionally not supported: use :meth:`values` for a NumPy
+        array of the whole series.
+        """
+        if not isinstance(index, (int, np.integer)) or isinstance(index, bool):
+            raise TypeError("ObservableSeries indices must be integers; slicing is not supported")
+        return float(self._values[index])
 
     def __array__(self, dtype: Any = None) -> npt.NDArray[Any]:
         return self._values.astype(float if dtype is None else dtype)
@@ -864,7 +1025,7 @@ class Plot:
         """
         self._sync_observables()
         clone = Plot()
-        clone._state = deepcopy(self._state)
+        clone._state = _freeze_observable_sources(deepcopy(self._state))
         clone._rebuild_native_plot(clone._state)
         return clone
 
@@ -876,6 +1037,16 @@ class Plot:
             raise ValueError("plot dimensions must be greater than zero")
         self._native_plot.size_px(normalized_width, normalized_height)
         self._state["sizePx"] = [normalized_width, normalized_height]
+        self._invalidate_snapshot_cache()
+        return self
+
+    def dpi(self, dpi: int) -> "Plot":
+        """Set output dots per inch, scaling the exported pixels from ``size_px``."""
+        normalized = int(dpi)
+        if normalized < 1:
+            raise ValueError("plot dpi must be greater than zero")
+        self._native_plot.dpi(normalized)
+        self._state["dpi"] = normalized
         self._invalidate_snapshot_cache()
         return self
 
@@ -1000,8 +1171,10 @@ class Plot:
 
         ``color`` takes a hex string (``"#2563eb"``) or a named color,
         ``linestyle`` one of solid/dashed/dotted/dash-dot/dash-dot-dot, and
-        ``marker`` one of circle/square/triangle/diamond/plus/cross/star and
-        their ``-open``/``-down`` variants.
+        ``marker`` one of circle/square/triangle/triangle-down/diamond/plus/
+        cross/star/circle-open/square-open/triangle-open/diamond-open. The
+        matplotlib shorthands (``"o"``, ``"^"``, ``"--"``, ``":"``, ...) work
+        wherever a marker or line style name does.
         """
         x_values, native_x, x_observable = self._build_native_numeric_source(
             _column_values(data, x), "line x"
@@ -1488,7 +1661,7 @@ class Plot:
         if self._snapshot_dirty or self._snapshot_cache is None:
             self._snapshot_cache = _materialize(self._state)
             self._snapshot_dirty = False
-        return cast(PlotSnapshot, deepcopy(self._snapshot_cache))
+        return cast(PlotSnapshot, _copy_materialized(self._snapshot_cache))
 
     def _track_observable(self, observable: ObservableSeries, series: dict[str, Any], key: str) -> None:
         self._observable_bindings.append((observable, series, key))
@@ -1501,8 +1674,19 @@ class Plot:
         guard_token = observable._attach_resize_guard(self._guard_observable_resize)
         weakref.finalize(self, observable._detach_resize_guard, guard_token)
 
-    def _guard_observable_resize(self, observable: ObservableSeries, new_length: int) -> None:
-        """Reject an observable length change that would break a bound series."""
+    def _guard_observable_resize(
+        self,
+        observable: ObservableSeries,
+        new_length: int,
+        prospective: dict[int, int],
+    ) -> None:
+        """Reject an observable length change that would break a bound series.
+
+        ``prospective`` maps observable ids onto their planned lengths, so a
+        sibling input that resizes alongside ``observable`` is compared at the
+        length it is about to take. Sources are visited in sorted order to keep
+        the reported sibling deterministic.
+        """
         source_owner = {id(series[key]): bound for bound, series, key in self._observable_bindings}
         for bound, series, key in self._observable_bindings:
             if bound is not observable:
@@ -1513,14 +1697,18 @@ class Plot:
                     f"cannot resize observable to {new_length} values: bar categories "
                     f"have length {len(series['categories'])}"
                 )
-            for other_key in _SERIES_KINDS[kind].sources:
+            for other_key in sorted(_SERIES_KINDS[kind].sources):
                 if other_key == key:
                     continue
                 sibling = series[other_key]
                 owner = source_owner.get(id(sibling))
                 if owner is observable:
                     continue
-                sibling_length = len(sibling["values"]) if owner is None else len(owner._values)
+                sibling_length = (
+                    len(sibling["values"])
+                    if owner is None
+                    else prospective.get(id(owner), len(owner._values))
+                )
                 if sibling_length != new_length:
                     raise ValueError(
                         f"cannot resize observable to {new_length} values: {kind} series "
@@ -1586,9 +1774,9 @@ class Plot3D:
         z: ArrayLike | str,
         data: DataSource,
     ) -> "Plot3D":
-        x_values = _to_numeric_1d(_column_values(data, x), f"{kind} x")
-        y_values = _to_numeric_1d(_column_values(data, y), f"{kind} y")
-        z_values = _to_numeric_1d(_column_values(data, z), f"{kind} z")
+        x_values = _to_static_numeric_1d(_column_values(data, x), kind, "x")
+        y_values = _to_static_numeric_1d(_column_values(data, y), kind, "y")
+        z_values = _to_static_numeric_1d(_column_values(data, z), kind, "z")
         if len({len(x_values), len(y_values), len(z_values)}) != 1:
             raise ValueError(f"{kind} x, y, and z inputs must have the same length")
         getattr(self._native_plot, kind)(x_values, y_values, z_values)
@@ -1603,9 +1791,9 @@ class Plot3D:
         z: MatrixLike | str,
         data: DataSource,
     ) -> "Plot3D":
-        x_values = _to_numeric_1d(_column_values(data, x), f"{kind} x")
-        y_values = _to_numeric_1d(_column_values(data, y), f"{kind} y")
-        z_values = _to_numeric_2d(_column_values(data, z), f"{kind} z")
+        x_values = _to_static_numeric_1d(_column_values(data, x), kind, "x")
+        y_values = _to_static_numeric_1d(_column_values(data, y), kind, "y")
+        z_values = _to_numeric_2d(_reject_observable(_column_values(data, z), kind), f"{kind} z")
         shape = (int(z_values.shape[0]), int(z_values.shape[1]))
         expected = (len(y_values), len(x_values))
         if shape != expected:
@@ -1662,18 +1850,21 @@ class Plot3D:
 
     def size_px(self, width: int, height: int) -> "Plot3D":
         """Set the exported image dimensions in pixels."""
-        if width <= 0 or height <= 0:
+        normalized_width = int(width)
+        normalized_height = int(height)
+        if normalized_width <= 0 or normalized_height <= 0:
             raise ValueError("3D plot dimensions must be greater than zero")
-        self._native_plot.size_px(int(width), int(height))
-        self._state["sizePx"] = [int(width), int(height)]
+        self._native_plot.size_px(normalized_width, normalized_height)
+        self._state["sizePx"] = [normalized_width, normalized_height]
         return self
 
     def dpi(self, dpi: int) -> "Plot3D":
         """Set output dots per inch while preserving ``size_px`` dimensions."""
-        if dpi <= 0:
+        normalized = int(dpi)
+        if normalized <= 0:
             raise ValueError("3D plot dpi must be greater than zero")
-        self._native_plot.dpi(int(dpi))
-        self._state["dpi"] = int(dpi)
+        self._native_plot.dpi(normalized)
+        self._state["dpi"] = normalized
         return self
 
     def theme(self, theme: Theme) -> "Plot3D":

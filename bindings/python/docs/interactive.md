@@ -109,9 +109,9 @@ In practice:
 ### Styling in the Widget
 
 Series style keywords and the plot-level `legend`, `grid`, limit, and scale
-settings are carried in the widget's snapshot, but the WASM runtime does not
-paint them yet — it draws size, theme, ticks, title, and axis labels. Static
-export (`save()`, `render_png()`, `render_svg()`) renders every style setting.
+settings are carried in the widget's snapshot and painted by the WASM runtime,
+matching static export. Snapshots also carry a `schemaVersion`, and the widget
+ignores fields it does not know, so notebooks keep working across versions.
 
 ## Desktop Windows
 

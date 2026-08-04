@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import gc
+import threading
 from functools import lru_cache
 import weakref
 from copy import copy, deepcopy
@@ -852,6 +853,7 @@ def test_invalid_series_config_values_are_rejected(
 
 
 PLOT_SETTING_CASES = [
+    ("dpi", lambda plot: plot.dpi(200), "dpi", 200),
     ("legend", lambda plot: plot.legend("upper_left"), "legend", "upper_left"),
     ("grid", lambda plot: plot.grid(False), "grid", False),
     ("xlim", lambda plot: plot.xlim(0.0, 2000.0), "xLim", [0.0, 2000.0]),
@@ -890,12 +892,14 @@ def test_plot_level_setting_renders_and_round_trips(
 def test_plot_level_settings_default_to_absent() -> None:
     snapshot = _plot_setting_base().to_snapshot()
 
-    assert not {"legend", "grid", "xLim", "yLim", "xScale", "yScale"} & set(snapshot)
+    assert not {"dpi", "legend", "grid", "xLim", "yLim", "xScale", "yScale"} & set(snapshot)
 
 
 @pytest.mark.parametrize(
     ("apply", "message"),
     [
+        (lambda plot: plot.dpi(0), "plot dpi must be greater than zero"),
+        (lambda plot: plot.dpi(0.5), "plot dpi must be greater than zero"),
         (lambda plot: plot.legend("nowhere"), "unsupported legend position"),
         (lambda plot: plot.xscale("logarithmic"), "unsupported axis scale"),
         (lambda plot: plot.xscale("symlog", 0.0), "linthresh must be a finite positive number"),
@@ -1104,3 +1108,168 @@ def test_native_handle_validates_numeric_style_ranges(method, args, style, messa
 
     with pytest.raises(ValueError, match=message):
         getattr(handle, method)(*args, style)
+
+
+def test_native_handle_rejects_zero_dpi() -> None:
+    handle = ruviz._native.NativePlotHandle()
+
+    with pytest.raises(ValueError, match="plot dpi must be greater than zero"):
+        handle.dpi(0)
+
+
+MARKER_ALIAS_CASES = sorted(ruviz._api._MARKER_ALIASES.items())
+LINESTYLE_ALIAS_CASES = sorted(ruviz._api._LINESTYLE_ALIASES.items())
+
+
+@pytest.mark.parametrize(
+    ("shorthand", "canonical"),
+    MARKER_ALIAS_CASES,
+    ids=[canonical for _, canonical in MARKER_ALIAS_CASES],
+)
+def test_marker_shorthand_renders_as_its_canonical_name(shorthand: str, canonical: str) -> None:
+    alias = _styled_base().line(STYLE_X, STYLE_Y, marker=shorthand)
+    expected = _styled_base().line(STYLE_X, STYLE_Y, marker=canonical)
+
+    assert alias.to_snapshot()["series"][0]["style"] == {"marker": canonical}
+    assert alias.render_png() == expected.render_png()
+    assert _styled_base().line(STYLE_X, STYLE_Y, marker=shorthand.upper()).render_png() == (
+        expected.render_png()
+    )
+
+
+@pytest.mark.parametrize(
+    ("shorthand", "canonical"),
+    LINESTYLE_ALIAS_CASES,
+    ids=[canonical for _, canonical in LINESTYLE_ALIAS_CASES],
+)
+def test_linestyle_shorthand_renders_as_its_canonical_name(shorthand: str, canonical: str) -> None:
+    alias = _styled_base().line(STYLE_X, STYLE_Y, linestyle=shorthand)
+    expected = _styled_base().line(STYLE_X, STYLE_Y, linestyle=canonical)
+
+    assert alias.to_snapshot()["series"][0]["style"] == {"linestyle": canonical}
+    assert alias.render_png() == expected.render_png()
+
+
+def _source_kinds(snapshot: dict[str, object]) -> set[str]:
+    return {
+        source["kind"]
+        for series in snapshot["series"]
+        for source in series.values()
+        if isinstance(source, dict) and "kind" in source
+    }
+
+
+def test_clone_marks_frozen_observable_sources_static() -> None:
+    source = ruviz.observable([1.0, 2.0, 3.0])
+    plot = ruviz.plot().line([0.0, 1.0, 2.0], source).histogram(source)
+
+    clone = plot.clone()
+
+    assert _source_kinds(clone.to_snapshot()) == {"static"}
+    assert "observable" in _source_kinds(plot.to_snapshot())
+    assert clone.render_png().startswith(PNG_HEADER)
+
+
+def test_render_png_works_from_a_worker_thread() -> None:
+    plot = ruviz.plot().size_px(200, 150).line([0.0, 1.0, 2.0], [0.0, 1.0, 4.0])
+    rendered: list[bytes] = []
+
+    thread = threading.Thread(target=lambda: rendered.append(plot.render_png()))
+    thread.start()
+    thread.join()
+
+    assert rendered[0].startswith(PNG_HEADER)
+    assert rendered[0] == plot.render_png()
+
+
+def test_observable_set_at_works_from_a_worker_thread() -> None:
+    source = ruviz.observable([1.0, 2.0, 3.0])
+    plot = ruviz.plot().line([0.0, 1.0, 2.0], source)
+
+    thread = threading.Thread(target=lambda: source.set_at(0, 9.0))
+    thread.start()
+    thread.join()
+
+    assert source.snapshot_values() == [9.0, 2.0, 3.0]
+    assert plot.to_snapshot()["series"][0]["y"]["values"] == [9.0, 2.0, 3.0]
+
+
+def test_sibling_series_derived_from_one_source_resize_together() -> None:
+    x = ruviz.observable([1.0, 2.0, 3.0])
+    y = np.sin(x)
+    plot = ruviz.plot().line(x, y)
+
+    x.replace([1.0, 2.0, 3.0, 4.0])
+
+    assert len(x) == len(y) == 4
+    np.testing.assert_allclose(y.values(), np.sin(x.values()))
+    series = plot.to_snapshot()["series"][0]
+    assert series["x"]["values"] == [1.0, 2.0, 3.0, 4.0]
+    np.testing.assert_allclose(series["y"]["values"], np.sin([1.0, 2.0, 3.0, 4.0]))
+    assert plot.render_png().startswith(PNG_HEADER)
+
+
+def test_diamond_derivation_graph_resizes_and_settles() -> None:
+    source = ruviz.observable([1.0, 2.0, 3.0])
+    doubled = source * 2.0
+    shifted = source + 1.0
+    combined = doubled + shifted
+    plot = ruviz.plot().line(source, combined)
+
+    source.replace([1.0, 2.0, 3.0, 4.0])
+
+    assert [len(node) for node in (source, doubled, shifted, combined)] == [4, 4, 4, 4]
+    assert doubled.snapshot_values() == [2.0, 4.0, 6.0, 8.0]
+    assert shifted.snapshot_values() == [2.0, 3.0, 4.0, 5.0]
+    assert combined.snapshot_values() == [4.0, 7.0, 10.0, 13.0]
+    assert plot.to_snapshot()["series"][0]["y"]["values"] == [4.0, 7.0, 10.0, 13.0]
+    assert plot.render_png().startswith(PNG_HEADER)
+
+
+def test_uneven_derivation_paths_to_one_child_resize_and_settle() -> None:
+    source = ruviz.observable([1.0, 2.0, 3.0])
+    short = source * 2.0
+    long_first = source + 1.0
+    long_second = long_first * 3.0
+    combined = short + long_second
+
+    source.replace([1.0, 2.0, 3.0, 4.0])
+
+    assert [len(node) for node in (short, long_first, long_second, combined)] == [4, 4, 4, 4]
+    assert combined.snapshot_values() == [8.0, 13.0, 18.0, 23.0]
+
+
+@pytest.mark.parametrize(
+    ("build", "message"),
+    [
+        (lambda: ruviz.plot().line("time", "value"), "line x is a string"),
+        (lambda: ruviz.plot().scatter([0.0, 1.0], "value"), "scatter y is a string"),
+        (lambda: ruviz.plot().bar("category", [1.0, 2.0]), "bar categories is a string"),
+        (lambda: ruviz.observable("values"), "observable values is a string"),
+    ],
+    ids=["line-x", "scatter-y", "bar-categories", "observable"],
+)
+def test_string_inputs_without_data_report_the_missing_lookup(build, message: str) -> None:
+    with pytest.raises(TypeError, match=f"{message}; pass data="):
+        build()
+
+
+def test_bar_categories_reject_observables() -> None:
+    source = ruviz.observable([1.0, 2.0])
+
+    with pytest.raises(TypeError, match="bar categories does not support ObservableSeries"):
+        ruviz.plot().bar(source, [1.0, 2.0])
+
+
+def test_observable_supports_len_and_integer_indexing() -> None:
+    source = ruviz.observable([1.0, 2.0, 3.0])
+
+    assert len(source) == 3
+    assert source[0] == 1.0
+    assert source[-1] == 3.0
+
+    with pytest.raises(IndexError):
+        source[3]
+
+    with pytest.raises(TypeError, match="indices must be integers"):
+        source[0:2]

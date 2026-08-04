@@ -101,17 +101,21 @@ renderer honors for it:
 - `marker` is one of `circle`, `square`, `triangle`, `triangle-down`, `diamond`,
   `plus`, `cross`, `star`, `circle-open`, `square-open`, `triangle-open`,
   `diamond-open`.
+- The matplotlib shorthands are accepted as aliases — `"o"`, `"s"`, `"^"`,
+  `"v"`, `"D"`, `"+"`, `"x"`, `"*"` for `marker` and `"-"`, `"--"`, `":"`,
+  `"-."` for `linestyle` — and snapshots store the canonical name.
 - Unsupported names raise `ValueError` listing the accepted values at the call
   that used them, not at render time.
 
 Plot-level settings are `legend(position="best")` — `"best"` plus lowercase
 position names such as `"upper_right"`, `"center"`, or `"outside_right"` —
-`grid(enabled=True)`, `xlim(min, max)`, `ylim(min, max)`, and
+`grid(enabled=True)`, `dpi(dpi)`, `xlim(min, max)`, `ylim(min, max)`, and
 `xscale(scale, linthresh=None)` / `yscale(...)` with `"linear"`, `"log"`, or
-`"symlog"`.
+`"symlog"`. `dpi` scales the exported pixels from `size_px(...)`, so
+`size_px(640, 480).dpi(200)` writes a 1280×960 image.
 
-Notebook widgets carry these settings in their snapshot but do not paint them
-yet; the WASM runtime renders styled series in a later phase.
+Notebook widgets render these settings too: the WASM runtime applies series
+styles, `legend`, `grid`, axis limits, and axis scales from the snapshot.
 
 ## Notebook and Desktop Usage
 
@@ -158,8 +162,12 @@ y.replace(np.cos(x))
 
 `replace()` is atomic: when the new length would break a bound series — directly
 or through a derived observable — it raises `ValueError` before anything
-mutates. `deepcopy(plot)` creates an independent live copy with fresh
-observables, while `plot.clone()` remains a static snapshot copy.
+mutates. Derived observables resize along with their source, so a plot of `x`
+against `np.sin(x)` stays consistent when `x` grows, and writing to an
+observable with `replace()` or `set_at()` permanently detaches it from its own
+sources. `len(series)` and `series[i]` read the current values.
+`deepcopy(plot)` creates an independent live copy with fresh observables, while
+`plot.clone()` remains a static snapshot copy.
 
 ## Experimental 3D Alpha
 

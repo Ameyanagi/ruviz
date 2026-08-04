@@ -129,7 +129,10 @@ plot = (
 color such as `"red"`, `"orange"`, `"teal"`, or `"crimson"`. `linestyle` is one
 of `solid`, `dashed`, `dotted`, `dash-dot`, `dash-dot-dot`, and `marker` is one
 of `circle`, `square`, `triangle`, `triangle-down`, `diamond`, `plus`, `cross`,
-`star`, `circle-open`, `square-open`, `triangle-open`, `diamond-open`.
+`star`, `circle-open`, `square-open`, `triangle-open`, `diamond-open`. The
+matplotlib shorthands work too: `"o"`, `"s"`, `"^"`, `"v"`, `"D"`, `"+"`, `"x"`,
+`"*"` for markers and `"-"`, `"--"`, `":"`, `"-."` for line styles; snapshots
+store the canonical name they resolve to.
 Unsupported names raise `ValueError` listing the accepted values, at the call
 that used them rather than at render time; an unknown color name also gets a
 "did you mean" suggestion.
@@ -154,13 +157,15 @@ Plot-level settings:
 - `legend(position="best")` — `"best"` plus the core positions as lowercase
   names, such as `"upper_right"`, `"center"`, or `"outside_right"`
 - `grid(enabled=True)`
+- `dpi(dpi)` — scales the exported pixels from `size_px(...)`, so
+  `size_px(640, 480).dpi(200)` exports a 1280×960 image
 - `xlim(min, max)` / `ylim(min, max)` — finite and strictly ascending
 - `xscale(scale, linthresh=None)` / `yscale(...)` — `"linear"`, `"log"`, or
   `"symlog"`, where `linthresh` (default `1.0`) applies to `"symlog"` only
 
 All of these round-trip through `to_snapshot()`, `clone()`, and `deepcopy`.
-Notebook widgets carry them in the snapshot but do not paint them yet; the WASM
-runtime renders styled series in a later phase.
+Notebook widgets render them too: the WASM runtime applies series styles and
+the plot-level settings from the snapshot.
 
 ## Validation Worth Knowing
 
@@ -177,7 +182,8 @@ time, so a mistake surfaces with the arguments still in scope.
   `Series` is a direct value — pass it positionally.
 - **`save()` accepts `.png`, `.svg`, and `.pdf` only.** Any other extension, or
   a path without one, raises `ValueError`.
-- **`size_px(width, height)`** raises `ValueError` on a non-positive dimension.
+- **`size_px(width, height)`** and **`dpi(dpi)`** raise `ValueError` on a
+  non-positive value, including one that truncates to zero.
 - **`theme()`** is case-insensitive and raises `ValueError` on an unknown name.
 - **Axis limits** must be finite and strictly ascending, and `linthresh` must be
   a finite positive number that only applies to the `"symlog"` scale.
