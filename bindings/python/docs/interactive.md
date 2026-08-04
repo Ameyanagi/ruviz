@@ -69,10 +69,49 @@ signal = np.sin((phase * 2.0) + 0.5)
 
 Derived observables detach on the first direct write, so `signal.set_at(...)`
 turns `signal` into an independent mutable series without mutating `phase`.
+
+### Which Plot Kinds Track Observables
+
 Live observable updates are supported by `line`, `scatter`, `bar`, `histogram`,
-`boxplot`, `error_bars`, and `error_bars_xy`. Plot types such as `heatmap`,
-`kde`, `ecdf`, `contour`, `pie`, `radar`, `violin`, and `polar_line` snapshot
-their data when added.
+`boxplot`, `error_bars`, and `error_bars_xy`. The remaining kinds — `kde`,
+`ecdf`, `contour`, `pie`, `violin`, `polar_line`, `heatmap`, and `radar` —
+cannot track a live source and raise `TypeError` when handed one. Pass
+`series.snapshot_values()` to add a static copy of the current values instead.
+
+### Resizing Is Atomic
+
+`set_at(index, value)` never changes the length, so it always succeeds.
+`replace(values)` may change the length, and that is where a plot can veto the
+write: before anything mutates, `replace()` walks every series bound to this
+observable *and* every series bound to an observable derived from it. If any of
+them would end up with mismatched inputs, it raises `ValueError` and the whole
+graph is left untouched.
+
+```python
+y = ruviz.observable([1.0, 2.0, 3.0])
+plot = ruviz.plot().line([0, 1, 2], y)
+
+y.replace([3.0, 2.0, 1.0])       # fine: same length
+y.replace([1.0, 2.0, 3.0, 4.0])  # ValueError: the static x still has length 3
+```
+
+In practice:
+
+- Single-vector kinds (`histogram`, `boxplot`) accept a resize freely.
+- A kind with sibling inputs (`line`, `scatter`, `error_bars`,
+  `error_bars_xy`, and `bar` with its category labels) rejects a resize that
+  would desynchronize them, so those series are effectively fixed-length once
+  bound.
+- An observable that is not bound to any plot resizes freely.
+- Deriving `y2 = y * 2.0` and plotting `y2` still guards `y`: resizing `y` is
+  rejected if the resize would break the series bound to `y2`.
+
+### Styling in the Widget
+
+Series style keywords and the plot-level `legend`, `grid`, limit, and scale
+settings are carried in the widget's snapshot, but the WASM runtime does not
+paint them yet — it draws size, theme, ticks, title, and axis labels. Static
+export (`save()`, `render_png()`, `render_svg()`) renders every style setting.
 
 ## Desktop Windows
 

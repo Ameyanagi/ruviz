@@ -18,7 +18,8 @@ def build_template():
         base_plot("Deepcopy Template")
         .xlabel("time")
         .ylabel("signal")
-        .line(x, y)
+        .line(x, y, label="baseline", color="#2563eb", width=2.0)
+        .legend("upper_right")
     )
 
 
@@ -27,7 +28,7 @@ def build_plot():
     template = build_template()
     variant = deepcopy(template).title("Deepcopy Template Copy")
     shifted = [value * 0.65 + 0.35 for value in y]
-    return variant.line(x, shifted)
+    return variant.line(x, shifted, label="variant", color="orange", linestyle="dashed")
 
 
 if __name__ == "__main__":

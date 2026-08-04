@@ -1,9 +1,11 @@
-# ruviz for Python
+# ruviz
 
-`ruviz` for Python wraps the Rust plotting runtime with a fluent Python API,
-static export helpers, native desktop `show()`, and notebook widget support.
-It requires Python 3.10 or newer, and the base install only needs NumPy for
-inputs and static rendering.
+Rust-powered plotting for Python. `ruviz` wraps the [ruviz](https://github.com/Ameyanagi/ruviz)
+rendering engine in a fluent, fully typed Python API: build a plot by chaining
+method calls, then export it to PNG, SVG, or PDF, display it in a Jupyter cell,
+drive it live from an observable, or open it in a native desktop window. NumPy
+arrays cross into Rust with a single `memcpy` and rendering runs with the GIL
+released, so million-point series stay interactive.
 
 ## Install
 
@@ -11,24 +13,19 @@ inputs and static rendering.
 pip install ruviz
 ```
 
-Notebook widgets (`plot.widget()` and `RuvizWidget`) need the optional
-`widget` extra:
+The base install pulls in NumPy only. Everything else is an extra:
 
-```sh
-pip install "ruviz[widget]"
-```
+| Extra | Install | Adds |
+| --- | --- | --- |
+| — | `pip install ruviz` | Static PNG/SVG/PDF export, native `show()`, static notebook display |
+| `widget` | `pip install "ruviz[widget]"` | `anywidget` + `traitlets` for `plot.widget()` and `RuvizWidget` |
+| `pandas` | `pip install "ruviz[pandas]"` | pandas `DataFrame` columns through `data=` |
+| `polars` | `pip install "ruviz[polars]"` | Polars `DataFrame` columns through `data=` |
+| `dataframes` | `pip install "ruviz[dataframes]"` | Both dataframe backends |
+| `all` | `pip install "ruviz[all]"` | Every extra |
 
-If you want pandas or Polars dataframe inputs, install the matching optional
-extra:
-
-```sh
-pip install "ruviz[dataframes]"
-# or only one dataframe backend:
-pip install "ruviz[pandas]"
-pip install "ruviz[polars]"
-# or everything at once:
-pip install "ruviz[all]"
-```
+`import ruviz` works without any extra; `plot.widget()` and `ruviz.RuvizWidget`
+raise an `ImportError` that names `ruviz[widget]` when the extra is missing.
 
 ## Quick Start
 
@@ -36,47 +33,53 @@ pip install "ruviz[all]"
 import numpy as np
 import ruviz
 
-x = np.linspace(0.0, 4.0, 50)
-y = x**2
+x = np.linspace(0.5, 12.0, 60)
+fast = 8.0 * np.exp(-x * 0.62)
+slow = 6.0 * np.exp(-x * 0.22)
 
 (
     ruviz.plot()
-    .line(x, y)
-    .title("Quadratic")
-    .xlabel("x")
-    .ylabel("y = x^2")
-    .save("quadratic.png")
+    .size_px(760, 420)
+    .title("Decay Rates")
+    .xlabel("time")
+    .ylabel("intensity")
+    .line(x, fast, label="fast decay", color="#2563eb", width=2.0)
+    .line(x, slow, label="slow decay", color="orange", linestyle="dashed")
+    .yscale("log")
+    .grid(True)
+    .legend("upper_right")
+    .save("decay.png")
 )
 ```
+
+## Features
+
+- **15 plot types** — line, scatter, bar, histogram, boxplot, violin, kde, ecdf,
+  error bars (y and xy), heatmap, contour, pie, radar, polar line.
+- **Per-series styling** — labels, colors, alpha, widths, line styles, markers,
+  plus kind-specific `bins`, `bandwidth`, and `levels`.
+- **Axis control** — `legend()`, `grid()`, `xlim`/`ylim`, and linear, log, or
+  symlog scales.
+- **Static export** — `save()` writes PNG, SVG, or PDF; `render_png()` returns
+  bytes and `render_svg()` returns a string.
+- **Jupyter** — plots display as a static PNG by default; `plot.widget()` gives
+  you the synced, zoomable WASM widget with the `ruviz[widget]` extra.
+- **Live data** — `ruviz.observable(...)` series support elementwise arithmetic
+  and NumPy ufuncs, and push updates into attached widgets.
+- **DataFrames** — pandas, Polars, and plain dicts through `data=`.
+- **Experimental 3D alpha** — deterministic static export for `scatter3d`,
+  `line3d`, `surface`, and `wireframe`.
+- **Typed** — inline annotations with a `py.typed` marker, so a type checker
+  rejects a bad `marker=`, `linestyle=`, legend position, or axis scale before
+  the call reaches the renderer.
+- **Fast** — adding a 1,000,000-point line series takes about 1 ms (it was
+  141 ms before the arrays were passed as a single `memcpy`), and rendering,
+  saving, and native display all release the GIL.
 
 ## Styling
 
-Series take keyword-only style arguments, and the plot takes legend, grid,
-limit, and scale settings:
-
-```python,check
-import ruviz
-
-(
-    ruviz.plot()
-    .line([0, 1, 2], [1.0, 2.5, 4.0], label="Revenue", color="#2563eb", width=2.0)
-    .scatter([0, 1, 2], [1.2, 2.2, 3.6], label="Samples", marker="diamond", marker_size=8.0)
-    .legend("upper_left")
-    .grid(True)
-    .ylim(0.0, 5.0)
-    .yscale("log")
-    .save("styled.png")
-)
-```
-
-- `color` takes a hex string (`"#2563eb"`, `"#25f"`, `"#2563eb80"`) or a named
-  color such as `"red"`.
-- `linestyle` is one of `solid`, `dashed`, `dotted`, `dash-dot`, `dash-dot-dot`.
-- `marker` is one of `circle`, `square`, `triangle`, `triangle-down`, `diamond`,
-  `plus`, `cross`, `star`, and the `-open` variants.
-- Unsupported names raise `ValueError` listing the accepted values at the call
-  that used them.
-- Supported per series kind:
+Series style arguments are keyword-only, and each kind accepts exactly what the
+renderer honors for it:
 
 | method | keywords |
 | --- | --- |
@@ -89,26 +92,39 @@ import ruviz
 | `ecdf`, `violin`, `polar_line`, `error_bars`, `error_bars_xy` | `label`, `color`, `alpha`, `width` |
 | `contour` | `alpha`, `width`, `levels` |
 
-Plot-level settings are `legend(position="best")`, `grid(enabled=True)`,
-`xlim(min, max)`, `ylim(min, max)`, and `xscale(scale, linthresh=None)` /
-`yscale(...)` with `"linear"`, `"log"`, or `"symlog"`.
+`heatmap`, `pie`, and `radar` take no style keywords.
+
+- `color` takes a hex string (`"#2563eb"`, `"#25f"`, `"#2563eb80"`) or a named
+  color such as `"red"`, `"orange"`, `"teal"`, or `"crimson"`; a typo raises
+  `ValueError` with a "did you mean" suggestion.
+- `linestyle` is one of `solid`, `dashed`, `dotted`, `dash-dot`, `dash-dot-dot`.
+- `marker` is one of `circle`, `square`, `triangle`, `triangle-down`, `diamond`,
+  `plus`, `cross`, `star`, `circle-open`, `square-open`, `triangle-open`,
+  `diamond-open`.
+- Unsupported names raise `ValueError` listing the accepted values at the call
+  that used them, not at render time.
+
+Plot-level settings are `legend(position="best")` — `"best"` plus lowercase
+position names such as `"upper_right"`, `"center"`, or `"outside_right"` —
+`grid(enabled=True)`, `xlim(min, max)`, `ylim(min, max)`, and
+`xscale(scale, linthresh=None)` / `yscale(...)` with `"linear"`, `"log"`, or
+`"symlog"`.
 
 Notebook widgets carry these settings in their snapshot but do not paint them
 yet; the WASM runtime renders styled series in a later phase.
 
 ## Notebook and Desktop Usage
 
-- In Jupyter, `plot.show()` displays a static PNG in the cell output.
+- In Jupyter, a bare plot result and `plot.show()` both display a static PNG.
 - Use `plot.widget()` when you want the synced WASM-backed notebook widget.
 - `plot.size_px(width, height)` also controls the widget's displayed size and aspect ratio.
 - Without `size_px(...)`, the widget uses the default PNG size (`640x480`) and shrinks proportionally if the notebook column is narrower.
-- Drag the widget's bottom-right handle to resize the display freely.
-- Hold `Shift` or `Ctrl` while dragging the handle to preserve the current aspect ratio.
-- In the widget, right click opens the export menu and right drag performs box zoom.
+- Drag the widget's bottom-right handle to resize the display freely; hold `Shift` or `Ctrl` while dragging to preserve the aspect ratio.
+- In the widget, the mouse wheel zooms, left drag pans, right drag box-zooms, and right click opens the export menu.
 - Outside notebooks, `plot.show()` opens the native interactive window.
 - The published Linux wheel focuses on static rendering and notebook widgets. Install from source on Linux if you need the native desktop `plot.show()` window.
 - `plot.render_png()` returns PNG bytes and `plot.render_svg()` returns an SVG string.
-- `plot.save(path)` writes PNG, SVG, or PDF according to the file extension and returns the output `Path`; any other extension raises `ValueError`.
+- `plot.save(path)` writes PNG, SVG, or PDF according to the file extension and returns the output `Path`; any other extension, or a path without one, raises `ValueError`.
 
 ## Reactive Notebook Data
 
@@ -140,8 +156,10 @@ plot.line(x, scaled)
 y.replace(np.cos(x))
 ```
 
-`deepcopy(plot)` creates an independent live copy with fresh observables, while
-`plot.clone()` remains a static snapshot copy.
+`replace()` is atomic: when the new length would break a bound series — directly
+or through a derived observable — it raises `ValueError` before anything
+mutates. `deepcopy(plot)` creates an independent live copy with fresh
+observables, while `plot.clone()` remains a static snapshot copy.
 
 ## Experimental 3D Alpha
 
@@ -175,11 +193,23 @@ the default; `.perspective_deg(45.0)` opts into perspective. This alpha is
 static-only in Python: interactive orbit widgets, transparency, volume plots,
 arbitrary meshes, and mixed 2D/3D axes are not yet exposed.
 
+## Supported Python Versions and Platforms
+
+- Python 3.10 or newer. Wheels are built as a single `abi3` artifact per
+  platform and are tested against 3.10 and 3.13.
+- Wheels: macOS x86\_64 and arm64, Windows x86\_64, Linux x86\_64 and aarch64
+  (manylinux 2\_28). A source distribution is published as well.
+- The Linux wheels are built without the native interactive backend, so
+  `plot.show()` raises there and asks you to install from source.
+
 ## Documentation
 
-- Python docs source: `bindings/python/docs/`
-- Python examples: `bindings/python/examples/`
-- Root project README: <https://github.com/Ameyanagi/ruviz/blob/main/README.md>
+- [Python docs source](https://github.com/Ameyanagi/ruviz/tree/main/bindings/python/docs)
+  — getting started, interactivity, gallery, and the generated API reference
+- [Python examples](https://github.com/Ameyanagi/ruviz/tree/main/bindings/python/examples)
+  — the runnable scripts the gallery is generated from
+- [Project README](https://github.com/Ameyanagi/ruviz/blob/main/README.md) and
+  [Rust API docs](https://docs.rs/ruviz)
 
 ## Contributor Workflow
 

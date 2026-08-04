@@ -23,6 +23,7 @@ pip install "ruviz[all]"
 `anywidget` and `traitlets` come with `ruviz[widget]`, and pandas and Polars
 are optional. Calling `plot.widget()` or importing `ruviz.RuvizWidget` without
 the widget extra raises an `ImportError` that names the extra to install.
+`ruviz.__version__` reports the installed distribution version.
 
 For local contributor builds:
 
@@ -125,11 +126,13 @@ plot = (
 ```
 
 `color` accepts a hex string (`"#2563eb"`, `"#25f"`, `"#2563eb80"`) or a named
-color such as `"red"`. `linestyle` is one of `solid`, `dashed`, `dotted`,
-`dash-dot`, `dash-dot-dot`, and `marker` is one of `circle`, `square`,
-`triangle`, `triangle-down`, `diamond`, `plus`, `cross`, `star`, and their
-`-open` variants. Unsupported names raise `ValueError` listing the accepted
-values, at the call that used them rather than at render time.
+color such as `"red"`, `"orange"`, `"teal"`, or `"crimson"`. `linestyle` is one
+of `solid`, `dashed`, `dotted`, `dash-dot`, `dash-dot-dot`, and `marker` is one
+of `circle`, `square`, `triangle`, `triangle-down`, `diamond`, `plus`, `cross`,
+`star`, `circle-open`, `square-open`, `triangle-open`, `diamond-open`.
+Unsupported names raise `ValueError` listing the accepted values, at the call
+that used them rather than at render time; an unknown color name also gets a
+"did you mean" suggestion.
 
 Which keywords a series takes follows what the renderer honors for that kind:
 
@@ -158,6 +161,30 @@ Plot-level settings:
 All of these round-trip through `to_snapshot()`, `clone()`, and `deepcopy`.
 Notebook widgets carry them in the snapshot but do not paint them yet; the WASM
 runtime renders styled series in a later phase.
+
+## Validation Worth Knowing
+
+The API rejects ambiguous input at the call that made it rather than at render
+time, so a mistake surfaces with the arguments still in scope.
+
+- **1D means 1D.** Numeric inputs to a 1D series must be one-dimensional; a 2D
+  array raises `TypeError` instead of being silently flattened. `heatmap` is
+  the exception and takes a rectangular 2D matrix, and `contour` takes a `z`
+  that is already flattened row-major (`len(z) == len(x) * len(y)`).
+- **A DataFrame is never a vector.** Passing one positionally raises
+  `TypeError`; select a column or use `data=`.
+- **`data=` takes a DataFrame or a dict**, not a Series. A pandas or Polars
+  `Series` is a direct value — pass it positionally.
+- **`save()` accepts `.png`, `.svg`, and `.pdf` only.** Any other extension, or
+  a path without one, raises `ValueError`.
+- **`size_px(width, height)`** raises `ValueError` on a non-positive dimension.
+- **`theme()`** is case-insensitive and raises `ValueError` on an unknown name.
+- **Axis limits** must be finite and strictly ascending, and `linthresh` must be
+  a finite positive number that only applies to the `"symlog"` scale.
+- **Style names are checked eagerly.** An unknown color, line style, marker,
+  legend position, or scale raises `ValueError` listing the accepted values,
+  and an unknown color adds a "did you mean" suggestion.
+- **Observables only go where they can be tracked** — see Reactive Data below.
 
 ## Plot Lifecycle
 
@@ -190,6 +217,11 @@ Live observables are passed through to the native renderer for `line`,
 `scatter`, `bar`, `histogram`, `boxplot`, `error_bars`, and `error_bars_xy`.
 Other plot types cannot track observables and raise `TypeError` when given one;
 pass `series.snapshot_values()` if you want a static copy.
+
+`source.replace(...)` may change the length, but only when every series bound to
+`source` — or to an observable derived from it — still holds together
+afterwards. Otherwise it raises `ValueError` and nothing mutates. See
+[Interactivity](interactive.md) for the details.
 
 ## Examples
 

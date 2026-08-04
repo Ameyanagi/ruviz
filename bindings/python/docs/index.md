@@ -11,8 +11,11 @@ API with three main workflows:
 
 - the same plot builder works across scripts, notebooks, and desktop sessions
 - pandas, Polars, dict, and array-like inputs work through the same API
+- fifteen 2D plot types with per-series styling and full axis control
 - notebook widgets reuse the browser runtime instead of a separate Python-only frontend
 - native static export stays in Rust; `save()` writes PNG, SVG, or PDF files
+- inline types with a `py.typed` marker, so checkers catch bad style names early
+- NumPy arrays reach the renderer as a single `memcpy`, and rendering releases the GIL
 
 ## Install
 
@@ -32,15 +35,17 @@ import numpy as np
 import ruviz
 
 x = np.linspace(0.0, 4.0, 50)
-y = x**2
 
 (
     ruviz.plot()
-    .line(x, y)
-    .title("Quadratic")
+    .line(x, x**2, label="x^2", color="#2563eb", width=2.0)
+    .line(x, x**1.5, label="x^1.5", color="orange", linestyle="dashed")
+    .title("Power Curves")
     .xlabel("x")
-    .ylabel("y = x^2")
-    .save("quadratic.png")
+    .ylabel("y")
+    .grid(True)
+    .legend("upper_left")
+    .save("power-curves.png")
 )
 ```
 

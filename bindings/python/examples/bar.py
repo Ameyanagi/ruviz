@@ -12,7 +12,11 @@ META = ExampleMeta(
 
 def build_plot():
     categories, values = categorical_series()
-    return base_plot("Runtime Coverage").ylabel("score").bar(categories, values)
+    return (
+        base_plot("Runtime Coverage")
+        .ylabel("score")
+        .bar(categories, values, color="#0ea5e9", alpha=0.85)
+    )
 
 
 if __name__ == "__main__":

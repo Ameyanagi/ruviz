@@ -5,7 +5,7 @@ from _shared import ExampleMeta, base_plot, save_example, scatter_series
 META = ExampleMeta(
     slug="scatter",
     title="Scatter plot",
-    summary="A scatter plot for irregular point clouds.",
+    summary="A scatter plot for irregular point clouds, with a custom marker.",
     section="Basic plots",
 )
 
@@ -16,7 +16,7 @@ def build_plot():
         base_plot("Scatter Plot")
         .xlabel("feature")
         .ylabel("response")
-        .scatter(x, y)
+        .scatter(x, y, color="#7c3aed", marker="circle-open", marker_size=7.0)
     )
 
 
