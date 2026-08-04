@@ -4,6 +4,78 @@ export type SessionMode = "main-thread" | "worker";
 export type PlotTheme = "light" | "dark";
 export type PlotSaveFormat = "png" | "svg";
 
+/** Line dash pattern accepted by `style.linestyle`. */
+export type LineStyleName = "solid" | "dashed" | "dotted" | "dash-dot" | "dash-dot-dot";
+
+/** Marker shape accepted by `style.marker`. */
+export type MarkerName =
+  | "circle"
+  | "square"
+  | "triangle"
+  | "triangle-down"
+  | "diamond"
+  | "plus"
+  | "cross"
+  | "star"
+  | "circle-open"
+  | "square-open"
+  | "triangle-open"
+  | "diamond-open";
+
+/** Legend placement; `best` auto-places the legend. */
+export type LegendPositionName =
+  | "best"
+  | "upper_right"
+  | "upper_left"
+  | "lower_left"
+  | "lower_right"
+  | "right"
+  | "center_left"
+  | "center_right"
+  | "lower_center"
+  | "upper_center"
+  | "center"
+  | "outside_right"
+  | "outside_left"
+  | "outside_upper"
+  | "outside_lower";
+
+/** Axis scale accepted by `xScale`/`yScale`. */
+export type AxisScaleName = "linear" | "log" | "symlog";
+
+/** Serialized axis scale; the trailing threshold applies to `symlog` only. */
+export type AxisScaleSnapshot = [scale: AxisScaleName, linthresh?: number];
+
+/**
+ * Per-series styling. Keys are camelCase to match the snapshot spelling shared
+ * with the Python binding; each maps to one core plot builder setter.
+ */
+export interface SeriesStyleSnapshot {
+  label?: string;
+  color?: string;
+  alpha?: number;
+  width?: number;
+  linestyle?: LineStyleName;
+  marker?: MarkerName;
+  markerSize?: number;
+  bins?: number;
+  bandwidth?: number;
+  levels?: number;
+}
+
+/** Styling every series kind shares. */
+export type CommonSeriesStyle = Pick<SeriesStyleSnapshot, "label" | "color" | "alpha">;
+/** Styling for the kinds drawn with a stroked outline. */
+export type StrokedSeriesStyle = CommonSeriesStyle & Pick<SeriesStyleSnapshot, "width">;
+export type LineSeriesStyle = StrokedSeriesStyle &
+  Pick<SeriesStyleSnapshot, "linestyle" | "marker" | "markerSize">;
+export type ScatterSeriesStyle = CommonSeriesStyle &
+  Pick<SeriesStyleSnapshot, "marker" | "markerSize">;
+export type BoxplotSeriesStyle = StrokedSeriesStyle & Pick<SeriesStyleSnapshot, "linestyle">;
+export type HistogramSeriesStyle = CommonSeriesStyle & Pick<SeriesStyleSnapshot, "bins">;
+export type KdeSeriesStyle = StrokedSeriesStyle & Pick<SeriesStyleSnapshot, "bandwidth">;
+export type ContourSeriesStyle = Pick<SeriesStyleSnapshot, "alpha" | "width" | "levels">;
+
 export interface RuntimeCapabilities {
   offscreenCanvasSupported: boolean;
   workerSupported: boolean;
@@ -71,29 +143,34 @@ export type YSourceSnapshot = NumericReactiveSourceSnapshot | SignalSourceSnapsh
 
 export interface LineSeriesSnapshot {
   kind: "line";
+  style?: LineSeriesStyle;
   x: XSourceSnapshot;
   y: YSourceSnapshot;
 }
 
 export interface ScatterSeriesSnapshot {
   kind: "scatter";
+  style?: ScatterSeriesStyle;
   x: XSourceSnapshot;
   y: YSourceSnapshot;
 }
 
 export interface BarSeriesSnapshot {
   kind: "bar";
+  style?: CommonSeriesStyle;
   categories: string[];
   values: NumericReactiveSourceSnapshot;
 }
 
 export interface HistogramSeriesSnapshot {
   kind: "histogram";
+  style?: HistogramSeriesStyle;
   data: NumericReactiveSourceSnapshot;
 }
 
 export interface BoxplotSeriesSnapshot {
   kind: "boxplot";
+  style?: BoxplotSeriesStyle;
   data: NumericReactiveSourceSnapshot;
 }
 
@@ -106,6 +183,7 @@ export interface HeatmapSeriesSnapshot {
 
 export interface ErrorBarsSeriesSnapshot {
   kind: "error-bars";
+  style?: StrokedSeriesStyle;
   x: NumericReactiveSourceSnapshot;
   y: NumericReactiveSourceSnapshot;
   yErrors: NumericReactiveSourceSnapshot;
@@ -113,6 +191,7 @@ export interface ErrorBarsSeriesSnapshot {
 
 export interface ErrorBarsXYSeriesSnapshot {
   kind: "error-bars-xy";
+  style?: StrokedSeriesStyle;
   x: NumericReactiveSourceSnapshot;
   y: NumericReactiveSourceSnapshot;
   xErrors: NumericReactiveSourceSnapshot;
@@ -121,16 +200,19 @@ export interface ErrorBarsXYSeriesSnapshot {
 
 export interface KdeSeriesSnapshot {
   kind: "kde";
+  style?: KdeSeriesStyle;
   data: number[];
 }
 
 export interface EcdfSeriesSnapshot {
   kind: "ecdf";
+  style?: StrokedSeriesStyle;
   data: number[];
 }
 
 export interface ContourSeriesSnapshot {
   kind: "contour";
+  style?: ContourSeriesStyle;
   x: number[];
   y: number[];
   z: number[];
@@ -155,11 +237,13 @@ export interface RadarSeriesSnapshot {
 
 export interface ViolinSeriesSnapshot {
   kind: "violin";
+  style?: StrokedSeriesStyle;
   data: number[];
 }
 
 export interface PolarLineSeriesSnapshot {
   kind: "polar-line";
+  style?: StrokedSeriesStyle;
   r: number[];
   theta: number[];
 }
@@ -181,13 +265,24 @@ export type PlotSeriesSnapshot =
   | ViolinSeriesSnapshot
   | PolarLineSeriesSnapshot;
 
+/** Snapshot layout version written by this build; consumers ignore unknown keys. */
+export const SNAPSHOT_SCHEMA_VERSION = 1;
+
 export interface PlotSnapshot {
+  /** Snapshot layout version; absent on snapshots written before it existed. */
+  schemaVersion?: number;
   sizePx?: [number, number];
   theme?: PlotTheme;
   ticks?: boolean;
   title?: string;
   xLabel?: string;
   yLabel?: string;
+  legend?: LegendPositionName;
+  grid?: boolean;
+  xLim?: [number, number];
+  yLim?: [number, number];
+  xScale?: AxisScaleSnapshot;
+  yScale?: AxisScaleSnapshot;
   series: PlotSeriesSnapshot[];
 }
 
@@ -221,111 +316,23 @@ export function normalizeSineSignalOptions(
 }
 
 export function cloneSourceSnapshot<T extends XSourceSnapshot | YSourceSnapshot>(source: T): T {
-  if (source.kind === "sine-signal") {
-    return {
-      kind: "sine-signal",
-      options: { ...source.options },
-    } as T;
-  }
-
-  return {
-    kind: source.kind,
-    values: [...source.values],
-  } as T;
+  return cloneSnapshotValue(source);
 }
 
-function cloneSeriesSnapshot(series: PlotSeriesSnapshot): PlotSeriesSnapshot {
-  switch (series.kind) {
-    case "line":
-    case "scatter":
-      return {
-        kind: series.kind,
-        x: cloneSourceSnapshot(series.x),
-        y: cloneSourceSnapshot(series.y),
-      };
-    case "bar":
-      return {
-        kind: "bar",
-        categories: [...series.categories],
-        values: cloneSourceSnapshot(series.values),
-      };
-    case "histogram":
-      return {
-        kind: "histogram",
-        data: cloneSourceSnapshot(series.data),
-      };
-    case "boxplot":
-      return {
-        kind: "boxplot",
-        data: cloneSourceSnapshot(series.data),
-      };
-    case "heatmap":
-      return {
-        kind: "heatmap",
-        values: [...series.values],
-        rows: series.rows,
-        cols: series.cols,
-      };
-    case "error-bars":
-      return {
-        kind: "error-bars",
-        x: cloneSourceSnapshot(series.x),
-        y: cloneSourceSnapshot(series.y),
-        yErrors: cloneSourceSnapshot(series.yErrors),
-      };
-    case "error-bars-xy":
-      return {
-        kind: "error-bars-xy",
-        x: cloneSourceSnapshot(series.x),
-        y: cloneSourceSnapshot(series.y),
-        xErrors: cloneSourceSnapshot(series.xErrors),
-        yErrors: cloneSourceSnapshot(series.yErrors),
-      };
-    case "kde":
-      return { kind: "kde", data: [...series.data] };
-    case "ecdf":
-      return { kind: "ecdf", data: [...series.data] };
-    case "contour":
-      return {
-        kind: "contour",
-        x: [...series.x],
-        y: [...series.y],
-        z: [...series.z],
-      };
-    case "pie":
-      return {
-        kind: "pie",
-        values: [...series.values],
-        labels: series.labels ? [...series.labels] : undefined,
-      };
-    case "radar":
-      return {
-        kind: "radar",
-        labels: [...series.labels],
-        series: series.series.map((item) => ({
-          name: item.name,
-          values: [...item.values],
-        })),
-      };
-    case "violin":
-      return { kind: "violin", data: [...series.data] };
-    case "polar-line":
-      return {
-        kind: "polar-line",
-        r: [...series.r],
-        theta: [...series.theta],
-      };
-  }
+/**
+ * Deep-copy a snapshot value, keeping fields this build does not know about.
+ * Snapshots cross the notebook widget boundary as plain JSON written by other
+ * ruviz versions, so cloning structurally keeps newer keys instead of dropping
+ * every field the copy does not name.
+ */
+function cloneSnapshotValue<T>(value: T): T {
+  return structuredClone(value);
+}
+
+export function cloneSeriesSnapshot(series: PlotSeriesSnapshot): PlotSeriesSnapshot {
+  return cloneSnapshotValue(series);
 }
 
 export function clonePlotSnapshot(snapshot: PlotSnapshot): PlotSnapshot {
-  return {
-    sizePx: snapshot.sizePx ? ([...snapshot.sizePx] as [number, number]) : undefined,
-    theme: snapshot.theme,
-    ticks: snapshot.ticks,
-    title: snapshot.title,
-    xLabel: snapshot.xLabel,
-    yLabel: snapshot.yLabel,
-    series: snapshot.series.map(cloneSeriesSnapshot),
-  };
+  return cloneSnapshotValue(snapshot);
 }

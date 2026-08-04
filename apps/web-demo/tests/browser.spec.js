@@ -1052,6 +1052,160 @@ test("python widget bundle handles a single-point sine signal snapshot", async (
   expect(result.imageLength).toBeGreaterThan(0);
 });
 
+test("python widget bundle applies per-series style and plot-level settings", async ({ page }) => {
+  await waitForDemoReady(page);
+
+  const consoleErrors = [];
+  const pageErrors = [];
+  page.on("console", (message) => {
+    if (message.type() === "error") {
+      consoleErrors.push(message.text());
+    }
+  });
+  page.on("pageerror", (error) => {
+    pageErrors.push(String(error));
+  });
+
+  const result = await page.evaluate(async (widgetSource) => {
+    const x = [0, 1, 2, 3, 4];
+    const y = [0.2, 1.1, 0.7, 1.8, 1.2];
+    const buildSnapshot = (series, plotSettings) => ({
+      sizePx: [480, 320],
+      title: "styled widget",
+      xLabel: "x",
+      yLabel: "y",
+      series: [
+        {
+          kind: "line",
+          x: { kind: "static", values: x },
+          y: { kind: "static", values: y },
+          ...series,
+        },
+      ],
+      ...plotSettings,
+    });
+
+    // No schemaVersion and no style: the shape older ruviz-py versions emit.
+    const legacySnapshot = buildSnapshot({}, {});
+    const styledSnapshot = buildSnapshot(
+      {
+        style: {
+          label: "Revenue",
+          color: "#2563eb",
+          alpha: 0.6,
+          width: 3.5,
+          linestyle: "dashed",
+          marker: "square",
+          markerSize: 9,
+        },
+      },
+      {
+        schemaVersion: 1,
+        legend: "upper_left",
+        grid: false,
+        xLim: [-1, 6],
+        yLim: [0, 4],
+        xScale: ["linear"],
+        yScale: ["symlog", 1],
+      },
+    );
+    // Unknown keys from a future ruviz-py must not break the render.
+    const futureSnapshot = buildSnapshot(
+      { unknownSeriesKey: "ignored" },
+      { schemaVersion: 99, unknownPlotKey: true },
+    );
+
+    const listeners = new Map();
+    const model = {
+      snapshot: legacySnapshot,
+      get(name) {
+        return name === "snapshot" ? this.snapshot : undefined;
+      },
+      on(name, callback) {
+        const callbacks = listeners.get(name) ?? [];
+        callbacks.push(callback);
+        listeners.set(name, callbacks);
+      },
+      off(name, callback) {
+        listeners.set(
+          name,
+          (listeners.get(name) ?? []).filter((entry) => entry !== callback),
+        );
+      },
+      setSnapshot(snapshot) {
+        this.snapshot = snapshot;
+        for (const callback of listeners.get("change:snapshot") ?? []) {
+          callback();
+        }
+      },
+    };
+
+    const waitForNextPaint = () =>
+      new Promise((resolve) => {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(resolve);
+        });
+      });
+
+    const waitForCanvasChange = async (canvas, previousData) => {
+      for (let attempt = 0; attempt < 120; attempt += 1) {
+        await waitForNextPaint();
+        const currentData = canvas.toDataURL("image/png");
+
+        if (previousData === undefined) {
+          const blankCanvas = document.createElement("canvas");
+          blankCanvas.width = canvas.width;
+          blankCanvas.height = canvas.height;
+          if (currentData !== blankCanvas.toDataURL("image/png")) {
+            return currentData;
+          }
+          continue;
+        }
+
+        if (currentData !== previousData) {
+          return currentData;
+        }
+      }
+
+      throw new Error("widget canvas did not update");
+    };
+
+    const mount = document.createElement("div");
+    document.body.appendChild(mount);
+
+    const moduleUrl = URL.createObjectURL(new Blob([widgetSource], { type: "text/javascript" }));
+
+    try {
+      const mod = await import(moduleUrl);
+      const cleanup = mod.default.render({ model, el: mount });
+      const canvas = mount.querySelector("canvas");
+      if (!(canvas instanceof HTMLCanvasElement)) {
+        throw new Error("widget bundle did not create a canvas");
+      }
+
+      const legacyImage = await waitForCanvasChange(canvas);
+      model.setSnapshot(styledSnapshot);
+      const styledImage = await waitForCanvasChange(canvas, legacyImage);
+      model.setSnapshot(futureSnapshot);
+      const futureImage = await waitForCanvasChange(canvas, styledImage);
+
+      if (typeof cleanup === "function") {
+        cleanup();
+      }
+
+      mount.remove();
+      return { legacyImage, styledImage, futureImage };
+    } finally {
+      URL.revokeObjectURL(moduleUrl);
+    }
+  }, PYTHON_WIDGET_BUNDLE);
+
+  expect(consoleErrors).toEqual([]);
+  expect(pageErrors).toEqual([]);
+  expect(result.styledImage).not.toEqual(result.legacyImage);
+  expect(result.futureImage).toEqual(result.legacyImage);
+});
+
 test("python widget bundle renders representative large snapshots without blacking out", async ({
   page,
 }) => {

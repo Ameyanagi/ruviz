@@ -6,20 +6,33 @@ import type {
   WebCanvasSession as RawWebCanvasSession,
 } from "../generated/raw/ruviz_web_raw.js";
 import {
+  cloneSeriesSnapshot,
   clonePlotSnapshot,
   normalizeSineSignalOptions,
+  SNAPSHOT_SCHEMA_VERSION,
   toNumberArray,
+  type AxisScaleName,
+  type AxisScaleSnapshot,
   type BackendPreference,
   type BarSeriesSnapshot,
+  type BoxplotSeriesStyle,
   type CanvasSessionOptions,
   type BoxplotSeriesSnapshot,
+  type CommonSeriesStyle,
   type ContourSeriesSnapshot,
+  type ContourSeriesStyle,
   type EcdfSeriesSnapshot,
   type ErrorBarsSeriesSnapshot,
   type ErrorBarsXYSeriesSnapshot,
   type HeatmapSeriesSnapshot,
   type HistogramSeriesSnapshot,
+  type HistogramSeriesStyle,
   type KdeSeriesSnapshot,
+  type KdeSeriesStyle,
+  type LegendPositionName,
+  type LineSeriesStyle,
+  type LineStyleName,
+  type MarkerName,
   type NumericReactiveSourceSnapshot,
   type NormalizedSineSignalOptions,
   type NumericArray,
@@ -31,15 +44,24 @@ import {
   type PolarLineSeriesSnapshot,
   type RadarSeriesSnapshot,
   type RuntimeCapabilities,
+  type ScatterSeriesStyle,
+  type SeriesStyleSnapshot,
   type SessionMode,
   type SineSignalOptions,
   type StaticSourceSnapshot,
+  type StrokedSeriesStyle,
   type ViolinSeriesSnapshot,
   type WorkerSessionOptions,
   type XSourceSnapshot,
   type YSourceSnapshot,
 } from "./shared.js";
-import { normalizeBackendPreference, toRawBackendPreference } from "./plot-runtime.js";
+import {
+  applySnapshotMetadata,
+  normalizeBackendPreference,
+  toRawBackendPreference,
+} from "./plot-runtime.js";
+
+export { SNAPSHOT_SCHEMA_VERSION } from "./shared.js";
 
 export {
   createPlot3d,
@@ -55,17 +77,28 @@ export {
 } from "./3d.js";
 
 export type {
+  AxisScaleName,
+  AxisScaleSnapshot,
   BackendPreference,
   BarSeriesSnapshot,
+  BoxplotSeriesStyle,
   CanvasSessionOptions,
   BoxplotSeriesSnapshot,
+  CommonSeriesStyle,
   ContourSeriesSnapshot,
+  ContourSeriesStyle,
   EcdfSeriesSnapshot,
   ErrorBarsSeriesSnapshot,
   ErrorBarsXYSeriesSnapshot,
   HeatmapSeriesSnapshot,
   HistogramSeriesSnapshot,
+  HistogramSeriesStyle,
   KdeSeriesSnapshot,
+  KdeSeriesStyle,
+  LegendPositionName,
+  LineSeriesStyle,
+  LineStyleName,
+  MarkerName,
   NumericArray,
   PieSeriesSnapshot,
   PlotTheme,
@@ -75,9 +108,12 @@ export type {
   PolarLineSeriesSnapshot,
   RadarSeriesSnapshot,
   RuntimeCapabilities,
+  ScatterSeriesStyle,
+  SeriesStyleSnapshot,
   SessionMode,
   SineSignalOptions,
   StaticSourceSnapshot,
+  StrokedSeriesStyle,
   ViolinSeriesSnapshot,
   WorkerSessionOptions,
 } from "./shared.js";
@@ -96,15 +132,25 @@ interface XYSeriesInput {
   y: NumericArray | ObservableSeries | SineSignal;
 }
 
+interface LineSeriesInput extends XYSeriesInput {
+  style?: LineSeriesStyle;
+}
+
+interface ScatterSeriesInput extends XYSeriesInput {
+  style?: ScatterSeriesStyle;
+}
+
 interface BarSeriesInput {
   categories: readonly string[] | ArrayLike<string>;
   values: NumericArray | ObservableSeries;
+  style?: CommonSeriesStyle;
 }
 
 interface ErrorBarsInput {
   x: NumericArray | ObservableSeries;
   y: NumericArray | ObservableSeries;
   yErrors: NumericArray | ObservableSeries;
+  style?: StrokedSeriesStyle;
 }
 
 interface ErrorBarsXYInput {
@@ -112,6 +158,7 @@ interface ErrorBarsXYInput {
   y: NumericArray | ObservableSeries;
   xErrors: NumericArray | ObservableSeries;
   yErrors: NumericArray | ObservableSeries;
+  style?: StrokedSeriesStyle;
 }
 
 interface RadarSeriesInput {
@@ -128,43 +175,51 @@ interface ContourInput {
   x: NumericArray;
   y: NumericArray;
   z: NumericArray;
+  style?: ContourSeriesStyle;
 }
 
 interface PolarLineInput {
   r: NumericArray;
   theta: NumericArray;
+  style?: StrokedSeriesStyle;
 }
 
 interface LineSeriesDefinition {
   kind: "line";
+  style?: LineSeriesStyle;
   x: XSourceDefinition;
   y: YSourceDefinition;
 }
 
 interface ScatterSeriesDefinition {
   kind: "scatter";
+  style?: ScatterSeriesStyle;
   x: XSourceDefinition;
   y: YSourceDefinition;
 }
 
 interface BarSeriesDefinition {
   kind: "bar";
+  style?: CommonSeriesStyle;
   categories: string[];
   values: NumericReactiveSourceDefinition;
 }
 
 interface HistogramSeriesDefinition {
   kind: "histogram";
+  style?: HistogramSeriesStyle;
   data: NumericReactiveSourceDefinition;
 }
 
 interface BoxplotSeriesDefinition {
   kind: "boxplot";
+  style?: BoxplotSeriesStyle;
   data: NumericReactiveSourceDefinition;
 }
 
 interface ErrorBarsSeriesDefinition {
   kind: "error-bars";
+  style?: StrokedSeriesStyle;
   x: NumericReactiveSourceDefinition;
   y: NumericReactiveSourceDefinition;
   yErrors: NumericReactiveSourceDefinition;
@@ -172,6 +227,7 @@ interface ErrorBarsSeriesDefinition {
 
 interface ErrorBarsXYSeriesDefinition {
   kind: "error-bars-xy";
+  style?: StrokedSeriesStyle;
   x: NumericReactiveSourceDefinition;
   y: NumericReactiveSourceDefinition;
   xErrors: NumericReactiveSourceDefinition;
@@ -202,6 +258,12 @@ interface PlotState {
   title?: string;
   xLabel?: string;
   yLabel?: string;
+  legend?: LegendPositionName;
+  grid?: boolean;
+  xLim?: [number, number];
+  yLim?: [number, number];
+  xScale?: AxisScaleSnapshot;
+  yScale?: AxisScaleSnapshot;
   series: PlotSeriesDefinition[];
 }
 
@@ -483,37 +545,48 @@ async function ephemeralObservable(
   return new module.ObservableVecF64(Float64Array.from(source.values));
 }
 
-function applyPlotMetadata(rawPlot: RawJsPlot, state: PlotState): void {
-  if (state.sizePx) {
-    rawPlot.size_px(state.sizePx[0], state.sizePx[1]);
+/** Copy the plot-level settings, keeping keys this build does not name. */
+function clonePlotMetadata(state: PlotState | PlotSnapshot): Omit<PlotState, "series"> {
+  const { series: _series, ...metadata } = state;
+  return structuredClone(metadata);
+}
+
+/** Reject the style values the wasm layer would only catch at render time. */
+function normalizeSeriesStyle<T extends SeriesStyleSnapshot>(style: T | undefined): T | undefined {
+  if (!style) {
+    return undefined;
   }
 
-  if (state.theme === "dark") {
-    rawPlot.theme_dark();
-  } else if (state.theme === "light") {
-    rawPlot.theme_light();
+  const { alpha, width, markerSize, bandwidth, bins, levels } = style as SeriesStyleSnapshot;
+  if (alpha !== undefined && !(alpha >= 0 && alpha <= 1)) {
+    throw new RangeError("alpha must be between 0.0 and 1.0");
   }
 
-  if (typeof state.ticks === "boolean") {
-    rawPlot.ticks(state.ticks);
+  for (const [name, value] of [
+    ["width", width],
+    ["markerSize", markerSize],
+    ["bandwidth", bandwidth],
+  ] as const) {
+    if (value !== undefined && !(Number.isFinite(value) && value > 0)) {
+      throw new RangeError(`${name} must be a finite positive number`);
+    }
   }
 
-  if (state.title) {
-    rawPlot.title(state.title);
+  for (const [name, value, minimum] of [
+    ["bins", bins, 1],
+    ["levels", levels, 2],
+  ] as const) {
+    if (value !== undefined && !(Number.isInteger(value) && value >= minimum)) {
+      throw new RangeError(`${name} must be an integer >= ${minimum}`);
+    }
   }
 
-  if (state.xLabel) {
-    rawPlot.xlabel(state.xLabel);
-  }
-
-  if (state.yLabel) {
-    rawPlot.ylabel(state.yLabel);
-  }
+  return { ...style };
 }
 
 async function buildRawPlotFromState(state: PlotState, module: RawModule): Promise<RawJsPlot> {
   const rawPlot = new module.JsPlot();
-  applyPlotMetadata(rawPlot, state);
+  applySnapshotMetadata(rawPlot, state);
 
   for (const series of state.series) {
     switch (series.kind) {
@@ -527,9 +600,9 @@ async function buildRawPlotFromState(state: PlotState, module: RawModule): Promi
               : Float64Array.from(series.x.values);
 
           if (series.kind === "line") {
-            rawPlot.line_signal(xValues, signal);
+            rawPlot.line_signal(xValues, signal, series.style);
           } else {
-            rawPlot.scatter_signal(xValues, signal);
+            rawPlot.scatter_signal(xValues, signal, series.style);
           }
           break;
         }
@@ -539,9 +612,9 @@ async function buildRawPlotFromState(state: PlotState, module: RawModule): Promi
           const yObservable = await ephemeralObservable(module, series.y);
 
           if (series.kind === "line") {
-            rawPlot.line_observable(xObservable, yObservable);
+            rawPlot.line_observable(xObservable, yObservable, series.style);
           } else {
-            rawPlot.scatter_observable(xObservable, yObservable);
+            rawPlot.scatter_observable(xObservable, yObservable, series.style);
           }
           break;
         }
@@ -550,9 +623,9 @@ async function buildRawPlotFromState(state: PlotState, module: RawModule): Promi
         const yValues = Float64Array.from(series.y.values);
 
         if (series.kind === "line") {
-          rawPlot.line(xValues, yValues);
+          rawPlot.line(xValues, yValues, series.style);
         } else {
-          rawPlot.scatter(xValues, yValues);
+          rawPlot.scatter(xValues, yValues, series.style);
         }
         break;
       }
@@ -561,25 +634,29 @@ async function buildRawPlotFromState(state: PlotState, module: RawModule): Promi
           rawPlot.bar_observable(
             series.categories,
             await ephemeralObservable(module, series.values),
+            series.style,
           );
         } else {
-          rawPlot.bar(series.categories, Float64Array.from(series.values.values));
+          rawPlot.bar(series.categories, Float64Array.from(series.values.values), series.style);
         }
         break;
       }
       case "histogram": {
         if (series.data.kind === "observable") {
-          rawPlot.histogram_observable(await ephemeralObservable(module, series.data));
+          rawPlot.histogram_observable(
+            await ephemeralObservable(module, series.data),
+            series.style,
+          );
         } else {
-          rawPlot.histogram(Float64Array.from(series.data.values));
+          rawPlot.histogram(Float64Array.from(series.data.values), series.style);
         }
         break;
       }
       case "boxplot": {
         if (series.data.kind === "observable") {
-          rawPlot.boxplot_observable(await ephemeralObservable(module, series.data));
+          rawPlot.boxplot_observable(await ephemeralObservable(module, series.data), series.style);
         } else {
-          rawPlot.boxplot(Float64Array.from(series.data.values));
+          rawPlot.boxplot(Float64Array.from(series.data.values), series.style);
         }
         break;
       }
@@ -596,12 +673,14 @@ async function buildRawPlotFromState(state: PlotState, module: RawModule): Promi
             await ephemeralObservable(module, series.x),
             await ephemeralObservable(module, series.y),
             await ephemeralObservable(module, series.yErrors),
+            series.style,
           );
         } else {
           rawPlot.error_bars(
             Float64Array.from(series.x.values),
             Float64Array.from(series.y.values),
             Float64Array.from(series.yErrors.values),
+            series.style,
           );
         }
         break;
@@ -618,6 +697,7 @@ async function buildRawPlotFromState(state: PlotState, module: RawModule): Promi
             await ephemeralObservable(module, series.y),
             await ephemeralObservable(module, series.xErrors),
             await ephemeralObservable(module, series.yErrors),
+            series.style,
           );
         } else {
           rawPlot.error_bars_xy(
@@ -625,21 +705,23 @@ async function buildRawPlotFromState(state: PlotState, module: RawModule): Promi
             Float64Array.from(series.y.values),
             Float64Array.from(series.xErrors.values),
             Float64Array.from(series.yErrors.values),
+            series.style,
           );
         }
         break;
       }
       case "kde":
-        rawPlot.kde(Float64Array.from(series.data));
+        rawPlot.kde(Float64Array.from(series.data), series.style);
         break;
       case "ecdf":
-        rawPlot.ecdf(Float64Array.from(series.data));
+        rawPlot.ecdf(Float64Array.from(series.data), series.style);
         break;
       case "contour":
         rawPlot.contour(
           Float64Array.from(series.x),
           Float64Array.from(series.y),
           Float64Array.from(series.z),
+          series.style,
         );
         break;
       case "pie":
@@ -660,10 +742,14 @@ async function buildRawPlotFromState(state: PlotState, module: RawModule): Promi
         break;
       }
       case "violin":
-        rawPlot.violin(Float64Array.from(series.data));
+        rawPlot.violin(Float64Array.from(series.data), series.style);
         break;
       case "polar-line":
-        rawPlot.polar_line(Float64Array.from(series.r), Float64Array.from(series.theta));
+        rawPlot.polar_line(
+          Float64Array.from(series.r),
+          Float64Array.from(series.theta),
+          series.style,
+        );
         break;
     }
   }
@@ -849,12 +935,7 @@ export class PlotBuilder {
   constructor(state?: PlotState) {
     this.#state = state
       ? {
-          sizePx: state.sizePx ? ([...state.sizePx] as [number, number]) : undefined,
-          theme: state.theme,
-          ticks: state.ticks,
-          title: state.title,
-          xLabel: state.xLabel,
-          yLabel: state.yLabel,
+          ...clonePlotMetadata(state),
           series: state.series.map((series) => PlotBuilder.#cloneSeries(series)),
         }
       : { series: [] };
@@ -870,54 +951,45 @@ export class PlotBuilder {
 
   static #stateFromSnapshot(snapshot: PlotSnapshot): PlotState {
     return {
-      sizePx: snapshot.sizePx ? ([...snapshot.sizePx] as [number, number]) : undefined,
-      theme: snapshot.theme,
-      ticks: snapshot.ticks,
-      title: snapshot.title,
-      xLabel: snapshot.xLabel,
-      yLabel: snapshot.yLabel,
+      ...clonePlotMetadata(snapshot),
       series: snapshot.series.map((series) => {
         switch (series.kind) {
           case "line":
           case "scatter":
             return {
-              kind: series.kind,
+              ...series,
               x: PlotBuilder.#sourceFromSnapshot(series.x),
               y: PlotBuilder.#ySourceFromSnapshot(series.y),
             };
           case "bar":
             return {
-              kind: "bar",
+              ...series,
               categories: [...series.categories],
               values: PlotBuilder.#sourceFromSnapshot(series.values),
             };
           case "histogram":
-            return {
-              kind: "histogram",
-              data: PlotBuilder.#sourceFromSnapshot(series.data),
-            };
           case "boxplot":
             return {
-              kind: "boxplot",
+              ...series,
               data: PlotBuilder.#sourceFromSnapshot(series.data),
             };
           case "error-bars":
             return {
-              kind: "error-bars",
+              ...series,
               x: PlotBuilder.#sourceFromSnapshot(series.x),
               y: PlotBuilder.#sourceFromSnapshot(series.y),
               yErrors: PlotBuilder.#sourceFromSnapshot(series.yErrors),
             };
           case "error-bars-xy":
             return {
-              kind: "error-bars-xy",
+              ...series,
               x: PlotBuilder.#sourceFromSnapshot(series.x),
               y: PlotBuilder.#sourceFromSnapshot(series.y),
               xErrors: PlotBuilder.#sourceFromSnapshot(series.xErrors),
               yErrors: PlotBuilder.#sourceFromSnapshot(series.yErrors),
             };
           default:
-            return clonePlotSnapshot({ series: [series] }).series[0] as PlotSeriesDefinition;
+            return cloneSeriesSnapshot(series) as PlotSeriesDefinition;
         }
       }),
     };
@@ -957,11 +1029,8 @@ export class PlotBuilder {
       case "line":
       case "scatter":
         return {
-          kind: series.kind,
-          x:
-            series.x.kind === "observable"
-              ? series.x
-              : { kind: "static", values: [...series.x.values] },
+          ...series,
+          x: PlotBuilder.#cloneSource(series.x),
           y:
             series.y.kind === "static"
               ? { kind: "static", values: [...series.y.values] }
@@ -969,68 +1038,35 @@ export class PlotBuilder {
         };
       case "bar":
         return {
-          kind: "bar",
+          ...series,
           categories: [...series.categories],
-          values:
-            series.values.kind === "observable"
-              ? series.values
-              : { kind: "static", values: [...series.values.values] },
+          values: PlotBuilder.#cloneSource(series.values),
         };
       case "histogram":
-        return {
-          kind: "histogram",
-          data:
-            series.data.kind === "observable"
-              ? series.data
-              : { kind: "static", values: [...series.data.values] },
-        };
       case "boxplot":
-        return {
-          kind: "boxplot",
-          data:
-            series.data.kind === "observable"
-              ? series.data
-              : { kind: "static", values: [...series.data.values] },
-        };
+        return { ...series, data: PlotBuilder.#cloneSource(series.data) };
       case "error-bars":
         return {
-          kind: "error-bars",
-          x:
-            series.x.kind === "observable"
-              ? series.x
-              : { kind: "static", values: [...series.x.values] },
-          y:
-            series.y.kind === "observable"
-              ? series.y
-              : { kind: "static", values: [...series.y.values] },
-          yErrors:
-            series.yErrors.kind === "observable"
-              ? series.yErrors
-              : { kind: "static", values: [...series.yErrors.values] },
+          ...series,
+          x: PlotBuilder.#cloneSource(series.x),
+          y: PlotBuilder.#cloneSource(series.y),
+          yErrors: PlotBuilder.#cloneSource(series.yErrors),
         };
       case "error-bars-xy":
         return {
-          kind: "error-bars-xy",
-          x:
-            series.x.kind === "observable"
-              ? series.x
-              : { kind: "static", values: [...series.x.values] },
-          y:
-            series.y.kind === "observable"
-              ? series.y
-              : { kind: "static", values: [...series.y.values] },
-          xErrors:
-            series.xErrors.kind === "observable"
-              ? series.xErrors
-              : { kind: "static", values: [...series.xErrors.values] },
-          yErrors:
-            series.yErrors.kind === "observable"
-              ? series.yErrors
-              : { kind: "static", values: [...series.yErrors.values] },
+          ...series,
+          x: PlotBuilder.#cloneSource(series.x),
+          y: PlotBuilder.#cloneSource(series.y),
+          xErrors: PlotBuilder.#cloneSource(series.xErrors),
+          yErrors: PlotBuilder.#cloneSource(series.yErrors),
         };
       default:
-        return clonePlotSnapshot({ series: [series] }).series[0] as PlotSeriesDefinition;
+        return cloneSeriesSnapshot(series) as PlotSeriesDefinition;
     }
+  }
+
+  static #cloneSource(source: NumericReactiveSourceDefinition): NumericReactiveSourceDefinition {
+    return source.kind === "observable" ? source : { kind: "static", values: [...source.values] };
   }
 
   sizePx(width: number, height: number): this {
@@ -1093,19 +1129,102 @@ export class PlotBuilder {
     return this;
   }
 
-  line(input: XYSeriesInput): this {
+  legend(position: LegendPositionName = "best"): this {
+    return this.setLegend(position);
+  }
+
+  setLegend(position: LegendPositionName = "best"): this {
+    this.#state.legend = position;
+    this.#markDirty();
+    return this;
+  }
+
+  grid(enabled = true): this {
+    return this.setGrid(enabled);
+  }
+
+  setGrid(enabled = true): this {
+    this.#state.grid = enabled;
+    this.#markDirty();
+    return this;
+  }
+
+  xlim(minimum: number, maximum: number): this {
+    return this.setXLim(minimum, maximum);
+  }
+
+  setXLim(minimum: number, maximum: number): this {
+    this.#state.xLim = PlotBuilder.#limits("x", minimum, maximum);
+    this.#markDirty();
+    return this;
+  }
+
+  ylim(minimum: number, maximum: number): this {
+    return this.setYLim(minimum, maximum);
+  }
+
+  setYLim(minimum: number, maximum: number): this {
+    this.#state.yLim = PlotBuilder.#limits("y", minimum, maximum);
+    this.#markDirty();
+    return this;
+  }
+
+  xscale(scale: AxisScaleName, linthresh?: number): this {
+    return this.setXScale(scale, linthresh);
+  }
+
+  setXScale(scale: AxisScaleName, linthresh?: number): this {
+    this.#state.xScale = PlotBuilder.#scale(scale, linthresh);
+    this.#markDirty();
+    return this;
+  }
+
+  yscale(scale: AxisScaleName, linthresh?: number): this {
+    return this.setYScale(scale, linthresh);
+  }
+
+  setYScale(scale: AxisScaleName, linthresh?: number): this {
+    this.#state.yScale = PlotBuilder.#scale(scale, linthresh);
+    this.#markDirty();
+    return this;
+  }
+
+  /** Inverted bounds are kept: they render a descending axis. */
+  static #limits(axis: "x" | "y", minimum: number, maximum: number): [number, number] {
+    if (!Number.isFinite(minimum) || !Number.isFinite(maximum) || minimum === maximum) {
+      throw new RangeError(`${axis} limits must be finite and different`);
+    }
+    return [minimum, maximum];
+  }
+
+  static #scale(scale: AxisScaleName, linthresh: number | undefined): AxisScaleSnapshot {
+    if (scale !== "symlog") {
+      if (linthresh !== undefined) {
+        throw new RangeError("linthresh only applies to the symlog scale");
+      }
+      return [scale];
+    }
+
+    const threshold = linthresh ?? 1;
+    if (!(Number.isFinite(threshold) && threshold > 0)) {
+      throw new RangeError("symlog linthresh must be a finite positive number");
+    }
+    return [scale, threshold];
+  }
+
+  line(input: LineSeriesInput): this {
     return this.#addXYSeries("line", input);
   }
 
-  addLine(input: XYSeriesInput): this {
+  addLine(input: LineSeriesInput): this {
     return this.line(input);
   }
 
-  scatter(input: XYSeriesInput): this {
+  scatter(input: ScatterSeriesInput): this {
     return this.#addXYSeries("scatter", input);
   }
 
-  addScatter(input: XYSeriesInput): this {
+  addScatter(input: ScatterSeriesInput): this {
     return this.scatter(input);
   }
 
@@ -1115,21 +1234,30 @@ export class PlotBuilder {
     if (categories.length !== sourceLength(values)) {
       throw new Error("bar categories and values must have the same length");
     }
-    this.#state.series.push({ kind: "bar", categories, values });
+    this.#state.series.push({
+      kind: "bar",
+      style: normalizeSeriesStyle(input.style),
+      categories,
+      values,
+    });
     this.#markDirty();
     return this;
   }
 
-  histogram(input: NumericArray | ObservableSeries): this {
+  histogram(input: NumericArray | ObservableSeries, style?: HistogramSeriesStyle): this {
     const values = normalizeReactiveSource(input);
-    this.#state.series.push({ kind: "histogram", data: values });
+    this.#state.series.push({
+      kind: "histogram",
+      style: normalizeSeriesStyle(style),
+      data: values,
+    });
     this.#markDirty();
     return this;
   }
 
-  boxplot(input: NumericArray | ObservableSeries): this {
+  boxplot(input: NumericArray | ObservableSeries, style?: BoxplotSeriesStyle): this {
     const values = normalizeReactiveSource(input);
-    this.#state.series.push({ kind: "boxplot", data: values });
+    this.#state.series.push({ kind: "boxplot", style: normalizeSeriesStyle(style), data: values });
     this.#markDirty();
     return this;
   }
@@ -1148,7 +1276,13 @@ export class PlotBuilder {
     if (sourceLength(x) !== sourceLength(y) || sourceLength(x) !== sourceLength(yErrors)) {
       throw new Error("x, y, and yErrors must have the same length");
     }
-    this.#state.series.push({ kind: "error-bars", x, y, yErrors });
+    this.#state.series.push({
+      kind: "error-bars",
+      style: normalizeSeriesStyle(input.style),
+      x,
+      y,
+      yErrors,
+    });
     this.#markDirty();
     return this;
   }
@@ -1166,19 +1300,34 @@ export class PlotBuilder {
     ) {
       throw new Error("x, y, xErrors, and yErrors must have the same length");
     }
-    this.#state.series.push({ kind: "error-bars-xy", x, y, xErrors, yErrors });
+    this.#state.series.push({
+      kind: "error-bars-xy",
+      style: normalizeSeriesStyle(input.style),
+      x,
+      y,
+      xErrors,
+      yErrors,
+    });
     this.#markDirty();
     return this;
   }
 
-  kde(input: NumericArray): this {
-    this.#state.series.push({ kind: "kde", data: toNumberArray(input) });
+  kde(input: NumericArray, style?: KdeSeriesStyle): this {
+    this.#state.series.push({
+      kind: "kde",
+      style: normalizeSeriesStyle(style),
+      data: toNumberArray(input),
+    });
     this.#markDirty();
     return this;
   }
 
-  ecdf(input: NumericArray): this {
-    this.#state.series.push({ kind: "ecdf", data: toNumberArray(input) });
+  ecdf(input: NumericArray, style?: StrokedSeriesStyle): this {
+    this.#state.series.push({
+      kind: "ecdf",
+      style: normalizeSeriesStyle(style),
+      data: toNumberArray(input),
+    });
     this.#markDirty();
     return this;
   }
@@ -1190,7 +1339,7 @@ export class PlotBuilder {
     if (x.length === 0 || y.length === 0 || z.length !== x.length * y.length) {
       throw new Error("contour z must contain x.length * y.length values");
     }
-    this.#state.series.push({ kind: "contour", x, y, z });
+    this.#state.series.push({ kind: "contour", style: normalizeSeriesStyle(input.style), x, y, z });
     this.#markDirty();
     return this;
   }
@@ -1229,8 +1378,12 @@ export class PlotBuilder {
     return this;
   }
 
-  violin(input: NumericArray): this {
-    this.#state.series.push({ kind: "violin", data: toNumberArray(input) });
+  violin(input: NumericArray, style?: StrokedSeriesStyle): this {
+    this.#state.series.push({
+      kind: "violin",
+      style: normalizeSeriesStyle(style),
+      data: toNumberArray(input),
+    });
     this.#markDirty();
     return this;
   }
@@ -1241,7 +1394,12 @@ export class PlotBuilder {
     if (r.length !== theta.length) {
       throw new Error("polar r and theta must have the same length");
     }
-    this.#state.series.push({ kind: "polar-line", r, theta });
+    this.#state.series.push({
+      kind: "polar-line",
+      style: normalizeSeriesStyle(input.style),
+      r,
+      theta,
+    });
     this.#markDirty();
     return this;
   }
@@ -1260,17 +1418,13 @@ export class PlotBuilder {
   }
 
   toSnapshot(): PlotSnapshot {
-    const snapshot: PlotSnapshot = {
-      sizePx: this.#state.sizePx ? ([...this.#state.sizePx] as [number, number]) : undefined,
-      theme: this.#state.theme,
-      ticks: this.#state.ticks,
-      title: this.#state.title,
-      xLabel: this.#state.xLabel,
-      yLabel: this.#state.yLabel,
-      series: this.#state.series.map((series) => this.#serializeSeries(series)),
-    };
+    const { series, ...metadata } = this.#state;
 
-    return clonePlotSnapshot(snapshot);
+    return clonePlotSnapshot({
+      schemaVersion: SNAPSHOT_SCHEMA_VERSION,
+      ...metadata,
+      series: series.map((item) => this.#serializeSeries(item)),
+    });
   }
 
   async renderPng(): Promise<Uint8Array> {
@@ -1359,13 +1513,18 @@ export class PlotBuilder {
     return rawPlot;
   }
 
-  #addXYSeries(kind: "line" | "scatter", input: XYSeriesInput): this {
+  #addXYSeries(kind: "line" | "scatter", input: LineSeriesInput | ScatterSeriesInput): this {
     const x = normalizeXSource(input.x);
     const y = normalizeYSource(input.y);
     if (sourceLength(x) !== sourceLength(y)) {
       throw new Error("x and y must have the same length");
     }
-    this.#state.series.push({ kind, x, y } as LineSeriesDefinition | ScatterSeriesDefinition);
+    this.#state.series.push({
+      kind,
+      style: normalizeSeriesStyle(input.style),
+      x,
+      y,
+    } as LineSeriesDefinition | ScatterSeriesDefinition);
     this.#markDirty();
     return this;
   }
@@ -1421,43 +1580,36 @@ export class PlotBuilder {
       case "line":
       case "scatter":
         return {
-          kind: series.kind,
+          ...series,
           x: this.#serializeXSource(series.x),
           y: this.#serializeYSource(series.y),
         };
       case "bar":
         return {
-          kind: "bar",
+          ...series,
           categories: [...series.categories],
           values: this.#serializeReactiveSource(series.values),
         };
       case "histogram":
-        return {
-          kind: "histogram",
-          data: this.#serializeReactiveSource(series.data),
-        };
       case "boxplot":
-        return {
-          kind: "boxplot",
-          data: this.#serializeReactiveSource(series.data),
-        };
+        return { ...series, data: this.#serializeReactiveSource(series.data) };
       case "error-bars":
         return {
-          kind: "error-bars",
+          ...series,
           x: this.#serializeReactiveSource(series.x),
           y: this.#serializeReactiveSource(series.y),
           yErrors: this.#serializeReactiveSource(series.yErrors),
         };
       case "error-bars-xy":
         return {
-          kind: "error-bars-xy",
+          ...series,
           x: this.#serializeReactiveSource(series.x),
           y: this.#serializeReactiveSource(series.y),
           xErrors: this.#serializeReactiveSource(series.xErrors),
           yErrors: this.#serializeReactiveSource(series.yErrors),
         };
       default:
-        return clonePlotSnapshot({ series: [series] }).series[0];
+        return cloneSeriesSnapshot(series);
     }
   }
 
