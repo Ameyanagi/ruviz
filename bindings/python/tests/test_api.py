@@ -945,3 +945,119 @@ def test_package_ships_inline_typing_markers() -> None:
 
     assert (package / "py.typed").is_file()
     assert (package / "_native.pyi").is_file()
+
+
+def test_observable_resize_bound_to_line_raises_and_leaves_state_intact() -> None:
+    source = ruviz.observable([1.0, 2.0, 3.0])
+    plot = ruviz.plot().line([0.0, 1.0, 2.0], source)
+
+    with pytest.raises(ValueError, match="cannot resize observable to 4 values"):
+        source.replace([1.0, 2.0, 3.0, 4.0])
+
+    assert source.snapshot_values() == [1.0, 2.0, 3.0]
+    assert plot.to_snapshot()["series"][0]["y"]["values"] == [1.0, 2.0, 3.0]
+    assert plot.render_png().startswith(PNG_HEADER)
+
+
+def test_observable_resize_bound_to_bar_categories_raises() -> None:
+    source = ruviz.observable([1.0, 2.0])
+    plot = ruviz.plot().bar(["a", "b"], source)
+
+    with pytest.raises(ValueError, match="bar categories have length 2"):
+        source.replace([1.0, 2.0, 3.0])
+
+    assert plot.render_png().startswith(PNG_HEADER)
+
+
+def test_observable_resize_bound_to_error_bars_raises() -> None:
+    errors = ruviz.observable([0.1, 0.2, 0.3])
+    plot = ruviz.plot().error_bars([0.0, 1.0, 2.0], [1.0, 2.0, 3.0], errors)
+
+    with pytest.raises(ValueError, match="input 'x' has length 3"):
+        errors.replace([0.1, 0.2])
+
+    assert plot.render_png().startswith(PNG_HEADER)
+
+
+def test_observable_resize_bound_to_histogram_is_allowed() -> None:
+    source = ruviz.observable([1.0, 2.0, 3.0])
+    plot = ruviz.plot().histogram(source)
+
+    source.replace([1.0, 2.0, 3.0, 4.0, 5.0])
+
+    assert plot.to_snapshot()["series"][0]["data"]["values"] == [1.0, 2.0, 3.0, 4.0, 5.0]
+    assert plot.render_png().startswith(PNG_HEADER)
+
+
+def test_same_observable_as_x_and_y_can_resize_together() -> None:
+    source = ruviz.observable([1.0, 2.0, 3.0])
+    plot = ruviz.plot().line(source, source)
+
+    source.replace([1.0, 2.0, 3.0, 4.0])
+
+    snapshot = plot.to_snapshot()["series"][0]
+    assert snapshot["x"]["values"] == [1.0, 2.0, 3.0, 4.0]
+    assert snapshot["y"]["values"] == [1.0, 2.0, 3.0, 4.0]
+    assert plot.render_png().startswith(PNG_HEADER)
+
+
+def test_derived_observable_resize_is_guarded_too() -> None:
+    source = ruviz.observable([1.0, 2.0, 3.0])
+    derived = source * 2.0
+    plot = ruviz.plot().line([0.0, 1.0, 2.0], derived)
+
+    with pytest.raises(ValueError, match="cannot resize observable to 4 values"):
+        source.replace([1.0, 2.0, 3.0, 4.0])
+
+    assert plot.render_png().startswith(PNG_HEADER)
+
+
+def test_dropped_plot_no_longer_constrains_observable_resize() -> None:
+    source = ruviz.observable([1.0, 2.0, 3.0])
+    ruviz.plot().line([0.0, 1.0, 2.0], source)
+    gc.collect()
+
+    source.replace([1.0, 2.0, 3.0, 4.0])
+
+    assert source.snapshot_values() == [1.0, 2.0, 3.0, 4.0]
+
+
+def test_unbound_observable_can_resize_freely() -> None:
+    source = ruviz.observable([1.0, 2.0, 3.0])
+
+    source.replace([1.0, 2.0])
+
+    assert source.snapshot_values() == [1.0, 2.0]
+
+
+@pytest.mark.parametrize(
+    ("method", "args", "style", "message"),
+    [
+        ("line", ([0.0, 1.0], [0.0, 1.0]), {"alpha": 1.5}, "alpha must be between 0.0 and 1.0"),
+        ("line", ([0.0, 1.0], [0.0, 1.0]), {"width": 0.0}, "width must be a finite positive number"),
+        (
+            "scatter",
+            ([0.0, 1.0], [0.0, 1.0]),
+            {"markerSize": -1.0},
+            "marker_size must be a finite positive number",
+        ),
+        ("histogram", ([0.0, 1.0, 2.0],), {"bins": 0}, "bins must be an integer >= 1"),
+        (
+            "kde",
+            ([0.0, 1.0, 2.0],),
+            {"bandwidth": 0.0},
+            "bandwidth must be a finite positive number",
+        ),
+        (
+            "contour",
+            ([0.0, 1.0], [0.0, 1.0], [0.0, 1.0, 2.0, 3.0]),
+            {"levels": 1},
+            "levels must be an integer >= 2",
+        ),
+    ],
+)
+def test_native_handle_validates_numeric_style_ranges(method, args, style, message) -> None:
+    handle = ruviz._native.NativePlotHandle()
+
+    with pytest.raises(ValueError, match=message):
+        getattr(handle, method)(*args, style)

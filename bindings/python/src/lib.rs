@@ -252,14 +252,14 @@ impl NativePlot3DHandle {
     /// Build (and cache) the core builder, then hand back the clone a render
     /// consumes. The 3D builders are `Send`, so both run with the GIL released.
     fn builder(&mut self, py: Python<'_>) -> PyResult<Plot3DBuilderState> {
-        if self.cached.is_none() {
-            let snapshot = self.snapshot.clone();
-            self.cached = Some(
-                py.allow_threads(|| snapshot.into_builder())
-                    .map_err(PyValueError::new_err)?,
-            );
+        if let Some(cached) = &self.cached {
+            return Ok(py.allow_threads(|| cached.clone()));
         }
-        let cached = self.cached.as_ref().expect("builder cached above");
+        let snapshot = self.snapshot.clone();
+        let built = py
+            .allow_threads(|| snapshot.into_builder())
+            .map_err(PyValueError::new_err)?;
+        let cached = self.cached.insert(built);
         Ok(py.allow_threads(|| cached.clone()))
     }
 

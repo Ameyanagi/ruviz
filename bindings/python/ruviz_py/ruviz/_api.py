@@ -439,6 +439,7 @@ class ObservableSeries:
         self._listeners: dict[int, weakref.ReferenceType[Any] | weakref.WeakMethod[Any]] = {}
         self._next_listener_token = 0
         self._derivation: _ObservableDerivation | None = None
+        self._resize_guards: dict[int, weakref.WeakMethod[Any]] = {}
 
     @classmethod
     def _from_values(cls, values: _F64Array) -> "ObservableSeries":
@@ -515,13 +516,35 @@ class ObservableSeries:
         if self._derivation is None:
             return
 
-        self._values = self._evaluate_ufunc(self._derivation.ufunc, self._derivation.inputs)
+        next_values = self._evaluate_ufunc(self._derivation.ufunc, self._derivation.inputs)
+        self._check_resize(len(next_values))
+        self._values = next_values
         self._native_observable.replace(self._values)
         self._notify()
 
     def _ensure_detached(self) -> None:
         if self._derivation is not None:
             self._detach_derivation()
+
+    def _attach_resize_guard(self, guard: Any) -> int:
+        token = self._next_listener_token
+        self._next_listener_token += 1
+        self._resize_guards[token] = weakref.WeakMethod(guard)
+        return token
+
+    def _detach_resize_guard(self, token: int) -> None:
+        self._resize_guards.pop(token, None)
+
+    def _check_resize(self, new_length: int) -> None:
+        """Let bound plots veto a length change before it is applied."""
+        if new_length == len(self._values):
+            return
+        for token, guard_ref in list(self._resize_guards.items()):
+            guard = guard_ref()
+            if guard is None:
+                self._resize_guards.pop(token, None)
+                continue
+            guard(self, new_length)
 
     def __copy__(self) -> "ObservableSeries":
         return self.__deepcopy__({})
@@ -542,8 +565,13 @@ class ObservableSeries:
         return clone
 
     def replace(self, values: ArrayLike) -> None:
-        """Replace the entire series and notify attached widgets."""
+        """Replace the entire series and notify attached widgets.
+
+        Raises ValueError when the new length would break a bound plot series
+        whose inputs must stay equal-length (line, scatter, bar, error bars).
+        """
         next_values = _to_numeric_1d(values, "observable values")
+        self._check_resize(len(next_values))
         self._ensure_detached()
         self._values = next_values
         self._native_observable.replace(self._values)
@@ -660,7 +688,7 @@ class Plot:
         self._widgets: "weakref.WeakSet[Any]" = weakref.WeakSet()
         self._observables: list[ObservableSeries] = []
         self._observable_listener_tokens: dict[ObservableSeries, int] = {}
-        self._observable_bindings: list[tuple[ObservableSeries, dict[str, Any]]] = []
+        self._observable_bindings: list[tuple[ObservableSeries, dict[str, Any], str]] = []
         self._snapshot_cache: dict[str, Any] | None = None
         self._snapshot_dirty = True
         self._refresh_scheduled = False
@@ -773,8 +801,8 @@ class Plot:
             return existing
 
         observable_lookup = {
-            id(snapshot): deepcopy(observable, memo)
-            for observable, snapshot in self._observable_bindings
+            id(series[key]): deepcopy(observable, memo)
+            for observable, series, key in self._observable_bindings
         }
         clone = type(self)._replay_snapshot(self._state, observable_lookup)
         memo[id(self)] = clone
@@ -949,9 +977,9 @@ class Plot:
         )
         self._apply_native_series(self._native_plot, series, native_sources={"x": native_x, "y": native_y})
         if x_observable is not None:
-            self._track_observable(x_observable, x_values)
+            self._track_observable(x_observable, series, "x")
         if y_observable is not None:
-            self._track_observable(y_observable, y_values)
+            self._track_observable(y_observable, series, "y")
         self._append_series_snapshot(series)
         return self
 
@@ -988,9 +1016,9 @@ class Plot:
         )
         self._apply_native_series(self._native_plot, series, native_sources={"x": native_x, "y": native_y})
         if x_observable is not None:
-            self._track_observable(x_observable, x_values)
+            self._track_observable(x_observable, series, "x")
         if y_observable is not None:
-            self._track_observable(y_observable, y_values)
+            self._track_observable(y_observable, series, "y")
         self._append_series_snapshot(series)
         return self
 
@@ -1018,7 +1046,7 @@ class Plot:
         )
         self._apply_native_series(self._native_plot, series, native_sources={"values": native_values})
         if observable is not None:
-            self._track_observable(observable, values)
+            self._track_observable(observable, series, "values")
         self._append_series_snapshot(series)
         return self
 
@@ -1043,7 +1071,7 @@ class Plot:
         )
         self._apply_native_series(self._native_plot, series, native_sources={"data": native_data})
         if observable is not None:
-            self._track_observable(observable, series_data)
+            self._track_observable(observable, series, "data")
         self._append_series_snapshot(series)
         return self
 
@@ -1075,7 +1103,7 @@ class Plot:
         )
         self._apply_native_series(self._native_plot, series, native_sources={"data": native_data})
         if observable is not None:
-            self._track_observable(observable, series_data)
+            self._track_observable(observable, series, "data")
         self._append_series_snapshot(series)
         return self
 
@@ -1133,11 +1161,11 @@ class Plot:
             native_sources={"x": native_x, "y": native_y, "yErrors": native_errors},
         )
         if x_observable is not None:
-            self._track_observable(x_observable, x_values)
+            self._track_observable(x_observable, series, "x")
         if y_observable is not None:
-            self._track_observable(y_observable, y_values)
+            self._track_observable(y_observable, series, "y")
         if error_observable is not None:
-            self._track_observable(error_observable, error_values)
+            self._track_observable(error_observable, series, "yErrors")
         self._append_series_snapshot(series)
         return self
 
@@ -1189,13 +1217,13 @@ class Plot:
             },
         )
         if x_observable is not None:
-            self._track_observable(x_observable, x_values)
+            self._track_observable(x_observable, series, "x")
         if y_observable is not None:
-            self._track_observable(y_observable, y_values)
+            self._track_observable(y_observable, series, "y")
         if x_error_observable is not None:
-            self._track_observable(x_error_observable, x_error_values)
+            self._track_observable(x_error_observable, series, "xErrors")
         if y_error_observable is not None:
-            self._track_observable(y_error_observable, y_error_values)
+            self._track_observable(y_error_observable, series, "yErrors")
         self._append_series_snapshot(series)
         return self
 
@@ -1414,18 +1442,46 @@ class Plot:
             self._snapshot_dirty = False
         return cast(PlotSnapshot, deepcopy(self._snapshot_cache))
 
-    def _track_observable(self, observable: ObservableSeries, snapshot: dict[str, Any]) -> None:
-        self._observable_bindings.append((observable, snapshot))
+    def _track_observable(self, observable: ObservableSeries, series: dict[str, Any], key: str) -> None:
+        self._observable_bindings.append((observable, series, key))
         if observable in self._observables:
             return
         self._observables.append(observable)
         token = observable._attach(self._notify_widgets)
         self._observable_listener_tokens[observable] = token
         weakref.finalize(self, observable._detach, token)
+        guard_token = observable._attach_resize_guard(self._guard_observable_resize)
+        weakref.finalize(self, observable._detach_resize_guard, guard_token)
+
+    def _guard_observable_resize(self, observable: ObservableSeries, new_length: int) -> None:
+        """Reject an observable length change that would break a bound series."""
+        source_owner = {id(series[key]): bound for bound, series, key in self._observable_bindings}
+        for bound, series, key in self._observable_bindings:
+            if bound is not observable:
+                continue
+            kind = series["kind"]
+            if kind == "bar" and len(series["categories"]) != new_length:
+                raise ValueError(
+                    f"cannot resize observable to {new_length} values: bar categories "
+                    f"have length {len(series['categories'])}"
+                )
+            for other_key in _SERIES_KINDS[kind].sources:
+                if other_key == key:
+                    continue
+                sibling = series[other_key]
+                owner = source_owner.get(id(sibling))
+                if owner is observable:
+                    continue
+                sibling_length = len(sibling["values"]) if owner is None else len(owner._values)
+                if sibling_length != new_length:
+                    raise ValueError(
+                        f"cannot resize observable to {new_length} values: {kind} series "
+                        f"input '{other_key}' has length {sibling_length}"
+                    )
 
     def _sync_observables(self) -> None:
-        for observable, snapshot in self._observable_bindings:
-            snapshot["values"] = observable._values
+        for observable, series, key in self._observable_bindings:
+            series[key]["values"] = observable._values
 
     def _notify_widgets(self) -> None:
         """Refresh attached widgets, coalescing bursts under a running event loop."""

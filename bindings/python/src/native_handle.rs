@@ -161,6 +161,28 @@ fn parse_axis_scale(scale: &str, linthresh: Option<f64>) -> PyResult<AxisScale> 
     }
 }
 
+/// Validate a strictly positive finite style number, matching the Python-side
+/// validator messages so `_native` callers see identical errors.
+fn finite_positive(value: &Bound<'_, PyAny>, name: &str) -> PyResult<f64> {
+    let number: f64 = value.extract()?;
+    if !number.is_finite() || number <= 0.0 {
+        return Err(PyValueError::new_err(format!(
+            "{name} must be a finite positive number"
+        )));
+    }
+    Ok(number)
+}
+
+fn count_at_least(value: &Bound<'_, PyAny>, name: &str, minimum: i64) -> PyResult<usize> {
+    let count: i64 = value.extract()?;
+    if count < minimum {
+        return Err(PyValueError::new_err(format!(
+            "{name} must be an integer >= {minimum}"
+        )));
+    }
+    Ok(count as usize)
+}
+
 fn extract_style(style: Option<&Bound<'_, PyDict>>) -> PyResult<SeriesStyle> {
     let mut parsed = SeriesStyle::default();
     let Some(style) = style else {
@@ -172,8 +194,14 @@ fn extract_style(style: Option<&Bound<'_, PyDict>>) -> PyResult<SeriesStyle> {
         match key.as_str() {
             "label" => parsed.label = Some(value.extract()?),
             "color" => parsed.color = Some(parse_color(&value.extract::<String>()?)?),
-            "alpha" => parsed.alpha = Some(value.extract()?),
-            "width" => parsed.width = Some(value.extract()?),
+            "alpha" => {
+                let alpha: f64 = value.extract()?;
+                if !(0.0..=1.0).contains(&alpha) {
+                    return Err(PyValueError::new_err("alpha must be between 0.0 and 1.0"));
+                }
+                parsed.alpha = Some(alpha as f32);
+            }
+            "width" => parsed.width = Some(finite_positive(&value, "width")? as f32),
             "linestyle" => {
                 parsed.line_style = Some(lookup(
                     &LINE_STYLES,
@@ -188,10 +216,12 @@ fn extract_style(style: Option<&Bound<'_, PyDict>>) -> PyResult<SeriesStyle> {
                     &value.extract::<String>()?,
                 )?)
             }
-            "markerSize" => parsed.marker_size = Some(value.extract()?),
-            "bins" => parsed.bins = Some(value.extract()?),
-            "bandwidth" => parsed.bandwidth = Some(value.extract()?),
-            "levels" => parsed.levels = Some(value.extract()?),
+            "markerSize" => {
+                parsed.marker_size = Some(finite_positive(&value, "marker_size")? as f32)
+            }
+            "bins" => parsed.bins = Some(count_at_least(&value, "bins", 1)?),
+            "bandwidth" => parsed.bandwidth = Some(finite_positive(&value, "bandwidth")?),
+            "levels" => parsed.levels = Some(count_at_least(&value, "levels", 2)?),
             other => {
                 return Err(PyValueError::new_err(format!(
                     "unsupported style option: {other}"

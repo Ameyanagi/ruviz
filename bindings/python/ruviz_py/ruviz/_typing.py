@@ -21,6 +21,20 @@ class NumericVector(Protocol):
     def __iter__(self) -> Iterator[Any]: ...
 
 
+class NumericMatrix(Protocol):
+    """Structural stand-in for 2D arrays: requires an array ``shape``.
+
+    Plain 1D sequences (``list[float]``) do not qualify. A 1D ndarray or Series
+    still matches structurally — dimensionality is not expressible in static
+    types — and is rejected at runtime instead.
+    """
+
+    @property
+    def shape(self) -> tuple[int, ...]: ...
+
+    def __iter__(self) -> Iterator[Any]: ...
+
+
 class ColumnSource(Protocol):
     """Structural stand-in for objects indexed by column name, such as DataFrames."""
 
@@ -32,7 +46,7 @@ class ColumnSource(Protocol):
 ArrayLike: TypeAlias = "Sequence[float] | NumericVector | ObservableSeries"
 
 #: A rectangular numeric matrix, such as a nested sequence or a 2D NumPy array.
-MatrixLike: TypeAlias = "Sequence[Sequence[float]] | NumericVector"
+MatrixLike: TypeAlias = "Sequence[Sequence[float]] | NumericMatrix"
 
 #: A vector of labels; values are stringified when they are not already strings.
 LabelsLike: TypeAlias = "Sequence[object] | NumericVector"
@@ -243,6 +257,7 @@ __all__ = [
     "MarkerName",
     "MatrixLike",
     "NumericField",
+    "NumericMatrix",
     "NumericSourceDict",
     "NumericVector",
     "Plot3DSnapshot",
