@@ -1001,7 +1001,7 @@ def test_same_observable_as_x_and_y_can_resize_together() -> None:
     assert plot.render_png().startswith(PNG_HEADER)
 
 
-def test_derived_observable_resize_is_guarded_too() -> None:
+def test_derived_observable_resize_is_guarded_and_atomic() -> None:
     source = ruviz.observable([1.0, 2.0, 3.0])
     derived = source * 2.0
     plot = ruviz.plot().line([0.0, 1.0, 2.0], derived)
@@ -1009,7 +1009,50 @@ def test_derived_observable_resize_is_guarded_too() -> None:
     with pytest.raises(ValueError, match="cannot resize observable to 4 values"):
         source.replace([1.0, 2.0, 3.0, 4.0])
 
+    assert source.snapshot_values() == [1.0, 2.0, 3.0]
+    assert derived.snapshot_values() == [2.0, 4.0, 6.0]
     assert plot.render_png().startswith(PNG_HEADER)
+
+
+def test_derived_chain_resize_is_guarded_and_atomic() -> None:
+    source = ruviz.observable([1.0, 2.0, 3.0])
+    halfway = source * 2.0
+    derived = halfway + 1.0
+    plot = ruviz.plot().line([0.0, 1.0, 2.0], derived)
+
+    with pytest.raises(ValueError, match="cannot resize observable to 2 values"):
+        source.replace([1.0, 2.0])
+
+    assert source.snapshot_values() == [1.0, 2.0, 3.0]
+    assert halfway.snapshot_values() == [2.0, 4.0, 6.0]
+    assert derived.snapshot_values() == [3.0, 5.0, 7.0]
+    assert plot.render_png().startswith(PNG_HEADER)
+
+
+def test_resize_with_mismatched_derivation_operands_is_atomic() -> None:
+    left = ruviz.observable([1.0, 2.0, 3.0])
+    right = ruviz.observable([1.0, 2.0, 3.0])
+    combined = left + right
+
+    with pytest.raises(ValueError, match="observable math operands must have the same length"):
+        left.replace([1.0, 2.0])
+
+    assert left.snapshot_values() == [1.0, 2.0, 3.0]
+    assert combined.snapshot_values() == [2.0, 4.0, 6.0]
+
+    left.replace([4.0, 5.0, 6.0])
+    assert combined.snapshot_values() == [5.0, 7.0, 9.0]
+
+
+def test_replacing_a_derived_observable_lifts_its_source_constraint() -> None:
+    source = ruviz.observable([1.0, 2.0, 3.0])
+    derived = source * 2.0
+    derived.replace([9.0, 9.0, 9.0])
+
+    source.replace([1.0, 2.0])
+
+    assert source.snapshot_values() == [1.0, 2.0]
+    assert derived.snapshot_values() == [9.0, 9.0, 9.0]
 
 
 def test_dropped_plot_no_longer_constrains_observable_resize() -> None:

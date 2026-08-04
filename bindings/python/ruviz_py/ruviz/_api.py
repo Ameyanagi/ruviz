@@ -421,7 +421,7 @@ _PLOT_SETTINGS: tuple[tuple[str, str, bool], ...] = (
 class _ObservableDerivation:
     ufunc: np.ufunc
     inputs: tuple[Any, ...]
-    bindings: list[tuple["ObservableSeries", int]]
+    bindings: list[tuple["ObservableSeries", int, int]]
 
 
 class ObservableSeries:
@@ -440,6 +440,7 @@ class ObservableSeries:
         self._next_listener_token = 0
         self._derivation: _ObservableDerivation | None = None
         self._resize_guards: dict[int, weakref.WeakMethod[Any]] = {}
+        self._derived_children: dict[int, weakref.ref["ObservableSeries"]] = {}
 
     @classmethod
     def _from_values(cls, values: _F64Array) -> "ObservableSeries":
@@ -454,7 +455,7 @@ class ObservableSeries:
             return cls(cls._evaluate_ufunc(ufunc, normalized_inputs))
 
         observable = cls._from_values(cls._evaluate_ufunc(ufunc, normalized_inputs))
-        bindings: list[tuple[ObservableSeries, int]] = []
+        bindings: list[tuple[ObservableSeries, int, int]] = []
         attached_sources: set[int] = set()
         for value in normalized_inputs:
             if not isinstance(value, ObservableSeries):
@@ -464,8 +465,10 @@ class ObservableSeries:
                 continue
             attached_sources.add(source_id)
             token = value._attach(observable._refresh_from_derivation)
-            bindings.append((value, token))
+            child_token = value._register_derived(observable)
+            bindings.append((value, token, child_token))
             weakref.finalize(observable, value._detach, token)
+            weakref.finalize(observable, value._unregister_derived, child_token)
 
         observable._derivation = _ObservableDerivation(ufunc=ufunc, inputs=normalized_inputs, bindings=bindings)
         return observable
@@ -508,8 +511,9 @@ class ObservableSeries:
         if self._derivation is None:
             return
 
-        for source, token in self._derivation.bindings:
+        for source, token, child_token in self._derivation.bindings:
             source._detach(token)
+            source._unregister_derived(child_token)
         self._derivation = None
 
     def _refresh_from_derivation(self) -> None:
@@ -535,6 +539,15 @@ class ObservableSeries:
     def _detach_resize_guard(self, token: int) -> None:
         self._resize_guards.pop(token, None)
 
+    def _register_derived(self, child: "ObservableSeries") -> int:
+        token = self._next_listener_token
+        self._next_listener_token += 1
+        self._derived_children[token] = weakref.ref(child)
+        return token
+
+    def _unregister_derived(self, token: int) -> None:
+        self._derived_children.pop(token, None)
+
     def _check_resize(self, new_length: int) -> None:
         """Let bound plots veto a length change before it is applied."""
         if new_length == len(self._values):
@@ -545,6 +558,39 @@ class ObservableSeries:
                 self._resize_guards.pop(token, None)
                 continue
             guard(self, new_length)
+
+    def _prevalidate_resize(
+        self, new_length: int, prospective: dict[int, int] | None = None
+    ) -> None:
+        """Validate a resize across the whole derivation graph before committing.
+
+        Walks every derived observable transitively, checking plot guards and
+        operand-length compatibility with the prospective lengths, so a vetoed
+        resize raises before any observable in the graph has mutated.
+        """
+        prospective = {} if prospective is None else prospective
+        if prospective.get(id(self)) == new_length:
+            return
+        prospective[id(self)] = new_length
+        self._check_resize(new_length)
+        for token, child_ref in list(self._derived_children.items()):
+            child = child_ref()
+            if child is None:
+                self._derived_children.pop(token, None)
+                continue
+            if child._derivation is None:
+                continue
+            lengths = {
+                prospective.get(id(value), len(value._values))
+                if isinstance(value, ObservableSeries)
+                else len(value)
+                for value in child._derivation.inputs
+                if isinstance(value, (ObservableSeries, np.ndarray))
+            }
+            if len(lengths) > 1:
+                raise ValueError("observable math operands must have the same length")
+            if lengths:
+                child._prevalidate_resize(lengths.pop(), prospective)
 
     def __copy__(self) -> "ObservableSeries":
         return self.__deepcopy__({})
@@ -567,11 +613,13 @@ class ObservableSeries:
     def replace(self, values: ArrayLike) -> None:
         """Replace the entire series and notify attached widgets.
 
-        Raises ValueError when the new length would break a bound plot series
-        whose inputs must stay equal-length (line, scatter, bar, error bars).
+        Raises ValueError before any state changes when the new length would
+        break a bound plot series whose inputs must stay equal-length (line,
+        scatter, bar, error bars) — including series bound to observables
+        derived from this one.
         """
         next_values = _to_numeric_1d(values, "observable values")
-        self._check_resize(len(next_values))
+        self._prevalidate_resize(len(next_values))
         self._ensure_detached()
         self._values = next_values
         self._native_observable.replace(self._values)
