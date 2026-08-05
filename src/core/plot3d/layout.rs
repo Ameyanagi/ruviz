@@ -507,9 +507,12 @@ fn lay_out_scene(
     let mut grid_lines = Vec::new();
     let mut tick_marks = Vec::new();
     let mut tick_labels = Vec::new();
+    let mut tick_label_outward: Vec<Vec2> = Vec::new();
+    let mut tick_label_runs = [0usize..0, 0..0, 0..0];
     let mut axis_labels = Vec::new();
 
     for axis in 0..3 {
+        let run_start = tick_labels.len();
         let (tick_values, formatted) = &ticks[axis];
         let axis_start = local_corner(axis_anchor_signs[axis]);
         let mut axis_end = axis_start;
@@ -564,6 +567,7 @@ fn lay_out_scene(
                 centered: true,
             };
             push_text_avoiding_overlap(&mut tick_labels, candidate, outward, tick_font_size);
+            tick_label_outward.push(outward);
 
             for other_axis in 0..3 {
                 if other_axis == axis {
@@ -578,6 +582,8 @@ fn lay_out_scene(
                 });
             }
         }
+
+        tick_label_runs[axis] = run_start..tick_labels.len();
 
         if let Some(label) = labels[axis].filter(|label| !label.is_empty()) {
             // Clear of the tick labels rather than at a fixed 28 px: the z
@@ -603,6 +609,15 @@ fn lay_out_scene(
             });
         }
     }
+
+    separate_corner_tick_labels(
+        &mut tick_labels,
+        &tick_label_outward,
+        &tick_marks,
+        &tick_label_runs,
+        Vec2::new(corners[anchor_index].x, corners[anchor_index].y),
+        tick_font_size,
+    );
 
     let mut ink = InkBox3D::empty();
     for edge in box_edges.iter().chain(&tick_marks) {
@@ -1331,14 +1346,91 @@ fn push_text_avoiding_overlap(
 }
 
 fn estimated_text_overlap(left: &OverlayText3D, right: &OverlayText3D, font_size: f32) -> bool {
+    texts_crowd_each_other(left, right, font_size, font_size * 0.2)
+}
+
+/// Do these two labels come within `gap` of each other?
+fn texts_crowd_each_other(
+    left: &OverlayText3D,
+    right: &OverlayText3D,
+    font_size: f32,
+    gap: f32,
+) -> bool {
     // Same estimate the 3D legend is sized with, so a tick label and a legend
     // label of the same text can never be assumed two different widths.
     let left_half_width = estimated_label_width(&left.text, font_size) * 0.5;
     let right_half_width = estimated_label_width(&right.text, font_size) * 0.5;
-    let horizontal = (left.position.x - right.position.x).abs()
-        < left_half_width + right_half_width + font_size * 0.2;
+    let horizontal =
+        (left.position.x - right.position.x).abs() < left_half_width + right_half_width + gap;
     let vertical = (left.position.y - right.position.y).abs() < font_size * 0.9;
     horizontal && vertical
+}
+
+/// Clear space two tick labels need between them to read as two numbers.
+///
+/// [`estimated_text_overlap`] only asks whether two labels *touch*, which is the
+/// right question for labels along one axis — they run in a row and a fifth of
+/// an em between them is legible. The x and y corner labels do not run in a row:
+/// they sit at the same projected point, on different axes, and a fifth of an em
+/// between them reads as one number with a space in it ("2 2"). A full em is
+/// what tells them apart.
+const CORNER_TICK_LABEL_GAP_EM: f32 = 1.0;
+
+/// Steps the y corner label may take before it is dropped instead.
+const MAX_CORNER_SEPARATION_STEPS: usize = 4;
+
+/// Pull the x and y tick labels that meet at the box's anchor corner apart.
+///
+/// x and y run along the two bottom edges that meet at that corner, so their
+/// corner-most ticks project to the *same* point and their labels come to rest
+/// side by side — two unrelated numbers reading as one. The y label is stepped
+/// further along its own outward direction until a full em separates them, and
+/// dropped if that many steps still leave them crowded. y is always the one that
+/// moves, so which label gives way does not depend on the camera.
+fn separate_corner_tick_labels(
+    labels: &mut Vec<OverlayText3D>,
+    outward: &[Vec2],
+    tick_marks: &[OverlayLine3D],
+    axis_runs: &[std::ops::Range<usize>; 3],
+    anchor: Vec2,
+    font_size: f32,
+) {
+    let nearest_to_anchor = |run: &std::ops::Range<usize>| -> Option<usize> {
+        run.clone().min_by(|left, right| {
+            let distance = |index: usize| {
+                tick_marks
+                    .get(index)
+                    .map_or(f32::MAX, |mark| (mark.start - anchor).length_squared())
+            };
+            distance(*left).total_cmp(&distance(*right))
+        })
+    };
+
+    let (Some(x_index), Some(y_index)) = (
+        nearest_to_anchor(&axis_runs[0]),
+        nearest_to_anchor(&axis_runs[1]),
+    ) else {
+        return;
+    };
+
+    let gap = font_size * CORNER_TICK_LABEL_GAP_EM;
+    let crowded = |labels: &[OverlayText3D]| {
+        texts_crowd_each_other(&labels[x_index], &labels[y_index], font_size, gap)
+    };
+    if !crowded(labels) {
+        return;
+    }
+
+    let step = (font_size * 0.85).max(3.0);
+    let direction = outward.get(y_index).copied().unwrap_or(Vec2::Y);
+    for _ in 0..MAX_CORNER_SEPARATION_STEPS {
+        labels[y_index].position += direction * step;
+        if !crowded(labels) {
+            return;
+        }
+    }
+
+    labels.remove(y_index);
 }
 
 fn project_local(
@@ -1510,6 +1602,45 @@ mod tests {
             .expect("frame");
         let layout = Axis3Layout::resolve(&frame).expect("layout");
         (frame, layout)
+    }
+
+    /// The x and y axes meet at the anchor corner, so their corner-most ticks
+    /// project to the same point. Their labels used to come to rest a few pixels
+    /// apart and read as a single number ("2 2"); every pair of tick labels on
+    /// the two bottom axes must now be a readable gap apart.
+    #[test]
+    fn the_corner_tick_labels_of_the_two_bottom_axes_do_not_read_as_one() {
+        let frame = surface(
+            &[0.0, 1.0, 2.0],
+            &[0.0, 1.0, 2.0],
+            &[[0.0, 1.0, 2.0], [1.0, 2.0, 3.0], [2.0, 3.0, 4.0]],
+        )
+        .finalize()
+        .resolve()
+        .expect("frame");
+        let layout = Axis3Layout::resolve(&frame).expect("layout");
+
+        let font_size = frame.theme.tick_label_font_size * frame.figure.dpi / 72.0;
+        let x_count = axis_ticks(&frame)[0].0.len();
+        assert!(x_count >= 2);
+        let (x_labels, rest) = layout.tick_labels.split_at(x_count);
+        // The z run is last, so whatever precedes it is the y run — which may be
+        // one label short, since an unsplittable corner label is dropped.
+        let z_count = axis_ticks(&frame)[2].0.len();
+        let y_labels = &rest[..rest.len() - z_count];
+
+        for x_label in x_labels {
+            for y_label in y_labels {
+                assert!(
+                    !texts_crowd_each_other(x_label, y_label, font_size, font_size),
+                    "{:?} at {:?} and {:?} at {:?} read as one label",
+                    x_label.text,
+                    x_label.position,
+                    y_label.text,
+                    y_label.position
+                );
+            }
+        }
     }
 
     /// The z ticks and the `z` label used to be drawn on the *front* vertical

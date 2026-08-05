@@ -18,6 +18,16 @@ use crate::render::skia::SkiaRenderer;
 use crate::render::{Color, LineStyle, Theme};
 use crate::stats::kde::{KdeResult, kde_1d, scotts_rule, silvermans_rule};
 
+/// Width of a violin body, as a fraction of its one-unit category slot.
+///
+/// The same fraction a box plot uses ([`crate::core::style_utils::defaults::BOXPLOT_WIDTH_RATIO`]),
+/// so a violin and a box in the same figure read as the same kind of object.
+/// The previous 0.8 left a single violin filling almost three quarters of the
+/// plot frame, which reads as a filled background rather than as one
+/// distribution sitting in its slot.
+pub const DEFAULT_VIOLIN_WIDTH: f64 =
+    crate::core::style_utils::defaults::BOXPLOT_WIDTH_RATIO as f64;
+
 /// Configuration for violin plot
 #[allow(deprecated)] // the derives touch the deprecated `scale` field
 #[derive(Debug, Clone)]
@@ -47,7 +57,8 @@ pub struct ViolinConfig {
         note = "not yet implemented; tracked for a future release. Violins are always width-normalised (ViolinScale::Width)"
     )]
     pub scale: ViolinScale,
-    /// Maximum width of violin (in plot units)
+    /// Maximum width of violin (in plot units, i.e. a fraction of the one-unit
+    /// category slot — see [`DEFAULT_VIOLIN_WIDTH`])
     pub width: f64,
     /// Orientation
     pub orientation: Orientation,
@@ -145,7 +156,7 @@ impl Default for ViolinConfig {
             show_points: false,
             split: false,
             scale: ViolinScale::Width,
-            width: 0.8,
+            width: DEFAULT_VIOLIN_WIDTH,
             orientation: Orientation::Vertical,
             fill_color: None,
             fill_alpha: 0.7,

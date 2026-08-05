@@ -315,11 +315,17 @@ mod tests {
     }
 
     #[test]
-    fn test_log_layout_labels_use_superscript_decades() {
+    fn test_log_layout_labels_match_the_raster_backend() {
+        // Was "1", "10", "10^2", "10^3" here and "10⁰"… in the raster backend;
+        // both now go through the one scale-aware formatter, which keeps an
+        // everyday range in plain decimals.
         let layout = TickLayout::compute(1.0, 1000.0, 0.0, 300.0, &AxisScale::Log, 4);
+        assert_eq!(layout.labels, vec!["1", "10", "100", "1000"]);
 
-        // Was "1", "10", "10^2", "10^3" here and "10⁰"… in the raster backend.
-        assert_eq!(layout.labels, vec!["10⁰", "10¹", "10²", "10³"]);
+        // …and switches the whole axis to exponent form once the decades leave
+        // the plain window.
+        let layout = TickLayout::compute(1e-8, 1e-5, 0.0, 300.0, &AxisScale::Log, 4);
+        assert_eq!(layout.labels, vec!["10⁻⁸", "10⁻⁷", "10⁻⁶", "10⁻⁵"]);
     }
 
     #[test]

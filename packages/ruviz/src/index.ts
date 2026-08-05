@@ -569,10 +569,13 @@ function normalizeSeriesStyle<T extends SeriesStyleSnapshot>(style: T | undefine
     return undefined;
   }
 
-  const { alpha, width, markerSize, bandwidth, bins, levels, color, marker, linestyle } =
+  const { alpha, width, markerSize, bandwidth, bins, density, levels, color, marker, linestyle } =
     style as SeriesStyleSnapshot;
   if (alpha !== undefined && !(alpha >= 0 && alpha <= 1)) {
     throw new RangeError("alpha must be between 0.0 and 1.0");
+  }
+  if (density !== undefined && typeof density !== "boolean") {
+    throw new TypeError("density must be a bool");
   }
 
   if (color !== undefined) {

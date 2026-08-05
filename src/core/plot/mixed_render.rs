@@ -1600,7 +1600,9 @@ impl Plot {
                         None
                     },
                     if data.config.show_percentages {
-                        Some(format!("{:.1}%", screen_data.percentages[idx]))
+                        Some(crate::plots::composition::pie::format_percentage(
+                            screen_data.percentages[idx],
+                        ))
                     } else {
                         None
                     },

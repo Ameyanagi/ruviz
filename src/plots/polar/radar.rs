@@ -45,6 +45,16 @@ pub(crate) const RADAR_LABEL_RADIUS: f64 = 1.15;
 /// the canvas edge.
 pub(crate) const RADAR_LABEL_PAD: f64 = 0.10;
 
+/// Opacity of a radar series' fill.
+///
+/// Radar series overlap by construction — every polygon contains the centre —
+/// so the fill has to survive being stacked two or three deep. At a quarter
+/// opacity two overlapping fills composited to a muddy tan that read as neither
+/// series; this is light enough that the overlap stays a tint of the colours
+/// that made it, and that the full-strength strokes and markers still carry the
+/// series identity, while a single-series chart still reads as filled.
+pub const DEFAULT_RADAR_FILL_ALPHA: f32 = 0.15;
+
 /// Half-extent of the data range a radar chart needs in both x and y.
 ///
 /// Both the raster bounds arm and the SVG path derive their bounds from this so
@@ -94,7 +104,7 @@ impl Default for RadarConfig {
             labels: vec![],
             colors: None,
             fill: true,
-            fill_alpha: 0.25,
+            fill_alpha: DEFAULT_RADAR_FILL_ALPHA,
             line_width: 2.0,
             marker_size: 4.0,
             show_grid: true,

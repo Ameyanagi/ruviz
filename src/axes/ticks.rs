@@ -136,8 +136,13 @@ pub fn generate_log_ticks(min: f64, max: f64, target_count: usize) -> Vec<f64> {
             }
         }
 
-        // If we have room, add intermediate ticks (2, 5) for better resolution
-        if decades <= target_count / 2 {
+        // Decades alone are the labelled ticks: an axis that also labelled the
+        // 2/5 intermediates read in two formats at once ("10⁻¹" next to "0.5").
+        // Only a range too short to produce three decades keeps them, because
+        // there the alternative is an axis with one or two ticks on it — and
+        // the label formatter puts *those* ticks in the same notation as the
+        // decades beside them.
+        if ticks.len() < 3 {
             for exp in log_min..log_max {
                 let base = 10.0_f64.powi(exp);
                 for &mult in &[2.0, 5.0] {
@@ -622,22 +627,77 @@ pub fn format_tick_labels(values: &[f64]) -> Vec<String> {
 ///
 /// This is the canonical tick label formatter: raster, SVG and the layout
 /// measurement pass all go through it, so a figure's axis reads identically in
-/// every backend. Log-scale ticks that sit on a clean power of ten render as
-/// `10ⁿ`; everything else uses the shared per-axis plain formatting.
+/// every backend.
+///
+/// A log axis picks **one** notation for the whole axis. While every ticked
+/// magnitude stays inside [`LOG_PLAIN_LABEL_MIN`]..=[`LOG_PLAIN_LABEL_MAX`] the
+/// decades read as plain decimals (`0.01`, `0.1`, `1`, `10`), because that is
+/// what a reader expects of an ordinary range; outside that window every label
+/// switches to the `10ⁿ` / `2×10ⁿ` exponent form together. An axis is never
+/// allowed to show `10⁻¹` next to `0.5`.
+///
+/// A symlog axis applies that rule to its logarithmic regions only — the linear
+/// region around zero keeps linear labels, which is the whole point of the
+/// scale.
 pub fn format_tick_labels_for_scale(values: &[f64], scale: &AxisScale) -> Vec<String> {
-    let plain = format_tick_labels(values);
     match scale {
-        AxisScale::Log => values
-            .iter()
-            .zip(plain)
-            .map(|(&value, plain)| {
-                log_decade_label(value)
-                    .or_else(|| log_scientific_label(&plain))
-                    .unwrap_or(plain)
-            })
-            .collect(),
-        _ => plain,
+        AxisScale::Linear => format_tick_labels(values),
+        AxisScale::Log => format_log_labels(values, 0.0),
+        AxisScale::SymLog { linthresh } => format_log_labels(values, linthresh.abs()),
     }
+}
+
+/// Smallest magnitude a log axis still labels as a plain decimal (`0.0001`).
+const LOG_PLAIN_LABEL_MIN: f64 = 1e-4;
+
+/// Largest magnitude a log axis still labels as a plain decimal (`100000`).
+const LOG_PLAIN_LABEL_MAX: f64 = 1e5;
+
+/// Format one axis worth of log (or symlog) ticks.
+///
+/// `linthresh` is the symlog linear threshold; `0.0` means every tick belongs
+/// to the logarithmic region, which is the plain log case.
+fn format_log_labels(values: &[f64], linthresh: f64) -> Vec<String> {
+    let plain = format_tick_labels(values);
+    let in_log_region = |value: f64| value.abs() > linthresh;
+
+    let reads_plain = values
+        .iter()
+        .zip(&plain)
+        .all(|(&value, label)| !in_log_region(value) || plain_log_label_is_nice(value, label));
+    if reads_plain {
+        return plain;
+    }
+
+    values
+        .iter()
+        .zip(plain)
+        .map(|(&value, plain)| {
+            if in_log_region(value) {
+                log_exponent_label(value).unwrap_or(plain)
+            } else {
+                plain
+            }
+        })
+        .collect()
+}
+
+/// Would this tick still read well as the plain decimal `label`?
+fn plain_log_label_is_nice(value: f64, label: &str) -> bool {
+    let magnitude = value.abs();
+    if !magnitude.is_finite() {
+        return false;
+    }
+    if magnitude == 0.0 {
+        // Zero reads the same in either notation, so it never forces a switch.
+        return true;
+    }
+
+    // The shared formatter falling back to `1.00e-8` is itself proof that plain
+    // decimals cannot carry this axis.
+    !label.contains(['e', 'E'])
+        && (LOG_PLAIN_LABEL_MIN * (1.0 - 1e-9)..=LOG_PLAIN_LABEL_MAX * (1.0 + 1e-9))
+            .contains(&magnitude)
 }
 
 /// Format a single log-scale tick value.
@@ -648,38 +708,37 @@ pub fn format_log_tick_label(value: f64) -> String {
         .unwrap_or_default()
 }
 
-/// Render `value` as `10ⁿ` when it is a clean positive power of ten.
-fn log_decade_label(value: f64) -> Option<String> {
-    if !value.is_finite() || value <= 0.0 {
+/// Render `value` in exponent form: `10ⁿ` on a decade, `2×10ⁿ` off one.
+///
+/// The sign is carried through so a symlog axis can label its negative
+/// logarithmic region as `-10³`.
+fn log_exponent_label(value: f64) -> Option<String> {
+    if !value.is_finite() || value == 0.0 {
         return None;
     }
 
-    let exponent = value.log10();
-    if (exponent.round() - exponent).abs() >= 1e-10 {
-        return None;
+    let sign = if value < 0.0 { "-" } else { "" };
+    let magnitude = value.abs();
+    let log = magnitude.log10();
+    if (log.round() - log).abs() < 1e-10 {
+        return Some(format!(
+            "{sign}10{}",
+            superscript_exponent(log.round() as i32)
+        ));
     }
+
+    let mut exponent = log.floor() as i32;
+    let mut mantissa = (magnitude / 10.0_f64.powi(exponent) * 100.0).round() / 100.0;
+    if mantissa >= 10.0 {
+        mantissa /= 10.0;
+        exponent += 1;
+    }
+    let mantissa = TickFormatter::trim_trailing_zeros(&format!("{mantissa:.2}"));
 
     Some(format!(
-        "10{}",
-        superscript_exponent(exponent.round() as i32)
+        "{sign}{mantissa}×10{}",
+        superscript_exponent(exponent)
     ))
-}
-
-/// Rewrite `2.00e-8` as `2×10⁻⁸`.
-///
-/// A log axis labels its decades as `10ⁿ`; a neighbouring tick rendered as
-/// `2.00e-8` would be the same mixed notation this module exists to prevent,
-/// so scientific labels are restated in the decade form.
-fn log_scientific_label(plain: &str) -> Option<String> {
-    let (mantissa, exponent) = plain.split_once(['e', 'E'])?;
-    let exponent: i32 = exponent.parse().ok()?;
-
-    let mantissa = mantissa.trim_end_matches('0').trim_end_matches('.');
-    if mantissa.is_empty() || mantissa == "-" {
-        return None;
-    }
-
-    Some(format!("{mantissa}×10{}", superscript_exponent(exponent)))
 }
 
 fn superscript_exponent(exponent: i32) -> String {
@@ -1137,15 +1196,25 @@ mod tests {
     }
 
     #[test]
-    fn test_log_labels_use_superscript_decades() {
-        let labels = format_tick_labels_for_scale(&[1.0, 10.0, 100.0, 1000.0], &AxisScale::Log);
-        assert_eq!(labels, vec!["10⁰", "10¹", "10²", "10³"]);
-
-        assert_eq!(format_log_tick_label(0.001), "10⁻³");
-        // Non-decade values fall back to the shared plain formatting.
+    fn test_log_labels_use_one_notation_per_axis() {
+        // Decades inside the plain window read as ordinary decimals.
+        assert_eq!(
+            format_tick_labels_for_scale(&[1.0, 10.0, 100.0, 1000.0], &AxisScale::Log),
+            vec!["1", "10", "100", "1000"]
+        );
+        assert_eq!(
+            format_tick_labels_for_scale(&[0.001, 0.01, 0.1, 1.0], &AxisScale::Log),
+            vec!["0.001", "0.01", "0.1", "1"]
+        );
+        assert_eq!(format_log_tick_label(0.001), "0.001");
         assert_eq!(format_log_tick_label(20.0), "20");
-        // …restated in decade form when plain formatting would go scientific,
-        // so an intermediate tick never clashes with the decades beside it.
+
+        // One tick outside the window puts the *whole* axis in exponent form,
+        // so an axis never shows "10⁻⁵" next to "0.001".
+        assert_eq!(
+            format_tick_labels_for_scale(&[1e-5, 1e-4, 1e-3], &AxisScale::Log),
+            vec!["10⁻⁵", "10⁻⁴", "10⁻³"]
+        );
         assert_eq!(
             format_tick_labels_for_scale(&[1e-8, 2e-8, 5e-8, 1e-7], &AxisScale::Log),
             vec!["10⁻⁸", "2×10⁻⁸", "5×10⁻⁸", "10⁻⁷"]
@@ -1153,6 +1222,57 @@ mod tests {
         // Non-positive values have no decade; they must still format.
         assert_eq!(format_log_tick_label(0.0), "0");
         assert_eq!(format_log_tick_label(-5.0), "-5");
+    }
+
+    #[test]
+    fn test_log_axis_labels_decades_only() {
+        // Three decades: decade ticks only, all in one plain notation.
+        let ticks = generate_ticks_for_scale(0.005, 1.0, 8, &AxisScale::Log);
+        assert_eq!(ticks, vec![0.01, 0.1, 1.0]);
+        assert_eq!(
+            format_tick_labels_for_scale(&ticks, &AxisScale::Log),
+            vec!["0.01", "0.1", "1"]
+        );
+
+        // A huge range labels the same decades in exponent form.
+        let ticks = generate_ticks_for_scale(1e-9, 1e9, 8, &AxisScale::Log);
+        let labels = format_tick_labels_for_scale(&ticks, &AxisScale::Log);
+        assert!(
+            labels.iter().all(|label| label.starts_with("10")),
+            "expected exponent labels: {labels:?}"
+        );
+        assert!(labels.contains(&"10⁻⁹".to_string()));
+
+        // A range too short for three decades keeps its 2/5 subdivisions, and
+        // they read in the same notation as the decade beside them.
+        let ticks = generate_ticks_for_scale(1.0, 10.0, 8, &AxisScale::Log);
+        assert_eq!(ticks, vec![1.0, 2.0, 5.0, 10.0]);
+        assert_eq!(
+            format_tick_labels_for_scale(&ticks, &AxisScale::Log),
+            vec!["1", "2", "5", "10"]
+        );
+    }
+
+    #[test]
+    fn test_symlog_labels_keep_linear_region_linear() {
+        // Log regions far from zero go exponent form on both signs; the linear
+        // region's own ticks stay linear.
+        let labels = format_tick_labels_for_scale(
+            &[-1e6, -1e3, 0.0, 1e3, 1e6],
+            &AxisScale::SymLog { linthresh: 1.0 },
+        );
+        assert_eq!(labels, vec!["-10⁶", "-10³", "0", "10³", "10⁶"]);
+
+        // A symlog axis whose decades all sit in the plain window stays plain.
+        let ticks = generate_ticks_for_scale(-100.0, 100.0, 8, &AxisScale::symlog(1.0));
+        let labels = format_tick_labels_for_scale(&ticks, &AxisScale::symlog(1.0));
+        assert!(
+            labels
+                .iter()
+                .all(|label| !label.contains('×') && !label.contains("10⁻")),
+            "expected plain symlog labels: {labels:?}"
+        );
+        assert!(labels.contains(&"0".to_string()));
     }
 
     #[test]
@@ -1174,9 +1294,13 @@ mod tests {
 
     #[test]
     fn test_log_ticks_few_decades() {
-        let ticks = generate_log_ticks(1.0, 100.0, 10);
-        // With few decades, should include intermediate ticks (2, 5)
-        assert!(ticks.len() > 3); // More than just 1, 10, 100
+        // Three decades is enough to read on its own, so the axis is ticked at
+        // the decades and nothing else — the 2/5 intermediates were what made a
+        // log axis label itself in two notations.
+        assert_eq!(generate_log_ticks(1.0, 100.0, 10), vec![1.0, 10.0, 100.0]);
+
+        // Under three decades they come back, or the axis would have two ticks.
+        assert_eq!(generate_log_ticks(1.0, 10.0, 10), vec![1.0, 2.0, 5.0, 10.0]);
     }
 
     #[test]

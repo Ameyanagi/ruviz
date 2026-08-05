@@ -4,7 +4,36 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-_None yet._
+### Added
+
+- The Python binding's `histogram()` gains a keyword-only `density=` flag
+  (mirrored in the web SDK's histogram style), normalizing bins to probability
+  density so a `kde()` overlay shares the axis instead of rendering flat at
+  zero. The 3D tick-label layout also separates the x and y corner labels that
+  previously collided into one string.
+
+### Changed
+
+- A log or symlog axis now labels its decades only, and picks one notation for
+  the whole axis: plain decimals while every ticked magnitude stays inside
+  `0.0001..=100000`, the `10ⁿ` / `2×10ⁿ` exponent form otherwise. A log axis
+  used to interleave `10⁰`-style decade labels with plain intermediates
+  (`0.5`, `2`, `5`) on the same axis. The 2/5 intermediates remain as unlabelled
+  minor ticks, and are kept as major ticks only on a range too short to produce
+  three decades. A symlog axis keeps its linear region's labels linear.
+- Pie percentage labels drop a trailing `.0`: a fifth of the pie reads `20%`
+  rather than `20.0%`, while `20.5%` is unchanged.
+- The default radar fill alpha drops from 0.25 to 0.15, so two filled series no
+  longer composite into a muddy tan where they overlap. Line strokes and
+  markers are unchanged; `fill_alpha`/`series_fill_alpha` still override it.
+- A violin body is now half of its category slot wide, the same fraction a box
+  plot uses, instead of 0.8 — a lone violin filled nearly three quarters of the
+  plot frame. The interior box, quartile lines and median marker are sized from
+  the body width and follow it.
+- 3D tick labels: the x and y axes meet at the same projected corner, so their
+  corner-most tick labels used to come to rest a few pixels apart and read as
+  one number ("2 2"). The y label is now stepped clear of the x label, and
+  dropped if it cannot be.
 
 ## [0.7.0] - 2026-08-05
 

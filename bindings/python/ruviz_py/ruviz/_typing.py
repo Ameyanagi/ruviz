@@ -192,6 +192,7 @@ class StyleDict(TypedDict, total=False):
     marker: MarkerName
     markerSize: float
     bins: int
+    density: bool
     bandwidth: float
     levels: int
 

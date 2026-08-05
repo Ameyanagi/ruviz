@@ -756,6 +756,7 @@ STYLE_VALUES = {
     "marker": "square",
     "marker_size": 12.0,
     "bins": 7,
+    "density": True,
     "bandwidth": 0.9,
     "levels": 9,
 }
@@ -839,6 +840,9 @@ def test_unsupported_style_keyword_is_rejected_per_kind() -> None:
     with pytest.raises(TypeError, match="unexpected keyword argument 'linestyle'"):
         ruviz.plot().bar(["a"], [1.0], linestyle="dashed")
 
+    with pytest.raises(TypeError, match="unexpected keyword argument 'density'"):
+        ruviz.plot().line(STYLE_X, STYLE_Y, density=True)
+
 
 @pytest.mark.parametrize(
     ("keyword", "value", "message"),
@@ -859,6 +863,47 @@ def test_invalid_series_config_values_are_rejected(
 
     with pytest.raises(ValueError, match=message):
         builders[keyword](**{keyword: value})
+
+
+DENSITY_SAMPLES = np.random.default_rng(20260805).normal(size=600).tolist()
+
+
+def _density_base() -> ruviz.Plot:
+    return ruviz.plot().size_px(360, 240)
+
+
+def test_histogram_density_puts_a_kde_overlay_on_the_same_scale() -> None:
+    counts = _density_base().histogram(DENSITY_SAMPLES, bins=40).render_png()
+    density = _density_base().histogram(DENSITY_SAMPLES, bins=40, density=True).render_png()
+    density_with_kde = (
+        _density_base()
+        .histogram(DENSITY_SAMPLES, bins=40, density=True)
+        .kde(DENSITY_SAMPLES)
+        .render_png()
+    )
+
+    assert density.startswith(PNG_HEADER)
+    # Counts and densities are different y scales, so the bars must move.
+    assert density != counts
+    # The KDE is drawn on the density scale, so it is visible over the bars.
+    assert density_with_kde != density
+    assert density_with_kde != counts
+
+
+def test_histogram_density_defaults_off_and_stays_out_of_the_snapshot() -> None:
+    plot = ruviz.plot().histogram(STYLE_SAMPLES, bins=4, density=False)
+
+    assert plot.to_snapshot()["series"][0]["style"] == {"bins": 4}
+    assert plot.render_png() == ruviz.plot().histogram(STYLE_SAMPLES, bins=4).render_png()
+
+
+@pytest.mark.parametrize("value", [1, 0, 1.0, "yes"], ids=["int-1", "int-0", "float", "string"])
+def test_histogram_density_rejects_non_boolean_values(value: object) -> None:
+    with pytest.raises(TypeError, match="density must be a bool"):
+        ruviz.plot().histogram(STYLE_SAMPLES, density=value)
+
+    with pytest.raises(TypeError, match="density must be a bool"):
+        ruviz._native.NativePlotHandle().histogram(STYLE_SAMPLES, {"density": value})
 
 
 PLOT_SETTING_CASES = [
@@ -1461,6 +1506,7 @@ def test_inverted_axis_limits_render_a_descending_axis(axis: str) -> None:
 
 NATIVE_STYLE_KIND_CASES = [
     ("line", ([0.0, 1.0], [0.0, 1.0]), {"bins": 3}, "line does not support bins="),
+    ("line", ([0.0, 1.0], [0.0, 1.0]), {"density": True}, "line does not support density="),
     ("scatter", ([0.0, 1.0], [0.0, 1.0]), {"width": 2.0}, "scatter does not support width="),
     (
         "histogram",
@@ -1481,7 +1527,7 @@ NATIVE_STYLE_KIND_CASES = [
 @pytest.mark.parametrize(
     ("method", "args", "style", "message"),
     NATIVE_STYLE_KIND_CASES,
-    ids=[case[0] for case in NATIVE_STYLE_KIND_CASES],
+    ids=[f"{case[0]}-{next(iter(case[2]))}" for case in NATIVE_STYLE_KIND_CASES],
 )
 def test_native_handle_rejects_style_keys_the_kind_ignores(
     method: str, args: tuple, style: dict[str, object], message: str

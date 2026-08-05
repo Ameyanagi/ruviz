@@ -325,6 +325,17 @@ def _style_alpha(value: Any) -> float:
     return alpha
 
 
+def _style_flag(name: str) -> Callable[[Any], bool]:
+    """Accept a plain ``bool``; ``1``/``"yes"`` are caller mistakes, not flags."""
+
+    def normalize(value: Any) -> bool:
+        if not isinstance(value, bool):
+            raise TypeError(f"{name} must be a bool")
+        return value
+
+    return normalize
+
+
 def _style_positive(name: str) -> Callable[[Any], float]:
     def normalize(value: Any) -> float:
         number = float(value)
@@ -373,6 +384,7 @@ _STYLE_OPTIONS: dict[str, Callable[[Any], Any]] = {
     "marker": _style_text("marker", _MARKER_ALIASES),
     "markerSize": _style_positive("marker_size"),
     "bins": _style_count("bins", 1),
+    "density": _style_flag("density"),
     "bandwidth": _style_positive("bandwidth"),
     "levels": _style_count("levels", 2),
 }
@@ -418,7 +430,11 @@ _SERIES_KINDS: dict[str, _SeriesKind] = {
         style=_COMMON_STYLE | {"marker", "markerSize"},
     ),
     "bar": _SeriesKind(("categories", "values"), frozenset({"values"}), style=_COMMON_STYLE),
-    "histogram": _SeriesKind(("data",), frozenset({"data"}), style=_COMMON_STYLE | {"bins"}),
+    "histogram": _SeriesKind(
+        ("data",),
+        frozenset({"data"}),
+        style=_COMMON_STYLE | {"bins", "density"},
+    ),
     "boxplot": _SeriesKind(
         ("data",),
         frozenset({"data"}),
@@ -480,7 +496,12 @@ def _styled_series(kind: str, fields: dict[str, Any], options: dict[str, Any]) -
                 f"{kind} does not support {_STYLE_KEYWORDS.get(key, key)}=; "
                 f"accepted: {accepted or 'none'}"
             )
-        style[key] = _STYLE_OPTIONS[key](value)
+        normalized = _STYLE_OPTIONS[key](value)
+        if normalized is False:
+            # Flag options are off by default, so `False` is the absence of
+            # styling: validate it, then keep it out of the snapshot.
+            continue
+        style[key] = normalized
 
     series = {"kind": kind, **fields}
     if style:
@@ -1338,18 +1359,30 @@ class Plot:
         *,
         data: DataSource = None,
         bins: int | None = None,
+        density: bool = False,
         label: str | None = None,
         color: str | None = None,
         alpha: float | None = None,
     ) -> "Plot":
-        """Add a histogram from one numeric sample vector."""
+        """Add a histogram from one numeric sample vector.
+
+        ``density=True`` normalizes the bars to a probability density, which is
+        what a :meth:`kde` overlay is drawn on; without it the KDE curve sits
+        flat at zero against a counts axis.
+        """
         series_data, native_data, observable = self._build_native_numeric_source(
             _column_values(data, x), "histogram x"
         )
         series = _styled_series(
             "histogram",
             {"data": series_data},
-            {"bins": bins, "label": label, "color": color, "alpha": alpha},
+            {
+                "bins": bins,
+                "density": density,
+                "label": label,
+                "color": color,
+                "alpha": alpha,
+            },
         )
         self._apply_native_series(self._native_plot, series, native_sources={"data": native_data})
         if observable is not None:
@@ -1610,7 +1643,11 @@ class Plot:
         return self
 
     def radar(self, labels: LabelsLike, series: Sequence[RadarSeriesDict]) -> "Plot":
-        """Add a radar chart from axis labels and named series."""
+        """Add a radar chart from axis labels and named series.
+
+        A series ``name`` is shown only once the plot asks for a legend, so pair
+        named series with :meth:`legend`.
+        """
         label_values = _to_string_list(labels, "radar labels")
         normalized = []
         for item in series:

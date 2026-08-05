@@ -425,7 +425,7 @@ impl TickFormatter {
     }
 
     /// Trim trailing zeros from a formatted number
-    fn trim_trailing_zeros(s: &str) -> String {
+    pub(crate) fn trim_trailing_zeros(s: &str) -> String {
         if !s.contains('.') {
             return s.to_string();
         }
