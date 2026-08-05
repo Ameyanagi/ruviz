@@ -6,6 +6,75 @@ All notable changes to this project will be documented in this file.
 
 _None yet._
 
+## [0.7.0] - 2026-08-05
+
+### Breaking
+
+- The Python binding rejects input it previously mis-handled silently:
+  non-1D arrays into 1D series (including `contour` with a 2D `z`), unknown
+  or missing `save()` extensions (previously wrote PNG bytes to any path),
+  non-positive or fractional `size_px`/`dpi`/`bins`/`levels`, DataFrames
+  passed as vectors, `data=` with a Series, bare string columns without
+  `data=`, and observables passed to plot kinds that cannot track them.
+- `anywidget`/`traitlets` moved to the optional `ruviz[widget]` extra;
+  `import ruviz` no longer requires them and widget entry points raise an
+  `ImportError` naming the extra. New `ruviz[all]` extra.
+- The private `ruviz._native` module no longer exports the legacy JSON
+  snapshot functions (`render_png_bytes`, `render_svg`, `save`,
+  `show_native`); rendering goes exclusively through the native handles.
+- `ObservableSeries.replace()` validates resizes across the whole derivation
+  graph before mutating and raises `ValueError` on any bound-series
+  violation; previously invalid resizes partially committed.
+
+### Added
+
+- Per-series styling in the Python binding wherever the renderer honors it:
+  `label`, `color` (hex and named, with did-you-mean suggestions), `alpha`,
+  `width`, `linestyle`, `marker`, `marker_size`, plus `histogram(bins=)`,
+  `kde(bandwidth=)`, and `contour(levels=)`; matplotlib shorthand aliases
+  (`"o"`, `"--"`, ...) are accepted and normalized.
+- Plot-level `legend(position)`, `grid()`, `dpi()`, `xlim`/`ylim`
+  (descending bounds render an inverted axis), and `xscale`/`yscale` with
+  linear, log, and symlog scales.
+- Full typing support: `py.typed`, `_native.pyi` stubs, runtime-valid
+  public aliases and snapshot TypedDicts, `ruviz.__version__`, and a
+  pyright-checked consumer contract in CI.
+- The notebook widget and web runtime render the styled snapshot schema
+  (`schemaVersion: 1`): series styles, `dpi`, legend, grid, limits, and
+  scales, with unknown fields tolerated and preserved for forward
+  compatibility. The TS `PlotBuilder` gains the matching styling and axis
+  methods with eager validation.
+- `data=` accepts any `Mapping` or object indexable by column name;
+  `ObservableSeries` supports `len()`, indexing, and the NumPy 2
+  `__array__` copy contract.
+- Linux aarch64 wheels (manylinux 2_28); wheels for every platform are
+  smoke tested before upload; CI tests Python 3.10 and 3.13.
+
+### Changed
+
+- NumPy arrays cross the Python boundary with a single `memcpy` instead of
+  a Python-list round trip (1M-point series add: 141 ms to 0.9 ms), plot
+  building and rendering release the GIL, snapshots materialize lazily
+  (cached `to_snapshot()` at 1M points: 477 ms to 4 ms), first-plot latency
+  drops from ~185 ms to ~0.2 ms, and widget refreshes coalesce under a
+  running event loop.
+- Native handles are `Send`: plots and observables built on one thread can
+  be used from another (GIL-serialized) instead of aborting with a panic.
+- The Python `numpy` floor relaxed to `>=1.26`.
+- Python examples, docs, and the PyPI README were rewritten around the new
+  API, with regenerated gallery assets.
+
+### Fixed
+
+- Vetoed observable resizes are atomic across derivation graphs (diamond
+  and unequal-depth paths included) and their error messages are
+  deterministic; derived updates propagate in dependency order.
+- `Plot3D.size_px`/`dpi` no longer accept sub-1 floats that truncated to
+  zero and failed at render; 3D methods reject observables instead of
+  silently freezing them.
+- `typing.get_type_hints` works on the whole public surface.
+- The web runtime's snapshot clones no longer drop or alias unknown fields.
+
 ## [0.6.0] - 2026-07-28
 
 ### Breaking
