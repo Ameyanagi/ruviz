@@ -843,7 +843,7 @@ fn test_skia_tick_helpers_are_the_canonical_axes_implementations() {
     );
     assert_eq!(
         super::format_tick_labels_for_scale(&values, &crate::axes::AxisScale::Log),
-        vec!["10⁰", "10¹", "10³"]
+        vec!["1", "10", "1000"]
     );
     assert_eq!(
         super::generate_ticks(0.0, 10.0, 6),

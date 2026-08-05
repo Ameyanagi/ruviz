@@ -7091,3 +7091,142 @@ mod quiver_colour_key {
         );
     }
 }
+
+/// Sample a radar chart along a ray that misses the axis spokes.
+///
+/// The spokes converge on the centre, so a sample taken straight along an axis
+/// reads the stroke rather than the fill.
+fn radar_fill_sample(image: &Image, radius_fraction: f32) -> [u8; 4] {
+    let center_x = image.width as f32 / 2.0;
+    let center_y = image.height as f32 / 2.0;
+    // Halfway between the first two of five axes, which start at 12 o'clock.
+    let angle = std::f32::consts::PI / 2.0 + std::f32::consts::PI / 5.0;
+    let radius = image.height as f32 * radius_fraction;
+    let x = (center_x + radius * angle.cos()).round() as u32;
+    let y = (center_y - radius * angle.sin()).round() as u32;
+    image_pixel_rgba(image, x, y)
+}
+
+fn max_channel_difference(left: [u8; 4], right: [u8; 4]) -> u8 {
+    (0..3)
+        .map(|channel| left[channel].abs_diff(right[channel]))
+        .max()
+        .unwrap_or(0)
+}
+
+/// Two filled radar series used to composite into a muddy tan that read as
+/// neither of them. The default fill alpha has to keep three things true at
+/// once: a lone series is visibly filled, the overlap is still told apart from
+/// the series under it, and the overlap stays a light tint rather than becoming
+/// an opaque third colour that hides the full-strength strokes.
+#[test]
+fn test_radar_default_fill_alpha_keeps_overlapping_series_distinguishable() {
+    let overlapping: Plot = Plot::new()
+        .size_px(600, 600)
+        .radar(&["A", "B", "C", "D", "E"])
+        .add_series("outer", &[100.0, 100.0, 100.0, 100.0, 100.0])
+        .add_series("inner", &[45.0, 45.0, 45.0, 45.0, 45.0])
+        .into();
+    let overlapping = overlapping.render().unwrap();
+
+    let background = image_pixel_rgba(&overlapping, 4, 4);
+    let overlap = radar_fill_sample(&overlapping, 0.08);
+    let single = radar_fill_sample(&overlapping, 0.22);
+
+    assert!(
+        max_channel_difference(single, background) >= 20,
+        "a radar fill must read as filled: {single:?} against {background:?}"
+    );
+    assert!(
+        max_channel_difference(overlap, single) >= 8,
+        "the overlap must not match the series under it: {overlap:?} vs {single:?}"
+    );
+    assert!(
+        overlap[..3].iter().all(|channel| *channel >= 200),
+        "two stacked fills must stay a light tint, not a muddy third colour: {overlap:?}"
+    );
+
+    // A chart with nothing to overlap is still clearly filled.
+    let lone: Plot = Plot::new()
+        .size_px(600, 600)
+        .radar(&["A", "B", "C", "D", "E"])
+        .add_series("only", &[100.0, 100.0, 100.0, 100.0, 100.0])
+        .into();
+    let lone = lone.render().unwrap();
+    assert!(
+        max_channel_difference(radar_fill_sample(&lone, 0.22), background) >= 20,
+        "a single-series radar must still read as filled"
+    );
+}
+
+/// Bounding box of the violin's own ink inside the plot frame, as
+/// `(left, right, top, bottom)` pixels.
+///
+/// Only the fill colour counts: grid lines and the frame span the whole area
+/// and would swamp any measurement of where the violin actually reaches.
+fn violin_ink_bounds(image: &Image, area: &tiny_skia::Rect) -> (u32, u32, u32, u32) {
+    let left = area.left().ceil() as u32 + 2;
+    let right = area.right().floor() as u32 - 2;
+    let top = area.top().ceil() as u32 + 2;
+    let bottom = area.bottom().floor() as u32 - 2;
+
+    let mut bounds = (u32::MAX, 0, u32::MAX, 0);
+    for y in top..bottom {
+        for x in left..right {
+            let [r, g, b, _] = image_pixel_rgba(image, x, y);
+            // The default violin fill is a blue tint; grey grid lines and the
+            // near-black outline are excluded by requiring a blue cast.
+            if i32::from(b) - i32::from(r) > 30 && b > 120 {
+                bounds.0 = bounds.0.min(x);
+                bounds.1 = bounds.1.max(x);
+                bounds.2 = bounds.2.min(y);
+                bounds.3 = bounds.3.max(y);
+            }
+        }
+    }
+    bounds
+}
+
+/// A violin has to sit *inside* its frame: the KDE tails need the same
+/// autoscale margin every other data kind gets, and the body has to be a
+/// fraction of its category slot rather than the whole panel — a violin that
+/// fills the frame edge to edge reads as a background, not as a distribution.
+#[test]
+fn test_violin_sits_inside_its_frame_with_room_at_top_and_bottom() {
+    let data: Vec<f64> = (0..200)
+        .map(|i| {
+            let u1 = ((i * 7 + 13) % 200) as f64 / 200.0;
+            let u2 = ((i * 11 + 17) % 200) as f64 / 200.0;
+            let normal =
+                (-2.0 * u1.max(0.01_f64).ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos();
+            if i % 2 == 0 {
+                3.0 + normal
+            } else {
+                7.0 + normal * 0.8
+            }
+        })
+        .collect();
+
+    let plot: Plot = Plot::new().size_px(760, 420).violin(&data).into();
+    let area = compute_render_plot_area(&plot);
+    let image = plot.render().unwrap();
+    let (left, right, top, bottom) = violin_ink_bounds(&image, &area);
+
+    let height = area.bottom() - area.top();
+    let width = area.right() - area.left();
+    assert!(
+        top as f32 - area.top() >= height * 0.02,
+        "violin tail touches the top of the frame: {top} against {}",
+        area.top()
+    );
+    assert!(
+        area.bottom() - bottom as f32 >= height * 0.02,
+        "violin tail touches the bottom of the frame: {bottom} against {}",
+        area.bottom()
+    );
+    assert!(
+        (right - left) as f32 <= width * 0.55,
+        "violin body spans {} of a {width}px frame",
+        right - left
+    );
+}

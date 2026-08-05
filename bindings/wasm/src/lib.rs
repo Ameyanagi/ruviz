@@ -336,6 +336,7 @@ mod wasm {
         marker: Option<MarkerStyle>,
         marker_size: Option<f32>,
         bins: Option<usize>,
+        density: Option<bool>,
         bandwidth: Option<f64>,
         levels: Option<usize>,
     }
@@ -461,8 +462,15 @@ mod wasm {
         Ok(count as usize)
     }
 
+    /// Validate a boolean style flag; `1` and `"yes"` are caller mistakes, not flags.
+    fn style_flag(value: &JsValue, name: &str) -> Result<bool, JsValue> {
+        value
+            .as_bool()
+            .ok_or_else(|| JsValue::from_str(&format!("{name} must be a bool")))
+    }
+
     /// Every style key any plot kind understands, in snapshot spelling.
-    const STYLE_KEYS: [&str; 10] = [
+    const STYLE_KEYS: [&str; 11] = [
         "label",
         "color",
         "alpha",
@@ -471,6 +479,7 @@ mod wasm {
         "marker",
         "markerSize",
         "bins",
+        "density",
         "bandwidth",
         "levels",
     ];
@@ -490,7 +499,7 @@ mod wasm {
             "markerSize",
         ];
         pub(super) const SCATTER: &[&str] = &["label", "color", "alpha", "marker", "markerSize"];
-        pub(super) const HISTOGRAM: &[&str] = &["label", "color", "alpha", "bins"];
+        pub(super) const HISTOGRAM: &[&str] = &["label", "color", "alpha", "bins", "density"];
         pub(super) const BOXPLOT: &[&str] = &["label", "color", "alpha", "width", "linestyle"];
         pub(super) const KDE: &[&str] = &["label", "color", "alpha", "width", "bandwidth"];
         pub(super) const CONTOUR: &[&str] = &["alpha", "width", "levels"];
@@ -579,6 +588,7 @@ mod wasm {
                         parsed.marker_size = Some(finite_positive(&value, "marker_size")? as f32)
                     }
                     "bins" => parsed.bins = Some(count_at_least(&value, "bins", 1)?),
+                    "density" => parsed.density = Some(style_flag(&value, "density")?),
                     "bandwidth" => parsed.bandwidth = Some(finite_positive(&value, "bandwidth")?),
                     "levels" => parsed.levels = Some(count_at_least(&value, "levels", 2)?),
                     // Unreachable: `allowed` is a subset of `STYLE_KEYS`, checked above.
@@ -795,6 +805,9 @@ mod wasm {
                 if let Some(bins) = style.bins {
                     builder = builder.bins(bins);
                 }
+                if let Some(density) = style.density {
+                    builder = builder.density(density);
+                }
                 styled(builder, &style).into_plot()
             });
             Ok(())
@@ -811,6 +824,9 @@ mod wasm {
                 let mut builder = plot.histogram_source(data_source);
                 if let Some(bins) = style.bins {
                     builder = builder.bins(bins);
+                }
+                if let Some(density) = style.density {
+                    builder = builder.density(density);
                 }
                 styled(builder, &style).into_plot()
             });

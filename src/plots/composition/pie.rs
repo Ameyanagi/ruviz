@@ -270,6 +270,16 @@ impl PieData {
     }
 }
 
+/// Format a wedge share as a percentage label.
+///
+/// One decimal is kept only when the share actually has one: a fifth of the pie
+/// reads "20%", not "20.0%".
+pub(crate) fn format_percentage(percentage: f64) -> String {
+    let rounded = format!("{percentage:.1}");
+    let trimmed = rounded.strip_suffix(".0").unwrap_or(&rounded);
+    format!("{trimmed}%")
+}
+
 /// Drop the entries of the per-value config vectors whose value was filtered out.
 ///
 /// `kept` holds the indices of the values that became wedges. Labels and explode
@@ -395,7 +405,7 @@ pub fn render_pie(
                     None
                 },
                 if config.show_percentages {
-                    Some(format!("{:.1}%", pie_data.percentages[i]))
+                    Some(format_percentage(pie_data.percentages[i]))
                 } else {
                     None
                 },
@@ -579,7 +589,7 @@ impl PlotRender for PieData {
                         None
                     },
                     if config.show_percentages {
-                        Some(format!("{:.1}%", screen_data.percentages[i]))
+                        Some(format_percentage(screen_data.percentages[i]))
                     } else {
                         None
                     },
@@ -834,6 +844,17 @@ mod tests {
         let result = Pie::compute(&values, &config);
 
         assert!(result.is_err());
+    }
+
+    /// A whole percentage used to render "20.0%"; the trailing ".0" is noise on
+    /// a wedge label, but a real fraction still has to survive.
+    #[test]
+    fn test_percentage_labels_drop_a_trailing_zero_decimal() {
+        assert_eq!(format_percentage(20.0), "20%");
+        assert_eq!(format_percentage(100.0), "100%");
+        assert_eq!(format_percentage(20.5), "20.5%");
+        assert_eq!(format_percentage(22.222), "22.2%");
+        assert_eq!(format_percentage(0.04), "0%");
     }
 
     #[test]

@@ -216,8 +216,10 @@ Plot::new()
 For logarithmic heatmaps, `ruviz` now follows Matplotlib-style masking for
 nonpositive cells: `<= 0` values are excluded from auto log-range detection and
 render as background/cutout cells instead of being clamped into the lowest
-color. Log colorbars use superscript decade labels such as `10^-5` visually
-rendered as `10⁻⁵`, and `colorbar_log_subticks(false)` switches back to a
+color. A log colorbar labels its decades in one notation for the whole bar:
+plain decimals (`0.01`, `0.1`, `1`) while every decade stays inside
+`0.0001..=100000`, and superscript decades such as `10^-5` visually rendered as
+`10⁻⁵` once any decade falls outside it. `colorbar_log_subticks(false)` switches back to a
 cleaner major-ticks-only colorbar. See `examples/montecarlo_heatmap.rs` for a
 synthetic absorbed-energy style example.
 

@@ -57,7 +57,7 @@ slow = 6.0 * np.exp(-x * 0.22)
 - **15 plot types** — line, scatter, bar, histogram, boxplot, violin, kde, ecdf,
   error bars (y and xy), heatmap, contour, pie, radar, polar line.
 - **Per-series styling** — labels, colors, alpha, widths, line styles, markers,
-  plus kind-specific `bins`, `bandwidth`, and `levels`.
+  plus kind-specific `bins`, `density`, `bandwidth`, and `levels`.
 - **Axis control** — `legend()`, `grid()`, `xlim`/`ylim`, and linear, log, or
   symlog scales.
 - **Static export** — `save()` writes PNG, SVG, or PDF; `render_png()` returns
@@ -87,14 +87,18 @@ renderer honors for it:
 | `line` | `label`, `color`, `alpha`, `width`, `linestyle`, `marker`, `marker_size` |
 | `scatter` | `label`, `color`, `alpha`, `marker`, `marker_size` |
 | `bar` | `label`, `color`, `alpha` |
-| `histogram` | `label`, `color`, `alpha`, `bins` |
+| `histogram` | `label`, `color`, `alpha`, `bins`, `density` |
 | `boxplot` | `label`, `color`, `alpha`, `width`, `linestyle` |
 | `kde` | `label`, `color`, `alpha`, `width`, `bandwidth` |
 | `ecdf`, `violin`, `polar_line`, `error_bars`, `error_bars_xy` | `label`, `color`, `alpha`, `width` |
 | `contour` | `alpha`, `width`, `levels` |
 
-`heatmap`, `pie`, and `radar` take no style keywords.
+`heatmap`, `pie`, and `radar` take no style keywords. `radar` series that carry
+a `name` are labelled once you add `.legend(...)` to the plot.
 
+- `histogram(density=True)` normalizes the bars to a probability density, which
+  is what a `kde()` overlay is drawn on; without it the KDE sits flat at zero
+  against a counts axis.
 - `color` takes a hex string (`"#2563eb"`, `"#25f"`, `"#2563eb80"`) or a named
   color such as `"red"`, `"orange"`, `"teal"`, or `"crimson"`; a typo raises
   `ValueError` with a "did you mean" suggestion.

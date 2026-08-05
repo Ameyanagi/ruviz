@@ -146,13 +146,18 @@ Which keywords a series takes follows what the renderer honors for that kind:
 | `line` | `label`, `color`, `alpha`, `width`, `linestyle`, `marker`, `marker_size` |
 | `scatter` | `label`, `color`, `alpha`, `marker`, `marker_size` |
 | `bar` | `label`, `color`, `alpha` |
-| `histogram` | `label`, `color`, `alpha`, `bins` |
+| `histogram` | `label`, `color`, `alpha`, `bins`, `density` |
 | `boxplot` | `label`, `color`, `alpha`, `width`, `linestyle` |
 | `kde` | `label`, `color`, `alpha`, `width`, `bandwidth` |
 | `ecdf`, `violin`, `polar_line`, `error_bars`, `error_bars_xy` | `label`, `color`, `alpha`, `width` |
 | `contour` | `alpha`, `width`, `levels` |
 
-`heatmap`, `pie`, and `radar` take no style keywords.
+`heatmap`, `pie`, and `radar` take no style keywords; a `radar` series that
+carries a `name` is labelled once you add `.legend(...)` to the plot.
+
+`histogram(density=True)` normalizes the bars to a probability density, which is
+the scale a `kde()` overlay is drawn on; without it the KDE curve sits flat at
+zero against a counts axis.
 
 Plot-level settings:
 

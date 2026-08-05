@@ -253,7 +253,9 @@ META = ExampleMeta(
 
 def build_plot():
     labels, series = radar_inputs()
-    return base_plot("Runtime Radar").radar(labels, series)
+    # Named series only get labelled once the plot asks for a legend; the
+    # upper-right corner stays clear of the pentagon.
+    return base_plot("Runtime Radar").radar(labels, series).legend("upper_right")
 
 
 if __name__ == "__main__":

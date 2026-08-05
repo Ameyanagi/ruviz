@@ -76,7 +76,7 @@ def every_series_kind_accepts_sequences_and_arrays() -> Plot:
         ruviz.plot()
         .line("x", "y", data=frame)
         .bar(["a", "b"], np.array([1.0, 2.0]), color="red")
-        .histogram(samples, bins=12)
+        .histogram(samples, bins=12, density=True)
         .boxplot(samples, linestyle="dotted")
         .violin(samples.tolist())
         .kde(samples, bandwidth=0.4)
@@ -194,6 +194,7 @@ def rejected_calls() -> None:
     chart.scatter([0.0], [1.0], marker_size="big")  # pyright: ignore[reportArgumentType]
     chart.line([0.0], [1.0], data=[1, 2])  # pyright: ignore[reportArgumentType]
     chart.histogram([0.0], bins="many")  # pyright: ignore[reportArgumentType]
+    chart.histogram([0.0], density="yes")  # pyright: ignore[reportArgumentType]
     chart.radar(["a"], [{"name": "x"}])  # pyright: ignore[reportArgumentType]
     chart.size_px(800)  # pyright: ignore[reportCallIssue]
     chart.line([0.0])  # pyright: ignore[reportCallIssue]
