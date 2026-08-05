@@ -22,7 +22,7 @@ gpu = ["ruviz/gpu"]
 egui = { version = "0.35", default-features = false, features = ["default_fonts"] }
 pollster = "0.4"
 rfd = "0.15"
-ruviz = { version = "=0.6.0", path = "../../.." }
+ruviz = { version = "=0.7.0", path = "../../.." }
 
 [dev-dependencies]
 eframe = { version = "0.35", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
