@@ -4,6 +4,7 @@ import {
   WebCanvasSession,
   register_default_browser_fonts_js,
 } from "../generated/raw/ruviz_web_raw.js";
+import { applySnapshotMetadata } from "./plot-runtime.js";
 import type { PlotSnapshot, YSourceSnapshot } from "./shared.js";
 
 let rawModuleSource: BufferSource | null = null;
@@ -30,34 +31,6 @@ function ensureRawModuleInitialized(): void {
   initSync(rawModuleSource);
   register_default_browser_fonts_js();
   rawModuleInitialized = true;
-}
-
-function applyPlotMetadata(rawPlot: JsPlot, snapshot: PlotSnapshot): void {
-  if (snapshot.sizePx) {
-    rawPlot.size_px(snapshot.sizePx[0], snapshot.sizePx[1]);
-  }
-
-  if (snapshot.theme === "dark") {
-    rawPlot.theme_dark();
-  } else if (snapshot.theme === "light") {
-    rawPlot.theme_light();
-  }
-
-  if (typeof snapshot.ticks === "boolean") {
-    rawPlot.ticks(snapshot.ticks);
-  }
-
-  if (snapshot.title) {
-    rawPlot.title(snapshot.title);
-  }
-
-  if (snapshot.xLabel) {
-    rawPlot.xlabel(snapshot.xLabel);
-  }
-
-  if (snapshot.yLabel) {
-    rawPlot.ylabel(snapshot.yLabel);
-  }
 }
 
 function sourceValues(
@@ -87,24 +60,24 @@ function sineSignalValues(source: Extract<YSourceSnapshot, { kind: "sine-signal"
 
 function buildRawPlotFromSnapshot(snapshot: PlotSnapshot): JsPlot {
   const rawPlot = new JsPlot();
-  applyPlotMetadata(rawPlot, snapshot);
+  applySnapshotMetadata(rawPlot, snapshot);
 
   for (const series of snapshot.series) {
     switch (series.kind) {
       case "line":
-        rawPlot.line(sourceValues(series.x), sourceValues(series.y));
+        rawPlot.line(sourceValues(series.x), sourceValues(series.y), series.style);
         break;
       case "scatter":
-        rawPlot.scatter(sourceValues(series.x), sourceValues(series.y));
+        rawPlot.scatter(sourceValues(series.x), sourceValues(series.y), series.style);
         break;
       case "bar":
-        rawPlot.bar(series.categories, sourceValues(series.values));
+        rawPlot.bar(series.categories, sourceValues(series.values), series.style);
         break;
       case "histogram":
-        rawPlot.histogram(sourceValues(series.data));
+        rawPlot.histogram(sourceValues(series.data), series.style);
         break;
       case "boxplot":
-        rawPlot.boxplot(sourceValues(series.data));
+        rawPlot.boxplot(sourceValues(series.data), series.style);
         break;
       case "heatmap":
         rawPlot.heatmap(Float64Array.from(series.values), series.rows, series.cols);
@@ -114,6 +87,7 @@ function buildRawPlotFromSnapshot(snapshot: PlotSnapshot): JsPlot {
           sourceValues(series.x),
           sourceValues(series.y),
           sourceValues(series.yErrors),
+          series.style,
         );
         break;
       case "error-bars-xy":
@@ -122,19 +96,21 @@ function buildRawPlotFromSnapshot(snapshot: PlotSnapshot): JsPlot {
           sourceValues(series.y),
           sourceValues(series.xErrors),
           sourceValues(series.yErrors),
+          series.style,
         );
         break;
       case "kde":
-        rawPlot.kde(Float64Array.from(series.data));
+        rawPlot.kde(Float64Array.from(series.data), series.style);
         break;
       case "ecdf":
-        rawPlot.ecdf(Float64Array.from(series.data));
+        rawPlot.ecdf(Float64Array.from(series.data), series.style);
         break;
       case "contour":
         rawPlot.contour(
           Float64Array.from(series.x),
           Float64Array.from(series.y),
           Float64Array.from(series.z),
+          series.style,
         );
         break;
       case "pie":
@@ -155,10 +131,14 @@ function buildRawPlotFromSnapshot(snapshot: PlotSnapshot): JsPlot {
         break;
       }
       case "violin":
-        rawPlot.violin(Float64Array.from(series.data));
+        rawPlot.violin(Float64Array.from(series.data), series.style);
         break;
       case "polar-line":
-        rawPlot.polar_line(Float64Array.from(series.r), Float64Array.from(series.theta));
+        rawPlot.polar_line(
+          Float64Array.from(series.r),
+          Float64Array.from(series.theta),
+          series.style,
+        );
         break;
     }
   }

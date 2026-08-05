@@ -33,6 +33,13 @@ def scatter_series(points: int = 48) -> tuple[list[float], list[float]]:
     return x.tolist(), y.tolist()
 
 
+def decay_series(points: int = 60) -> tuple[list[float], list[float], list[float]]:
+    x = np.linspace(0.5, 12.0, points)
+    fast = 8.0 * np.exp(-x * 0.62)
+    slow = 6.0 * np.exp(-x * 0.22)
+    return x.tolist(), fast.tolist(), slow.tolist()
+
+
 def categorical_series() -> tuple[list[str], list[float]]:
     categories = ["CPU", "SVG", "GPU", "WASM", "Jupyter"]
     values = [3.8, 2.6, 4.4, 4.9, 4.1]

@@ -5,14 +5,14 @@ from _shared import ExampleMeta, base_plot, contour_grid, save_example
 META = ExampleMeta(
     slug="contour",
     title="Contour plot",
-    summary="Contours computed from a flattened z-grid over x/y axes.",
+    summary="Contours computed from a flattened z-grid over x/y axes, at a chosen level count.",
     section="Matrix plots",
 )
 
 
 def build_plot():
     x, y, z = contour_grid()
-    return base_plot("Contour Plot").contour(x, y, z)
+    return base_plot("Contour Plot").contour(x, y, z, levels=12)
 
 
 if __name__ == "__main__":

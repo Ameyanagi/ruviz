@@ -58,9 +58,18 @@ function toObservable(
   return new module.ObservableVecF64(Float64Array.from(source.values));
 }
 
-export function applySnapshotMetadata(rawPlot: RawJsPlot, snapshot: PlotSnapshot): void {
+/** The plot-level settings of a snapshot, without its series. */
+export type PlotSnapshotMetadata = Omit<PlotSnapshot, "series">;
+
+export function applySnapshotMetadata(rawPlot: RawJsPlot, snapshot: PlotSnapshotMetadata): void {
   if (snapshot.sizePx) {
     rawPlot.size_px(snapshot.sizePx[0], snapshot.sizePx[1]);
+  }
+
+  // After `size_px`, which fixes the figure size in inches: raising the DPI
+  // then scales the exported pixels instead of reshaping the figure.
+  if (typeof snapshot.dpi === "number") {
+    rawPlot.dpi(snapshot.dpi);
   }
 
   if (snapshot.theme === "dark") {
@@ -83,6 +92,30 @@ export function applySnapshotMetadata(rawPlot: RawJsPlot, snapshot: PlotSnapshot
 
   if (snapshot.yLabel) {
     rawPlot.ylabel(snapshot.yLabel);
+  }
+
+  if (snapshot.legend) {
+    rawPlot.legend(snapshot.legend);
+  }
+
+  if (typeof snapshot.grid === "boolean") {
+    rawPlot.grid(snapshot.grid);
+  }
+
+  if (snapshot.xLim) {
+    rawPlot.xlim(snapshot.xLim[0], snapshot.xLim[1]);
+  }
+
+  if (snapshot.yLim) {
+    rawPlot.ylim(snapshot.yLim[0], snapshot.yLim[1]);
+  }
+
+  if (snapshot.xScale) {
+    rawPlot.xscale(snapshot.xScale[0], snapshot.xScale[1]);
+  }
+
+  if (snapshot.yScale) {
+    rawPlot.yscale(snapshot.yScale[0], snapshot.yScale[1]);
   }
 }
 
@@ -108,9 +141,9 @@ export function buildRawPlotFromSnapshot(snapshot: PlotSnapshot, module: RawModu
           const xValues = Float64Array.from(sourceValues(series.x));
 
           if (series.kind === "line") {
-            rawPlot.line_signal(xValues, signal);
+            rawPlot.line_signal(xValues, signal, series.style);
           } else {
-            rawPlot.scatter_signal(xValues, signal);
+            rawPlot.scatter_signal(xValues, signal, series.style);
           }
           break;
         }
@@ -120,9 +153,9 @@ export function buildRawPlotFromSnapshot(snapshot: PlotSnapshot, module: RawModu
           const yObservable = toObservable(module, series.y);
 
           if (series.kind === "line") {
-            rawPlot.line_observable(xObservable, yObservable);
+            rawPlot.line_observable(xObservable, yObservable, series.style);
           } else {
-            rawPlot.scatter_observable(xObservable, yObservable);
+            rawPlot.scatter_observable(xObservable, yObservable, series.style);
           }
           break;
         }
@@ -130,33 +163,37 @@ export function buildRawPlotFromSnapshot(snapshot: PlotSnapshot, module: RawModu
         const xValues = Float64Array.from(sourceValues(series.x));
         const yValues = Float64Array.from(sourceValues(series.y));
         if (series.kind === "line") {
-          rawPlot.line(xValues, yValues);
+          rawPlot.line(xValues, yValues, series.style);
         } else {
-          rawPlot.scatter(xValues, yValues);
+          rawPlot.scatter(xValues, yValues, series.style);
         }
         break;
       }
       case "bar": {
         if (series.values.kind === "observable") {
-          rawPlot.bar_observable(series.categories, toObservable(module, series.values));
+          rawPlot.bar_observable(
+            series.categories,
+            toObservable(module, series.values),
+            series.style,
+          );
         } else {
-          rawPlot.bar(series.categories, Float64Array.from(series.values.values));
+          rawPlot.bar(series.categories, Float64Array.from(series.values.values), series.style);
         }
         break;
       }
       case "histogram": {
         if (series.data.kind === "observable") {
-          rawPlot.histogram_observable(toObservable(module, series.data));
+          rawPlot.histogram_observable(toObservable(module, series.data), series.style);
         } else {
-          rawPlot.histogram(Float64Array.from(series.data.values));
+          rawPlot.histogram(Float64Array.from(series.data.values), series.style);
         }
         break;
       }
       case "boxplot": {
         if (series.data.kind === "observable") {
-          rawPlot.boxplot_observable(toObservable(module, series.data));
+          rawPlot.boxplot_observable(toObservable(module, series.data), series.style);
         } else {
-          rawPlot.boxplot(Float64Array.from(series.data.values));
+          rawPlot.boxplot(Float64Array.from(series.data.values), series.style);
         }
         break;
       }
@@ -173,12 +210,14 @@ export function buildRawPlotFromSnapshot(snapshot: PlotSnapshot, module: RawModu
             toObservable(module, series.x),
             toObservable(module, series.y),
             toObservable(module, series.yErrors),
+            series.style,
           );
         } else {
           rawPlot.error_bars(
             Float64Array.from(series.x.values),
             Float64Array.from(series.y.values),
             Float64Array.from(series.yErrors.values),
+            series.style,
           );
         }
         break;
@@ -195,6 +234,7 @@ export function buildRawPlotFromSnapshot(snapshot: PlotSnapshot, module: RawModu
             toObservable(module, series.y),
             toObservable(module, series.xErrors),
             toObservable(module, series.yErrors),
+            series.style,
           );
         } else {
           rawPlot.error_bars_xy(
@@ -202,21 +242,23 @@ export function buildRawPlotFromSnapshot(snapshot: PlotSnapshot, module: RawModu
             Float64Array.from(series.y.values),
             Float64Array.from(series.xErrors.values),
             Float64Array.from(series.yErrors.values),
+            series.style,
           );
         }
         break;
       }
       case "kde":
-        rawPlot.kde(Float64Array.from(series.data));
+        rawPlot.kde(Float64Array.from(series.data), series.style);
         break;
       case "ecdf":
-        rawPlot.ecdf(Float64Array.from(series.data));
+        rawPlot.ecdf(Float64Array.from(series.data), series.style);
         break;
       case "contour":
         rawPlot.contour(
           Float64Array.from(series.x),
           Float64Array.from(series.y),
           Float64Array.from(series.z),
+          series.style,
         );
         break;
       case "pie":
@@ -237,10 +279,14 @@ export function buildRawPlotFromSnapshot(snapshot: PlotSnapshot, module: RawModu
         break;
       }
       case "violin":
-        rawPlot.violin(Float64Array.from(series.data));
+        rawPlot.violin(Float64Array.from(series.data), series.style);
         break;
       case "polar-line":
-        rawPlot.polar_line(Float64Array.from(series.r), Float64Array.from(series.theta));
+        rawPlot.polar_line(
+          Float64Array.from(series.r),
+          Float64Array.from(series.theta),
+          series.style,
+        );
         break;
     }
   }

@@ -3107,6 +3107,21 @@ dependencies = [
 
 [[package]]
 name = "ndarray"
+version = "0.16.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "882ed72dce9365842bf196bdeedf5055305f11fc8c03dee7bb0194a6cad34841"
+dependencies = [
+ "matrixmultiply",
+ "num-complex",
+ "num-integer",
+ "num-traits",
+ "portable-atomic",
+ "portable-atomic-util",
+ "rawpointer",
+]
+
+[[package]]
+name = "ndarray"
 version = "0.17.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "520080814a7a6b4a6e9070823bb24b4531daac8c4627e08ba5de8c5ef2f2752d"
@@ -3241,6 +3256,22 @@ name = "numerals"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e25be21376a772d15f97ae789845340a9651d3c4246ff5ebb6a2b35f9c37bd31"
+
+[[package]]
+name = "numpy"
+version = "0.24.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a7cfbf3f0feededcaa4d289fe3079b03659e85c5b5a177f4ba6fb01ab4fb3e39"
+dependencies = [
+ "libc",
+ "ndarray 0.16.1",
+ "num-complex",
+ "num-integer",
+ "num-traits",
+ "pyo3",
+ "pyo3-build-config",
+ "rustc-hash 2.1.1",
+]
 
 [[package]]
 name = "objc-sys"
@@ -5349,7 +5380,7 @@ dependencies = [
  "image",
  "log",
  "nalgebra",
- "ndarray",
+ "ndarray 0.17.2",
  "palette",
  "plotters",
  "polars",
@@ -5389,11 +5420,10 @@ name = "ruviz-py"
 version = "0.6.0"
 dependencies = [
  "image",
+ "numpy",
  "pollster",
  "pyo3",
  "ruviz",
- "serde",
- "serde_json",
 ]
 
 [[package]]

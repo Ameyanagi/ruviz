@@ -12,7 +12,7 @@ META = ExampleMeta(
 
 def build_plot():
     radius, theta = polar_series()
-    return base_plot("Polar Line").polar_line(radius, theta)
+    return base_plot("Polar Line").polar_line(radius, theta, color="#c026d3", width=2.0)
 
 
 if __name__ == "__main__":

@@ -79,7 +79,7 @@ release-docs-python:
 	bun run build:python-widget
 	cd bindings/python && uv run maturin develop
 	cd bindings/python && uv run python scripts/generate_gallery.py
-	cd bindings/python && uv run python -m mkdocs build --site-dir $(PYTHON_SITE_DIR)
+	cd bindings/python && uv run python -m mkdocs build --strict --site-dir $(PYTHON_SITE_DIR)
 	cd bindings/python && uv run python -m pytest
 
 release-docs-web:
@@ -103,7 +103,7 @@ build-generated-preview-python:
 	bun run build:python-widget
 	cd bindings/python && uv run maturin develop
 	cd bindings/python && uv run python scripts/generate_gallery.py
-	cd bindings/python && uv run python -m mkdocs build --site-dir $(PYTHON_SITE_DIR)
+	cd bindings/python && uv run python -m mkdocs build --strict --site-dir $(PYTHON_SITE_DIR)
 
 build-generated-preview-web:
 	rm -rf generated/web/docs

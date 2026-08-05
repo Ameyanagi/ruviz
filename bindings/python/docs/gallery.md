@@ -2,7 +2,95 @@
 
 This page is generated from `bindings/python/examples/` by `scripts/generate_gallery.py`.
 
+## 3D plots
+
+### 3D surface
+
+An opaque regular-grid surface using the static Python 3D alpha.
+
+`examples/surface3d.py`
+
+```python
+from __future__ import annotations
+
+import numpy as np
+
+import ruviz
+from _shared import ExampleMeta, save_example
+
+META = ExampleMeta(
+    slug="surface3d",
+    title="3D surface",
+    summary="An opaque regular-grid surface using the static Python 3D alpha.",
+    section="3D plots",
+    gallery=False,
+)
+
+
+def build_plot() -> ruviz.Plot3D:
+    x = np.linspace(-3.0, 3.0, 36)
+    y = np.linspace(-3.0, 3.0, 28)
+    grid_x, grid_y = np.meshgrid(x, y)
+    radius = np.hypot(grid_x, grid_y)
+    z = np.sin(radius * 2.2) / (1.0 + radius)
+
+    return (
+        ruviz.surface(x, y, z)
+        .size_px(760, 480)
+        .title("Damped radial wave")
+        .xlabel("x")
+        .ylabel("y")
+        .zlabel("amplitude")
+        .azimuth_deg(42.0)
+        .elevation_deg(27.0)
+    )
+
+
+if __name__ == "__main__":
+    save_example(META, build_plot())
+```
+
 ## Basic plots
+
+### Axis limits and scales
+
+Explicit axis limits, a logarithmic y-axis, and a grid behind two labelled series.
+
+![Axis limits and scales](assets/gallery/axis-scales.png)
+
+`examples/axis_scales.py`
+
+```python
+from __future__ import annotations
+
+from _shared import ExampleMeta, base_plot, decay_series, save_example
+
+META = ExampleMeta(
+    slug="axis-scales",
+    title="Axis limits and scales",
+    summary="Explicit axis limits, a logarithmic y-axis, and a grid behind two labelled series.",
+    section="Basic plots",
+)
+
+
+def build_plot():
+    x, fast, slow = decay_series()
+    return (
+        base_plot("Decay Rates")
+        .xlabel("time")
+        .ylabel("intensity")
+        .line(x, fast, label="fast decay", color="#2563eb", width=2.0)
+        .line(x, slow, label="slow decay", color="orange", linestyle="dashed")
+        .xlim(0.0, 12.0)
+        .yscale("log")
+        .grid(True)
+        .legend("upper_right")
+    )
+
+
+if __name__ == "__main__":
+    save_example(META, build_plot())
+```
 
 ### Bar chart
 
@@ -27,7 +115,11 @@ META = ExampleMeta(
 
 def build_plot():
     categories, values = categorical_series()
-    return base_plot("Runtime Coverage").ylabel("score").bar(categories, values)
+    return (
+        base_plot("Runtime Coverage")
+        .ylabel("score")
+        .bar(categories, values, color="#0ea5e9", alpha=0.85)
+    )
 
 
 if __name__ == "__main__":
@@ -36,7 +128,7 @@ if __name__ == "__main__":
 
 ### Line plot
 
-A basic fluent line plot built with chained Python methods.
+A fluent line plot with a styled, labelled series and a legend.
 
 ![Line plot](assets/gallery/line.png)
 
@@ -50,7 +142,7 @@ from _shared import ExampleMeta, base_plot, save_example, wave_series
 META = ExampleMeta(
     slug="line",
     title="Line plot",
-    summary="A basic fluent line plot built with chained Python methods.",
+    summary="A fluent line plot with a styled, labelled series and a legend.",
     section="Basic plots",
 )
 
@@ -61,7 +153,8 @@ def build_plot():
         base_plot("Line Plot")
         .xlabel("x")
         .ylabel("signal")
-        .line(x, y)
+        .line(x, y, label="signal", color="#2563eb", width=2.0)
+        .legend("upper_right")
     )
 
 
@@ -71,7 +164,7 @@ if __name__ == "__main__":
 
 ### Scatter plot
 
-A scatter plot for irregular point clouds.
+A scatter plot for irregular point clouds, with a custom marker.
 
 ![Scatter plot](assets/gallery/scatter.png)
 
@@ -85,7 +178,7 @@ from _shared import ExampleMeta, base_plot, save_example, scatter_series
 META = ExampleMeta(
     slug="scatter",
     title="Scatter plot",
-    summary="A scatter plot for irregular point clouds.",
+    summary="A scatter plot for irregular point clouds, with a custom marker.",
     section="Basic plots",
 )
 
@@ -96,7 +189,7 @@ def build_plot():
         base_plot("Scatter Plot")
         .xlabel("feature")
         .ylabel("response")
-        .scatter(x, y)
+        .scatter(x, y, color="#7c3aed", marker="circle-open", marker_size=7.0)
     )
 
 
@@ -195,8 +288,9 @@ def build_plot():
         base_plot("Pandas DataFrame Input")
         .xlabel("time")
         .ylabel("value")
-        .line("time", "value", data=frame)
-        .line("time", "baseline", data=frame)
+        .line("time", "value", data=frame, label="value", color="#2563eb")
+        .line("time", "baseline", data=frame, label="baseline", linestyle="dashed")
+        .legend("upper_right")
     )
 
 
@@ -233,7 +327,8 @@ def build_template():
         base_plot("Deepcopy Template")
         .xlabel("time")
         .ylabel("signal")
-        .line(x, y)
+        .line(x, y, label="baseline", color="#2563eb", width=2.0)
+        .legend("upper_right")
     )
 
 
@@ -242,7 +337,7 @@ def build_plot():
     template = build_template()
     variant = deepcopy(template).title("Deepcopy Template Copy")
     shifted = [value * 0.65 + 0.35 for value in y]
-    return variant.line(x, shifted)
+    return variant.line(x, shifted, label="variant", color="orange", linestyle="dashed")
 
 
 if __name__ == "__main__":
@@ -453,8 +548,9 @@ def build_plot():
         base_plot("Observable Math")
         .xlabel("x")
         .ylabel("value")
-        .line(x, signal)
-        .line(x, amplitude_line)
+        .line(x, signal, label="signal", color="#2563eb", width=2.0)
+        .line(x, amplitude_line, label="amplitude", color="orange", linestyle="dashed")
+        .legend("upper_right")
     )
 
 
@@ -478,7 +574,7 @@ if __name__ == "__main__":
 
 ### Contour plot
 
-Contours computed from a flattened z-grid over x/y axes.
+Contours computed from a flattened z-grid over x/y axes, at a chosen level count.
 
 ![Contour plot](assets/gallery/contour.png)
 
@@ -492,14 +588,14 @@ from _shared import ExampleMeta, base_plot, contour_grid, save_example
 META = ExampleMeta(
     slug="contour",
     title="Contour plot",
-    summary="Contours computed from a flattened z-grid over x/y axes.",
+    summary="Contours computed from a flattened z-grid over x/y axes, at a chosen level count.",
     section="Matrix plots",
 )
 
 
 def build_plot():
     x, y, z = contour_grid()
-    return base_plot("Contour Plot").contour(x, y, z)
+    return base_plot("Contour Plot").contour(x, y, z, levels=12)
 
 
 if __name__ == "__main__":
@@ -560,7 +656,7 @@ META = ExampleMeta(
 
 def build_plot():
     radius, theta = polar_series()
-    return base_plot("Polar Line").polar_line(radius, theta)
+    return base_plot("Polar Line").polar_line(radius, theta, color="#c026d3", width=2.0)
 
 
 if __name__ == "__main__":
@@ -629,7 +725,7 @@ if __name__ == "__main__":
 
 ### Histogram
 
-A distribution view built from a deterministic sample.
+A distribution view built from a deterministic sample with an explicit bin count.
 
 ![Histogram](assets/gallery/histogram.png)
 
@@ -643,13 +739,17 @@ from _shared import ExampleMeta, base_plot, sample_distribution, save_example
 META = ExampleMeta(
     slug="histogram",
     title="Histogram",
-    summary="A distribution view built from a deterministic sample.",
+    summary="A distribution view built from a deterministic sample with an explicit bin count.",
     section="Statistical plots",
 )
 
 
 def build_plot():
-    return base_plot("Histogram").xlabel("value").histogram(sample_distribution())
+    return (
+        base_plot("Histogram")
+        .xlabel("value")
+        .histogram(sample_distribution(), bins=24, color="#f97316", alpha=0.85)
+    )
 
 
 if __name__ == "__main__":
@@ -693,7 +793,7 @@ if __name__ == "__main__":
 
 ### Kernel density estimate
 
-A smoothed density curve for a numeric sample.
+A smoothed density curve for a numeric sample with an explicit bandwidth.
 
 ![Kernel density estimate](assets/gallery/kde.png)
 
@@ -707,13 +807,17 @@ from _shared import ExampleMeta, base_plot, sample_distribution, save_example
 META = ExampleMeta(
     slug="kde",
     title="Kernel density estimate",
-    summary="A smoothed density curve for a numeric sample.",
+    summary="A smoothed density curve for a numeric sample with an explicit bandwidth.",
     section="Statistical plots",
 )
 
 
 def build_plot():
-    return base_plot("Kernel Density Estimate").xlabel("value").kde(sample_distribution())
+    return (
+        base_plot("Kernel Density Estimate")
+        .xlabel("value")
+        .kde(sample_distribution(), bandwidth=0.35, color="#7c3aed", width=2.0)
+    )
 
 
 if __name__ == "__main__":
@@ -747,7 +851,7 @@ def build_plot():
         base_plot("Vertical Error Bars")
         .xlabel("trial")
         .ylabel("measurement")
-        .error_bars(x, y, errors)
+        .error_bars(x, y, errors, color="#0f766e", width=1.5)
     )
 
 

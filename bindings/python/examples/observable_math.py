@@ -28,8 +28,9 @@ def build_plot():
         base_plot("Observable Math")
         .xlabel("x")
         .ylabel("value")
-        .line(x, signal)
-        .line(x, amplitude_line)
+        .line(x, signal, label="signal", color="#2563eb", width=2.0)
+        .line(x, amplitude_line, label="amplitude", color="orange", linestyle="dashed")
+        .legend("upper_right")
     )
 
 

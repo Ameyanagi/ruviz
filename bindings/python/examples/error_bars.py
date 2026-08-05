@@ -16,7 +16,7 @@ def build_plot():
         base_plot("Vertical Error Bars")
         .xlabel("trial")
         .ylabel("measurement")
-        .error_bars(x, y, errors)
+        .error_bars(x, y, errors, color="#0f766e", width=1.5)
     )
 
 

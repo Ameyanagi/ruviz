@@ -43,16 +43,18 @@
 mod wasm {
     use std::{mem, sync::OnceLock};
 
-    use js_sys::Reflect;
+    use js_sys::{Array, Object, Reflect};
     #[cfg(feature = "3d-gpu")]
     use ruviz::core::{GpuSurfacePresentStatus3D, GpuSurfaceSession3D, RenderDiagnostics3D};
     use ruviz::{
+        axes::AxisScale,
         core::{
-            Image, ImageTarget, InteractivePlotSession, IntoPlot, Plot, PlotInputEvent,
-            SurfaceTarget, ViewportPoint, ViewportRect,
+            Image, ImageTarget, InteractivePlotSession, IntoPlot, LegendPosition, Plot,
+            PlotBuilder, PlotInputEvent, SurfaceTarget, ViewportPoint, ViewportRect,
         },
         data::{Observable, Signal},
-        render::register_font_bytes,
+        plots::{LineConfig, PlotConfig, ScatterConfig},
+        render::{Color, LineStyle, MarkerStyle, register_font_bytes},
     };
     #[cfg(feature = "3d")]
     use ruviz::{
@@ -320,6 +322,325 @@ mod wasm {
         }
     }
 
+    /// Optional per-series styling forwarded from a snapshot `style` object.
+    ///
+    /// Mirrors the Python binding's `SeriesStyle`: each field maps to one core
+    /// `PlotBuilder` setter, and the accepted names come from the same tables.
+    #[derive(Clone, Default)]
+    struct SeriesStyle {
+        label: Option<String>,
+        color: Option<Color>,
+        alpha: Option<f32>,
+        width: Option<f32>,
+        line_style: Option<LineStyle>,
+        marker: Option<MarkerStyle>,
+        marker_size: Option<f32>,
+        bins: Option<usize>,
+        bandwidth: Option<f64>,
+        levels: Option<usize>,
+    }
+
+    const MARKER_STYLES: [(&str, MarkerStyle); 12] = [
+        ("circle", MarkerStyle::Circle),
+        ("square", MarkerStyle::Square),
+        ("triangle", MarkerStyle::Triangle),
+        ("triangle-down", MarkerStyle::TriangleDown),
+        ("diamond", MarkerStyle::Diamond),
+        ("plus", MarkerStyle::Plus),
+        ("cross", MarkerStyle::Cross),
+        ("star", MarkerStyle::Star),
+        ("circle-open", MarkerStyle::CircleOpen),
+        ("square-open", MarkerStyle::SquareOpen),
+        ("triangle-open", MarkerStyle::TriangleOpen),
+        ("diamond-open", MarkerStyle::DiamondOpen),
+    ];
+
+    const LINE_STYLES: [(&str, LineStyle); 5] = [
+        ("solid", LineStyle::Solid),
+        ("dashed", LineStyle::Dashed),
+        ("dotted", LineStyle::Dotted),
+        ("dash-dot", LineStyle::DashDot),
+        ("dash-dot-dot", LineStyle::DashDotDot),
+    ];
+
+    const LEGEND_POSITIONS: [(&str, LegendPosition); 15] = [
+        ("best", LegendPosition::Best),
+        ("upper_right", LegendPosition::UpperRight),
+        ("upper_left", LegendPosition::UpperLeft),
+        ("lower_left", LegendPosition::LowerLeft),
+        ("lower_right", LegendPosition::LowerRight),
+        ("right", LegendPosition::Right),
+        ("center_left", LegendPosition::CenterLeft),
+        ("center_right", LegendPosition::CenterRight),
+        ("lower_center", LegendPosition::LowerCenter),
+        ("upper_center", LegendPosition::UpperCenter),
+        ("center", LegendPosition::Center),
+        ("outside_right", LegendPosition::OutsideRight),
+        ("outside_left", LegendPosition::OutsideLeft),
+        ("outside_upper", LegendPosition::OutsideUpper),
+        ("outside_lower", LegendPosition::OutsideLower),
+    ];
+
+    /// Look a name up in a `(name, value)` table, or report the accepted names.
+    fn lookup<T: Clone>(table: &[(&str, T)], kind: &str, name: &str) -> Result<T, JsValue> {
+        table
+            .iter()
+            .find(|(candidate, _)| *candidate == name)
+            .map(|(_, value)| value.clone())
+            .ok_or_else(|| {
+                let accepted: Vec<&str> = table.iter().map(|(candidate, _)| *candidate).collect();
+                JsValue::from_str(&format!(
+                    "unsupported {kind} '{name}'; expected one of: {}",
+                    accepted.join(", ")
+                ))
+            })
+    }
+
+    fn parse_color(value: &str) -> Result<Color, JsValue> {
+        Color::named(value)
+            .or_else(|| Color::hex(value))
+            .ok_or_else(|| {
+                let hint = Color::suggest_named(value)
+                    .map(|name| format!(" (did you mean '{name}'?)"))
+                    .unwrap_or_default();
+                JsValue::from_str(&format!(
+                    "unsupported color '{value}'; expected a hex string like '#2563eb' \
+                     or a named color such as red, green, blue, orange, purple, black, white, gray{hint}"
+                ))
+            })
+    }
+
+    fn parse_axis_scale(scale: &str, linthresh: Option<f64>) -> Result<AxisScale, JsValue> {
+        match scale {
+            "linear" => Ok(AxisScale::Linear),
+            "log" => Ok(AxisScale::Log),
+            "symlog" => {
+                let linthresh = linthresh.unwrap_or(1.0);
+                if !linthresh.is_finite() || linthresh <= 0.0 {
+                    return Err(JsValue::from_str(
+                        "symlog linthresh must be a finite positive number",
+                    ));
+                }
+                Ok(AxisScale::SymLog { linthresh })
+            }
+            other => Err(JsValue::from_str(&format!(
+                "unsupported axis scale '{other}'; expected one of: linear, log, symlog"
+            ))),
+        }
+    }
+
+    fn style_string(value: &JsValue, name: &str) -> Result<String, JsValue> {
+        value
+            .as_string()
+            .ok_or_else(|| JsValue::from_str(&format!("{name} must be a string")))
+    }
+
+    fn style_number(value: &JsValue, name: &str) -> Result<f64, JsValue> {
+        value
+            .as_f64()
+            .ok_or_else(|| JsValue::from_str(&format!("{name} must be a number")))
+    }
+
+    fn finite_positive(value: &JsValue, name: &str) -> Result<f64, JsValue> {
+        let number = style_number(value, name)?;
+        if !number.is_finite() || number <= 0.0 {
+            return Err(JsValue::from_str(&format!(
+                "{name} must be a finite positive number"
+            )));
+        }
+        Ok(number)
+    }
+
+    fn count_at_least(value: &JsValue, name: &str, minimum: usize) -> Result<usize, JsValue> {
+        let count = style_number(value, name)?;
+        if !count.is_finite() || count.fract() != 0.0 || count < minimum as f64 {
+            return Err(JsValue::from_str(&format!(
+                "{name} must be an integer >= {minimum}"
+            )));
+        }
+        Ok(count as usize)
+    }
+
+    /// Every style key any plot kind understands, in snapshot spelling.
+    const STYLE_KEYS: [&str; 10] = [
+        "label",
+        "color",
+        "alpha",
+        "width",
+        "linestyle",
+        "marker",
+        "markerSize",
+        "bins",
+        "bandwidth",
+        "levels",
+    ];
+
+    /// The style keys each plot kind's core builder honors, mirroring the Python
+    /// binding's per-kind sets so both surfaces reject the same combinations.
+    mod style_keys {
+        pub(super) const COMMON: &[&str] = &["label", "color", "alpha"];
+        pub(super) const STROKED: &[&str] = &["label", "color", "alpha", "width"];
+        pub(super) const LINE: &[&str] = &[
+            "label",
+            "color",
+            "alpha",
+            "width",
+            "linestyle",
+            "marker",
+            "markerSize",
+        ];
+        pub(super) const SCATTER: &[&str] = &["label", "color", "alpha", "marker", "markerSize"];
+        pub(super) const HISTOGRAM: &[&str] = &["label", "color", "alpha", "bins"];
+        pub(super) const BOXPLOT: &[&str] = &["label", "color", "alpha", "width", "linestyle"];
+        pub(super) const KDE: &[&str] = &["label", "color", "alpha", "width", "bandwidth"];
+        pub(super) const CONTOUR: &[&str] = &["alpha", "width", "levels"];
+    }
+
+    /// The Python keyword spelling of a snapshot style key, for error messages.
+    fn style_keyword(key: &str) -> &str {
+        if key == "markerSize" {
+            "marker_size"
+        } else {
+            key
+        }
+    }
+
+    /// Report a style key a different plot kind supports, matching the Python message.
+    fn unsupported_for_kind(kind: &str, key: &str, allowed: &[&str]) -> JsValue {
+        let mut accepted: Vec<&str> = allowed.iter().copied().map(style_keyword).collect();
+        accepted.sort_unstable();
+        let accepted = if accepted.is_empty() {
+            "none".to_string()
+        } else {
+            accepted.join(", ")
+        };
+        JsValue::from_str(&format!(
+            "{kind} does not support {}=; accepted: {accepted}",
+            style_keyword(key)
+        ))
+    }
+
+    impl SeriesStyle {
+        /// Parse a JS `style` object from a snapshot.
+        ///
+        /// Keys this build has never heard of are ignored: a snapshot written by
+        /// a newer ruviz must still render everything this build understands. A
+        /// *known* key the plot kind does not honor is still an error, because
+        /// silently dropping it would misrender a snapshot this build does
+        /// understand.
+        fn from_js(style: Option<Object>, kind: &str, allowed: &[&str]) -> Result<Self, JsValue> {
+            let mut parsed = Self::default();
+            let Some(style) = style else {
+                return Ok(parsed);
+            };
+
+            for entry in Object::entries(&style).iter() {
+                let entry = Array::from(&entry);
+                let key = style_string(&entry.get(0), "style key")?;
+                let value = entry.get(1);
+                // Optional TypeScript fields serialize as `undefined`; treat them as unset.
+                if value.is_undefined() || value.is_null() {
+                    continue;
+                }
+
+                if !allowed.contains(&key.as_str()) {
+                    if STYLE_KEYS.contains(&key.as_str()) {
+                        return Err(unsupported_for_kind(kind, &key, allowed));
+                    }
+                    continue;
+                }
+
+                match key.as_str() {
+                    "label" => parsed.label = Some(style_string(&value, "label")?),
+                    "color" => parsed.color = Some(parse_color(&style_string(&value, "color")?)?),
+                    "alpha" => {
+                        let alpha = style_number(&value, "alpha")?;
+                        if !(0.0..=1.0).contains(&alpha) {
+                            return Err(JsValue::from_str("alpha must be between 0.0 and 1.0"));
+                        }
+                        parsed.alpha = Some(alpha as f32);
+                    }
+                    "width" => parsed.width = Some(finite_positive(&value, "width")? as f32),
+                    "linestyle" => {
+                        parsed.line_style = Some(lookup(
+                            &LINE_STYLES,
+                            "linestyle",
+                            &style_string(&value, "linestyle")?,
+                        )?)
+                    }
+                    "marker" => {
+                        parsed.marker = Some(lookup(
+                            &MARKER_STYLES,
+                            "marker",
+                            &style_string(&value, "marker")?,
+                        )?)
+                    }
+                    "markerSize" => {
+                        parsed.marker_size = Some(finite_positive(&value, "marker_size")? as f32)
+                    }
+                    "bins" => parsed.bins = Some(count_at_least(&value, "bins", 1)?),
+                    "bandwidth" => parsed.bandwidth = Some(finite_positive(&value, "bandwidth")?),
+                    "levels" => parsed.levels = Some(count_at_least(&value, "levels", 2)?),
+                    // Unreachable: `allowed` is a subset of `STYLE_KEYS`, checked above.
+                    _ => {}
+                }
+            }
+
+            Ok(parsed)
+        }
+    }
+
+    /// Apply the styling every core `PlotBuilder<C>` shares.
+    fn styled<C: PlotConfig>(mut builder: PlotBuilder<C>, style: &SeriesStyle) -> PlotBuilder<C> {
+        if let Some(label) = &style.label {
+            builder = builder.label(label.clone());
+        }
+        if let Some(color) = style.color {
+            builder = builder.color(color);
+        }
+        if let Some(alpha) = style.alpha {
+            builder = builder.alpha(alpha);
+        }
+        if let Some(width) = style.width {
+            builder = builder.line_width(width);
+        }
+        if let Some(line_style) = &style.line_style {
+            builder = builder.line_style(line_style.clone());
+        }
+        builder
+    }
+
+    /// Apply the marker options to a line. Lines draw markers only when one is
+    /// chosen, so a bare `markerSize` implies circles.
+    fn line_markers(
+        mut builder: PlotBuilder<LineConfig>,
+        style: &SeriesStyle,
+    ) -> PlotBuilder<LineConfig> {
+        if let Some(marker) = style
+            .marker
+            .or_else(|| style.marker_size.map(|_| MarkerStyle::Circle))
+        {
+            builder = builder.marker(marker);
+        }
+        if let Some(size) = style.marker_size {
+            builder = builder.marker_size(size);
+        }
+        builder
+    }
+
+    fn scatter_markers(
+        mut builder: PlotBuilder<ScatterConfig>,
+        style: &SeriesStyle,
+    ) -> PlotBuilder<ScatterConfig> {
+        if let Some(marker) = style.marker {
+            builder = builder.marker(marker);
+        }
+        if let Some(size) = style.marker_size {
+            builder = builder.marker_size(size);
+        }
+        builder
+    }
+
     #[wasm_bindgen]
     pub struct JsPlot {
         inner: Plot,
@@ -394,32 +715,56 @@ mod wasm {
             Self { inner: Plot::new() }
         }
 
-        pub fn line(&mut self, x: Vec<f64>, y: Vec<f64>) -> Result<(), JsValue> {
+        pub fn line(
+            &mut self,
+            x: Vec<f64>,
+            y: Vec<f64>,
+            style: Option<Object>,
+        ) -> Result<(), JsValue> {
             if x.len() != y.len() {
                 return Err(JsValue::from_str("x and y must have the same length"));
             }
 
-            self.replace_with_series(|plot| plot.line(&x, &y).into_plot());
+            let style = SeriesStyle::from_js(style, "line", style_keys::LINE)?;
+            self.replace_with_series(|plot| {
+                styled(line_markers(plot.line(&x, &y), &style), &style).into_plot()
+            });
             Ok(())
         }
 
-        pub fn scatter(&mut self, x: Vec<f64>, y: Vec<f64>) -> Result<(), JsValue> {
+        pub fn scatter(
+            &mut self,
+            x: Vec<f64>,
+            y: Vec<f64>,
+            style: Option<Object>,
+        ) -> Result<(), JsValue> {
             if x.len() != y.len() {
                 return Err(JsValue::from_str("x and y must have the same length"));
             }
 
-            self.replace_with_series(|plot| plot.scatter(&x, &y).into_plot());
+            let style = SeriesStyle::from_js(style, "scatter", style_keys::SCATTER)?;
+            self.replace_with_series(|plot| {
+                styled(scatter_markers(plot.scatter(&x, &y), &style), &style).into_plot()
+            });
             Ok(())
         }
 
-        pub fn bar(&mut self, categories: Vec<String>, values: Vec<f64>) -> Result<(), JsValue> {
+        pub fn bar(
+            &mut self,
+            categories: Vec<String>,
+            values: Vec<f64>,
+            style: Option<Object>,
+        ) -> Result<(), JsValue> {
             if categories.len() != values.len() {
                 return Err(JsValue::from_str(
                     "bar categories and values must have the same length",
                 ));
             }
 
-            self.replace_with_series(|plot| plot.bar(&categories, &values).into_plot());
+            let style = SeriesStyle::from_js(style, "bar", style_keys::COMMON)?;
+            self.replace_with_series(|plot| {
+                styled(plot.bar(&categories, &values), &style).into_plot()
+            });
             Ok(())
         }
 
@@ -427,6 +772,7 @@ mod wasm {
             &mut self,
             categories: Vec<String>,
             values: &ObservableVecF64,
+            style: Option<Object>,
         ) -> Result<(), JsValue> {
             if categories.len() != values.len() {
                 return Err(JsValue::from_str(
@@ -434,27 +780,60 @@ mod wasm {
                 ));
             }
 
+            let style = SeriesStyle::from_js(style, "bar", style_keys::COMMON)?;
             let value_source = values.inner.clone();
-            self.replace_with_series(|plot| plot.bar_source(&categories, value_source).into_plot());
+            self.replace_with_series(|plot| {
+                styled(plot.bar_source(&categories, value_source), &style).into_plot()
+            });
             Ok(())
         }
 
-        pub fn histogram(&mut self, data: Vec<f64>) {
-            self.replace_with_series(|plot| plot.histogram(&data).into_plot());
+        pub fn histogram(&mut self, data: Vec<f64>, style: Option<Object>) -> Result<(), JsValue> {
+            let style = SeriesStyle::from_js(style, "histogram", style_keys::HISTOGRAM)?;
+            self.replace_with_series(|plot| {
+                let mut builder = plot.histogram(&data);
+                if let Some(bins) = style.bins {
+                    builder = builder.bins(bins);
+                }
+                styled(builder, &style).into_plot()
+            });
+            Ok(())
         }
 
-        pub fn histogram_observable(&mut self, data: &ObservableVecF64) {
+        pub fn histogram_observable(
+            &mut self,
+            data: &ObservableVecF64,
+            style: Option<Object>,
+        ) -> Result<(), JsValue> {
+            let style = SeriesStyle::from_js(style, "histogram", style_keys::HISTOGRAM)?;
             let data_source = data.inner.clone();
-            self.replace_with_series(|plot| plot.histogram_source(data_source).into_plot());
+            self.replace_with_series(|plot| {
+                let mut builder = plot.histogram_source(data_source);
+                if let Some(bins) = style.bins {
+                    builder = builder.bins(bins);
+                }
+                styled(builder, &style).into_plot()
+            });
+            Ok(())
         }
 
-        pub fn boxplot(&mut self, data: Vec<f64>) {
-            self.replace_with_series(|plot| plot.boxplot(&data).into_plot());
+        pub fn boxplot(&mut self, data: Vec<f64>, style: Option<Object>) -> Result<(), JsValue> {
+            let style = SeriesStyle::from_js(style, "boxplot", style_keys::BOXPLOT)?;
+            self.replace_with_series(|plot| styled(plot.boxplot(&data), &style).into_plot());
+            Ok(())
         }
 
-        pub fn boxplot_observable(&mut self, data: &ObservableVecF64) {
+        pub fn boxplot_observable(
+            &mut self,
+            data: &ObservableVecF64,
+            style: Option<Object>,
+        ) -> Result<(), JsValue> {
+            let style = SeriesStyle::from_js(style, "boxplot", style_keys::BOXPLOT)?;
             let data_source = data.inner.clone();
-            self.replace_with_series(|plot| plot.boxplot_source(data_source).into_plot());
+            self.replace_with_series(|plot| {
+                styled(plot.boxplot_source(data_source), &style).into_plot()
+            });
+            Ok(())
         }
 
         pub fn heatmap(
@@ -473,13 +852,17 @@ mod wasm {
             x: Vec<f64>,
             y: Vec<f64>,
             y_errors: Vec<f64>,
+            style: Option<Object>,
         ) -> Result<(), JsValue> {
             Self::validate_equal_lengths(
                 &[x.len(), y.len(), y_errors.len()],
                 "x, y, and y_errors must have the same length",
             )?;
 
-            self.replace_with_series(|plot| plot.error_bars(&x, &y, &y_errors).into_plot());
+            let style = SeriesStyle::from_js(style, "error-bars", style_keys::STROKED)?;
+            self.replace_with_series(|plot| {
+                styled(plot.error_bars(&x, &y, &y_errors), &style).into_plot()
+            });
             Ok(())
         }
 
@@ -488,15 +871,24 @@ mod wasm {
             x: &ObservableVecF64,
             y: &ObservableVecF64,
             y_errors: &ObservableVecF64,
+            style: Option<Object>,
         ) -> Result<(), JsValue> {
             Self::validate_equal_lengths(
                 &[x.len(), y.len(), y_errors.len()],
                 "observable x, y, and y_errors must have the same length",
             )?;
 
+            let style = SeriesStyle::from_js(style, "error-bars", style_keys::STROKED)?;
             self.replace_with_series(|plot| {
-                plot.error_bars_source(x.inner.clone(), y.inner.clone(), y_errors.inner.clone())
-                    .into_plot()
+                styled(
+                    plot.error_bars_source(
+                        x.inner.clone(),
+                        y.inner.clone(),
+                        y_errors.inner.clone(),
+                    ),
+                    &style,
+                )
+                .into_plot()
             });
             Ok(())
         }
@@ -507,14 +899,16 @@ mod wasm {
             y: Vec<f64>,
             x_errors: Vec<f64>,
             y_errors: Vec<f64>,
+            style: Option<Object>,
         ) -> Result<(), JsValue> {
             Self::validate_equal_lengths(
                 &[x.len(), y.len(), x_errors.len(), y_errors.len()],
                 "x, y, x_errors, and y_errors must have the same length",
             )?;
 
+            let style = SeriesStyle::from_js(style, "error-bars-xy", style_keys::STROKED)?;
             self.replace_with_series(|plot| {
-                plot.error_bars_xy(&x, &y, &x_errors, &y_errors).into_plot()
+                styled(plot.error_bars_xy(&x, &y, &x_errors, &y_errors), &style).into_plot()
             });
             Ok(())
         }
@@ -525,33 +919,54 @@ mod wasm {
             y: &ObservableVecF64,
             x_errors: &ObservableVecF64,
             y_errors: &ObservableVecF64,
+            style: Option<Object>,
         ) -> Result<(), JsValue> {
             Self::validate_equal_lengths(
                 &[x.len(), y.len(), x_errors.len(), y_errors.len()],
                 "observable x, y, x_errors, and y_errors must have the same length",
             )?;
 
+            let style = SeriesStyle::from_js(style, "error-bars-xy", style_keys::STROKED)?;
             self.replace_with_series(|plot| {
-                plot.error_bars_xy_source(
-                    x.inner.clone(),
-                    y.inner.clone(),
-                    x_errors.inner.clone(),
-                    y_errors.inner.clone(),
+                styled(
+                    plot.error_bars_xy_source(
+                        x.inner.clone(),
+                        y.inner.clone(),
+                        x_errors.inner.clone(),
+                        y_errors.inner.clone(),
+                    ),
+                    &style,
                 )
                 .into_plot()
             });
             Ok(())
         }
 
-        pub fn kde(&mut self, data: Vec<f64>) {
-            self.replace_with_series(|plot| plot.kde(&data).into_plot());
+        pub fn kde(&mut self, data: Vec<f64>, style: Option<Object>) -> Result<(), JsValue> {
+            let style = SeriesStyle::from_js(style, "kde", style_keys::KDE)?;
+            self.replace_with_series(|plot| {
+                let mut builder = plot.kde(&data);
+                if let Some(bandwidth) = style.bandwidth {
+                    builder = builder.bandwidth(bandwidth);
+                }
+                styled(builder, &style).into_plot()
+            });
+            Ok(())
         }
 
-        pub fn ecdf(&mut self, data: Vec<f64>) {
-            self.replace_with_series(|plot| plot.ecdf(&data).into_plot());
+        pub fn ecdf(&mut self, data: Vec<f64>, style: Option<Object>) -> Result<(), JsValue> {
+            let style = SeriesStyle::from_js(style, "ecdf", style_keys::STROKED)?;
+            self.replace_with_series(|plot| styled(plot.ecdf(&data), &style).into_plot());
+            Ok(())
         }
 
-        pub fn contour(&mut self, x: Vec<f64>, y: Vec<f64>, z: Vec<f64>) -> Result<(), JsValue> {
+        pub fn contour(
+            &mut self,
+            x: Vec<f64>,
+            y: Vec<f64>,
+            z: Vec<f64>,
+            style: Option<Object>,
+        ) -> Result<(), JsValue> {
             if x.is_empty() || y.is_empty() {
                 return Err(JsValue::from_str("contour x and y must not be empty"));
             }
@@ -562,7 +977,14 @@ mod wasm {
                 ));
             }
 
-            self.replace_with_series(|plot| plot.contour(&x, &y, &z).into_plot());
+            let style = SeriesStyle::from_js(style, "contour", style_keys::CONTOUR)?;
+            self.replace_with_series(|plot| {
+                let mut builder = plot.contour(&x, &y, &z);
+                if let Some(levels) = style.levels {
+                    builder = builder.levels(levels);
+                }
+                styled(builder, &style).into_plot()
+            });
             Ok(())
         }
 
@@ -623,41 +1045,71 @@ mod wasm {
             Ok(())
         }
 
-        pub fn violin(&mut self, data: Vec<f64>) {
-            self.replace_with_series(|plot| plot.violin(&data).into_plot());
+        pub fn violin(&mut self, data: Vec<f64>, style: Option<Object>) -> Result<(), JsValue> {
+            let style = SeriesStyle::from_js(style, "violin", style_keys::STROKED)?;
+            self.replace_with_series(|plot| styled(plot.violin(&data), &style).into_plot());
+            Ok(())
         }
 
-        pub fn polar_line(&mut self, r: Vec<f64>, theta: Vec<f64>) -> Result<(), JsValue> {
+        pub fn polar_line(
+            &mut self,
+            r: Vec<f64>,
+            theta: Vec<f64>,
+            style: Option<Object>,
+        ) -> Result<(), JsValue> {
             Self::validate_equal_lengths(
                 &[r.len(), theta.len()],
                 "polar r and theta must have the same length",
             )?;
 
-            self.replace_with_series(|plot| plot.polar_line(&r, &theta).into_plot());
+            let style = SeriesStyle::from_js(style, "polar-line", style_keys::STROKED)?;
+            self.replace_with_series(|plot| {
+                styled(plot.polar_line(&r, &theta), &style).into_plot()
+            });
             Ok(())
         }
 
-        pub fn line_signal(&mut self, x: Vec<f64>, y: &SignalVecF64) -> Result<(), JsValue> {
+        pub fn line_signal(
+            &mut self,
+            x: Vec<f64>,
+            y: &SignalVecF64,
+            style: Option<Object>,
+        ) -> Result<(), JsValue> {
             if x.len() != y.len() {
                 return Err(JsValue::from_str(
                     "signal y data and x must have the same length",
                 ));
             }
 
+            let style = SeriesStyle::from_js(style, "line", style_keys::LINE)?;
             let y_signal = y.inner.clone();
-            self.replace_with_series(|plot| plot.line_source(x, y_signal).into_plot());
+            self.replace_with_series(|plot| {
+                styled(line_markers(plot.line_source(x, y_signal), &style), &style).into_plot()
+            });
             Ok(())
         }
 
-        pub fn scatter_signal(&mut self, x: Vec<f64>, y: &SignalVecF64) -> Result<(), JsValue> {
+        pub fn scatter_signal(
+            &mut self,
+            x: Vec<f64>,
+            y: &SignalVecF64,
+            style: Option<Object>,
+        ) -> Result<(), JsValue> {
             if x.len() != y.len() {
                 return Err(JsValue::from_str(
                     "signal y data and x must have the same length",
                 ));
             }
 
+            let style = SeriesStyle::from_js(style, "scatter", style_keys::SCATTER)?;
             let y_signal = y.inner.clone();
-            self.replace_with_series(|plot| plot.scatter_source(x, y_signal).into_plot());
+            self.replace_with_series(|plot| {
+                styled(
+                    scatter_markers(plot.scatter_source(x, y_signal), &style),
+                    &style,
+                )
+                .into_plot()
+            });
             Ok(())
         }
 
@@ -665,6 +1117,7 @@ mod wasm {
             &mut self,
             x: &ObservableVecF64,
             y: &ObservableVecF64,
+            style: Option<Object>,
         ) -> Result<(), JsValue> {
             if x.len() != y.len() {
                 return Err(JsValue::from_str(
@@ -672,9 +1125,13 @@ mod wasm {
                 ));
             }
 
+            let style = SeriesStyle::from_js(style, "line", style_keys::LINE)?;
             self.replace_with_series(|plot| {
-                plot.line_source(x.inner.clone(), y.inner.clone())
-                    .into_plot()
+                styled(
+                    line_markers(plot.line_source(x.inner.clone(), y.inner.clone()), &style),
+                    &style,
+                )
+                .into_plot()
             });
             Ok(())
         }
@@ -683,6 +1140,7 @@ mod wasm {
             &mut self,
             x: &ObservableVecF64,
             y: &ObservableVecF64,
+            style: Option<Object>,
         ) -> Result<(), JsValue> {
             if x.len() != y.len() {
                 return Err(JsValue::from_str(
@@ -690,9 +1148,16 @@ mod wasm {
                 ));
             }
 
+            let style = SeriesStyle::from_js(style, "scatter", style_keys::SCATTER)?;
             self.replace_with_series(|plot| {
-                plot.scatter_source(x.inner.clone(), y.inner.clone())
-                    .into_plot()
+                styled(
+                    scatter_markers(
+                        plot.scatter_source(x.inner.clone(), y.inner.clone()),
+                        &style,
+                    ),
+                    &style,
+                )
+                .into_plot()
             });
             Ok(())
         }
@@ -713,6 +1178,18 @@ mod wasm {
             self.update_plot(|plot| plot.size_px(width, height));
         }
 
+        /// Sets the output DPI, which scales the exported pixels from `size_px`.
+        /// Apply it after `size_px`, which fixes the figure size in inches.
+        pub fn dpi(&mut self, dpi: u32) -> Result<(), JsValue> {
+            if dpi == 0 {
+                return Err(JsValue::from_str(
+                    "plot dpi must be an integer greater than zero",
+                ));
+            }
+            self.update_plot(|plot| plot.dpi(dpi));
+            Ok(())
+        }
+
         /// Sets the x-axis limits. Inverted bounds keep a descending axis.
         pub fn xlim(&mut self, min: f64, max: f64) {
             self.update_plot(|plot| plot.xlim(min, max));
@@ -721,6 +1198,34 @@ mod wasm {
         /// Sets the y-axis limits. Inverted bounds keep a descending axis.
         pub fn ylim(&mut self, min: f64, max: f64) {
             self.update_plot(|plot| plot.ylim(min, max));
+        }
+
+        /// Sets the x-axis scale. `linthresh` applies to `symlog` only and
+        /// defaults to `1.0`.
+        pub fn xscale(&mut self, scale: &str, linthresh: Option<f64>) -> Result<(), JsValue> {
+            let scale = parse_axis_scale(scale, linthresh)?;
+            self.update_plot(|plot| plot.xscale(scale));
+            Ok(())
+        }
+
+        /// Sets the y-axis scale. `linthresh` applies to `symlog` only and
+        /// defaults to `1.0`.
+        pub fn yscale(&mut self, scale: &str, linthresh: Option<f64>) -> Result<(), JsValue> {
+            let scale = parse_axis_scale(scale, linthresh)?;
+            self.update_plot(|plot| plot.yscale(scale));
+            Ok(())
+        }
+
+        /// Shows the legend at a lowercase position name such as `upper_right`,
+        /// or `best` to auto-place it.
+        pub fn legend(&mut self, position: &str) -> Result<(), JsValue> {
+            let position = lookup(&LEGEND_POSITIONS, "legend position", position)?;
+            self.update_plot(|plot| plot.legend(position));
+            Ok(())
+        }
+
+        pub fn grid(&mut self, enabled: bool) {
+            self.update_plot(|plot| plot.grid(enabled));
         }
 
         pub fn ticks(&mut self, enabled: bool) {

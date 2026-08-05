@@ -1052,6 +1052,161 @@ test("python widget bundle handles a single-point sine signal snapshot", async (
   expect(result.imageLength).toBeGreaterThan(0);
 });
 
+test("python widget bundle applies per-series style and plot-level settings", async ({ page }) => {
+  await waitForDemoReady(page);
+
+  const consoleErrors = [];
+  const pageErrors = [];
+  page.on("console", (message) => {
+    if (message.type() === "error") {
+      consoleErrors.push(message.text());
+    }
+  });
+  page.on("pageerror", (error) => {
+    pageErrors.push(String(error));
+  });
+
+  const result = await page.evaluate(async (widgetSource) => {
+    const x = [0, 1, 2, 3, 4];
+    const y = [0.2, 1.1, 0.7, 1.8, 1.2];
+    const buildSnapshot = (series, plotSettings) => ({
+      sizePx: [480, 320],
+      title: "styled widget",
+      xLabel: "x",
+      yLabel: "y",
+      series: [
+        {
+          kind: "line",
+          x: { kind: "static", values: x },
+          y: { kind: "static", values: y },
+          ...series,
+        },
+      ],
+      ...plotSettings,
+    });
+
+    // No schemaVersion and no style: the shape older ruviz-py versions emit.
+    const legacySnapshot = buildSnapshot({}, {});
+    const styledSnapshot = buildSnapshot(
+      {
+        style: {
+          label: "Revenue",
+          color: "#2563eb",
+          alpha: 0.6,
+          width: 3.5,
+          linestyle: "dashed",
+          marker: "square",
+          markerSize: 9,
+        },
+      },
+      {
+        schemaVersion: 1,
+        legend: "upper_left",
+        grid: false,
+        xLim: [-1, 6],
+        yLim: [0, 4],
+        xScale: ["linear"],
+        yScale: ["symlog", 1],
+      },
+    );
+    // Unknown keys from a future ruviz-py must not break the render, including
+    // unknown per-series style keys.
+    const futureSnapshot = buildSnapshot(
+      { unknownSeriesKey: "ignored", style: { futureStyle: "ignored" } },
+      { schemaVersion: 99, unknownPlotKey: true },
+    );
+
+    const listeners = new Map();
+    const model = {
+      snapshot: legacySnapshot,
+      get(name) {
+        return name === "snapshot" ? this.snapshot : undefined;
+      },
+      on(name, callback) {
+        const callbacks = listeners.get(name) ?? [];
+        callbacks.push(callback);
+        listeners.set(name, callbacks);
+      },
+      off(name, callback) {
+        listeners.set(
+          name,
+          (listeners.get(name) ?? []).filter((entry) => entry !== callback),
+        );
+      },
+      setSnapshot(snapshot) {
+        this.snapshot = snapshot;
+        for (const callback of listeners.get("change:snapshot") ?? []) {
+          callback();
+        }
+      },
+    };
+
+    const waitForNextPaint = () =>
+      new Promise((resolve) => {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(resolve);
+        });
+      });
+
+    const waitForCanvasChange = async (canvas, previousData) => {
+      for (let attempt = 0; attempt < 120; attempt += 1) {
+        await waitForNextPaint();
+        const currentData = canvas.toDataURL("image/png");
+
+        if (previousData === undefined) {
+          const blankCanvas = document.createElement("canvas");
+          blankCanvas.width = canvas.width;
+          blankCanvas.height = canvas.height;
+          if (currentData !== blankCanvas.toDataURL("image/png")) {
+            return currentData;
+          }
+          continue;
+        }
+
+        if (currentData !== previousData) {
+          return currentData;
+        }
+      }
+
+      throw new Error("widget canvas did not update");
+    };
+
+    const mount = document.createElement("div");
+    document.body.appendChild(mount);
+
+    const moduleUrl = URL.createObjectURL(new Blob([widgetSource], { type: "text/javascript" }));
+
+    try {
+      const mod = await import(moduleUrl);
+      const cleanup = mod.default.render({ model, el: mount });
+      const canvas = mount.querySelector("canvas");
+      if (!(canvas instanceof HTMLCanvasElement)) {
+        throw new Error("widget bundle did not create a canvas");
+      }
+
+      const legacyImage = await waitForCanvasChange(canvas);
+      model.setSnapshot(styledSnapshot);
+      const styledImage = await waitForCanvasChange(canvas, legacyImage);
+      model.setSnapshot(futureSnapshot);
+      const futureImage = await waitForCanvasChange(canvas, styledImage);
+
+      if (typeof cleanup === "function") {
+        cleanup();
+      }
+
+      mount.remove();
+      return { legacyImage, styledImage, futureImage };
+    } finally {
+      URL.revokeObjectURL(moduleUrl);
+    }
+  }, PYTHON_WIDGET_BUNDLE);
+
+  expect(consoleErrors).toEqual([]);
+  expect(pageErrors).toEqual([]);
+  expect(result.styledImage).not.toEqual(result.legacyImage);
+  expect(result.futureImage).toEqual(result.legacyImage);
+});
+
 test("python widget bundle renders representative large snapshots without blacking out", async ({
   page,
 }) => {
@@ -1438,4 +1593,154 @@ test("direct exports match snapshot and canvas-session exports", async ({ page }
       `${entry.slug}: ${entry.directVsSession.reason || "session mismatch"}`,
     ).toBeTruthy();
   }
+});
+
+test("snapshots keep unknown fields and never alias the caller's object", async ({ page }) => {
+  await waitForDemoReady(page);
+
+  const result = await page.evaluate(async () => {
+    const { createPlotFromSnapshot } = window.__ruvizDemo.sdk;
+
+    const snapshot = {
+      schemaVersion: 99,
+      sizePx: [320, 200],
+      futurePlotKey: { nested: "plot" },
+      series: [
+        {
+          kind: "line",
+          futureSeriesKey: { nested: "series" },
+          x: { kind: "static", values: [0, 1, 2], futureSourceKey: { nested: "source" } },
+          y: { kind: "static", values: [0, 1, 0] },
+        },
+      ],
+    };
+
+    const builder = createPlotFromSnapshot(snapshot);
+    const preserved = builder.toSnapshot();
+
+    // Mutating the caller's snapshot afterwards must not reach the builder.
+    snapshot.futurePlotKey.nested = "mutated";
+    snapshot.series[0].futureSeriesKey.nested = "mutated";
+    snapshot.series[0].x.futureSourceKey.nested = "mutated";
+    snapshot.series[0].x.values[0] = 99;
+
+    return { preserved, afterCallerMutation: builder.toSnapshot() };
+  });
+
+  expect(result.preserved.futurePlotKey).toEqual({ nested: "plot" });
+  expect(result.preserved.series[0].futureSeriesKey).toEqual({ nested: "series" });
+  expect(result.preserved.series[0].x.futureSourceKey).toEqual({ nested: "source" });
+  expect(result.afterCallerMutation).toEqual(result.preserved);
+});
+
+test("dpi scales the pixels exported from sizePx", async ({ page }) => {
+  await waitForDemoReady(page);
+
+  const result = await page.evaluate(async () => {
+    const { createPlot, createPlotFromSnapshot } = window.__ruvizDemo.sdk;
+
+    // PNG IHDR carries the dimensions as big-endian u32s at bytes 16..24.
+    const pngSize = (bytes) => {
+      const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+      return [view.getUint32(16), view.getUint32(20)];
+    };
+
+    const base = createPlot()
+      .sizePx(200, 150)
+      .line({ x: [0, 1, 2], y: [0, 1, 0] });
+    const scaled = createPlot()
+      .sizePx(200, 150)
+      .dpi(200)
+      .line({ x: [0, 1, 2], y: [0, 1, 0] });
+
+    return {
+      base: pngSize(await base.renderPng()),
+      scaled: pngSize(await scaled.renderPng()),
+      snapshotDpi: scaled.toSnapshot().dpi,
+      fromSnapshot: pngSize(await createPlotFromSnapshot(scaled.toSnapshot()).renderPng()),
+    };
+  });
+
+  expect(result.base).toEqual([200, 150]);
+  expect(result.scaled).toEqual([400, 300]);
+  expect(result.snapshotDpi).toBe(200);
+  expect(result.fromSnapshot).toEqual([400, 300]);
+});
+
+test("the render path ignores unknown style keys but rejects wrong-kind ones", async ({ page }) => {
+  await waitForDemoReady(page);
+
+  const result = await page.evaluate(async () => {
+    const { createPlotFromSnapshot } = window.__ruvizDemo.sdk;
+
+    const lineWithStyle = (style) => ({
+      sizePx: [320, 200],
+      series: [
+        {
+          kind: "line",
+          style,
+          x: { kind: "static", values: [0, 1, 2] },
+          y: { kind: "static", values: [0, 1, 0] },
+        },
+      ],
+    });
+
+    const plain = await createPlotFromSnapshot(lineWithStyle({})).renderPng();
+    const future = await createPlotFromSnapshot(
+      lineWithStyle({ futureStyle: "ignored" }),
+    ).renderPng();
+
+    let wrongKind = "no error";
+    try {
+      await createPlotFromSnapshot(lineWithStyle({ bins: 3 })).renderPng();
+    } catch (error) {
+      wrongKind = String(error);
+    }
+
+    return {
+      unknownKeyIsIgnored: plain.length === future.length && plain.every((b, i) => b === future[i]),
+      wrongKind,
+    };
+  });
+
+  expect(result.unknownKeyIsIgnored).toBe(true);
+  expect(result.wrongKind).toContain(
+    "line does not support bins=; accepted: alpha, color, label, linestyle, marker, marker_size, width",
+  );
+});
+
+test("the builder rejects unusable style and axis names at the call", async ({ page }) => {
+  await waitForDemoReady(page);
+
+  const messages = await page.evaluate(() => {
+    const { createPlot } = window.__ruvizDemo.sdk;
+
+    const xy = { x: [0, 1], y: [0, 1] };
+    const cases = [
+      () => createPlot().line({ ...xy, style: { color: "blu" } }),
+      () => createPlot().line({ ...xy, style: { marker: "blob" } }),
+      () => createPlot().line({ ...xy, style: { linestyle: "wavy" } }),
+      () => createPlot().legend("nowhere"),
+      () => createPlot().xscale("logarithmic"),
+      () => createPlot().dpi(200.5),
+    ];
+
+    return cases.map((run) => {
+      try {
+        run();
+        return "no error";
+      } catch (error) {
+        return error.message;
+      }
+    });
+  });
+
+  expect(messages).toEqual([
+    "unsupported color 'blu'; expected a hex string like '#2563eb' or a named color such as red, green, blue, orange, purple, black, white, gray (did you mean 'blue'?)",
+    "unsupported marker 'blob'; expected one of: circle, square, triangle, triangle-down, diamond, plus, cross, star, circle-open, square-open, triangle-open, diamond-open",
+    "unsupported linestyle 'wavy'; expected one of: solid, dashed, dotted, dash-dot, dash-dot-dot",
+    "unsupported legend position 'nowhere'; expected one of: best, upper_right, upper_left, lower_left, lower_right, right, center_left, center_right, lower_center, upper_center, center, outside_right, outside_left, outside_upper, outside_lower",
+    "unsupported axis scale 'logarithmic'; expected one of: linear, log, symlog",
+    "plot dpi must be an integer greater than zero",
+  ]);
 });

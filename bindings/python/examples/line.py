@@ -5,7 +5,7 @@ from _shared import ExampleMeta, base_plot, save_example, wave_series
 META = ExampleMeta(
     slug="line",
     title="Line plot",
-    summary="A basic fluent line plot built with chained Python methods.",
+    summary="A fluent line plot with a styled, labelled series and a legend.",
     section="Basic plots",
 )
 
@@ -16,7 +16,8 @@ def build_plot():
         base_plot("Line Plot")
         .xlabel("x")
         .ylabel("signal")
-        .line(x, y)
+        .line(x, y, label="signal", color="#2563eb", width=2.0)
+        .legend("upper_right")
     )
 
 

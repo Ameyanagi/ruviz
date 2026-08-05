@@ -1,12 +1,17 @@
 from __future__ import annotations
 
-import tomllib
+import sys
 from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
 import pytest
 import ruviz
+
+if sys.version_info >= (3, 11):
+    import tomllib
+else:  # Python 3.10 has no stdlib tomllib
+    import tomli as tomllib
 
 PNG_HEADER = b"\x89PNG\r\n\x1a\n"
 
@@ -76,13 +81,24 @@ def test_plot3d_combines_series_and_exports_png_svg_and_pdf(tmp_path: Path) -> N
     assert pdf_path.read_bytes().startswith(b"%PDF")
 
 
-def test_plot3d_render_uses_native_handle_without_json_roundtrip() -> None:
+def test_plot3d_render_delegates_to_the_native_handle() -> None:
     plot = ruviz.scatter3d([0.0, 1.0], [0.0, 1.0], [0.0, 1.0]).size_px(240, 180)
 
-    with patch("ruviz._api.json.dumps", side_effect=AssertionError("JSON path should not run")):
-        png = plot.render_png()
+    with patch.object(
+        type(plot._native_plot), "render_png_bytes", return_value=b"native-png"
+    ) as render:
+        assert plot.render_png() == b"native-png"
 
-    assert png.startswith(PNG_HEADER)
+    render.assert_called_once()
+
+
+def test_plot3d_reuses_the_cached_builder_across_renders() -> None:
+    plot = ruviz.scatter3d([0.0, 1.0], [0.0, 1.0], [0.0, 1.0]).size_px(240, 180)
+
+    first = plot.render_png()
+    assert plot.render_png() == first
+
+    assert plot.title("changed").render_png() != first
 
 
 def test_surface_requires_y_rows_by_x_columns() -> None:
@@ -101,3 +117,123 @@ def test_point_series_reject_matrix_coordinates() -> None:
 def test_empty_plot3d_reports_a_clear_error() -> None:
     with pytest.raises(ValueError, match="must contain at least one series"):
         ruviz.plot3d().render_png()
+
+
+def test_plot3d_save_rejects_unknown_extension(tmp_path: Path) -> None:
+    plot = ruviz.scatter3d([0.0, 1.0], [0.0, 1.0], [0.0, 1.0]).size_px(160, 120)
+
+    with pytest.raises(ValueError, match=r"unsupported save extension '\.jpg'"):
+        plot.save(tmp_path / "scene.jpg")
+
+
+def test_plot3d_save_rejects_path_without_extension(tmp_path: Path) -> None:
+    plot = ruviz.scatter3d([0.0, 1.0], [0.0, 1.0], [0.0, 1.0]).size_px(160, 120)
+
+    with pytest.raises(ValueError, match="has no extension"):
+        plot.save(tmp_path / "scene")
+
+
+def test_plot3d_save_accepts_uppercase_extensions(tmp_path: Path) -> None:
+    plot = ruviz.scatter3d([0.0, 1.0], [0.0, 1.0], [0.0, 1.0]).size_px(160, 120)
+
+    assert plot.save(tmp_path / "scene.PNG").read_bytes().startswith(PNG_HEADER)
+
+
+def test_plot3d_theme_normalizes_case_and_rejects_unknown_themes() -> None:
+    assert ruviz.plot3d().theme("Dark").to_snapshot()["theme"] == "dark"
+
+    with pytest.raises(ValueError, match="unsupported theme: solarized"):
+        ruviz.plot3d().theme("solarized")
+
+
+@pytest.mark.parametrize(("width", "height"), [(0, 100), (100, 0), (-1, 100)])
+def test_plot3d_size_px_rejects_non_positive_dimensions(width: int, height: int) -> None:
+    with pytest.raises(ValueError, match="greater than zero"):
+        ruviz.plot3d().size_px(width, height)
+
+
+@pytest.mark.parametrize(
+    ("width", "height"),
+    [(0.5, 200), (200, 0.5), (200.5, 150), (True, 150)],
+    ids=["width", "height", "fractional", "bool"],
+)
+def test_plot3d_size_px_rejects_non_integer_dimensions(
+    width: float | bool, height: float | bool
+) -> None:
+    with pytest.raises(ValueError, match="3D plot dimensions must be integers greater than zero"):
+        ruviz.plot3d().size_px(width, height)
+
+
+@pytest.mark.parametrize("dpi", [0, -1, 0.5, 200.5, True])
+def test_plot3d_dpi_rejects_non_positive_or_fractional_values(dpi: float | bool) -> None:
+    with pytest.raises(ValueError, match="3D plot dpi must be an integer greater than zero"):
+        ruviz.plot3d().dpi(dpi)
+
+
+@pytest.mark.parametrize(
+    ("method", "args", "message"),
+    [
+        ("size_px", (0, 200), "3D plot dimensions must be integers greater than zero"),
+        ("size_px", (200, 0), "3D plot dimensions must be integers greater than zero"),
+        ("dpi", (0,), "3D plot dpi must be an integer greater than zero"),
+    ],
+    ids=["width", "height", "dpi"],
+)
+def test_native_3d_handle_rejects_zero_dimensions(method: str, args: tuple, message: str) -> None:
+    handle = ruviz._native.NativePlot3DHandle()
+
+    with pytest.raises(ValueError, match=message):
+        getattr(handle, method)(*args)
+
+
+OBSERVABLE_3D_CASES = [
+    ("scatter3d", lambda source: ruviz.plot3d().scatter3d(source, [0.0, 1.0], [0.0, 1.0])),
+    ("line3d", lambda source: ruviz.plot3d().line3d(source, [0.0, 1.0], [0.0, 1.0])),
+    ("surface", lambda source: ruviz.plot3d().surface(source, [0.0, 1.0], np.zeros((2, 2)))),
+    ("wireframe", lambda source: ruviz.plot3d().wireframe(source, [0.0, 1.0], np.zeros((2, 2)))),
+    ("surface", lambda source: ruviz.plot3d().surface([0.0, 1.0], [0.0, 1.0], source)),
+    ("wireframe", lambda source: ruviz.plot3d().wireframe([0.0, 1.0], [0.0, 1.0], source)),
+]
+
+
+@pytest.mark.parametrize(
+    ("kind", "build"),
+    OBSERVABLE_3D_CASES,
+    ids=[f"{kind}-{index}" for index, (kind, _) in enumerate(OBSERVABLE_3D_CASES)],
+)
+def test_3d_series_reject_observables(kind: str, build: object) -> None:
+    source = ruviz.observable([0.0, 1.0])
+
+    with pytest.raises(TypeError, match=f"{kind} does not support ObservableSeries"):
+        build(source)
+
+
+def test_plot3d_rejects_observable_and_dataframe_inputs() -> None:
+    pd = pytest.importorskip("pandas")
+    frame = pd.DataFrame({"x": [0.0, 1.0], "y": [0.0, 1.0], "z": [0.0, 1.0]})
+
+    plot = ruviz.plot3d().scatter3d("x", "y", "z", data=frame)
+    assert plot.to_snapshot()["series"][0]["x"] == [0.0, 1.0]
+
+    with pytest.raises(TypeError, match="select a column or pass data="):
+        ruviz.scatter3d(frame, frame, frame)
+
+    with pytest.raises(TypeError, match="data= expects a DataFrame or dict"):
+        ruviz.plot3d().scatter3d("x", "y", "z", data=frame["x"])
+
+
+def test_plot3d_snapshot_carries_schema_version() -> None:
+    plot = ruviz.scatter3d([0, 1], [0, 1], [0, 1]).title("versioned")
+
+    assert plot.to_snapshot()["schemaVersion"] == 1
+
+
+@pytest.mark.parametrize("axis", ["x", "y", "z"], ids=["x", "y", "z"])
+def test_plot3d_axis_limits_stay_strictly_ascending(axis: str) -> None:
+    message = f"{axis} limits must be finite and strictly ascending"
+
+    with pytest.raises(ValueError, match=message):
+        getattr(ruviz.plot3d(), f"{axis}lim")(10.0, 0.0)
+
+    with pytest.raises(ValueError, match=message):
+        getattr(ruviz._native.NativePlot3DHandle(), f"{axis}lim")(10.0, 0.0)

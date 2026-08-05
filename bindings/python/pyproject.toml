@@ -11,12 +11,14 @@ requires-python = ">=3.10"
 license = { text = "MIT OR Apache-2.0" }
 authors = [{ name = "Ruviz Contributors" }]
 dependencies = [
-  "anywidget>=0.9",
-  "numpy>=2.0",
-  "traitlets>=5.14",
+  "numpy>=1.26",
 ]
 
 [project.optional-dependencies]
+widget = [
+  "anywidget>=0.9",
+  "traitlets>=5.14",
+]
 dataframes = [
   "pandas>=2.2",
   "polars>=1.0",
@@ -27,9 +29,16 @@ pandas = [
 polars = [
   "polars>=1.0",
 ]
+all = [
+  "anywidget>=0.9",
+  "pandas>=2.2",
+  "polars>=1.0",
+  "traitlets>=5.14",
+]
 
 [dependency-groups]
 dev = [
+  "anywidget>=0.9",
   "ipykernel>=6.0",
   "maturin>=1.8,<2.0",
   "mkdocs-material>=9.6",
@@ -37,8 +46,11 @@ dev = [
   "mkdocstrings[python]>=0.30",
   "pandas>=2.2",
   "polars>=1.0",
+  "pyright>=1.1.400",
   "pytest>=8.0",
   "ruff>=0.12",
+  "tomli>=2.0; python_version < '3.11'",
+  "traitlets>=5.14",
 ]
 bench = [
   "matplotlib>=3.10",
@@ -52,3 +64,15 @@ features = ["pyo3/extension-module"]
 [tool.ruff]
 line-length = 100
 target-version = "py310"
+
+[tool.pyright]
+include = ["ruviz_py", "tests/typing"]
+pythonVersion = "3.10"
+typeCheckingMode = "basic"
+venvPath = "."
+venv = ".venv"
+# Negative typing cases in tests/typing assert their errors with `# pyright: ignore`
+# comments; this turns a comment that stopped suppressing anything into a failure.
+reportUnnecessaryTypeIgnoreComment = "error"
+# traitlets ships py.typed but does not re-export its trait types explicitly.
+reportPrivateImportUsage = "none"

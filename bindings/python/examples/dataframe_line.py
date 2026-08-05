@@ -17,8 +17,9 @@ def build_plot():
         base_plot("Pandas DataFrame Input")
         .xlabel("time")
         .ylabel("value")
-        .line("time", "value", data=frame)
-        .line("time", "baseline", data=frame)
+        .line("time", "value", data=frame, label="value", color="#2563eb")
+        .line("time", "baseline", data=frame, label="baseline", linestyle="dashed")
+        .legend("upper_right")
     )
 
 
