@@ -630,7 +630,7 @@ pub fn format_tick_labels(values: &[f64]) -> Vec<String> {
 /// every backend.
 ///
 /// A log axis picks **one** notation for the whole axis. While every ticked
-/// magnitude stays inside [`LOG_PLAIN_LABEL_MIN`]..=[`LOG_PLAIN_LABEL_MAX`] the
+/// magnitude stays inside `LOG_PLAIN_LABEL_MIN..=LOG_PLAIN_LABEL_MAX` the
 /// decades read as plain decimals (`0.01`, `0.1`, `1`, `10`), because that is
 /// what a reader expects of an ordinary range; outside that window every label
 /// switches to the `10ⁿ` / `2×10ⁿ` exponent form together. An axis is never
