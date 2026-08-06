@@ -43,13 +43,17 @@ pub struct PieConfig {
     /// Start angle in degrees, measured counter-clockwise from 3 o'clock
     /// (0 = 3 o'clock, 90 = 12 o'clock), as in matplotlib
     pub start_angle: f64,
-    /// Whether wedges advance counter-clockwise from `start_angle` (matplotlib's default)
+    /// Whether wedges advance counter-clockwise from `start_angle`.
+    ///
+    /// The default is `false`: wedges run clockwise in input order from
+    /// `start_angle`, so reading the chart the way a clock is read follows the
+    /// order the values were given (plotly's and d3's convention).
     pub counter_clockwise: bool,
-    /// Text color for labels
-    pub text_color: Color,
+    /// Label color, or `None` to pick per wedge for contrast against its fill.
+    pub text_color: Option<Color>,
     /// Font size for labels
     pub label_font_size: f32,
-    /// Distance from center for labels (as fraction of radius)
+    /// How far out labels sit: 0 is the inner edge, 1 the rim
     pub label_distance: f64,
     /// Shadow offset (0 = no shadow)
     pub shadow: f64,
@@ -70,8 +74,8 @@ impl Default for PieConfig {
             show_labels: true,
             inner_radius: 0.0,
             start_angle: 90.0, // Start at top (12 o'clock)
-            counter_clockwise: true,
-            text_color: Color::from_rgb(0, 0, 0),
+            counter_clockwise: false,
+            text_color: None,
             label_font_size: 10.0,
             label_distance: 0.6,
             shadow: 0.0,
@@ -116,9 +120,24 @@ impl PieConfig {
         self
     }
 
-    /// Go clockwise instead of counter-clockwise
+    /// Sweep the wedges clockwise from `start_angle` (the default).
     pub fn clockwise(mut self) -> Self {
         self.counter_clockwise = false;
+        self
+    }
+
+    /// Sweep the wedges counter-clockwise from `start_angle`, as matplotlib does.
+    pub fn counter_clockwise(mut self) -> Self {
+        self.counter_clockwise = true;
+        self
+    }
+
+    /// Force one label color for every wedge.
+    ///
+    /// Left unset, each label takes black or white by the luminance of the
+    /// wedge it sits on — see [`label_color_on`].
+    pub fn text_color(mut self, color: Color) -> Self {
+        self.text_color = Some(color);
         self
     }
 
@@ -146,7 +165,7 @@ impl PieConfig {
         self
     }
 
-    /// Set label distance from center
+    /// Set how far out the labels sit, 0 at the inner edge and 1 at the rim
     pub fn label_distance(mut self, distance: f64) -> Self {
         self.label_distance = distance;
         self
@@ -278,6 +297,68 @@ pub(crate) fn format_percentage(percentage: f64) -> String {
     let rounded = format!("{percentage:.1}");
     let trimmed = rounded.strip_suffix(".0").unwrap_or(&rounded);
     format!("{trimmed}%")
+}
+
+/// Relative luminance at or above which a wedge is light enough for dark text.
+///
+/// Placed at the CIE lightness midpoint (`L* = 60`, i.e. `((60 + 16) / 116)^3`,
+/// rounded to 0.30) rather than at the WCAG contrast crossover (0.179), which
+/// would leave dark saturated fills — tab10 blue (0.168), green (0.259) and red
+/// (0.159) — carrying black text that barely reads.
+const DARK_LABEL_LUMINANCE: f64 = 0.30;
+
+/// Label color used on a dark wedge.
+const LIGHT_LABEL: Color = Color::from_rgb(255, 255, 255);
+
+/// Label color used on a light wedge: near-black, so it does not read as a hole.
+const DARK_LABEL: Color = Color::from_rgb(26, 26, 26);
+
+/// Relative luminance of an sRGB color, per WCAG 2.x.
+///
+/// Alpha is ignored: a wedge label sits on the wedge's own hue.
+pub(crate) fn relative_luminance(color: Color) -> f64 {
+    fn linearize(channel: u8) -> f64 {
+        let value = f64::from(channel) / 255.0;
+        if value <= 0.03928 {
+            value / 12.92
+        } else {
+            ((value + 0.055) / 1.055).powf(2.4)
+        }
+    }
+
+    0.2126 * linearize(color.r) + 0.7152 * linearize(color.g) + 0.0722 * linearize(color.b)
+}
+
+/// How far out a wedge label sits, in pixels from the centre.
+///
+/// `label_distance` runs the label from the inner edge to the outer edge, so a
+/// donut keeps its labels on the ring. Multiplying the ring midpoint by
+/// `label_distance` instead dropped them back into the hole, where they were
+/// half-eaten by the background.
+pub(crate) fn label_radius(radius: f64, inner_radius: f64, label_distance: f64) -> f64 {
+    radius * (inner_radius + (1.0 - inner_radius) * label_distance)
+}
+
+/// Pick the label color that reads on `fill`.
+///
+/// Dark fills take white, light fills near-black, split at 0.30 relative
+/// luminance — the CIE lightness midpoint, `L* = 60`.
+///
+/// ```
+/// use ruviz::plots::composition::pie::label_color_on;
+/// use ruviz::render::Color;
+///
+/// // tab10 blue is dark enough to need white text
+/// assert_eq!(label_color_on(Color::from_rgb(31, 119, 180)), Color::from_rgb(255, 255, 255));
+/// // tab10 orange is not
+/// assert_eq!(label_color_on(Color::from_rgb(255, 127, 14)), Color::from_rgb(26, 26, 26));
+/// ```
+pub fn label_color_on(fill: Color) -> Color {
+    if relative_luminance(fill) >= DARK_LABEL_LUMINANCE {
+        DARK_LABEL
+    } else {
+        LIGHT_LABEL
+    }
 }
 
 /// Drop the entries of the per-value config vectors whose value was filtered out.
@@ -423,23 +504,22 @@ pub fn render_pie(
                 let label = label_parts.join("\n");
 
                 // Calculate label position
-                let label_r = if config.inner_radius > 0.0 {
-                    radius * (1.0 + config.inner_radius) / 2.0 * config.label_distance
-                } else {
-                    radius * config.label_distance
-                };
+                let label_r = label_radius(radius, config.inner_radius, config.label_distance);
 
                 let (lx, ly) = wedge.centroid();
                 let mid_angle = (wedge.start_angle + wedge.end_angle) / 2.0;
                 let label_x = cx + label_r * mid_angle.cos();
                 let label_y = cy + label_r * mid_angle.sin();
 
+                let text_color = config
+                    .text_color
+                    .unwrap_or_else(|| label_color_on(colors[i % colors.len()]));
                 renderer.draw_text_centered(
                     &label,
                     label_x as f32,
                     label_y as f32,
                     label_font_size_px,
-                    config.text_color,
+                    text_color,
                 )?;
             }
         }
@@ -607,22 +687,22 @@ impl PlotRender for PieData {
                     let label = label_parts.join("\n");
 
                     // Calculate label position
-                    let label_r = if config.inner_radius > 0.0 {
-                        radius as f64 * (1.0 + config.inner_radius) / 2.0 * config.label_distance
-                    } else {
-                        radius as f64 * config.label_distance
-                    };
+                    let label_r =
+                        label_radius(radius as f64, config.inner_radius, config.label_distance);
 
                     let mid_angle = (wedge.start_angle + wedge.end_angle) / 2.0;
                     let label_x = cx as f64 + label_r * mid_angle.cos();
                     let label_y = cy as f64 + label_r * mid_angle.sin();
 
+                    let text_color = config
+                        .text_color
+                        .unwrap_or_else(|| label_color_on(colors[i % colors.len()]));
                     renderer.draw_text_centered(
                         &label,
                         label_x as f32,
                         label_y as f32,
                         label_font_size_px,
-                        config.text_color,
+                        text_color,
                     )?;
                 }
             }
@@ -711,27 +791,36 @@ mod tests {
     }
 
     #[test]
-    fn test_pie_starts_at_twelve_oclock_counter_clockwise() {
-        let values = vec![30.0, 20.0, 50.0];
+    fn test_pie_starts_at_twelve_oclock_clockwise() {
+        let values = vec![30.0, 26.0, 24.0, 20.0];
         let config = PieConfig::default();
         let (cx, cy) = (100.0, 100.0);
         let data = PieData::from_values(&values, cx, cy, 50.0, &config);
 
-        // Default start_angle of 90° is 12 o'clock: one boundary ray points up.
-        // Screen space has +y down, so "up" is -PI/2.
-        let boundary = data.wedges[0].end_angle;
-        assert!((boundary + PI / 2.0).abs() < 1e-9, "boundary: {boundary}");
+        // Default start_angle of 90° is 12 o'clock: the first wedge *begins*
+        // there. Screen space has +y down, so "up" is -PI/2.
+        let start = data.wedges[0].start_angle;
+        assert!((start + PI / 2.0).abs() < 1e-9, "start: {start}");
 
-        // Counter-clockwise from the top puts the first wedge's midpoint in the
-        // upper-left quadrant (matplotlib's default direction).
+        // The first input occupies the range immediately clockwise of 12
+        // o'clock: 30 of 100 is 108°, so it ends past 3 o'clock.
+        let sweep = data.wedges[0].end_angle - data.wedges[0].start_angle;
+        assert!(sweep > 0.0, "first wedge must sweep clockwise, got {sweep}");
+        assert!((sweep - 2.0 * PI * 0.3).abs() < 1e-9, "sweep: {sweep}");
+
+        // Clockwise from the top puts the first wedge's midpoint in the
+        // upper-right quadrant.
         let (mx, my) = data.wedges[0].centroid();
-        assert!(mx < cx, "midpoint x {mx} should be left of {cx}");
+        assert!(mx > cx, "midpoint x {mx} should be right of {cx}");
         assert!(my < cy, "midpoint y {my} should be above {cy}");
 
-        // Wedges stay adjacent and cover the full turn.
+        // Each wedge picks up where the previous one stopped, so input order is
+        // read clockwise.
         for pair in data.wedges.windows(2) {
-            assert!((pair[0].start_angle - pair[1].end_angle).abs() < 1e-9);
+            assert!((pair[0].end_angle - pair[1].start_angle).abs() < 1e-9);
         }
+
+        // Wedges cover the full turn.
         let swept: f64 = data
             .wedges
             .iter()
@@ -741,16 +830,16 @@ mod tests {
     }
 
     #[test]
-    fn test_pie_clockwise_reverses_direction() {
+    fn test_pie_counter_clockwise_reverses_direction() {
         let values = vec![30.0, 20.0, 50.0];
-        let config = PieConfig::default().clockwise();
+        let config = PieConfig::default().counter_clockwise();
         let (cx, cy) = (100.0, 100.0);
         let data = PieData::from_values(&values, cx, cy, 50.0, &config);
 
-        // Still starts at 12 o'clock, but sweeps toward the upper-right.
-        assert!((data.wedges[0].start_angle + PI / 2.0).abs() < 1e-9);
+        // Still bounded by 12 o'clock, but sweeps toward the upper-left.
+        assert!((data.wedges[0].end_angle + PI / 2.0).abs() < 1e-9);
         let (mx, my) = data.wedges[0].centroid();
-        assert!(mx > cx, "midpoint x {mx} should be right of {cx}");
+        assert!(mx < cx, "midpoint x {mx} should be left of {cx}");
         assert!(my < cy, "midpoint y {my} should be above {cy}");
     }
 
@@ -761,11 +850,67 @@ mod tests {
         let (cx, cy) = (0.0, 0.0);
         let data = PieData::from_values(&values, cx, cy, 1.0, &config);
 
-        // start_angle 0 is the +x axis; the first wedge sweeps counter-clockwise
-        // into the upper-right quadrant.
-        assert!(data.wedges[0].end_angle.abs() < 1e-9);
+        // start_angle 0 is the +x axis; the first wedge sweeps clockwise from
+        // there, into the lower-right quadrant on screen.
+        assert!(data.wedges[0].start_angle.abs() < 1e-9);
         let (mx, my) = data.wedges[0].centroid();
-        assert!(mx > 0.0 && my < 0.0, "midpoint ({mx}, {my})");
+        assert!(mx > 0.0 && my > 0.0, "midpoint ({mx}, {my})");
+    }
+
+    /// A wedge label has to read on the wedge it sits on. Black on tab10 blue
+    /// or red is the case that prompted this; the pale end of a palette still
+    /// has to take dark text.
+    #[test]
+    fn test_label_color_follows_wedge_luminance() {
+        let white = Color::from_rgb(255, 255, 255);
+        let near_black = Color::from_rgb(26, 26, 26);
+
+        // tab10 blue, green and red are dark enough that black text crushes.
+        assert_eq!(label_color_on(Color::from_rgb(31, 119, 180)), white);
+        assert_eq!(label_color_on(Color::from_rgb(44, 160, 44)), white);
+        assert_eq!(label_color_on(Color::from_rgb(214, 39, 40)), white);
+        // tab10 orange is above the split: 0.365 relative luminance.
+        assert_eq!(label_color_on(Color::from_rgb(255, 127, 14)), near_black);
+        // A pale yellow is nowhere near needing white text.
+        assert_eq!(label_color_on(Color::from_rgb(255, 255, 179)), near_black);
+
+        // The computed luminances the split above relies on.
+        for (color, expected) in [
+            (Color::from_rgb(31, 119, 180), 0.1678),
+            (Color::from_rgb(255, 127, 14), 0.3647),
+            (Color::from_rgb(214, 39, 40), 0.1590),
+        ] {
+            let luminance = relative_luminance(color);
+            assert!(
+                (luminance - expected).abs() < 5e-4,
+                "{color:?} luminance {luminance} != {expected}"
+            );
+        }
+    }
+
+    /// A donut label has to land on the ring, not in the hole: the hole is
+    /// background, and a white label there is invisible.
+    #[test]
+    fn test_donut_labels_land_on_the_ring() {
+        let radius = 100.0;
+        let inner = DEFAULT_DONUT_INNER_RADIUS;
+        let label_r = label_radius(radius, inner, PieConfig::default().label_distance);
+        assert!(
+            label_r > radius * inner && label_r < radius,
+            "donut label radius {label_r} must sit between the hole ({}) and the rim ({radius})",
+            radius * inner
+        );
+
+        // A full pie is the `inner_radius = 0` case of the same expression.
+        assert_eq!(label_radius(radius, 0.0, 0.6), 60.0);
+    }
+
+    /// An explicit `text_color` still wins over the automatic choice.
+    #[test]
+    fn test_explicit_text_color_overrides_the_automatic_choice() {
+        let config = PieConfig::default().text_color(Color::from_rgb(1, 2, 3));
+        assert_eq!(config.text_color, Some(Color::from_rgb(1, 2, 3)));
+        assert_eq!(PieConfig::default().text_color, None);
     }
 
     #[test]
@@ -774,11 +919,11 @@ mod tests {
         assert_plot_config::<PieConfig>();
     }
 
-    /// `PieConfig::clockwise` was reported as an inert setter (plan item 2.4).
-    /// It is not: `PieData::from_values` reads `counter_clockwise`, and
+    /// The direction setters were reported as inert (plan item 2.4). They are
+    /// not: `PieData::from_values` reads `counter_clockwise`, and
     /// `render_styled` re-derives the wedges from the stored config, so the
     /// direction reaches the pixels. This test guards the render path that
-    /// `test_pie_clockwise_reverses_direction` does not cover.
+    /// `test_pie_counter_clockwise_reverses_direction` does not cover.
     #[test]
     fn test_clockwise_changes_the_rendered_image() {
         fn render(config: PieConfig) -> Vec<u8> {
@@ -796,17 +941,17 @@ mod tests {
             renderer.into_image().pixels
         }
 
-        let ccw = render(PieConfig::default().labels(false).percentages(false));
-        let cw = render(
+        let cw = render(PieConfig::default().labels(false).percentages(false));
+        let ccw = render(
             PieConfig::default()
                 .labels(false)
                 .percentages(false)
-                .clockwise(),
+                .counter_clockwise(),
         );
 
         assert_ne!(
             ccw, cw,
-            "PieConfig::clockwise produced a byte-identical image"
+            "PieConfig::counter_clockwise produced a byte-identical image"
         );
     }
 

@@ -1618,21 +1618,23 @@ impl Plot {
 
                 if !label_parts.is_empty() {
                     let label = label_parts.join("\n");
-                    let label_r = if data.config.inner_radius > 0.0 {
-                        radius as f64 * (1.0 + data.config.inner_radius) / 2.0
-                            * data.config.label_distance
-                    } else {
-                        radius as f64 * data.config.label_distance
-                    };
+                    let label_r = crate::plots::composition::pie::label_radius(
+                        radius as f64,
+                        data.config.inner_radius,
+                        data.config.label_distance,
+                    );
                     let mid_angle = (wedge.start_angle + wedge.end_angle) / 2.0;
                     let label_x = cx as f64 + label_r * mid_angle.cos();
                     let label_y = cy as f64 + label_r * mid_angle.sin();
+                    let text_color = data.config.text_color.unwrap_or_else(|| {
+                        crate::plots::composition::pie::label_color_on(colors[idx % colors.len()])
+                    });
                     svg.draw_text_centered(
                         &label,
                         label_x as f32,
                         label_y as f32,
                         label_font_size,
-                        data.config.text_color,
+                        text_color,
                     )?;
                 }
             }

@@ -14,6 +14,29 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- The 2D draw order now reads grid, data, frame. The grid already sat under the
+  series in both the raster and the SVG path, but the axis frame and its tick
+  marks were drawn *before* the series, so a bar or histogram resting on zero
+  painted over the bottom spine and tinted it. Both paths now emit the frame
+  and ticks after the series, matching matplotlib, where spines outrank
+  patches. Annotations keep their existing underlay/overlay split.
+- A pie's wedges now run **clockwise** from 12 o'clock in input order (plotly's
+  and d3's convention), so reading the chart the way a clock is read follows
+  the order the values were given. They used to run counter-clockwise, which
+  reversed the apparent order. Donut mode follows, and both the raster and SVG
+  paths agree. `PieConfig::counter_clockwise()` (and the matching pie-builder
+  method) restores matplotlib's direction.
+- Pie wedge labels now take white or near-black per wedge, by the relative
+  luminance of the fill they sit on, instead of always black — black on tab10
+  blue, green or red was close to unreadable. `PieConfig::text_color` became
+  `Option<Color>`: left unset the label color is derived, and
+  `PieConfig::text_color(color)` forces one color for every wedge. The name
+  line and the percentage line get the same treatment.
+- A donut's wedge labels now land on the ring. `label_distance` runs from the
+  inner edge (0) to the rim (1), where it used to scale the ring's midpoint and
+  so pushed the labels back over the hole, where the background ate half of
+  each one. A full pie is the `inner_radius = 0` case of the same expression
+  and is unchanged.
 - A log or symlog axis now labels its decades only, and picks one notation for
   the whole axis: plain decimals while every ticked magnitude stays inside
   `0.0001..=100000`, the `10ⁿ` / `2×10ⁿ` exponent form otherwise. A log axis

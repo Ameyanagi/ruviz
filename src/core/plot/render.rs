@@ -725,53 +725,6 @@ impl Plot {
             Self::categorical_x_tick_pixels(plot_area, x_min, x_max, category_positions);
 
         let draw_ticks = draw_axes && self.layout.tick_config.enabled;
-        if draw_ticks {
-            let x_axis_ticks = categorical_x_tick_pixels
-                .as_deref()
-                .unwrap_or(x_tick_pixels.as_slice());
-            let x_axis_minor_ticks = if categorical_x_tick_pixels.is_some() {
-                &[][..]
-            } else {
-                x_minor_tick_pixels.as_slice()
-            };
-            let (axis_width, major_tick_size, minor_tick_size, major_tick_width, minor_tick_width) =
-                self.axis_tick_metrics_px();
-            renderer.draw_axes_with_minor_ticks_styled(
-                plot_area,
-                x_axis_ticks,
-                &y_tick_pixels,
-                x_axis_minor_ticks,
-                &y_minor_tick_pixels,
-                &self.layout.tick_config.direction,
-                &self.layout.tick_config.sides,
-                &self.display.config.spines,
-                self.display.theme.foreground,
-                axis_width,
-                major_tick_size,
-                minor_tick_size,
-                major_tick_width,
-                minor_tick_width,
-            )?;
-        } else if draw_axes {
-            let (axis_width, major_tick_size, minor_tick_size, major_tick_width, minor_tick_width) =
-                self.axis_tick_metrics_px();
-            renderer.draw_axes_with_minor_ticks_styled(
-                plot_area,
-                &[],
-                &[],
-                &[],
-                &[],
-                &self.layout.tick_config.direction,
-                &TickSides::none(),
-                &self.display.config.spines,
-                self.display.theme.foreground,
-                axis_width,
-                major_tick_size,
-                minor_tick_size,
-                major_tick_width,
-                minor_tick_width,
-            )?;
-        }
 
         let tick_size_px = pt_to_px(self.display.config.typography.tick_size(), dpi);
 
@@ -877,6 +830,57 @@ impl Plot {
             &self.layout.y_scale,
             Self::is_overlay_annotation,
         )?;
+
+        // Frame and ticks last, so data ink can never eat the border it is
+        // measured against: a bar sitting on zero would otherwise paint over the
+        // bottom spine. The grid, drawn before the series, stays underneath.
+        if draw_ticks {
+            let x_axis_ticks = categorical_x_tick_pixels
+                .as_deref()
+                .unwrap_or(x_tick_pixels.as_slice());
+            let x_axis_minor_ticks = if categorical_x_tick_pixels.is_some() {
+                &[][..]
+            } else {
+                x_minor_tick_pixels.as_slice()
+            };
+            let (axis_width, major_tick_size, minor_tick_size, major_tick_width, minor_tick_width) =
+                self.axis_tick_metrics_px();
+            renderer.draw_axes_with_minor_ticks_styled(
+                plot_area,
+                x_axis_ticks,
+                &y_tick_pixels,
+                x_axis_minor_ticks,
+                &y_minor_tick_pixels,
+                &self.layout.tick_config.direction,
+                &self.layout.tick_config.sides,
+                &self.display.config.spines,
+                self.display.theme.foreground,
+                axis_width,
+                major_tick_size,
+                minor_tick_size,
+                major_tick_width,
+                minor_tick_width,
+            )?;
+        } else if draw_axes {
+            let (axis_width, major_tick_size, minor_tick_size, major_tick_width, minor_tick_width) =
+                self.axis_tick_metrics_px();
+            renderer.draw_axes_with_minor_ticks_styled(
+                plot_area,
+                &[],
+                &[],
+                &[],
+                &[],
+                &self.layout.tick_config.direction,
+                &TickSides::none(),
+                &self.display.config.spines,
+                self.display.theme.foreground,
+                axis_width,
+                major_tick_size,
+                minor_tick_size,
+                major_tick_width,
+                minor_tick_width,
+            )?;
+        }
 
         let legend_items = self.collect_legend_items();
         if !legend_items.is_empty() && frame.style.legend.enabled {
@@ -3073,20 +3077,64 @@ impl Plot {
             }
         }
 
-        if draw_axes && !self.layout.tick_config.enabled {
+        let category_x_tick_positions = SkiaRenderer::categorical_label_centers(
+            &layout.plot_area,
+            category_positions,
+            x_min,
+            x_max,
+        );
+
+        // The frame and its ticks are emitted after the series, so data ink can
+        // never eat the border it is measured against. The grid, emitted before
+        // the series, stays underneath. Declared here, next to the grid, so the
+        // two halves of the z-order read together.
+        let draw_frame = |svg: &mut crate::export::SvgRenderer| -> Result<()> {
+            if !draw_axes {
+                return Ok(());
+            }
             let (axis_width, major_tick_size, minor_tick_size, major_tick_width, minor_tick_width) =
                 self.axis_tick_metrics_px();
+            let (x_major, y_major, x_minor, y_minor, sides): (
+                &[f32],
+                &[f32],
+                &[f32],
+                &[f32],
+                &TickSides,
+            ) = if !self.layout.tick_config.enabled {
+                (&[], &[], &[], &[], &TickSides::none())
+            } else if is_categorical {
+                (
+                    &category_x_tick_positions,
+                    &y_tick_layout.pixel_positions,
+                    &[],
+                    &y_minor_tick_pixels,
+                    &self.layout.tick_config.sides,
+                )
+            } else {
+                let x_tick_layout = x_tick_layout.as_ref().ok_or_else(|| {
+                    PlottingError::RenderError(
+                        "missing x tick layout for non-categorical SVG axes".to_string(),
+                    )
+                })?;
+                (
+                    &x_tick_layout.pixel_positions,
+                    &y_tick_layout.pixel_positions,
+                    &x_minor_tick_pixels,
+                    &y_minor_tick_pixels,
+                    &self.layout.tick_config.sides,
+                )
+            };
             svg.draw_axes_with_minor_ticks_styled(
                 plot_left,
                 plot_right,
                 plot_top,
                 plot_bottom,
-                &[],
-                &[],
-                &[],
-                &[],
+                x_major,
+                y_major,
+                x_minor,
+                y_minor,
                 &self.layout.tick_config.direction,
-                &TickSides::none(),
+                sides,
                 &self.display.config.spines,
                 self.display.theme.foreground,
                 axis_width,
@@ -3095,52 +3143,20 @@ impl Plot {
                 major_tick_width,
                 minor_tick_width,
             );
-        }
+            Ok(())
+        };
 
         let tick_size_px = pt_to_px(
             self.display.config.typography.tick_size(),
             self.display.config.figure.dpi,
         );
 
-        // Draw axes and tick labels
+        // Draw tick labels. The frame and its ticks follow the series; see
+        // `draw_frame`.
         if draw_axes {
             if is_categorical {
-                let category_x_tick_positions = SkiaRenderer::categorical_label_centers(
-                    &layout.plot_area,
-                    category_positions,
-                    x_min,
-                    x_max,
-                );
-
                 // Categorical axis: ticks at the slot centres, labels under them.
                 if self.layout.tick_config.enabled {
-                    let (
-                        axis_width,
-                        major_tick_size,
-                        minor_tick_size,
-                        major_tick_width,
-                        minor_tick_width,
-                    ) = self.axis_tick_metrics_px();
-                    svg.draw_axes_with_minor_ticks_styled(
-                        plot_left,
-                        plot_right,
-                        plot_top,
-                        plot_bottom,
-                        &category_x_tick_positions,
-                        &y_tick_layout.pixel_positions,
-                        &[],
-                        &y_minor_tick_pixels,
-                        &self.layout.tick_config.direction,
-                        &self.layout.tick_config.sides,
-                        &self.display.config.spines,
-                        self.display.theme.foreground,
-                        axis_width,
-                        major_tick_size,
-                        minor_tick_size,
-                        major_tick_width,
-                        minor_tick_width,
-                    );
-
                     // Draw Y-axis tick labels
                     svg.draw_tick_labels(
                         &[],
@@ -3178,32 +3194,6 @@ impl Plot {
                     )
                 })?;
                 if self.layout.tick_config.enabled {
-                    let (
-                        axis_width,
-                        major_tick_size,
-                        minor_tick_size,
-                        major_tick_width,
-                        minor_tick_width,
-                    ) = self.axis_tick_metrics_px();
-                    svg.draw_axes_with_minor_ticks_styled(
-                        plot_left,
-                        plot_right,
-                        plot_top,
-                        plot_bottom,
-                        &x_tick_layout.pixel_positions,
-                        &y_tick_layout.pixel_positions,
-                        &x_minor_tick_pixels,
-                        &y_minor_tick_pixels,
-                        &self.layout.tick_config.direction,
-                        &self.layout.tick_config.sides,
-                        &self.display.config.spines,
-                        self.display.theme.foreground,
-                        axis_width,
-                        major_tick_size,
-                        minor_tick_size,
-                        major_tick_width,
-                        minor_tick_width,
-                    );
                     svg.draw_tick_labels(
                         &x_tick_layout.pixel_positions,
                         &x_tick_layout.labels,
@@ -3302,6 +3292,8 @@ impl Plot {
             y_max,
         )?;
         svg.end_group(); // End clip group
+
+        draw_frame(&mut svg)?;
 
         // Colorbars sit beside the plot area, so they belong outside its clip.
         self.render_svg_colorbars(&mut svg, plot_area)?;

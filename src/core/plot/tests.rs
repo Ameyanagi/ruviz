@@ -6498,6 +6498,84 @@ fn test_grid_layers_floor_every_pass_at_one_device_pixel() {
     }
 }
 
+/// Z-order, both halves, on one default bar chart: a horizontal gridline runs
+/// through every bar, and every bar sits on the bottom spine. The grid has to
+/// stay under the fills, and the frame has to stay over them.
+#[test]
+fn test_grid_stays_under_bar_fills_and_the_frame_stays_over_them() {
+    fn pixel(image: &Image, x: u32, y: u32) -> [u8; 4] {
+        let index = ((y * image.width + x) * 4) as usize;
+        [
+            image.pixels[index],
+            image.pixels[index + 1],
+            image.pixels[index + 2],
+            image.pixels[index + 3],
+        ]
+    }
+
+    let categories = ["A", "B", "C", "D", "E"];
+    let values = [23.0, 45.0, 56.0, 78.0, 32.0];
+    let plot = || Plot::new().size_px(640, 480).bar(&categories, &values);
+
+    let with_grid = plot().render().expect("bar chart with grid should render");
+    let without_grid = plot()
+        .grid(false)
+        .render()
+        .expect("bar chart without grid should render");
+
+    let fill = Theme::default().get_color(0);
+    let fill_pixel = [fill.r, fill.g, fill.b, 255];
+
+    // The centre column of the tallest bar (the fourth of five slots).
+    let bar_column = with_grid.width * 7 / 10;
+    let bar_rows: Vec<u32> = (0..with_grid.height)
+        .filter(|&y| pixel(&with_grid, bar_column, y) == fill_pixel)
+        .collect();
+    let (bar_top, bar_bottom) = (
+        *bar_rows.first().expect("tallest bar should have a fill"),
+        *bar_rows.last().expect("tallest bar should have a fill"),
+    );
+
+    // Rows the grid changes are the rows a gridline occupies. At least one has
+    // to fall inside the bar, or this test proves nothing.
+    let grid_rows: Vec<u32> = (0..with_grid.height)
+        .filter(|&y| {
+            (0..with_grid.width).any(|x| pixel(&with_grid, x, y) != pixel(&without_grid, x, y))
+        })
+        .collect();
+    let crossing_rows: Vec<u32> = grid_rows
+        .iter()
+        .copied()
+        .filter(|&y| y > bar_top && y < bar_bottom)
+        .collect();
+    assert!(
+        !crossing_rows.is_empty(),
+        "no gridline crosses the bar interior (rows {bar_top}..{bar_bottom}), grid rows {grid_rows:?}"
+    );
+
+    for y in crossing_rows {
+        assert_eq!(
+            pixel(&with_grid, bar_column, y),
+            fill_pixel,
+            "gridline at row {y} shows through the bar fill"
+        );
+    }
+
+    // The frame stays on top: the bottom spine reads the same inside a bar as
+    // it does in the gap between two bars.
+    let gap_column = (with_grid.width / 4..with_grid.width)
+        .find(|&x| pixel(&with_grid, x, bar_bottom) == [255, 255, 255, 255])
+        .expect("a gap between two bars");
+    let spine_row = (bar_bottom..with_grid.height)
+        .rfind(|&y| pixel(&with_grid, gap_column, y)[0] < 64)
+        .expect("bottom spine below the bars");
+    assert_eq!(
+        pixel(&with_grid, bar_column, spine_row),
+        pixel(&with_grid, gap_column, spine_row),
+        "the bar overpainted the bottom spine at row {spine_row}"
+    );
+}
+
 #[test]
 fn test_invalid_theme_base_font_does_not_poison_resolved_typography() {
     for invalid in [0.0, f32::NAN, f32::INFINITY] {
