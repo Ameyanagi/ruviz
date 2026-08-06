@@ -315,7 +315,8 @@ const DARK_LABEL: Color = Color::from_rgb(26, 26, 26);
 
 /// Relative luminance of an sRGB color, per WCAG 2.x.
 ///
-/// Alpha is ignored: a wedge label sits on the wedge's own hue.
+/// Alpha is ignored here; [`label_color_on`] composites a translucent fill
+/// over the plot background before asking for its luminance.
 pub(crate) fn relative_luminance(color: Color) -> f64 {
     fn linearize(channel: u8) -> f64 {
         let value = f64::from(channel) / 255.0;
@@ -344,17 +345,34 @@ pub(crate) fn label_radius(radius: f64, inner_radius: f64, label_distance: f64) 
 /// Dark fills take white, light fills near-black, split at 0.30 relative
 /// luminance — the CIE lightness midpoint, `L* = 60`.
 ///
+/// A translucent fill is composited over `background` first, so the choice
+/// follows the color the viewer actually sees: tab10 blue at quarter alpha
+/// over white reads as a pale tint and takes dark text, not white.
+///
 /// ```
 /// use ruviz::plots::composition::pie::label_color_on;
 /// use ruviz::render::Color;
 ///
 /// // tab10 blue is dark enough to need white text
-/// assert_eq!(label_color_on(Color::from_rgb(31, 119, 180)), Color::from_rgb(255, 255, 255));
+/// assert_eq!(
+///     label_color_on(Color::from_rgb(31, 119, 180), Color::WHITE),
+///     Color::from_rgb(255, 255, 255),
+/// );
 /// // tab10 orange is not
-/// assert_eq!(label_color_on(Color::from_rgb(255, 127, 14)), Color::from_rgb(26, 26, 26));
+/// assert_eq!(
+///     label_color_on(Color::from_rgb(255, 127, 14), Color::WHITE),
+///     Color::from_rgb(26, 26, 26),
+/// );
 /// ```
-pub fn label_color_on(fill: Color) -> Color {
-    if relative_luminance(fill) >= DARK_LABEL_LUMINANCE {
+pub fn label_color_on(fill: Color, background: Color) -> Color {
+    let alpha = f64::from(fill.a) / 255.0;
+    let composite = |f: u8, b: u8| (alpha * f64::from(f) + (1.0 - alpha) * f64::from(b)) as u8;
+    let seen = Color::from_rgb(
+        composite(fill.r, background.r),
+        composite(fill.g, background.g),
+        composite(fill.b, background.b),
+    );
+    if relative_luminance(seen) >= DARK_LABEL_LUMINANCE {
         DARK_LABEL
     } else {
         LIGHT_LABEL
@@ -513,7 +531,7 @@ pub fn render_pie(
 
                 let text_color = config
                     .text_color
-                    .unwrap_or_else(|| label_color_on(colors[i % colors.len()]));
+                    .unwrap_or_else(|| label_color_on(colors[i % colors.len()], theme.background));
                 renderer.draw_text_centered(
                     &label,
                     label_x as f32,
@@ -694,9 +712,9 @@ impl PlotRender for PieData {
                     let label_x = cx as f64 + label_r * mid_angle.cos();
                     let label_y = cy as f64 + label_r * mid_angle.sin();
 
-                    let text_color = config
-                        .text_color
-                        .unwrap_or_else(|| label_color_on(colors[i % colors.len()]));
+                    let text_color = config.text_color.unwrap_or_else(|| {
+                        label_color_on(colors[i % colors.len()], theme.background)
+                    });
                     renderer.draw_text_centered(
                         &label,
                         label_x as f32,
@@ -866,13 +884,29 @@ mod tests {
         let near_black = Color::from_rgb(26, 26, 26);
 
         // tab10 blue, green and red are dark enough that black text crushes.
-        assert_eq!(label_color_on(Color::from_rgb(31, 119, 180)), white);
-        assert_eq!(label_color_on(Color::from_rgb(44, 160, 44)), white);
-        assert_eq!(label_color_on(Color::from_rgb(214, 39, 40)), white);
+        assert_eq!(label_color_on(Color::from_rgb(31, 119, 180), white), white);
+        assert_eq!(label_color_on(Color::from_rgb(44, 160, 44), white), white);
+        assert_eq!(label_color_on(Color::from_rgb(214, 39, 40), white), white);
         // tab10 orange is above the split: 0.365 relative luminance.
-        assert_eq!(label_color_on(Color::from_rgb(255, 127, 14)), near_black);
+        assert_eq!(
+            label_color_on(Color::from_rgb(255, 127, 14), white),
+            near_black
+        );
         // A pale yellow is nowhere near needing white text.
-        assert_eq!(label_color_on(Color::from_rgb(255, 255, 179)), near_black);
+        assert_eq!(
+            label_color_on(Color::from_rgb(255, 255, 179), white),
+            near_black
+        );
+
+        // A translucent fill is judged by what the viewer sees, not its raw
+        // RGB: tab10 blue at quarter alpha over white is a pale tint and takes
+        // dark text, while the same fill over a dark background stays dark.
+        let faint_blue = Color::from_rgba(31, 119, 180, 64);
+        assert_eq!(label_color_on(faint_blue, white), near_black);
+        assert_eq!(
+            label_color_on(faint_blue, Color::from_rgb(30, 30, 30)),
+            white
+        );
 
         // The computed luminances the split above relies on.
         for (color, expected) in [
@@ -925,7 +959,7 @@ mod tests {
     /// direction reaches the pixels. This test guards the render path that
     /// `test_pie_counter_clockwise_reverses_direction` does not cover.
     #[test]
-    fn test_clockwise_changes_the_rendered_image() {
+    fn test_counter_clockwise_reverses_the_rendered_image() {
         fn render(config: PieConfig) -> Vec<u8> {
             let values = vec![10.0, 20.0, 70.0];
             let data = PieData::compute(&values, &config);

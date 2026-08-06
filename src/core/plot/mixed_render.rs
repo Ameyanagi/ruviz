@@ -1627,7 +1627,10 @@ impl Plot {
                     let label_x = cx as f64 + label_r * mid_angle.cos();
                     let label_y = cy as f64 + label_r * mid_angle.sin();
                     let text_color = data.config.text_color.unwrap_or_else(|| {
-                        crate::plots::composition::pie::label_color_on(colors[idx % colors.len()])
+                        crate::plots::composition::pie::label_color_on(
+                            colors[idx % colors.len()],
+                            self.display.theme.background,
+                        )
                     });
                     svg.draw_text_centered(
                         &label,
