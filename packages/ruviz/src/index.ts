@@ -13,6 +13,7 @@ import {
   LINE_STYLE_NAMES,
   MARKER_NAMES,
   normalizeSineSignalOptions,
+  PLOT_THEME_NAMES,
   SNAPSHOT_SCHEMA_VERSION,
   toNumberArray,
   validateColor,
@@ -67,7 +68,7 @@ import {
   toRawBackendPreference,
 } from "./plot-runtime.js";
 
-export { SNAPSHOT_SCHEMA_VERSION } from "./shared.js";
+export { PLOT_THEME_NAMES, SNAPSHOT_SCHEMA_VERSION } from "./shared.js";
 
 export {
   createPlot3d,
@@ -1140,6 +1141,7 @@ export class PlotBuilder {
   }
 
   setTheme(theme: PlotTheme): this {
+    validateName(PLOT_THEME_NAMES, "theme", theme);
     this.#state.theme = theme;
     this.#markDirty();
     return this;

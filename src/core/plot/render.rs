@@ -83,6 +83,41 @@ impl Plot {
         )
     }
 
+    /// The spines the theme allows.
+    ///
+    /// A theme with `frame == false` (seaborn) removes the box outright; every
+    /// other theme leaves the plot's own [`SpineConfig`] untouched, which is
+    /// what keeps existing output byte-identical.
+    ///
+    /// [`SpineConfig`]: crate::core::config::SpineConfig
+    pub(crate) fn themed_spines(&self) -> crate::core::config::SpineConfig {
+        if self.display.theme.frame {
+            self.display.config.spines
+        } else {
+            crate::core::config::SpineConfig::none()
+        }
+    }
+
+    /// The tick sides the theme allows.
+    ///
+    /// `Theme::tick_marks == false` drops the marks only. Tick *labels* are
+    /// drawn by a separate pass keyed on `TickConfig::enabled`, so they stay.
+    pub(crate) fn themed_tick_sides(&self, sides: TickSides) -> TickSides {
+        if self.display.theme.tick_marks {
+            sides
+        } else {
+            TickSides::none()
+        }
+    }
+
+    /// The panel fill the theme asks for, if any.
+    ///
+    /// Painted inside the axes rect before the grid, so the grid reads as drawn
+    /// *on* the panel.
+    pub(crate) fn themed_panel_background(&self) -> Option<Color> {
+        self.display.theme.panel_background
+    }
+
     fn annotation_render_layer(annotation: &Annotation) -> AnnotationRenderLayer {
         match annotation {
             Annotation::FillBetween { .. }
@@ -699,6 +734,18 @@ impl Plot {
             .collect();
 
         let draw_axes = Self::needs_cartesian_axes_for_series(&self.series_mgr.series);
+        if let Some(panel) = self.themed_panel_background()
+            && draw_axes
+        {
+            renderer.draw_rectangle(
+                plot_area.left(),
+                plot_area.top(),
+                plot_area.width(),
+                plot_area.height(),
+                panel,
+                true,
+            )?;
+        }
         if self.layout.grid_style.visible && draw_axes {
             let layers = Self::grid_layers(
                 &self.layout.grid_style,
@@ -852,8 +899,8 @@ impl Plot {
                 x_axis_minor_ticks,
                 &y_minor_tick_pixels,
                 &self.layout.tick_config.direction,
-                &self.layout.tick_config.sides,
-                &self.display.config.spines,
+                &self.themed_tick_sides(self.layout.tick_config.sides),
+                &self.themed_spines(),
                 self.display.theme.foreground,
                 axis_width,
                 major_tick_size,
@@ -872,7 +919,7 @@ impl Plot {
                 &[],
                 &self.layout.tick_config.direction,
                 &TickSides::none(),
-                &self.display.config.spines,
+                &self.themed_spines(),
                 self.display.theme.foreground,
                 axis_width,
                 major_tick_size,
@@ -3041,6 +3088,11 @@ impl Plot {
         // Draw grid lines (only horizontal for bar charts) - using unified GridStyle
         // Skip grid for non-Cartesian plots (Pie, Radar, Polar)
         let draw_axes = Self::needs_cartesian_axes_for_series(&self.series_mgr.series);
+        if let Some(panel) = self.themed_panel_background()
+            && draw_axes
+        {
+            svg.draw_rectangle(plot_left, plot_top, plot_width, plot_height, panel, true);
+        }
         if self.layout.grid_style.visible && draw_axes {
             // Bar charts only get horizontal grid lines.
             let (x_major_pixels, x_minor_pixels): (&[f32], &[f32]) = if is_categorical {
@@ -3088,6 +3140,8 @@ impl Plot {
         // never eat the border it is measured against. The grid, emitted before
         // the series, stays underneath. Declared here, next to the grid, so the
         // two halves of the z-order read together.
+        let themed_sides = self.themed_tick_sides(self.layout.tick_config.sides);
+        let themed_spines = self.themed_spines();
         let draw_frame = |svg: &mut crate::export::SvgRenderer| -> Result<()> {
             if !draw_axes {
                 return Ok(());
@@ -3108,7 +3162,7 @@ impl Plot {
                     &y_tick_layout.pixel_positions,
                     &[],
                     &y_minor_tick_pixels,
-                    &self.layout.tick_config.sides,
+                    &themed_sides,
                 )
             } else {
                 let x_tick_layout = x_tick_layout.as_ref().ok_or_else(|| {
@@ -3121,7 +3175,7 @@ impl Plot {
                     &y_tick_layout.pixel_positions,
                     &x_minor_tick_pixels,
                     &y_minor_tick_pixels,
-                    &self.layout.tick_config.sides,
+                    &themed_sides,
                 )
             };
             svg.draw_axes_with_minor_ticks_styled(
@@ -3135,7 +3189,7 @@ impl Plot {
                 y_minor,
                 &self.layout.tick_config.direction,
                 sides,
-                &self.display.config.spines,
+                &themed_spines,
                 self.display.theme.foreground,
                 axis_width,
                 major_tick_size,

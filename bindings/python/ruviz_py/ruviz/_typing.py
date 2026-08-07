@@ -79,8 +79,18 @@ LabelsLike: TypeAlias = Sequence[object] | NumericVector
 #: A ``data=`` source whose columns are looked up by name.
 DataSource: TypeAlias = Mapping[str, Any] | ColumnSource | None
 
-#: Built-in theme names.
-Theme: TypeAlias = Literal["light", "dark"]
+#: Built-in theme names accepted by :meth:`Plot.theme`.
+Theme: TypeAlias = Literal[
+    "light",
+    "dark",
+    "seaborn",
+    "publication",
+    "minimal",
+    "presentation",
+]
+
+#: Theme names accepted by :meth:`Plot3D.theme`, which only ships the two.
+Theme3D: TypeAlias = Literal["light", "dark"]
 
 #: Line style names accepted by ``linestyle=``; the last four are the matplotlib
 #: shorthands, and a snapshot always stores the canonical name they resolve to.
@@ -280,7 +290,7 @@ class Plot3DSnapshot(_Plot3DSnapshot, total=False):
 
     sizePx: list[int]
     dpi: int
-    theme: Theme
+    theme: Theme3D
     title: str
     xLabel: str
     yLabel: str
@@ -317,4 +327,5 @@ __all__ = [
     "SeriesSnapshot",
     "StyleDict",
     "Theme",
+    "Theme3D",
 ]

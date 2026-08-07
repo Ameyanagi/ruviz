@@ -35,6 +35,7 @@ from ._typing import (
     SeriesSnapshot,
     StyleDict,
     Theme,
+    Theme3D,
 )
 
 if TYPE_CHECKING:
@@ -81,6 +82,7 @@ __all__ = [
     "SeriesSnapshot",
     "StyleDict",
     "Theme",
+    "Theme3D",
     "__version__",
     "line3d",
     "observable",

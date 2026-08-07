@@ -183,7 +183,7 @@ impl StyledShape for HistogramBar {
 
 | matplotlib | ruviz |
 |------------|-------|
-| Seaborn-inspired palette | ![ruviz seaborn](../assets/rustdoc/theme_seaborn.png) |
+| `sns.set_theme()`: `#EAEAF2` panel, white grid, no spines, `deep` palette | ![ruviz seaborn](../assets/rustdoc/theme_seaborn.png) |
 
 ### Publication Theme
 

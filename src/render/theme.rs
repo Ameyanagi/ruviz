@@ -11,7 +11,7 @@ use crate::render::{Color, LineStyle};
 /// |-------|-------------|
 /// | [`Theme::light()`] | Default light theme with white background |
 /// | [`Theme::dark()`] | Dark mode with dark background |
-/// | [`Theme::seaborn()`] | Seaborn-inspired styling |
+/// | [`Theme::seaborn()`] | Faithful port of `seaborn.set_theme()` |
 /// | [`Theme::publication()`] | Publication-ready, high contrast |
 ///
 /// # Example
@@ -40,10 +40,35 @@ use crate::render::{Color, LineStyle};
 pub struct Theme {
     /// Background color of the plot area
     pub background: Color,
+    /// Fill painted over the data panel (inside the axes rect) before the grid
+    ///
+    /// `None` lets [`Theme::background`] show through the whole figure, which
+    /// is what every theme except [`Theme::seaborn`] wants. `Some(color)` gives
+    /// the seaborn "darkgrid" look, where the panel is tinted and the grid is
+    /// drawn *on* it.
+    pub panel_background: Option<Color>,
     /// Foreground color for text and axes
     pub foreground: Color,
     /// Grid line color
     pub grid_color: Color,
+    /// Draw the axes frame (the spines around the data panel)
+    ///
+    /// `false` removes every spine regardless of the plot's [`SpineConfig`],
+    /// so the panel edge is the only visual boundary.
+    ///
+    /// [`SpineConfig`]: crate::core::config::SpineConfig
+    pub frame: bool,
+    /// Draw tick marks
+    ///
+    /// `false` removes the marks only; tick *labels* keep their own control
+    /// (`Plot::ticks`), so a theme can float labels next to a bare panel.
+    pub tick_marks: bool,
+    /// Default edge color for filled patches (bars, histogram bins, boxes)
+    ///
+    /// `None` derives the edge by darkening the fill, which is the historical
+    /// behavior. A theme that wants seaborn's hairline separator sets it to an
+    /// explicit color. An edge named on the series always wins.
+    pub patch_edge_color: Option<Color>,
     /// Default line width for plot elements (in points, 1pt = 1/72 inch)
     pub line_width: f32,
     /// Default line style
@@ -107,9 +132,13 @@ impl Theme {
     pub fn light() -> Self {
         Self {
             background: Color::WHITE,
+            panel_background: None,
             foreground: Color::BLACK,
             grid_color: Color::from_gray(176), // #B0B0B0, matches GridStyle::default()
-            line_width: 1.5,                   // matplotlib default: 1.5pt
+            frame: true,
+            tick_marks: true,
+            patch_edge_color: None,
+            line_width: 1.5, // matplotlib default: 1.5pt
             line_style: LineStyle::Solid,
             font_family: "sans-serif".to_string(),
             font_size: 10.0,            // matplotlib default: 10pt
@@ -143,8 +172,12 @@ impl Theme {
     pub fn dark() -> Self {
         Self {
             background: Color::from_hex("#1e1e1e").unwrap(),
+            panel_background: None,
             foreground: Color::WHITE,
             grid_color: Color::DARK_GRAY,
+            frame: true,
+            tick_marks: true,
+            patch_edge_color: None,
             line_width: 1.5, // matplotlib default: 1.5pt
             line_style: LineStyle::Solid,
             font_family: "sans-serif".to_string(),
@@ -179,10 +212,14 @@ impl Theme {
     pub fn publication() -> Self {
         Self {
             background: Color::WHITE,
+            panel_background: None,
             foreground: Color::BLACK,
             // #B0B0B0: 2.17:1 on white, matching GridStyle::default(). The old
             // #E0E0E0 was 1.31:1 and effectively invisible on screen.
             grid_color: Color::from_gray(176),
+            frame: true,
+            tick_marks: true,
+            patch_edge_color: None,
             line_width: 1.5,
             line_style: LineStyle::Solid,
             font_family: "Times New Roman".to_string(),
@@ -202,8 +239,12 @@ impl Theme {
     pub fn minimal() -> Self {
         Self {
             background: Color::WHITE,
+            panel_background: None,
             foreground: Color::BLACK,
             grid_color: Color::TRANSPARENT,
+            frame: true,
+            tick_marks: true,
+            patch_edge_color: None,
             line_width: 1.5,
             line_style: LineStyle::Solid,
             font_family: "Helvetica".to_string(),
@@ -227,9 +268,12 @@ impl Theme {
         theme
     }
 
-    /// Create seaborn-style theme (matplotlib-inspired, clean and professional)
+    /// Create the seaborn default theme (`darkgrid` style, `deep` palette)
     ///
-    /// Inspired by Python's seaborn library, with a clean, modern aesthetic.
+    /// A faithful port of what `seaborn.set_theme()` produces: a lavender-gray
+    /// data panel on a white figure, white grid lines drawn on that panel, no
+    /// spines and no tick marks, and soft near-black text. Every value below is
+    /// the matching seaborn/matplotlib rcParam.
     ///
     /// # Example
     ///
@@ -245,17 +289,24 @@ impl Theme {
     /// ```
     pub fn seaborn() -> Self {
         Self {
-            background: Color::WHITE,
-            foreground: Color::from_hex("#262626").unwrap(), // Dark gray instead of pure black
-            grid_color: Color::from_gray(176),               // #B0B0B0, readable mid-gray grid
-            line_width: 1.5,
+            background: Color::WHITE, // figure.facecolor
+            panel_background: Some(Color::from_rgb(0xEA, 0xEA, 0xF2)), // axes.facecolor
+            foreground: Color::from_gray(38), // text.color: .15
+            grid_color: Color::WHITE, // grid.color
+            // axes.linewidth is 1.25, but axes.edgecolor is white on a white
+            // figure, so the spines are invisible; xtick.bottom/ytick.left are
+            // both False. The panel edge is the whole boundary.
+            frame: false,
+            tick_marks: false,
+            patch_edge_color: Some(Color::WHITE), // patch.edgecolor with force_edgecolor
+            line_width: 1.5,                      // lines.linewidth
             line_style: LineStyle::Solid,
-            font_family: "DejaVu Sans".to_string(), // Seaborn's preferred font
-            font_size: 11.0,
-            title_font_size: 14.0,
-            legend_font_size: 10.0,
-            axis_label_font_size: 11.0,
-            tick_label_font_size: 9.0,
+            font_family: "DejaVu Sans".to_string(), // font.sans-serif
+            font_size: 12.0,                        // font.size
+            title_font_size: 12.0,                  // axes.titlesize
+            legend_font_size: 11.0,                 // legend.fontsize
+            axis_label_font_size: 12.0,             // axes.labelsize
+            tick_label_font_size: 11.0,             // xtick/ytick.labelsize
             color_palette: Self::seaborn_palette(),
             margin: 0.08,
             padding: 8.0,
@@ -268,10 +319,14 @@ impl Theme {
     pub fn ieee() -> Self {
         Self {
             background: Color::WHITE,
+            panel_background: None,
             foreground: Color::BLACK,
             // #C8C8C8: 1.86:1 on white. Lighter than GridStyle::default() because
             // IEEE targets print, but no longer the 1.27:1 wash of #E5E5E5.
             grid_color: Color::from_gray(200),
+            frame: true,
+            tick_marks: true,
+            patch_edge_color: None,
             line_width: 0.75, // Match PlotStyle::IEEE data_width
             line_style: LineStyle::Solid,
             font_family: "serif".to_string(), // IEEE standard serif font
@@ -292,9 +347,13 @@ impl Theme {
     pub fn nature() -> Self {
         Self {
             background: Color::WHITE,
+            panel_background: None,
             foreground: Color::BLACK,
             grid_color: Color::TRANSPARENT, // Nature style: no grid
-            line_width: 0.75,               // Match PlotStyle::Nature data_width
+            frame: true,
+            tick_marks: true,
+            patch_edge_color: None,
+            line_width: 0.75, // Match PlotStyle::Nature data_width
             line_style: LineStyle::Solid,
             font_family: "sans-serif".to_string(), // Nature standard sans-serif
             font_size: 7.0,                        // Small for multi-panel figures
@@ -314,10 +373,14 @@ impl Theme {
     pub fn presentation() -> Self {
         Self {
             background: Color::WHITE,
+            panel_background: None,
             foreground: Color::BLACK,
             // #B0B0B0: projector contrast is worse than a monitor's, so the grid
             // has to be at least as readable as the default (2.17:1 on white).
             grid_color: Color::from_gray(176),
+            frame: true,
+            tick_marks: true,
+            patch_edge_color: None,
             line_width: 2.5, // Thick lines for visibility (same as PlotStyle::Presentation)
             line_style: LineStyle::Solid,
             font_family: "sans-serif".to_string(), // High legibility sans-serif
@@ -338,9 +401,13 @@ impl Theme {
     pub fn paul_tol() -> Self {
         Self {
             background: Color::WHITE,
+            panel_background: None,
             foreground: Color::BLACK,
             // #B0B0B0: 2.17:1 on white, matching GridStyle::default().
             grid_color: Color::from_gray(176),
+            frame: true,
+            tick_marks: true,
+            patch_edge_color: None,
             line_width: 1.5,
             line_style: LineStyle::Solid,
             font_family: "Arial".to_string(),
@@ -478,19 +545,19 @@ impl Theme {
         ]
     }
 
+    /// Seaborn's `deep` palette, its default since 0.8
     fn seaborn_palette() -> Vec<Color> {
-        // Seaborn's default color palette (muted colors, professional)
         vec![
-            Color::from_hex("#1f77b4").unwrap(), // Muted blue
-            Color::from_hex("#ff7f0e").unwrap(), // Muted orange
-            Color::from_hex("#2ca02c").unwrap(), // Muted green
-            Color::from_hex("#d62728").unwrap(), // Muted red
-            Color::from_hex("#9467bd").unwrap(), // Muted purple
-            Color::from_hex("#8c564b").unwrap(), // Muted brown
-            Color::from_hex("#e377c2").unwrap(), // Muted pink
-            Color::from_hex("#7f7f7f").unwrap(), // Muted gray
-            Color::from_hex("#bcbd22").unwrap(), // Muted olive
-            Color::from_hex("#17becf").unwrap(), // Muted cyan
+            Color::from_rgb(0x4C, 0x72, 0xB0), // Blue
+            Color::from_rgb(0xDD, 0x84, 0x52), // Orange
+            Color::from_rgb(0x55, 0xA8, 0x68), // Green
+            Color::from_rgb(0xC4, 0x4E, 0x52), // Red
+            Color::from_rgb(0x81, 0x72, 0xB3), // Purple
+            Color::from_rgb(0x93, 0x78, 0x60), // Brown
+            Color::from_rgb(0xDA, 0x8B, 0xC3), // Pink
+            Color::from_rgb(0x8C, 0x8C, 0x8C), // Gray
+            Color::from_rgb(0xCC, 0xB9, 0x74), // Yellow
+            Color::from_rgb(0x64, 0xB5, 0xCD), // Cyan
         ]
     }
 
@@ -585,6 +652,30 @@ impl ThemeBuilder {
     /// Set grid color
     pub fn grid_color(mut self, color: Color) -> Self {
         self.theme.grid_color = color;
+        self
+    }
+
+    /// Fill the data panel with `color` before the grid is drawn
+    pub fn panel_background(mut self, color: Color) -> Self {
+        self.theme.panel_background = Some(color);
+        self
+    }
+
+    /// Show or hide the axes frame (spines)
+    pub fn frame(mut self, enabled: bool) -> Self {
+        self.theme.frame = enabled;
+        self
+    }
+
+    /// Show or hide tick marks, leaving tick labels alone
+    pub fn tick_marks(mut self, enabled: bool) -> Self {
+        self.theme.tick_marks = enabled;
+        self
+    }
+
+    /// Set the default edge color for filled patches (bars, bins, boxes)
+    pub fn patch_edge_color(mut self, color: Color) -> Self {
+        self.theme.patch_edge_color = Some(color);
         self
     }
 

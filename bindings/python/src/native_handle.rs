@@ -23,6 +23,29 @@ use ruviz::interactive::show_interactive;
 #[cfg(not(feature = "native-interactive"))]
 use crate::NATIVE_INTERACTIVE_UNAVAILABLE_MESSAGE;
 
+/// One named theme: the name Python passes and the constructor it selects.
+type NamedTheme = (&'static str, fn() -> Theme);
+
+/// The core themes the 2D binding exposes by name.
+///
+/// One table so the setter's validation and the builder's lookup can never
+/// drift; `Plot3D` deliberately keeps only `light`/`dark`.
+const THEMES: &[NamedTheme] = &[
+    ("light", Theme::light),
+    ("dark", Theme::dark),
+    ("seaborn", Theme::seaborn),
+    ("publication", Theme::publication),
+    ("minimal", Theme::minimal),
+    ("presentation", Theme::presentation),
+];
+
+fn lookup_theme(name: &str) -> Option<Theme> {
+    THEMES
+        .iter()
+        .find(|(candidate, _)| *candidate == name)
+        .map(|(_, build)| build())
+}
+
 #[derive(Clone)]
 enum NumericSourceState {
     Static(Vec<f64>),
@@ -453,11 +476,9 @@ impl NativePlotState {
         }
 
         if let Some(theme) = &self.theme {
-            plot = match theme.as_str() {
-                "light" => plot.theme(Theme::light()),
-                "dark" => plot.theme(Theme::dark()),
-                other => return Err(format!("unsupported theme: {other}")),
-            };
+            let resolved =
+                lookup_theme(theme).ok_or_else(|| format!("unsupported theme: {theme}"))?;
+            plot = plot.theme(resolved);
         }
 
         if let Some(ticks) = self.ticks {
@@ -859,7 +880,7 @@ impl NativePlotHandle {
     }
 
     fn theme(&mut self, theme: &str) -> PyResult<()> {
-        if !matches!(theme, "light" | "dark") {
+        if lookup_theme(theme).is_none() {
             return Err(PyValueError::new_err(format!("unsupported theme: {theme}")));
         }
         self.state.theme = Some(theme.to_string());

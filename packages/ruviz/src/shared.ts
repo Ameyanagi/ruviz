@@ -1,7 +1,7 @@
 export type NumericArray = number[] | Float64Array | ArrayLike<number>;
 export type BackendPreference = "auto" | "cpu" | "svg" | "gpu";
 export type SessionMode = "main-thread" | "worker";
-export type PlotTheme = "light" | "dark";
+export type PlotTheme = (typeof PLOT_THEME_NAMES)[number];
 export type PlotSaveFormat = "png" | "svg";
 
 /**
@@ -44,6 +44,16 @@ export const LEGEND_POSITION_NAMES = [
 ] as const;
 
 export const AXIS_SCALE_NAMES = ["linear", "log", "symlog"] as const;
+
+/** Built-in theme names; `seaborn` reproduces `seaborn.set_theme()`. */
+export const PLOT_THEME_NAMES = [
+  "light",
+  "dark",
+  "seaborn",
+  "publication",
+  "minimal",
+  "presentation",
+] as const;
 
 /** Line dash pattern accepted by `style.linestyle`. */
 export type LineStyleName = (typeof LINE_STYLE_NAMES)[number];

@@ -194,7 +194,12 @@ time, so a mistake surfaces with the arguments still in scope.
 - **`size_px(width, height)`** and **`dpi(dpi)`** take whole numbers and raise
   `ValueError` on a non-positive or fractional value; `bins=` and `levels=` are
   the same, so `bins=2.9` is rejected rather than truncated to `2`.
-- **`theme()`** is case-insensitive and raises `ValueError` on an unknown name.
+- **`theme()`** takes one of `"light"`, `"dark"`, `"seaborn"`, `"publication"`,
+  `"minimal"`, or `"presentation"`. It is case-insensitive and raises
+  `ValueError` on an unknown name. `"seaborn"` reproduces `seaborn.set_theme()`
+  — lavender-gray panel, white grid, no spines or tick marks, `deep` palette —
+  so a migrated script keeps the look it had. `Plot3D.theme()` still takes only
+  `"light"` and `"dark"`.
 - **2D axis limits** must be finite and different; passing them inverted keeps
   a descending axis. `Plot3D` limits stay strictly ascending. `linthresh` must
   be a finite positive number that only applies to the `"symlog"` scale.

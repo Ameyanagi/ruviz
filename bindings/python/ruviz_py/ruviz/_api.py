@@ -15,7 +15,7 @@ from collections.abc import Callable, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypeAlias, cast
+from typing import TYPE_CHECKING, Any, TypeAlias, cast, get_args
 
 import numpy as np
 import numpy.typing as npt
@@ -34,6 +34,7 @@ from ._typing import (
     RadarSeriesDict,
     ScaleName,
     Theme,
+    Theme3D,
 )
 
 if TYPE_CHECKING:
@@ -47,6 +48,12 @@ else:
 
 #: Internal storage for every numeric vector: an owned C-contiguous float64 array.
 _F64Array: TypeAlias = "npt.NDArray[np.float64]"
+
+#: Theme names the 2D plot accepts, mirroring the native binding's table.
+_THEMES: frozenset[str] = frozenset(get_args(Theme))
+
+#: Theme names the 3D plot accepts.
+_THEMES_3D: frozenset[str] = frozenset(get_args(Theme3D))
 
 
 def _is_notebook() -> bool:
@@ -1133,9 +1140,13 @@ class Plot:
         return self
 
     def theme(self, theme: Theme) -> "Plot":
-        """Set the built-in ``light`` or ``dark`` theme (case-insensitive)."""
+        """Select a built-in theme by name (case-insensitive).
+
+        One of ``light``, ``dark``, ``seaborn``, ``publication``, ``minimal``,
+        or ``presentation``. ``seaborn`` reproduces ``seaborn.set_theme()``.
+        """
         normalized = str(theme).lower()
-        if normalized not in {"light", "dark"}:
+        if normalized not in _THEMES:
             raise ValueError(f"unsupported theme: {theme}")
         self._native_plot.theme(normalized)
         self._state["theme"] = normalized
@@ -1965,10 +1976,14 @@ class Plot3D:
         self._state["dpi"] = normalized
         return self
 
-    def theme(self, theme: Theme) -> "Plot3D":
-        """Use the ``light`` or ``dark`` theme."""
+    def theme(self, theme: Theme3D) -> "Plot3D":
+        """Use the ``light`` or ``dark`` theme.
+
+        The 3D renderer ships only these two; the named 2D themes are not
+        available here.
+        """
         normalized = str(theme).lower()
-        if normalized not in {"light", "dark"}:
+        if normalized not in _THEMES_3D:
             raise ValueError(f"unsupported theme: {theme}")
         self._native_plot.theme(normalized)
         self._state["theme"] = normalized

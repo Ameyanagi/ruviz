@@ -72,10 +72,8 @@ export function applySnapshotMetadata(rawPlot: RawJsPlot, snapshot: PlotSnapshot
     rawPlot.dpi(snapshot.dpi);
   }
 
-  if (snapshot.theme === "dark") {
-    rawPlot.theme_dark();
-  } else if (snapshot.theme === "light") {
-    rawPlot.theme_light();
+  if (snapshot.theme) {
+    rawPlot.theme(snapshot.theme);
   }
 
   if (typeof snapshot.ticks === "boolean") {
