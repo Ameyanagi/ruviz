@@ -1777,9 +1777,15 @@ impl PlotBuilder<crate::plots::PieConfig> {
         self
     }
 
-    /// Go clockwise instead of counter-clockwise
+    /// Sweep the wedges clockwise from the start angle (the default)
     pub fn clockwise(mut self) -> Self {
         self.config.counter_clockwise = false;
+        self
+    }
+
+    /// Sweep the wedges counter-clockwise from the start angle, as matplotlib does
+    pub fn counter_clockwise(mut self) -> Self {
+        self.config.counter_clockwise = true;
         self
     }
 

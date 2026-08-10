@@ -13,4 +13,4 @@
 
 pub mod pie;
 
-pub use pie::{DEFAULT_DONUT_INNER_RADIUS, Pie, PieConfig, PieData, render_pie};
+pub use pie::{DEFAULT_DONUT_INNER_RADIUS, Pie, PieConfig, PieData, label_color_on, render_pie};
