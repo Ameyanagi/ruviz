@@ -36,9 +36,10 @@ All notable changes to this project will be documented in this file.
   the tab10 colors it used to carry. Bars and histogram bins take seaborn's
   white hairline instead of a darkened edge. The default theme is unchanged and
   its output is byte-identical.
-- The web binding's `JsPlot.theme_light()`/`theme_dark()` are replaced by a
-  single `JsPlot.theme(name)` that takes any of the named themes, matching how
-  `legend(position)` already works.
+- The web binding gains `JsPlot.theme(name)`, which takes any of the named
+  themes, matching how `legend(position)` already works. The existing
+  `theme_light()`/`theme_dark()` keep working and are now shorthands for
+  `theme("light")`/`theme("dark")`.
 - The 2D draw order now reads grid, data, frame. The grid already sat under the
   series in both the raster and the SVG path, but the axis frame and its tick
   marks were drawn *before* the series, so a bar or histogram resting on zero

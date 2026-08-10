@@ -56,6 +56,62 @@ impl Pixels {
         assert_ne!(left, u32::MAX, "no pixel painted {color:?}");
         (left, top, right, bottom)
     }
+
+    /// Pixels painted `color` within `(left, top, right, bottom)`, ends included.
+    fn count_in(&self, color: [u8; 3], (left, top, right, bottom): (u32, u32, u32, u32)) -> usize {
+        (left..=right)
+            .flat_map(|x| (top..=bottom).map(move |y| (x, y)))
+            .filter(|&(x, y)| self.at(x, y) == color)
+            .count()
+    }
+
+    /// The panel box shrunk by a pixel, dropping the antialiased ring where the
+    /// fill meets the figure background.
+    fn panel_interior(&self) -> (u32, u32, u32, u32) {
+        let (left, top, right, bottom) = self.bounds_of(PANEL);
+        (left + 1, top + 1, right - 1, bottom - 1)
+    }
+
+    /// Whether a panel pixel carries grid ink. Seaborn strokes the grid white
+    /// over the `#EAEAF2` fill, so anything lighter than the fill belongs to a
+    /// grid line - including the fringe of a line that lands between pixel
+    /// centres. Nothing else inside the panel is lighter than the fill: the
+    /// curve and any text are darker.
+    fn is_grid_ink(px: [u8; 3]) -> bool {
+        px[0] > PANEL[0] && px[1] > PANEL[1] && px[2] > PANEL[2]
+    }
+
+    fn grid_runs(pixels: impl Iterator<Item = [u8; 3]>) -> usize {
+        let mut runs = 0;
+        let mut inside = false;
+        for px in pixels {
+            let ink = Self::is_grid_ink(px);
+            runs += usize::from(ink && !inside);
+            inside = ink;
+        }
+        runs
+    }
+
+    /// Grid lines crossing the panel vertically, counted as runs of grid ink
+    /// along whichever row meets the most of them. Counting runs keeps the
+    /// measurement independent of where the layout puts the panel and its
+    /// ticks, which shifts with the platform's font metrics.
+    fn vertical_grid_lines(&self) -> usize {
+        let (left, top, right, bottom) = self.panel_interior();
+        (top..=bottom)
+            .map(|y| Self::grid_runs((left..=right).map(|x| self.at(x, y))))
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// The same count for horizontal grid lines, scanning columns.
+    fn horizontal_grid_lines(&self) -> usize {
+        let (left, top, right, bottom) = self.panel_interior();
+        (left..=right)
+            .map(|x| Self::grid_runs((top..=bottom).map(|y| self.at(x, y))))
+            .max()
+            .unwrap_or(0)
+    }
 }
 
 fn sine() -> (Vec<f64>, Vec<f64>) {
@@ -64,16 +120,20 @@ fn sine() -> (Vec<f64>, Vec<f64>) {
     (x, y)
 }
 
-fn seaborn_line() -> Plot {
+fn seaborn_line_sized(width: u32, height: u32) -> Plot {
     let (x, y) = sine();
     Plot::new()
         .theme(Theme::seaborn())
-        .size_px(800, 600)
+        .size_px(width, height)
         .title("Line")
         .xlabel("x")
         .ylabel("y")
         .line(&x, &y)
         .into()
+}
+
+fn seaborn_line() -> Plot {
+    seaborn_line_sized(800, 600)
 }
 
 #[test]
@@ -105,26 +165,45 @@ fn seaborn_theme_fills_the_panel_and_leaves_the_figure_white() {
         "the panel should be inset from the figure edge, got {left},{top},{right},{bottom}"
     );
 
-    // A point inside the panel and away from any grid line or the sine curve.
-    let inside_x = left + (right - left) / 8;
-    let inside_y = top + (bottom - top) / 8;
-    assert_eq!(pixels.at(inside_x, inside_y), PANEL);
+    // The panel is filled, not merely outlined: nearly every pixel inside the
+    // box is the fill colour, the remainder being grid lines and the curve.
+    // Sampling one computed point instead would be a coin flip, since a grid
+    // line lands wherever the platform's font metrics push the layout.
+    let area = ((right - left + 1) as usize) * ((bottom - top + 1) as usize);
+    let filled = pixels.count_in(PANEL, (left, top, right, bottom));
+    assert!(
+        filled * 10 > area * 8,
+        "the panel should be filled with #EAEAF2, got {filled} of {area} pixels"
+    );
 }
 
 #[test]
 fn seaborn_theme_draws_white_grid_lines_on_the_panel() {
-    let pixels = Pixels::render(seaborn_line());
-    let (left, top, right, _) = pixels.bounds_of(PANEL);
+    // Two sizes, one of them odd, so the panel lands on a different sub-pixel
+    // offset in each. Platform font metrics move the layout the same way.
+    for (width, height) in [(800, 600), (801, 603)] {
+        let pixels = Pixels::render(seaborn_line_sized(width, height));
 
-    // Columns that are white from the top of the panel downwards are grid lines
-    // drawn on the panel; there is no other source of white inside it.
-    let grid_columns = (left + 2..right - 1)
-        .filter(|&x| (top + 2..top + 40).all(|y| pixels.at(x, y) == WHITE))
-        .count();
-    assert!(
-        grid_columns >= 4,
-        "expected white vertical grid lines on the panel, found {grid_columns}"
-    );
+        // Count grid lines as runs of ink rather than sampling computed offsets:
+        // a line that falls between pixel centres is antialiased across two
+        // columns and neither is pure white, so how many *pure white* columns a
+        // panel shows is an accident of the layout.
+        let vertical = pixels.vertical_grid_lines();
+        let horizontal = pixels.horizontal_grid_lines();
+        assert!(
+            vertical >= 3,
+            "expected vertical grid lines at {width}x{height}, found {vertical}"
+        );
+        assert!(
+            horizontal >= 3,
+            "expected horizontal grid lines at {width}x{height}, found {horizontal}"
+        );
+
+        // The grid is white, not a lighter tint of the panel: wherever a line
+        // does land on a pixel centre it paints pure #FFFFFF.
+        let white = pixels.count_in(WHITE, pixels.panel_interior());
+        assert!(white > 0, "grid lines at {width}x{height} should be white");
+    }
 }
 
 #[test]

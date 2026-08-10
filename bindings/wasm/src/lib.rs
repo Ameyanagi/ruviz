@@ -1269,6 +1269,18 @@ mod wasm {
             Ok(())
         }
 
+        /// Applies the light theme. Superseded by `theme("light")`, and kept so
+        /// callers written against the published package keep working.
+        pub fn theme_light(&mut self) {
+            self.update_plot(|plot| plot.theme(ruviz::render::Theme::light()));
+        }
+
+        /// Applies the dark theme. Superseded by `theme("dark")`, and kept so
+        /// callers written against the published package keep working.
+        pub fn theme_dark(&mut self) {
+            self.update_plot(|plot| plot.theme(ruviz::render::Theme::dark()));
+        }
+
         pub fn render_png_bytes(&self) -> Result<Vec<u8>, JsValue> {
             ensure_default_browser_fonts()?;
             self.inner.render_png_bytes().map_err(js_err)
