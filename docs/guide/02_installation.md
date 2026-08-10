@@ -282,7 +282,7 @@ rustup update
 
 ### Feature Conflicts
 
-**Problem**: `error: package ruviz v0.6.0 cannot be built because it requires rustc 1.92 or newer`
+**Problem**: `error: package ruviz v0.7.0 cannot be built because it requires rustc 1.92 or newer`
 
 **Solution**: Update Rust:
 ```bash

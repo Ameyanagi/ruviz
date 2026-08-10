@@ -2,17 +2,20 @@
 
 Get started with ruviz in less than 5 minutes!
 
-## What's New in v0.6.0
+## What's New in v0.7.0
 
-- First-class 3D plotting now spans Rust, Python, WebAssembly, GPUI, egui, Iced, and Slint.
-- Native adapters support static and interactive 2D/3D plots with responsive HiDPI rendering and nonblocking reactive updates.
-- CPU and GPU 3D paths share corrected lighting, alpha, clipping, camera, legend, and picking behavior.
-- Legend layout and styling are unified across 2D and 3D raster and SVG output.
+- The Python binding grew per-series styling, axis control, full typing, and a
+  faster NumPy path with GIL-released rendering; notebook widgets render the
+  styled snapshots.
+- Stricter, earlier validation across the Python surface, with atomic
+  observable updates.
+- Wheels now cover Linux aarch64, and notebook widget dependencies moved to
+  the optional `ruviz[widget]` extra.
 
 See full details:
 
-- [Release notes for v0.6.0](releases/v0.6.0.md)
 - [Project changelog](../CHANGELOG.md)
+- [Release notes for v0.6.0](releases/v0.6.0.md) (historical)
 
 ## Installation
 
