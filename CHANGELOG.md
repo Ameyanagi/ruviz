@@ -6,6 +6,20 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- `Theme` gains four knobs that let a theme express a panel-based look:
+  `panel_background: Option<Color>` fills the plot area before the grid,
+  `frame: bool` removes every spine, `tick_marks: bool` removes the tick marks
+  while leaving the tick labels alone, and `patch_edge_color: Option<Color>`
+  sets the default edge for bars, histogram bins and boxes instead of darkening
+  the fill. All four are honored by both 2D backends (raster and SVG) and are
+  available on `Theme::builder()`. Every existing theme keeps the values that
+  reproduce today's output exactly.
+- Named themes reach the bindings. `plot.theme(...)` in Python and
+  `plot.theme(...)`/`setTheme(...)` in the web SDK now accept `"seaborn"`,
+  `"publication"`, `"minimal"` and `"presentation"` alongside `"light"` and
+  `"dark"`; the accepted names are exported as `ruviz.Theme` (Python) and
+  `PLOT_THEME_NAMES` (TypeScript). `Plot3D` still takes `"light"`/`"dark"`
+  only, now typed as `Theme3D`.
 - The Python binding's `histogram()` gains a keyword-only `density=` flag
   (mirrored in the web SDK's histogram style), normalizing bins to probability
   density so a `kde()` overlay shares the axis instead of rendering flat at
@@ -14,6 +28,18 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- `Theme::seaborn()` is now a faithful port of `seaborn.set_theme()` rather than
+  a loose approximation: an `#EAEAF2` data panel on a white figure, white grid
+  lines drawn on that panel, no spines and no tick marks, soft near-black text
+  (`#262626`), seaborn's font sizes, and the `deep` palette (`#4C72B0 #DD8452
+  #55A868 #C44E52 #8172B3 #937860 #DA8BC3 #8C8C8C #CCB974 #64B5CD`) in place of
+  the tab10 colors it used to carry. Bars and histogram bins take seaborn's
+  white hairline instead of a darkened edge. The default theme is unchanged and
+  its output is byte-identical.
+- The web binding gains `JsPlot.theme(name)`, which takes any of the named
+  themes, matching how `legend(position)` already works. The existing
+  `theme_light()`/`theme_dark()` keep working and are now shorthands for
+  `theme("light")`/`theme("dark")`.
 - The 2D draw order now reads grid, data, frame. The grid already sat under the
   series in both the raster and the SVG path, but the axis frame and its tick
   marks were drawn *before* the series, so a bar or histogram resting on zero

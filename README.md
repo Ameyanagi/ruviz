@@ -106,6 +106,18 @@ The top-level `line`/`scatter`/`bar` functions and the `ruviz::simple` module ar
 deprecated in favour of that chain; see
 [docs/migration/0.6-builder-api.md](docs/migration/0.6-builder-api.md).
 
+### Themes
+
+`.theme(...)` takes any of `Theme::light` (the default), `Theme::dark`,
+`Theme::seaborn`, `Theme::publication`, `Theme::minimal`, `Theme::presentation`,
+`Theme::ieee`, `Theme::nature`, `Theme::paul_tol`, and
+`Theme::colorblind_friendly`. `Theme::seaborn()` is a faithful port of
+`seaborn.set_theme()` — a `#EAEAF2` data panel on a white figure, a white grid
+drawn on that panel, no spines or tick marks, and the `deep` palette — so a
+script migrated from Python keeps the look it had. `Theme::builder()` exposes
+the same knobs (`panel_background`, `frame`, `tick_marks`, `patch_edge_color`)
+for a custom theme. See [docs/guide/05_styling.md](docs/guide/05_styling.md).
+
 ## Plot Types
 
 The root `Plot` builder exposes 29 plot types, and that list is complete:

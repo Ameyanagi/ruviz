@@ -656,6 +656,41 @@ def test_theme_normalizes_case_and_rejects_unknown_themes() -> None:
         ruviz.plot().theme("solarized")
 
 
+@pytest.mark.parametrize(
+    "theme", ["light", "dark", "seaborn", "publication", "minimal", "presentation"]
+)
+def test_every_named_theme_survives_a_snapshot_round_trip(theme: str, tmp_path: Path) -> None:
+    plot = ruviz.plot().theme(theme).line([0.0, 1.0, 2.0], [0.0, 1.0, 4.0])
+    snapshot = plot.to_snapshot()
+    assert snapshot["theme"] == theme
+
+    replayed = ruviz.Plot._replay_snapshot(snapshot)
+    assert replayed.to_snapshot() == snapshot
+
+    # The native handle accepts the name too, so the theme actually renders.
+    target = tmp_path / f"{theme}.png"
+    replayed.save(target)
+    assert target.stat().st_size > 0
+
+
+def test_named_themes_reach_the_renderer_and_produce_distinct_output() -> None:
+    def render(theme: str) -> bytes:
+        return (
+            ruviz.plot()
+            .theme(theme)
+            .size_px(320, 240)
+            .line([0.0, 1.0, 2.0], [0.0, 1.0, 4.0])
+            .render_png()
+        )
+
+    rendered = {
+        theme: render(theme)
+        for theme in ("light", "dark", "seaborn", "publication", "minimal", "presentation")
+    }
+    assert all(png.startswith(PNG_HEADER) for png in rendered.values())
+    assert len(set(rendered.values())) == len(rendered)
+
+
 def test_pandas_series_are_direct_inputs() -> None:
     pd = pytest.importorskip("pandas")
     frame = pd.DataFrame({"time": [0.0, 1.0, 2.0], "value": [1.0, 2.0, 3.0]})

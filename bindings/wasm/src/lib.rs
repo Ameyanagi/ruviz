@@ -382,6 +382,20 @@ mod wasm {
         ("outside_lower", LegendPosition::OutsideLower),
     ];
 
+    /// One named theme: the name JavaScript passes and the constructor it selects.
+    type NamedTheme = (&'static str, fn() -> ruviz::render::Theme);
+
+    /// The core themes the web binding exposes by name, matching the Python
+    /// binding's list. `Plot3D` deliberately keeps only `light`/`dark`.
+    const THEMES: [NamedTheme; 6] = [
+        ("light", ruviz::render::Theme::light),
+        ("dark", ruviz::render::Theme::dark),
+        ("seaborn", ruviz::render::Theme::seaborn),
+        ("publication", ruviz::render::Theme::publication),
+        ("minimal", ruviz::render::Theme::minimal),
+        ("presentation", ruviz::render::Theme::presentation),
+    ];
+
     /// Look a name up in a `(name, value)` table, or report the accepted names.
     fn lookup<T: Clone>(table: &[(&str, T)], kind: &str, name: &str) -> Result<T, JsValue> {
         table
@@ -1248,10 +1262,21 @@ mod wasm {
             self.update_plot(|plot| plot.ticks(enabled));
         }
 
+        /// Applies a built-in theme by name, such as `light` or `seaborn`.
+        pub fn theme(&mut self, name: &str) -> Result<(), JsValue> {
+            let build = lookup(&THEMES, "theme", name)?;
+            self.update_plot(move |plot| plot.theme(build()));
+            Ok(())
+        }
+
+        /// Applies the light theme. Superseded by `theme("light")`, and kept so
+        /// callers written against the published package keep working.
         pub fn theme_light(&mut self) {
             self.update_plot(|plot| plot.theme(ruviz::render::Theme::light()));
         }
 
+        /// Applies the dark theme. Superseded by `theme("dark")`, and kept so
+        /// callers written against the published package keep working.
         pub fn theme_dark(&mut self) {
             self.update_plot(|plot| plot.theme(ruviz::render::Theme::dark()));
         }

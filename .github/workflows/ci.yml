@@ -366,7 +366,7 @@ jobs:
       # assigned to a lane -- the whole-suite `--all-features` run in
       # `test-feature-matrix` is a safety net and deliberately does not count.
       - name: Run styling and rendering suites
-        run: cargo test --test color_palette_tests --test line_style_tests --test scatter_plot_tests --test tick_system_tests --test visual_traits_test --test mixed_coordinate_visual_test --verbose
+        run: cargo test --test color_palette_tests --test line_style_tests --test scatter_plot_tests --test tick_system_tests --test visual_traits_test --test mixed_coordinate_visual_test --test seaborn_theme_test --verbose
 
       - name: Run DPI and typography suites
         run: cargo test --test dpi_api_test --test dpi_scaling_test --test dpi_scaling_tests --test dpi_typography_scaling_test --verbose

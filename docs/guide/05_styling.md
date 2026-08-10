@@ -330,12 +330,31 @@ Plot::new()
     .save("theme_seaborn.png")?;
 ```
 
-**Characteristics**:
-- Muted color palette
-- Grid by default
-- Clean, minimal styling
-- Optimized for readability
+**Characteristics** — a faithful port of `seaborn.set_theme()` (the `darkgrid`
+style with the `deep` palette):
+- `#EAEAF2` data panel on a white figure, with the grid drawn in white *on* the
+  panel
+- No spines and no tick marks; the panel edge is the boundary and the tick
+  labels float beside it
+- The `deep` palette: `#4C72B0 #DD8452 #55A868 #C44E52 #8172B3 #937860 #DA8BC3
+  #8C8C8C #CCB974 #64B5CD`
+- Soft near-black text (`#262626`), and bars/bins separated by a white hairline
+  rather than a darkened edge
 - Ideal for: Statistical analysis, data science, Python migration
+
+The panel fill, the frame and the tick marks are ordinary theme knobs, so any
+theme can adopt them:
+
+```rust
+use ruviz::prelude::*;
+
+let bare_panel = Theme::builder()
+    .panel_background(Color::from_hex("#F2F2F2").unwrap())
+    .grid_color(Color::WHITE)
+    .frame(false)
+    .tick_marks(false)
+    .build();
+```
 
 ## Typography
 

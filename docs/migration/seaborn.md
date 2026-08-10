@@ -47,16 +47,21 @@ seaborn's visual aesthetic is available via `Theme::seaborn()`:
 use ruviz::prelude::*;
 
 Plot::new()
-    .theme(Theme::seaborn())  // Muted colors, clean grid
+    .theme(Theme::seaborn())  // darkgrid style, deep palette
     .line(&x, &y)
     .save("seaborn_style.png")?;
 ```
 
-**seaborn characteristics in ruviz**:
-- Muted color palette
-- Grid by default
-- Clean, minimal styling
-- Optimized for readability
+`Theme::seaborn()` is a port of `sns.set_theme()`, matching its rcParams:
+- `#EAEAF2` data panel on a white figure (`axes.facecolor`/`figure.facecolor`)
+- White grid lines drawn on the panel (`grid.color`)
+- No spines and no tick marks (`xtick.bottom`/`ytick.left` are `False`)
+- The `deep` palette: `#4C72B0 #DD8452 #55A868 #C44E52 #8172B3 #937860 #DA8BC3
+  #8C8C8C #CCB974 #64B5CD`
+- Soft near-black text (`text.color` `.15`) and a white hairline on bars and
+  histogram bins (`patch.edgecolor`)
+
+In the Python binding the same theme is `plot.theme("seaborn")`.
 
 ## Plot Type Translation
 

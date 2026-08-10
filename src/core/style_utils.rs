@@ -107,7 +107,8 @@ impl<'a> StyleResolver<'a> {
     /// the backends stroke with.
     ///
     /// This is the single place both halves of the edge rule live:
-    /// - an `explicit` colour of `None` means "derive from the fill" (see
+    /// - an `explicit` colour of `None` falls back to the theme's
+    ///   [`Theme::patch_edge_color`], and only then to darkening the fill (see
     ///   [`Self::edge_color`]);
     /// - a non-positive `width` means there is no edge at all, rather than a
     ///   hairline floored to some minimum.
@@ -123,6 +124,7 @@ impl<'a> StyleResolver<'a> {
         explicit: Option<Color>,
         width: f32,
     ) -> Option<(Color, f32)> {
+        let explicit = explicit.or(self.theme.patch_edge_color);
         (width > 0.0).then(|| (self.edge_color(fill, explicit), width))
     }
 

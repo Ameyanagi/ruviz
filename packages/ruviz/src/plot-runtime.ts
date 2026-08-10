@@ -72,10 +72,14 @@ export function applySnapshotMetadata(rawPlot: RawJsPlot, snapshot: PlotSnapshot
     rawPlot.dpi(snapshot.dpi);
   }
 
-  if (snapshot.theme === "dark") {
-    rawPlot.theme_dark();
-  } else if (snapshot.theme === "light") {
-    rawPlot.theme_light();
+  if (snapshot.theme) {
+    // A snapshot may come from a newer ruviz with a theme this runtime does
+    // not know; render with the default theme rather than failing the plot.
+    try {
+      rawPlot.theme(snapshot.theme);
+    } catch {
+      // unknown theme name: ignored
+    }
   }
 
   if (typeof snapshot.ticks === "boolean") {
