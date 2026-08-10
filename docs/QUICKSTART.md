@@ -2,17 +2,20 @@
 
 Get started with ruviz in less than 5 minutes!
 
-## What's New in v0.6.0
+## What's New in v0.7.0
 
-- First-class 3D plotting now spans Rust, Python, WebAssembly, GPUI, egui, Iced, and Slint.
-- Native adapters support static and interactive 2D/3D plots with responsive HiDPI rendering and nonblocking reactive updates.
-- CPU and GPU 3D paths share corrected lighting, alpha, clipping, camera, legend, and picking behavior.
-- Legend layout and styling are unified across 2D and 3D raster and SVG output.
+- The Python binding grew per-series styling, axis control, full typing, and a
+  faster NumPy path with GIL-released rendering; notebook widgets render the
+  styled snapshots.
+- Stricter, earlier validation across the Python surface, with atomic
+  observable updates.
+- Wheels now cover Linux aarch64, and notebook widget dependencies moved to
+  the optional `ruviz[widget]` extra.
 
 See full details:
 
-- [Release notes for v0.6.0](releases/v0.6.0.md)
 - [Project changelog](../CHANGELOG.md)
+- [Release notes for v0.6.0](releases/v0.6.0.md) (historical)
 
 ## Installation
 
@@ -25,7 +28,7 @@ cd my_plot
 2. **Add ruviz to your `Cargo.toml`**:
 ```toml
 [dependencies]
-ruviz = "0.6.0"
+ruviz = "0.7.0"
 ```
 
 3. **Write your first plot** in `src/main.rs`:
@@ -64,8 +67,8 @@ an embedded interactive plot view:
 
 ```toml
 [dependencies]
-ruviz = "0.6.0"
-ruviz-gpui = "0.6.0"
+ruviz = "0.7.0"
+ruviz-gpui = "0.7.0"
 ```
 
 `ruviz-gpui` is supported on Linux, macOS, and Windows. On Windows, prefer the
@@ -93,7 +96,7 @@ If you want publication-style math in labels and titles, enable Typst text rende
 
 ```toml
 [dependencies]
-ruviz = { version = "0.6.0", features = ["typst-math"] }
+ruviz = { version = "0.7.0", features = ["typst-math"] }
 ```
 
 `.typst(true)` is only available when `typst-math` is enabled. The configured
@@ -112,7 +115,7 @@ If you want Typst to stay optional in your own crate, forward a local feature fi
 
 ```toml
 [dependencies]
-ruviz = { version = "0.6.0", default-features = false }
+ruviz = { version = "0.7.0", default-features = false }
 
 [features]
 default = []
@@ -364,7 +367,7 @@ Plot::new()
 ### With polars (requires `polars_support` feature)
 ```toml
 [dependencies]
-ruviz = { version = "0.6.0", features = ["polars_support"] }
+ruviz = { version = "0.7.0", features = ["polars_support"] }
 polars = "0.50"
 ```
 
@@ -392,7 +395,7 @@ Plot::new()
 only when you have benchmarked a path that benefits from the extra SIMD support:
 ```toml
 [dependencies]
-ruviz = { version = "0.6.0", features = ["performance"] }
+ruviz = { version = "0.7.0", features = ["performance"] }
 ```
 
 ### Large Dataset Export
