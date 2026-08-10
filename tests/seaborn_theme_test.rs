@@ -20,6 +20,11 @@ struct Pixels {
 impl Pixels {
     fn render(plot: Plot) -> Self {
         let image = plot.render().expect("plot should render");
+        assert_eq!(
+            image.pixels.len(),
+            (image.width * image.height * 4) as usize,
+            "renderer returned a buffer that is not RGBA8 width*height"
+        );
         let rgb = image
             .pixels
             .chunks_exact(4)

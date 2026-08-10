@@ -1110,10 +1110,10 @@ test("python widget bundle applies per-series style and plot-level settings", as
       },
     );
     // Unknown keys from a future ruviz-py must not break the render, including
-    // unknown per-series style keys.
+    // unknown per-series style keys and an unknown theme name.
     const futureSnapshot = buildSnapshot(
       { unknownSeriesKey: "ignored", style: { futureStyle: "ignored" } },
-      { schemaVersion: 99, unknownPlotKey: true },
+      { schemaVersion: 99, unknownPlotKey: true, theme: "future-theme" },
     );
 
     const listeners = new Map();

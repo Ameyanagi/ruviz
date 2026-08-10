@@ -2895,7 +2895,9 @@ function applySnapshotMetadata(rawPlot, snapshot) {
     rawPlot.dpi(snapshot.dpi);
   }
   if (snapshot.theme) {
-    rawPlot.theme(snapshot.theme);
+    try {
+      rawPlot.theme(snapshot.theme);
+    } catch {}
   }
   if (typeof snapshot.ticks === "boolean") {
     rawPlot.ticks(snapshot.ticks);

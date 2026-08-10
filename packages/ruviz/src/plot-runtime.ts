@@ -73,7 +73,13 @@ export function applySnapshotMetadata(rawPlot: RawJsPlot, snapshot: PlotSnapshot
   }
 
   if (snapshot.theme) {
-    rawPlot.theme(snapshot.theme);
+    // A snapshot may come from a newer ruviz with a theme this runtime does
+    // not know; render with the default theme rather than failing the plot.
+    try {
+      rawPlot.theme(snapshot.theme);
+    } catch {
+      // unknown theme name: ignored
+    }
   }
 
   if (typeof snapshot.ticks === "boolean") {
