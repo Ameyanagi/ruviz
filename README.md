@@ -9,6 +9,16 @@ High-performance 2D and 3D plotting library for Rust.
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue)](LICENSE)
 [![CI](https://github.com/Ameyanagi/ruviz/actions/workflows/ci.yml/badge.svg)](https://github.com/Ameyanagi/ruviz/actions/workflows/ci.yml)
 
+## Demo
+
+<a href="https://youtu.be/6MT_hu8xpjo">
+  <img src="docs/assets/readme/demo-thumbnail.png" alt="Watch the ruviz demo video on YouTube" width="640">
+</a>
+
+A 77-second tour — 29 plot types from one builder, the built-in themes, Typst
+mathematics and CJK text, 3D and animation, and the Python and WebAssembly
+bindings. Every figure in it is real ruviz output.
+
 ## Visual Examples
 
 Click any plot to open its runnable Rust source. See the [complete gallery](docs/gallery/README.md)

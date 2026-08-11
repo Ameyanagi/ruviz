@@ -36,9 +36,10 @@ include = [
     "/tools/gallery/**/*.rs",
     "/scripts/generate_gallery.rs",
     "/docs/assets/readme/readme_example.png",
-    # Referenced by README.md, so it has to ship with the crate for the
-    # rendered README on crates.io and docs.rs to resolve it.
+    # Referenced by README.md, so these have to ship with the crate for the
+    # rendered README on crates.io and docs.rs to resolve them.
     "/docs/assets/logo/ruviz-logo-256.png",
+    "/docs/assets/readme/demo-thumbnail.png",
     "/Cargo.toml",
     "/Cargo.lock",
     "/README.md",
