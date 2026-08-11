@@ -1,6 +1,8 @@
+<img src="docs/assets/logo/ruviz-logo-256.png" alt="" width="112" align="right">
+
 # ruviz
 
-High-performance 2D plotting library for Rust.
+High-performance 2D and 3D plotting library for Rust.
 
 [![Crates.io](https://img.shields.io/crates/v/ruviz)](https://crates.io/crates/ruviz)
 [![Documentation](https://docs.rs/ruviz/badge.svg)](https://docs.rs/ruviz)

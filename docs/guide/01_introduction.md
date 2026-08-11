@@ -1,6 +1,7 @@
 # Introduction to ruviz
 
-**ruviz** is a 2D plotting library for Rust with a fluent, matplotlib-inspired API.
+**ruviz** is a 2D and 3D plotting library for Rust with a fluent,
+matplotlib-inspired API. 3D plotting is behind the `3d` feature.
 
 ## What is ruviz?
 

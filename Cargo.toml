@@ -23,7 +23,7 @@ version = "0.7.0"
 edition = "2024"
 rust-version = "1.92"
 authors = ["Ruviz Contributors"]
-description = "High-performance 2D plotting library for Rust"
+description = "High-performance 2D and 3D plotting library for Rust"
 license = "MIT OR Apache-2.0"
 keywords = ["plotting", "visualization", "graphics", "charts"]
 categories = ["visualization", "graphics"]
@@ -36,6 +36,9 @@ include = [
     "/tools/gallery/**/*.rs",
     "/scripts/generate_gallery.rs",
     "/docs/assets/readme/readme_example.png",
+    # Referenced by README.md, so it has to ship with the crate for the
+    # rendered README on crates.io and docs.rs to resolve it.
+    "/docs/assets/logo/ruviz-logo-256.png",
     "/Cargo.toml",
     "/Cargo.lock",
     "/README.md",

@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="ruviz">
+  <title>ruviz</title>
+  <!--
+    ruviz mark. A hexagonal crate shell — the Rust ecosystem's convention — with
+    an axis pair and a tanh curve knocked out of it, sampled at one warm point.
+
+    Hexagon: pointy-top, circumradius 210 about (256,256), so the top and bottom
+    vertices sit on the vertical centreline and the left/right sides are
+    vertical. The 24-unit same-colour stroke with a round linejoin rounds the
+    six corners and grows the effective radius to ~222.
+
+    Curve: a real tanh, not a hand-drawn S. y = 255 - 66*tanh(t) over
+    t in [-2.8, 2.8], emitted as six cubics whose control points come from the
+    analytic derivative — flat asymptote, steep middle, flat asymptote.
+
+    Marker: at x = 0.5 on the curve (t = 0.5, tanh(0.5) = 0.4621), computed from
+    the same function that draws the path so it lands exactly on the stroke.
+    Just past the inflection, on the steep flank, with line running through it
+    on both sides — a dot terminating the stroke read as a tadpole.
+
+    Arrowheads: explicit triangles rather than SVG markers. Markers inherit
+    stroke scaling and orientation rules that are awkward to tune, and a marker
+    on this polyline would need its direction reversed for the upward arm. Each
+    triangle's base overlaps its line end so no seam shows.
+
+    Arrows were chosen over tick marks and a plot grid because repeated fine
+    detail dies at icon sizes while single gestures survive: ticks degraded into
+    a fuzzy comb by 48px and a grid turned to mesh by 32px.
+
+    Hierarchy: axis thin (14), curve heavier (22), so the curve reads first.
+    The marker is r22 — about the line width — so it stays a marker, not a blob.
+  -->
+  <polygon
+    points="256,46 438,151 438,361 256,466 74,361 74,151"
+    fill="#13161B" stroke="#13161B" stroke-width="24" stroke-linejoin="round"/>
+
+  <g fill="#FBFAF7" stroke="none">
+    <!-- arrowheads: y axis up, x axis right -->
+    <polygon points="152,150 135,182 169,182"/>
+    <polygon points="404,344 372,327 372,361"/>
+  </g>
+
+  <g fill="none" stroke="#FBFAF7" stroke-linecap="round" stroke-linejoin="round">
+    <!-- y axis and x axis, meeting at the origin corner -->
+    <path d="M 152 178 L 152 344 L 376 344" stroke-width="14"/>
+    <!-- tanh -->
+    <path d="M 175.0 320.5 C 186.1 320.2 197.2 319.8 208.3 317.9 C 219.4 316.0 230.6 312.8 241.7 303.3 C 252.8 293.8 263.9 275.5 275.0 255.0 C 286.1 234.5 297.2 216.2 308.3 206.7 C 319.4 197.2 330.6 194.0 341.7 192.1 C 352.8 190.2 363.9 189.8 375.0 189.5"
+          stroke-width="22"/>
+  </g>
+
+  <!-- The sampled point, at x = 0.5. -->
+  <circle cx="292.9" cy="224.5" r="22" fill="#C2510F"/>
+</svg>

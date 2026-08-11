@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="ruviz">
+  <title>ruviz</title>
+  <!--
+    Small-size cut — use at 48px and below (favicon, tab icon).
+
+    Same shell, same tanh, same marker at x = 0.5, same arrowheads as
+    ruviz-hex-a.svg, but everything is thickened and pushed out toward the
+    shell: axis 26 (vs 14), curve 28 (vs 22), marker r26 (vs 22), with the
+    arrowheads scaled to match the heavier axis.
+
+    A caveat worth knowing: at 16px a 26-unit stroke against a 512 viewBox is
+    still only 0.8 device pixels, so the axes and arrowheads soften there even
+    in this cut. It holds from about 24px up. A genuinely crisp 16px icon would
+    have to be drawn on the pixel grid rather than scaled down from this.
+  -->
+  <polygon
+    points="256,46 438,151 438,361 256,466 74,361 74,151"
+    fill="#13161B" stroke="#13161B" stroke-width="24" stroke-linejoin="round"/>
+
+  <g fill="#FBFAF7" stroke="none">
+    <polygon points="146,132 118,180 174,180"/>
+    <polygon points="416,352 368,324 368,380"/>
+  </g>
+
+  <g fill="none" stroke="#FBFAF7" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M 146 174 L 146 352 L 372 352" stroke-width="26"/>
+    <path d="M 185.0 311.5 C 195.6 311.3 206.1 310.9 216.7 309.1 C 227.2 307.3 237.8 304.3 248.3 295.4 C 258.9 286.4 269.4 269.3 280.0 250.0 C 290.6 230.7 301.1 213.6 311.7 204.6 C 322.2 195.7 332.8 192.7 343.3 190.9 C 353.9 189.1 364.4 188.7 375.0 188.5"
+          stroke-width="28"/>
+  </g>
+
+  <circle cx="297.0" cy="221.3" r="26" fill="#C2510F"/>
+</svg>

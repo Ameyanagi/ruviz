@@ -12,9 +12,9 @@
 
 //! # Ruviz - High-Performance Rust Plotting Library
 //!
-//! A modern, high-performance 2D plotting library for Rust that combines matplotlib's
-//! comprehensiveness with Makie's performance-oriented design, while maintaining Rust's
-//! safety and ergonomics.
+//! A modern, high-performance 2D and 3D plotting library for Rust that combines
+//! matplotlib's comprehensiveness with Makie's performance-oriented design, while
+//! maintaining Rust's safety and ergonomics. 3D plotting is behind the `3d` feature.
 //!
 //! ## Features
 //!
