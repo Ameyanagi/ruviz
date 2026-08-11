@@ -36,10 +36,13 @@ include = [
     "/tools/gallery/**/*.rs",
     "/scripts/generate_gallery.rs",
     "/docs/assets/readme/readme_example.png",
-    # Referenced by README.md, so these have to ship with the crate for the
-    # rendered README on crates.io and docs.rs to resolve them.
+    # Referenced by README.md, which crates.io renders. (docs.rs does not: this
+    # crate's docs come from the //! comments in src/lib.rs, not from the README.)
     "/docs/assets/logo/ruviz-logo-256.png",
-    "/docs/assets/readme/demo-thumbnail.png",
+    # The demo thumbnail is deliberately NOT listed. The README links it by
+    # absolute raw.githubusercontent URL so crates.io can fetch it directly,
+    # which means shipping it inside the package would be 113 KB of dead weight
+    # in every published version.
     "/Cargo.toml",
     "/Cargo.lock",
     "/README.md",
