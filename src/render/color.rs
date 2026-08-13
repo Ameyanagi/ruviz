@@ -286,6 +286,28 @@ impl Color {
         self
     }
 
+    /// Scale this color's existing alpha by a factor.
+    ///
+    /// Unlike [`with_alpha`](Color::with_alpha), which *replaces* the alpha
+    /// channel, this preserves a color that is already transparent: scaling
+    /// [`Color::TRANSPARENT`] can never produce a visible color, whatever the
+    /// factor. Use this when applying a separate opacity setting on top of a
+    /// color that carries its own alpha.
+    ///
+    /// ```rust
+    /// use ruviz::render::Color;
+    ///
+    /// assert_eq!(Color::RED.scale_alpha(0.5).a, 127);
+    /// // Replacing alpha would turn this into opaque black.
+    /// assert_eq!(Color::TRANSPARENT.scale_alpha(1.0).a, 0);
+    /// ```
+    pub fn scale_alpha(mut self, factor: f32) -> Self {
+        // Truncating matches `with_alpha`, so an opaque color scaled by `f`
+        // lands on exactly the alpha that replacing it with `f` used to give.
+        self.a = (self.a as f32 * factor.clamp(0.0, 1.0)) as u8;
+        self
+    }
+
     /// Convert to tiny-skia Color32 for rendering
     pub fn to_tiny_skia_color(self) -> tiny_skia::Color {
         tiny_skia::Color::from_rgba8(self.r, self.g, self.b, self.a)

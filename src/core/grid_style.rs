@@ -158,13 +158,31 @@ impl GridStyle {
     }
 
     /// Get the effective grid color with alpha applied
+    ///
+    /// The style's alpha *scales* the color's own alpha rather than replacing
+    /// it, so a transparent grid color stays transparent. Replacing it turned
+    /// a theme that asked for no grid (`grid_color: Color::TRANSPARENT`, which
+    /// is `rgba(0, 0, 0, 0)`) into an opaque black one.
     pub fn effective_color(&self) -> Color {
-        self.color.with_alpha(self.alpha)
+        self.color.scale_alpha(self.alpha)
     }
 
     /// Get the effective minor grid color with alpha applied
     pub fn effective_minor_color(&self) -> Color {
-        self.color.with_alpha(self.minor_alpha)
+        self.color.scale_alpha(self.minor_alpha)
+    }
+
+    /// Whether the major grid contributes any pixels.
+    ///
+    /// A grid that is `visible` but fully transparent draws nothing, so the
+    /// renderer can skip it outright instead of stroking invisible lines.
+    pub fn draws_major(&self) -> bool {
+        self.visible && self.effective_color().a > 0
+    }
+
+    /// Whether the minor grid contributes any pixels.
+    pub fn draws_minor(&self) -> bool {
+        self.visible && self.minor && self.effective_minor_color().a > 0
     }
 }
 
@@ -312,6 +330,60 @@ mod tests {
         assert_eq!(minor.r, 176);
         assert_eq!(minor.a, 127); // 0.5 * 255 = 127.5, truncated
         assert!(minor.a < style.effective_color().a);
+    }
+
+    /// A theme asking for no grid must not get the loudest grid in the library.
+    ///
+    /// `Color::TRANSPARENT` is `rgba(0, 0, 0, 0)`, so replacing its alpha with
+    /// the style's opaque default produced solid black — `Theme::minimal()`
+    /// and `Theme::nature()` both rendered a heavy black grid they had
+    /// explicitly opted out of.
+    #[test]
+    fn test_transparent_grid_color_stays_transparent() {
+        let style = GridStyle::default().color(Color::TRANSPARENT);
+
+        assert_eq!(style.alpha, 1.0, "the default style is fully opaque");
+        assert_eq!(style.effective_color().a, 0);
+        assert_eq!(style.effective_minor_color().a, 0);
+        assert!(!style.draws_major());
+        assert!(!style.draws_minor());
+    }
+
+    #[test]
+    fn test_opaque_grid_color_is_unchanged_by_the_alpha_scaling() {
+        let style = GridStyle::default();
+
+        assert!(style.draws_major());
+        assert_eq!(style.effective_color().a, 255);
+        assert_eq!(style.effective_color().r, 176);
+    }
+
+    #[test]
+    fn test_draws_major_follows_visibility_and_opacity() {
+        assert!(!GridStyle::default().visible(false).draws_major());
+        assert!(!GridStyle::default().alpha(0.0).draws_major());
+        assert!(GridStyle::default().alpha(0.01).draws_major());
+    }
+
+    #[test]
+    fn test_draws_minor_requires_minor_lines_to_be_enabled() {
+        assert!(
+            !GridStyle::default().draws_minor(),
+            "minor lines are off by default"
+        );
+        assert!(GridStyle::default().minor(true).draws_minor());
+        assert!(
+            !GridStyle::default()
+                .minor(true)
+                .visible(false)
+                .draws_minor()
+        );
+        assert!(
+            !GridStyle::default()
+                .minor(true)
+                .color(Color::TRANSPARENT)
+                .draws_minor()
+        );
     }
 
     #[test]

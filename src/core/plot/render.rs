@@ -746,7 +746,7 @@ impl Plot {
                 true,
             )?;
         }
-        if self.layout.grid_style.visible && draw_axes {
+        if self.layout.grid_style.draws_major() && draw_axes {
             let layers = Self::grid_layers(
                 &self.layout.grid_style,
                 &self.layout.tick_config.grid_mode,
@@ -3093,7 +3093,7 @@ impl Plot {
         {
             svg.draw_rectangle(plot_left, plot_top, plot_width, plot_height, panel, true);
         }
-        if self.layout.grid_style.visible && draw_axes {
+        if self.layout.grid_style.draws_major() && draw_axes {
             // Bar charts only get horizontal grid lines.
             let (x_major_pixels, x_minor_pixels): (&[f32], &[f32]) = if is_categorical {
                 (&[], &[])

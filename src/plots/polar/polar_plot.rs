@@ -683,10 +683,8 @@ impl PlotRender for PolarPlotData {
         // from the plot's own `GridStyle`, so a polar grid and a radar grid in
         // the same theme are the same lines. Falling back to the theme when no
         // style is passed keeps the trait's simpler entry points honest.
-        if grid_style.is_none_or(|style| style.visible) {
-            let grid_color = grid_style.map_or(theme.grid_color, |style| {
-                style.color.with_alpha(style.alpha)
-            });
+        if grid_style.is_none_or(|style| style.draws_major()) {
+            let grid_color = grid_style.map_or(theme.grid_color, |style| style.effective_color());
             let grid_line_width =
                 render_scale.points_to_pixels(grid_style.map_or(0.5, |style| style.line_width));
             let grid_line_style = grid_style

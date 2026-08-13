@@ -1664,12 +1664,8 @@ impl Plot {
         let render_scale = svg.render_scale();
         let label_font_size = render_scale.points_to_pixels(data.config.label_font_size);
 
-        if data.config.show_grid && self.layout.grid_style.visible {
-            let grid_color = self
-                .layout
-                .grid_style
-                .color
-                .with_alpha(self.layout.grid_style.alpha);
+        if data.config.show_grid && self.layout.grid_style.draws_major() {
+            let grid_color = self.layout.grid_style.effective_color();
             let grid_line_width = render_scale
                 .points_to_pixels(self.layout.grid_style.line_width)
                 .max(crate::core::style_utils::defaults::MIN_GRID_LINE_WIDTH_PX);
@@ -1833,9 +1829,9 @@ impl Plot {
         // from the same precomputed rings and spokes and the same `GridStyle`.
         // Without this the two backends disagreed about whether a polar plot has
         // a grid at all.
-        if self.layout.grid_style.visible {
+        if self.layout.grid_style.draws_major() {
             let grid_style = &self.layout.grid_style;
-            let grid_color = grid_style.color.with_alpha(grid_style.alpha);
+            let grid_color = grid_style.effective_color();
             let grid_line_width = render_scale.points_to_pixels(grid_style.line_width);
             for ring in &data.grid_rings {
                 if ring.len() < 2 {
