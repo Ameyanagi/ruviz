@@ -491,7 +491,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
 ```toml
 [dependencies]
-ruviz = "0.1"
+ruviz = "0.7.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 ```

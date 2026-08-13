@@ -23,6 +23,10 @@ The checks are intentionally narrow and deterministic:
 - Ignored Rust/TypeScript/shell fences require an explicit `reason=...`.
 - Every runnable `examples/**/*.rs` and `tools/gallery/**/*.rs` program must resolve
   to exactly one uniquely named Cargo example target.
+- Dependency pins in prose (`ruviz = "0.7.0"`) must name the version this
+  repository ships, so a release cannot leave stale install snippets behind.
+  `docs/releases/` and changelogs are exempt by location; a single deliberate
+  snippet is exempt with `<!-- docs-version-pin: exempt -->` on the line above.
 """
 
 from __future__ import annotations
@@ -54,6 +58,7 @@ MARKDOWN_ROOTS = [
     ROOT / "packages" / "ruviz" / "docs",
     ROOT / "packages" / "ruviz" / "examples" / "README.md",
 ]
+VERSION_PIN_EXEMPT = "<!-- docs-version-pin: exempt -->"
 LINK_RE = re.compile(r"!?\[[^\]]*\]\(([^)]+)\)")
 FENCE_RE = re.compile(r"^```", re.MULTILINE)
 FENCE_BLOCK_RE = re.compile(
@@ -137,6 +142,31 @@ class CodeFence:
 
     def label(self) -> str:
         return f"{self.path.relative_to(ROOT)}:{self.line}"
+
+
+def tracked_files(pattern: str) -> list[str]:
+    """Repository-relative paths of tracked files matching a git pathspec.
+
+    Falls back to a filesystem walk outside a git checkout (sdists, vendored
+    copies), where `git ls-files` cannot answer.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "ls-files", pattern],
+            cwd=ROOT,
+            check=True,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        suffix = pattern.lstrip("*")
+        return sorted(
+            path.relative_to(ROOT).as_posix()
+            for path in ROOT.rglob(f"*{suffix}")
+            if "node_modules" not in path.parts and "target" not in path.parts
+        )
+    return sorted(line for line in result.stdout.splitlines() if line)
 
 
 def markdown_files(roots: list[Path] | None = None) -> list[Path]:
@@ -841,6 +871,104 @@ def check_markdown_snippets(
     return errors, len(fences)
 
 
+def workspace_package_version(manifest: Path) -> str | None:
+    """Resolve `version.workspace = true` against the nearest owning workspace."""
+    for parent in manifest.parent.parents:
+        candidate = parent / "Cargo.toml"
+        if candidate == manifest or not candidate.is_file():
+            continue
+        with candidate.open("rb") as handle:
+            data = tomllib.load(handle)
+        version = data.get("workspace", {}).get("package", {}).get("version")
+        if isinstance(version, str):
+            return version
+        if parent == ROOT:
+            break
+    return None
+
+
+def local_crate_versions() -> dict[str, str]:
+    """Map every crate published from this repository to its current version."""
+    versions: dict[str, str] = {}
+    for relative in tracked_files("*Cargo.toml"):
+        manifest = ROOT / relative
+        with manifest.open("rb") as handle:
+            data = tomllib.load(handle)
+        package = data.get("package")
+        if not package:
+            continue
+        name = package.get("name")
+        version = package.get("version")
+        if isinstance(version, dict) and version.get("workspace"):
+            version = workspace_package_version(manifest)
+        if isinstance(name, str) and isinstance(version, str):
+            versions[name] = version
+    return versions
+
+
+def version_pin_matches(pin: str, current: str) -> bool:
+    """A pin is current when it names this version or a prefix of it.
+
+    `0.7` and `0.7.0` both satisfy a crate at `0.7.0`; `0.6` and `0.7.1` do not.
+    Anything that does not open with a digit — `...`, `*`, a path or git
+    dependency — is not a version claim and is left alone.
+    """
+    pin = pin.strip().lstrip("^~=").strip()
+    if not pin[:1].isdigit():
+        return True
+    return pin == current or current.startswith(f"{pin}.")
+
+
+def version_pin_pattern(crate: str) -> re.Pattern[str]:
+    escaped = re.escape(crate)
+    return re.compile(
+        rf'(?<![\w-]){escaped}\s*=\s*'
+        rf'(?:"(?P<bare>[^"]+)"|\{{[^}}]*?version\s*=\s*"(?P<table>[^"]+)")'
+    )
+
+
+def check_documented_version_pins() -> list[str]:
+    """Install snippets in prose must pin the version this repository ships.
+
+    A release bumps the manifests but cannot bump prose, so `ruviz = "0.6.0"`
+    survives in guides and gets copied by readers — and by translation PRs —
+    long after it is wrong. Historical files are exempt by location
+    (`docs/releases/`, changelogs); an individual snippet that documents an
+    older version on purpose is exempt with an inline
+    `<!-- docs-version-pin: exempt -->` comment on the preceding line.
+    """
+    versions = local_crate_versions()
+    if not versions:
+        return ["no local crate versions found; cannot validate documented pins"]
+
+    patterns = {crate: version_pin_pattern(crate) for crate in versions}
+    errors: list[str] = []
+    for relative in tracked_files("*.md"):
+        if relative.startswith("docs/releases/") or Path(relative).name in {
+            "CHANGELOG.md",
+            "CHANGELOG-py.md",
+        }:
+            continue
+        path = ROOT / relative
+        text = path.read_text(encoding="utf-8")
+        lines = text.splitlines()
+        for crate, pattern in patterns.items():
+            current = versions[crate]
+            for match in pattern.finditer(text):
+                pin = match.group("bare") or match.group("table")
+                if version_pin_matches(pin, current):
+                    continue
+                line_number = text.count("\n", 0, match.start()) + 1
+                previous = lines[line_number - 2] if line_number > 1 else ""
+                if VERSION_PIN_EXEMPT in previous:
+                    continue
+                errors.append(
+                    f"{relative}:{line_number} pins {crate} = {pin!r} but this "
+                    f"repository ships {current!r}"
+                )
+    return sorted(errors)
+
+
 def main() -> int:
     files = markdown_files()
     all_snippet_fences = extract_code_fences(files)
@@ -853,6 +981,7 @@ def main() -> int:
     errors.extend(check_local_links(files))
     errors.extend(check_fence_classification(all_snippet_fences))
     errors.extend(check_example_target_coverage())
+    errors.extend(check_documented_version_pins())
     errors.extend(check_readme_rust_snippets_are_complete())
     errors.extend(check_rust_fence_error_propagation(all_snippet_fences))
     errors.extend(

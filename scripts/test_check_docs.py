@@ -324,5 +324,104 @@ class CheckDocsTests(unittest.TestCase):
             self.assertEqual(marker.read_text(encoding="utf-8"), "keep")
 
 
+class DocumentedVersionPinTests(unittest.TestCase):
+    def pins_in(self, files: dict[str, str], crates: dict[str, str]) -> list[str]:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            for relative, text in files.items():
+                path = root / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(text, encoding="utf-8")
+            with (
+                mock.patch.object(check_docs, "ROOT", root),
+                mock.patch.object(
+                    check_docs, "tracked_files", return_value=sorted(files)
+                ),
+                mock.patch.object(
+                    check_docs, "local_crate_versions", return_value=crates
+                ),
+            ):
+                return check_docs.check_documented_version_pins()
+
+    def test_version_pin_matches_accepts_the_shipped_version_and_prefixes(self) -> None:
+        self.assertTrue(check_docs.version_pin_matches("0.7.0", "0.7.0"))
+        self.assertTrue(check_docs.version_pin_matches("0.7", "0.7.0"))
+        self.assertTrue(check_docs.version_pin_matches('^0.7.0', "0.7.0"))
+        self.assertFalse(check_docs.version_pin_matches("0.6", "0.7.0"))
+        self.assertFalse(check_docs.version_pin_matches("0.7.1", "0.7.0"))
+        # `0.1` must not read as a prefix of `0.10.0`.
+        self.assertFalse(check_docs.version_pin_matches("0.1", "0.10.0"))
+
+    def test_version_pin_matches_ignores_non_version_pins(self) -> None:
+        for pin in ("...", "*", "{ path = \"..\" }"):
+            self.assertTrue(check_docs.version_pin_matches(pin, "0.7.0"))
+
+    def test_flags_stale_bare_and_table_pins(self) -> None:
+        errors = self.pins_in(
+            {
+                "docs/a.md": 'ruviz = "0.6"\n',
+                "docs/b.md": 'ruviz = { version = "0.5", features = ["3d"] }\n',
+            },
+            {"ruviz": "0.7.0"},
+        )
+        self.assertEqual(len(errors), 2, errors)
+        self.assertIn("docs/a.md:1", errors[0])
+        self.assertIn("docs/b.md:1", errors[1])
+
+    def test_accepts_current_pins_and_reports_the_offending_line(self) -> None:
+        errors = self.pins_in(
+            {"docs/guide.md": 'ruviz = "0.7.0"\n\nlater\n\nruviz = "0.6.0"\n'},
+            {"ruviz": "0.7.0"},
+        )
+        self.assertEqual(errors, [
+            "docs/guide.md:5 pins ruviz = '0.6.0' but this repository ships '0.7.0'"
+        ])
+
+    def test_exempts_release_notes_changelogs_and_marked_snippets(self) -> None:
+        errors = self.pins_in(
+            {
+                "docs/releases/v0.6.0.md": 'ruviz = "0.6.0"\n',
+                "CHANGELOG.md": 'ruviz = "0.6.0"\n',
+                "docs/upgrade.md": (
+                    f"{check_docs.VERSION_PIN_EXEMPT}\n"
+                    'ruviz = "0.6.0"\n'
+                ),
+            },
+            {"ruviz": "0.7.0"},
+        )
+        self.assertEqual(errors, [])
+
+    def test_does_not_attribute_a_sibling_crate_pin_to_its_prefix(self) -> None:
+        errors = self.pins_in(
+            {"docs/adapters.md": 'ruviz-iced = "0.7.0"\n'},
+            {"ruviz": "0.7.0", "ruviz-iced": "0.7.0"},
+        )
+        self.assertEqual(errors, [])
+
+    def test_resolves_versions_inherited_from_a_workspace(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "Cargo.toml").write_text(
+                '[workspace.package]\nversion = "0.7.0"\n', encoding="utf-8"
+            )
+            member = root / "adapters" / "thing"
+            member.mkdir(parents=True)
+            (member / "Cargo.toml").write_text(
+                '[package]\nname = "ruviz-thing"\nversion.workspace = true\n',
+                encoding="utf-8",
+            )
+            with (
+                mock.patch.object(check_docs, "ROOT", root),
+                mock.patch.object(
+                    check_docs,
+                    "tracked_files",
+                    return_value=["Cargo.toml", "adapters/thing/Cargo.toml"],
+                ),
+            ):
+                self.assertEqual(
+                    check_docs.local_crate_versions(), {"ruviz-thing": "0.7.0"}
+                )
+
+
 if __name__ == "__main__":
     unittest.main()
