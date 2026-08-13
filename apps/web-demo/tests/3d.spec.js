@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { gotoDemo } from "./navigate.js";
 
 const DEMO_READY_TIMEOUT_MS = 60_000;
 
@@ -19,8 +20,7 @@ test("direct 3d WebGPU renders and coalesces main and worker input", async ({
     };
   });
 
-  await page.goto("/3d.html");
-  await expect(page).toHaveTitle("ruviz 3d WebGPU demo");
+  await gotoDemo(page, "/3d.html", "ruviz 3d WebGPU demo");
   await expect(page.locator("#main-3d-status")).toContainText("gpu3d-surface", {
     timeout: DEMO_READY_TIMEOUT_MS,
   });

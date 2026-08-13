@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
+import { gotoDemo } from "./navigate.js";
 
 const PYTHON_WIDGET_BUNDLE = readFileSync(
   fileURLToPath(new URL("../../../bindings/python/ruviz_py/ruviz/widget.js", import.meta.url)),
@@ -9,8 +10,7 @@ const PYTHON_WIDGET_BUNDLE = readFileSync(
 const DEMO_READY_TIMEOUT_MS = 45_000;
 
 async function waitForDemoReady(page) {
-  await page.goto("/");
-  await expect(page).toHaveTitle("ruviz wasm demo", { timeout: DEMO_READY_TIMEOUT_MS });
+  await gotoDemo(page, "/", "ruviz wasm demo");
   await expect(page.locator("#capability-status")).toContainText("default font:", {
     timeout: DEMO_READY_TIMEOUT_MS,
   });
