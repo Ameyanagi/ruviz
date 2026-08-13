@@ -2,8 +2,8 @@
 
 # ruviz
 
-High-performance 2D and 3D plotting for Rust. One builder, ~30 plot types,
-PNG / SVG / PDF output.
+High-performance 2D and 3D plotting for Rust. One builder, 29 plot types
+(33 with the `3d` feature), PNG / SVG / PDF output.
 
 [![Crates.io](https://img.shields.io/crates/v/ruviz)](https://crates.io/crates/ruviz)
 [![Documentation](https://docs.rs/ruviz/badge.svg)](https://docs.rs/ruviz)
@@ -75,7 +75,9 @@ fn main() -> PlotResult<()> {
 
 ## Series methods
 
-The complete list. `&x` / `&data` accept any numeric slice or `Vec` (`&[f64]`,
+Every series method, complete. The one catalogued type missing here is
+`fill_between`, which is an annotation rather than a series — see Styling.
+`&x` / `&data` accept any numeric slice or `Vec` (`&[f64]`,
 `&Vec<f64>`, and ndarray / polars / nalgebra types with the matching feature).
 Grid data differs by plot: `heatmap` takes nested rows (`&Vec<Vec<f64>>`), while
 `contour` takes a **flat row-major** `&Vec<f64>` of `x.len() * y.len()` values.
@@ -107,8 +109,7 @@ Grid data differs by plot: `heatmap` takes nested rows (`&Vec<Vec<f64>>`), while
 | `.hexbin(&x, &y)` | hexagonal binning |
 | `.step(&x, &y, StepWhere::Pre)` | step plot (`Pre` / `Post` / `Mid`) |
 | `.stem(&x, &y, baseline)` | stem plot |
-| `.error_bars(&x, &y, &err)` | symmetric error bars |
-| `.error_bars_xy(&x, &y, &xerr, &yerr)` | error bars on both axes |
+| `.error_bars(&x, &y, &err)` / `.error_bars_xy(&x, &y, &xerr, &yerr)` | error bars, symmetric or on both axes |
 | `.quiver(&x, &y, &u, &v)` | vector field |
 | `.dendrogram(&linkage)` | hierarchical clustering tree |
 
