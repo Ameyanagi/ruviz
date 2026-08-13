@@ -1,37 +1,29 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
-import { gotoDemo } from "./navigate.js";
+import { openDemo } from "./navigate.js";
 
 const PYTHON_WIDGET_BUNDLE = readFileSync(
   fileURLToPath(new URL("../../../bindings/python/ruviz_py/ruviz/widget.js", import.meta.url)),
   "utf8",
 );
-const DEMO_READY_TIMEOUT_MS = 45_000;
-
-async function waitForDemoReady(page) {
-  await gotoDemo(page, "/", "ruviz wasm demo");
-  await expect(page.locator("#capability-status")).toContainText("default font:", {
-    timeout: DEMO_READY_TIMEOUT_MS,
-  });
-  await expect(page.locator("#export-status")).toContainText("ready", {
-    timeout: DEMO_READY_TIMEOUT_MS,
-  });
-  await expect(page.locator("#main-status")).toContainText("ready", {
-    timeout: DEMO_READY_TIMEOUT_MS,
-  });
-  await expect(page.locator("#temporal-status")).toContainText("ready", {
-    timeout: DEMO_READY_TIMEOUT_MS,
-  });
-  await expect(page.locator("#observable-status")).toContainText("ready", {
-    timeout: DEMO_READY_TIMEOUT_MS,
-  });
+// The budget comes from openDemo so its two attempts fit the test timeout.
+async function assertDemoBooted(page, timeout) {
+  await expect(page.locator("#capability-status")).toContainText("default font:", { timeout });
+  await expect(page.locator("#export-status")).toContainText("ready", { timeout });
+  await expect(page.locator("#main-status")).toContainText("ready", { timeout });
+  await expect(page.locator("#temporal-status")).toContainText("ready", { timeout });
+  await expect(page.locator("#observable-status")).toContainText("ready", { timeout });
   await expect(page.locator("#worker-status")).toHaveText(/ready|fallback|unavailable/, {
-    timeout: DEMO_READY_TIMEOUT_MS,
+    timeout,
   });
   await page.waitForFunction(() => Boolean(window.__ruvizDemo?.mainSession), undefined, {
-    timeout: DEMO_READY_TIMEOUT_MS,
+    timeout,
   });
+}
+
+async function waitForDemoReady(page) {
+  await openDemo(page, "/", "ruviz wasm demo", assertDemoBooted);
 }
 
 test("renders the expanded demo panels and runtime diagnostics", async ({ page }) => {
