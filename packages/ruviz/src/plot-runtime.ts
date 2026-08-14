@@ -62,14 +62,35 @@ function toObservable(
 export type PlotSnapshotMetadata = Omit<PlotSnapshot, "series">;
 
 export function applySnapshotMetadata(rawPlot: RawJsPlot, snapshot: PlotSnapshotMetadata): void {
+  // Figure size first: DPI, tight layout and max-resolution are all measured
+  // against it. `sizeIn` wins over `sizePx` — a caller who asked for inches is
+  // targeting a physical output, so honour that over a pixel hint.
   if (snapshot.sizePx) {
     rawPlot.size_px(snapshot.sizePx[0], snapshot.sizePx[1]);
   }
 
-  // After `size_px`, which fixes the figure size in inches: raising the DPI
-  // then scales the exported pixels instead of reshaping the figure.
+  if (snapshot.sizeIn) {
+    rawPlot.size(snapshot.sizeIn[0], snapshot.sizeIn[1]);
+  }
+
+  // After the figure size: raising the DPI then scales the exported pixels
+  // instead of reshaping the figure.
   if (typeof snapshot.dpi === "number") {
     rawPlot.dpi(snapshot.dpi);
+  }
+
+  // Shape-checked rather than `!== undefined`: a foreign snapshot with a null
+  // or malformed value should degrade like every other field, not fail replay.
+  if (Array.isArray(snapshot.maxResolution)) {
+    rawPlot.max_resolution(snapshot.maxResolution[0], snapshot.maxResolution[1]);
+  }
+
+  if (typeof snapshot.scientificNotation === "boolean") {
+    rawPlot.scientific_notation(snapshot.scientificNotation);
+  }
+
+  if (typeof snapshot.margin === "number") {
+    rawPlot.margin(snapshot.margin);
   }
 
   if (snapshot.theme) {
@@ -80,6 +101,31 @@ export function applySnapshotMetadata(rawPlot: RawJsPlot, snapshot: PlotSnapshot
     } catch {
       // unknown theme name: ignored
     }
+  }
+
+  // Typography and line width come *after* the theme: applying a theme replaces
+  // the typography and line config wholesale (`apply_theme` assigns
+  // `config.typography` and `config.lines`), so setting these first would let
+  // the theme silently discard an explicitly requested font size or family.
+  if (snapshot.fontFamily) {
+    rawPlot.font_family(snapshot.fontFamily);
+  }
+
+  if (typeof snapshot.fontSize === "number") {
+    rawPlot.font_size(snapshot.fontSize);
+  }
+
+  // After `fontSize`: the title size is stored internally as a ratio of it.
+  if (typeof snapshot.titleSize === "number") {
+    rawPlot.title_size(snapshot.titleSize);
+  }
+
+  if (typeof snapshot.scaleTypography === "number") {
+    rawPlot.scale_typography(snapshot.scaleTypography);
+  }
+
+  if (typeof snapshot.lineWidthPt === "number") {
+    rawPlot.line_width_pt(snapshot.lineWidthPt);
   }
 
   if (typeof snapshot.ticks === "boolean") {
@@ -120,6 +166,12 @@ export function applySnapshotMetadata(rawPlot: RawJsPlot, snapshot: PlotSnapshot
 
   if (snapshot.yScale) {
     rawPlot.yscale(snapshot.yScale[0], snapshot.yScale[1]);
+  }
+
+  // Last: tight layout measures the text it packs around, so it has to run once
+  // the title and axis labels that occupy those margins are actually set.
+  if (typeof snapshot.tightLayoutPad === "number") {
+    rawPlot.tight_layout_pad(snapshot.tightLayoutPad);
   }
 }
 

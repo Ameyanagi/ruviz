@@ -7,6 +7,9 @@ import sys
 from typing import Any
 
 import ruviz
+# Compare against the constant, not a literal: pinning the number here
+# makes every legitimate schema bump look like a regression.
+from ruviz._api import _SNAPSHOT_SCHEMA_VERSION
 
 
 # Runs in a subprocess so the blocker cannot disturb the rest of the suite: it
@@ -73,6 +76,6 @@ def test_widget_snapshot_traitlet_syncs_observable_updates() -> None:
     assert len(synced) == 1
     pushed = synced[-1]
     assert pushed == widget.snapshot
-    assert pushed["schemaVersion"] == 1
+    assert pushed["schemaVersion"] == _SNAPSHOT_SCHEMA_VERSION
     assert pushed["series"][0]["y"]["values"] == [4.0, 5.0, 6.0]
     assert pushed["series"][0]["style"]["color"] == "#ff0000"

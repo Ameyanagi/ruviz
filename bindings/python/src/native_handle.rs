@@ -14,7 +14,7 @@ use ruviz::{
     },
     data::Observable,
     plots::PlotConfig,
-    render::{Color, LineStyle, MarkerStyle, Theme},
+    render::{Color, FontFamily, LineStyle, MarkerStyle, Theme},
 };
 
 #[cfg(feature = "native-interactive")]
@@ -60,7 +60,7 @@ impl NumericSourceState {
         }
     }
 
-    fn into_plot_data(&self) -> PlotData {
+    fn to_plot_data(&self) -> PlotData {
         match self {
             Self::Static(values) => values.clone().into_plot_data(),
             Self::Observable(values) => values.clone().into_plot_data(),
@@ -446,7 +446,17 @@ enum NativeSeriesState {
 #[derive(Clone, Default)]
 struct NativePlotState {
     size_px: Option<(u32, u32)>,
+    size_in: Option<(f32, f32)>,
     dpi: Option<u32>,
+    max_resolution: Option<(u32, u32)>,
+    font_size: Option<f32>,
+    title_size: Option<f32>,
+    font_family: Option<String>,
+    scale_typography: Option<f32>,
+    line_width_pt: Option<f32>,
+    margin: Option<f32>,
+    tight_layout_pad: Option<f32>,
+    scientific_notation: Option<bool>,
     theme: Option<String>,
     ticks: Option<bool>,
     title: Option<String>,
@@ -465,20 +475,63 @@ impl NativePlotState {
     fn build_plot(&self) -> Result<Plot, String> {
         let mut plot = Plot::new();
 
+        // Figure geometry first: DPI, max-resolution and tight layout are all
+        // measured against it. `size_in` wins over `size_px` — a caller who
+        // asked for inches is targeting a physical output.
         if let Some((width, height)) = self.size_px {
             plot = plot.size_px(width, height);
         }
 
-        // After `size_px`, which fixes the figure size in inches: raising the DPI
-        // then scales the exported pixels instead of reshaping the figure.
+        if let Some((width_in, height_in)) = self.size_in {
+            plot = plot.size(width_in, height_in);
+        }
+
+        // After the figure size: raising the DPI then scales the exported
+        // pixels instead of reshaping the figure.
         if let Some(dpi) = self.dpi {
             plot = plot.dpi(dpi);
+        }
+
+        if let Some((max_width, max_height)) = self.max_resolution {
+            plot = plot.max_resolution(max_width, max_height);
+        }
+
+        if let Some(enabled) = self.scientific_notation {
+            plot = plot.scientific_notation(enabled);
+        }
+
+        if let Some(margin) = self.margin {
+            plot = plot.margin(margin);
         }
 
         if let Some(theme) = &self.theme {
             let resolved =
                 lookup_theme(theme).ok_or_else(|| format!("unsupported theme: {theme}"))?;
             plot = plot.theme(resolved);
+        }
+
+        // Typography and line width come *after* the theme: `apply_theme`
+        // assigns `config.typography` and `config.lines` wholesale, so setting
+        // these first would let the theme silently discard an explicit request.
+        if let Some(family) = &self.font_family {
+            plot = plot.font_family(font_family_from_str(family));
+        }
+
+        if let Some(size) = self.font_size {
+            plot = plot.font_size(size);
+        }
+
+        // After `font_size`: the title size is stored as a ratio of it.
+        if let Some(size) = self.title_size {
+            plot = plot.title_size(size);
+        }
+
+        if let Some(factor) = self.scale_typography {
+            plot = plot.scale_typography(factor);
+        }
+
+        if let Some(width) = self.line_width_pt {
+            plot = plot.line_width_pt(width);
         }
 
         if let Some(ticks) = self.ticks {
@@ -521,11 +574,44 @@ impl NativePlotState {
             plot = plot.yscale(*scale);
         }
 
+        // Last of the plot-level settings: tight layout measures the title and
+        // axis labels it packs margins around, so they have to be set first.
+        if let Some(pad) = self.tight_layout_pad {
+            plot = plot.tight_layout_pad(pad);
+        }
+
         for series in &self.series {
             plot = apply_series(plot, series.data.clone(), &series.style)?;
         }
 
         Ok(plot)
+    }
+}
+
+/// Reject values the core builders would silently clamp. Clamping suits Rust
+/// call sites; from Python it would turn a typo into a subtly wrong figure.
+fn finite_positive_f32(value: f32, field: &str) -> PyResult<f32> {
+    if !value.is_finite() || value <= 0.0 {
+        return Err(PyValueError::new_err(format!(
+            "{field} must be a finite positive number"
+        )));
+    }
+    Ok(value)
+}
+
+/// Map a CSS-style generic family name onto `FontFamily`, falling back to
+/// treating the string as a specific registered family.
+fn font_family_from_str(family: &str) -> FontFamily {
+    // Trim the fallback too: `"Arial "` must match the registered family
+    // `"Arial"`, not silently fall back to the default face.
+    let family = family.trim();
+    match family.to_ascii_lowercase().as_str() {
+        "serif" => FontFamily::Serif,
+        "sans-serif" | "sans_serif" | "sansserif" => FontFamily::SansSerif,
+        "monospace" | "mono" => FontFamily::Monospace,
+        "cursive" => FontFamily::Cursive,
+        "fantasy" => FontFamily::Fantasy,
+        _ => FontFamily::Name(family.to_string()),
     }
 }
 
@@ -552,7 +638,7 @@ fn apply_series(
                 &[x.len(), y.len()],
                 "line x and y must have the same length",
             )?;
-            let mut builder = plot.line_source(x.into_plot_data(), y.into_plot_data());
+            let mut builder = plot.line_source(x.to_plot_data(), y.to_plot_data());
             // Lines draw markers only when one is chosen, so a bare size implies circles.
             if let Some(marker) = style
                 .marker
@@ -570,7 +656,7 @@ fn apply_series(
                 &[x.len(), y.len()],
                 "scatter x and y must have the same length",
             )?;
-            let mut builder = plot.scatter_source(x.into_plot_data(), y.into_plot_data());
+            let mut builder = plot.scatter_source(x.to_plot_data(), y.to_plot_data());
             if let Some(marker) = style.marker {
                 builder = builder.marker(marker);
             }
@@ -584,7 +670,7 @@ fn apply_series(
                 &[categories.len(), values.len()],
                 "bar categories and values must have the same length",
             )?;
-            let builder = plot.bar_source(&categories, values.into_plot_data());
+            let builder = plot.bar_source(&categories, values.to_plot_data());
             Ok(styled(builder, style).into_plot())
         }
         NativeSeriesState::Histogram { data } => {
@@ -601,7 +687,7 @@ fn apply_series(
             Ok(styled(builder, style).into_plot())
         }
         NativeSeriesState::Boxplot { data } => {
-            let builder = plot.boxplot_source(data.into_plot_data());
+            let builder = plot.boxplot_source(data.to_plot_data());
             Ok(styled(builder, style).into_plot())
         }
         NativeSeriesState::Heatmap { values, rows, cols } => {
@@ -616,11 +702,8 @@ fn apply_series(
                 &[x.len(), y.len(), y_errors.len()],
                 "error bar x, y, and y_errors must have the same length",
             )?;
-            let builder = plot.error_bars_source(
-                x.into_plot_data(),
-                y.into_plot_data(),
-                y_errors.into_plot_data(),
-            );
+            let builder =
+                plot.error_bars_source(x.to_plot_data(), y.to_plot_data(), y_errors.to_plot_data());
             Ok(styled(builder, style).into_plot())
         }
         NativeSeriesState::ErrorBarsXy {
@@ -634,10 +717,10 @@ fn apply_series(
                 "error bar x, y, x_errors, and y_errors must have the same length",
             )?;
             let builder = plot.error_bars_xy_source(
-                x.into_plot_data(),
-                y.into_plot_data(),
-                x_errors.into_plot_data(),
-                y_errors.into_plot_data(),
+                x.to_plot_data(),
+                y.to_plot_data(),
+                x_errors.to_plot_data(),
+                y_errors.to_plot_data(),
             );
             Ok(styled(builder, style).into_plot())
         }
@@ -868,6 +951,14 @@ impl NativePlotHandle {
         Ok(())
     }
 
+    fn size(&mut self, width_in: f32, height_in: f32) -> PyResult<()> {
+        let width_in = finite_positive_f32(width_in, "plot width")?;
+        let height_in = finite_positive_f32(height_in, "plot height")?;
+        self.state.size_in = Some((width_in, height_in));
+        self.mark_dirty();
+        Ok(())
+    }
+
     fn dpi(&mut self, dpi: u32) -> PyResult<()> {
         if dpi == 0 {
             return Err(PyValueError::new_err(
@@ -875,6 +966,82 @@ impl NativePlotHandle {
             ));
         }
         self.state.dpi = Some(dpi);
+        self.mark_dirty();
+        Ok(())
+    }
+
+    fn max_resolution(&mut self, max_width: u32, max_height: u32) -> PyResult<()> {
+        if max_width == 0 || max_height == 0 {
+            return Err(PyValueError::new_err(
+                "plot max resolution bounds must be integers greater than zero",
+            ));
+        }
+        self.state.max_resolution = Some((max_width, max_height));
+        self.mark_dirty();
+        Ok(())
+    }
+
+    fn font_size(&mut self, points: f32) -> PyResult<()> {
+        self.state.font_size = Some(finite_positive_f32(points, "plot font size")?);
+        self.mark_dirty();
+        Ok(())
+    }
+
+    fn title_size(&mut self, points: f32) -> PyResult<()> {
+        self.state.title_size = Some(finite_positive_f32(points, "plot title size")?);
+        self.mark_dirty();
+        Ok(())
+    }
+
+    fn font_family(&mut self, family: &str) -> PyResult<()> {
+        if family.trim().is_empty() {
+            return Err(PyValueError::new_err(
+                "plot font family must be a non-empty string",
+            ));
+        }
+        self.state.font_family = Some(family.to_string());
+        self.mark_dirty();
+        Ok(())
+    }
+
+    fn scale_typography(&mut self, factor: f32) -> PyResult<()> {
+        self.state.scale_typography = Some(finite_positive_f32(factor, "plot typography scale")?);
+        self.mark_dirty();
+        Ok(())
+    }
+
+    fn line_width_pt(&mut self, points: f32) -> PyResult<()> {
+        self.state.line_width_pt = Some(finite_positive_f32(points, "plot line width")?);
+        self.mark_dirty();
+        Ok(())
+    }
+
+    fn margin(&mut self, fraction: f32) -> PyResult<()> {
+        // The core builder clamps to 0.0..=0.5; reject out-of-range here
+        // instead so 0.9 does not silently render as 0.5.
+        if !fraction.is_finite() || !(0.0..=0.5).contains(&fraction) {
+            return Err(PyValueError::new_err(
+                "plot margin must be a fraction between 0.0 and 0.5",
+            ));
+        }
+        self.state.margin = Some(fraction);
+        self.mark_dirty();
+        Ok(())
+    }
+
+    fn tight_layout_pad(&mut self, points: f32) -> PyResult<()> {
+        if !points.is_finite() || points < 0.0 {
+            return Err(PyValueError::new_err(
+                "plot tight layout padding must be a finite, non-negative number of points",
+            ));
+        }
+        self.state.tight_layout_pad = Some(points);
+        self.mark_dirty();
+        Ok(())
+    }
+
+    fn scientific_notation(&mut self, enabled: bool) -> PyResult<()> {
+        self.state.scientific_notation = Some(enabled);
         self.mark_dirty();
         Ok(())
     }

@@ -33,7 +33,8 @@ pub use skia::{SkiaRenderer, XTickLabelPlan, XTickRotation, XTickRowBounds, XTic
 pub use style::{LineStyle, MarkerStyle};
 pub use text::{FontConfig, FontFamily, FontStyle, FontWeight};
 pub use text::{
-    TextRenderer, get_font_system, get_swash_cache, initialize_text_system, register_font_bytes,
+    TextRenderer, get_font_system, get_swash_cache, has_registered_fonts, initialize_text_system,
+    register_font_bytes,
 };
 pub use theme::{Theme, ThemeBuilder, ThemeVariant};
 

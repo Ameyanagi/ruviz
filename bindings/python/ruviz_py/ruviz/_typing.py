@@ -254,7 +254,20 @@ class PlotSnapshot(_PlotSnapshot, total=False):
     """
 
     sizePx: list[int]
+    #: Figure size in inches. Spelled to match the JS runtime, which renders
+    #: these snapshots for the notebook widget — a divergent key would be
+    #: silently ignored there rather than raising.
+    sizeIn: list[float]
     dpi: int
+    maxResolution: list[int]
+    fontSize: float
+    titleSize: float
+    fontFamily: str
+    scaleTypography: float
+    lineWidthPt: float
+    margin: float
+    tightLayoutPad: float
+    scientificNotation: bool
     theme: Theme
     ticks: bool
     title: str
