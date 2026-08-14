@@ -657,6 +657,7 @@ impl Plot {
             self.display.config.typography.family.clone(),
         )?;
         renderer.set_text_engine_mode(self.display.text_engine);
+        renderer.set_tick_notation(self.layout.scientific_notation);
         renderer.set_render_mode_diagnostics(match mode {
             RenderExecutionMode::Reference => "reference",
             RenderExecutionMode::Optimized => "optimized",
@@ -2042,8 +2043,16 @@ impl Plot {
         // Must be the scale-aware formatter: the renderer draws a log axis as
         // "10³", so measuring "1000" here would size the margins for a string
         // that is never drawn.
-        let x_labels = crate::axes::format_tick_labels_for_scale(&x_ticks, &self.layout.x_scale);
-        let y_labels = crate::axes::format_tick_labels_for_scale(&y_ticks, &self.layout.y_scale);
+        let x_labels = crate::axes::format_tick_labels_with_notation(
+            &x_ticks,
+            &self.layout.x_scale,
+            self.layout.scientific_notation,
+        );
+        let y_labels = crate::axes::format_tick_labels_with_notation(
+            &y_ticks,
+            &self.layout.y_scale,
+            self.layout.scientific_notation,
+        );
         let measurements =
             self.measure_layout_text_with_ticks(renderer, content, dpi, &x_labels, &y_labels)?;
 
@@ -2963,21 +2972,23 @@ impl Plot {
         )?;
         measurement_renderer.set_text_engine_mode(self.display.text_engine);
         measurement_renderer.set_render_scale(render_scale);
-        let x_major_measurement_layout = TickLayout::compute(
+        let x_major_measurement_layout = TickLayout::compute_with_notation(
             x_min,
             x_max,
             0.0,
             1.0,
             &self.layout.x_scale,
             self.layout.tick_config.major_ticks_x,
+            self.layout.scientific_notation,
         );
-        let y_major_measurement_layout = TickLayout::compute_y_axis(
+        let y_major_measurement_layout = TickLayout::compute_y_axis_with_notation(
             y_min,
             y_max,
             0.0,
             1.0,
             &self.layout.y_scale,
             self.layout.tick_config.major_ticks_y,
+            self.layout.scientific_notation,
         );
         let measured_dimensions = self.measure_layout_text_with_ticks(
             &measurement_renderer,
@@ -3036,22 +3047,24 @@ impl Plot {
         svg.draw_rectangle(0.0, 0.0, width, height, self.display.theme.background, true);
 
         // Compute Y-axis tick layout (fix parameter order: pixel_top then pixel_bottom)
-        let y_tick_layout = TickLayout::compute_y_axis(
+        let y_tick_layout = TickLayout::compute_y_axis_with_notation(
             y_min,
             y_max,
             plot_top,
             plot_bottom,
             &self.layout.y_scale,
             self.layout.tick_config.major_ticks_y,
+            self.layout.scientific_notation,
         );
         let x_tick_layout = if !is_categorical {
-            Some(TickLayout::compute(
+            Some(TickLayout::compute_with_notation(
                 x_min,
                 x_max,
                 plot_left,
                 plot_right,
                 &self.layout.x_scale,
                 self.layout.tick_config.major_ticks_x,
+                self.layout.scientific_notation,
             ))
         } else {
             None

@@ -566,7 +566,12 @@ impl Plot {
     ) -> Result<()> {
         let color = series.color_with_alpha(default_color);
         let render_scale = self.render_scale();
-        let line_width = render_scale.points_to_pixels(series.props.line_width.value_or(2.0));
+        let line_width = render_scale.points_to_pixels(
+            series
+                .props
+                .line_width
+                .value_or(self.display.config.lines.data_width),
+        );
         let line_style = series.props.line_style.value_or(LineStyle::Solid);
 
         match (&series.series_type, resolved) {

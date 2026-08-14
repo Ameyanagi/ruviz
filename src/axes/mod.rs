@@ -17,6 +17,6 @@ pub use secondary::{AxisType, DualAxes, SecondaryAxis};
 pub use tick_layout::TickLayout;
 pub use ticks::{
     format_log_tick_label, format_tick_label, format_tick_labels, format_tick_labels_for_scale,
-    generate_log_minor_ticks, generate_log_ticks, generate_minor_ticks, generate_symlog_ticks,
-    generate_ticks, generate_ticks_for_scale,
+    format_tick_labels_with_notation, generate_log_minor_ticks, generate_log_ticks,
+    generate_minor_ticks, generate_symlog_ticks, generate_ticks, generate_ticks_for_scale,
 };

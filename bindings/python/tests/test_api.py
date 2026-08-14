@@ -1767,6 +1767,39 @@ def test_copy_and_deepcopy_replay_figure_settings() -> None:
         assert snapshot["fontSize"] == 9.0
 
 
+def _png_size(png: bytes) -> tuple[int, int]:
+    return int.from_bytes(png[16:20], "big"), int.from_bytes(png[20:24], "big")
+
+
+def test_figure_margin_changes_the_rendered_layout() -> None:
+    assert _figure_plot().figure(margin=0.3).render_svg() != _figure_plot().render_svg()
+
+
+def test_figure_scientific_notation_changes_the_tick_labels() -> None:
+    assert (
+        _figure_plot().figure(scientific_notation=True).render_svg() != _figure_plot().render_svg()
+    )
+
+
+def test_figure_line_width_changes_the_rendered_lines() -> None:
+    assert _figure_plot().figure(line_width_pt=5.0).render_svg() != _figure_plot().render_svg()
+
+
+def test_max_resolution_caps_an_explicit_dpi_without_replacing_it() -> None:
+    png = _figure_plot().figure(size=(3.25, 2.5), dpi=300, max_resolution=(1920, 1440)).render_png()
+    assert _png_size(png) == (975, 750)
+
+
+def test_max_resolution_reduces_an_explicit_dpi_that_overflows_it() -> None:
+    png = _figure_plot().figure(size=(4.0, 3.0), dpi=300, max_resolution=(800, 600)).render_png()
+    assert _png_size(png) == (800, 600)
+
+
+def test_small_max_resolution_still_renders() -> None:
+    width, height = _png_size(_figure_plot().figure(max_resolution=(400, 400)).render_png())
+    assert width <= 400 and height <= 400
+
+
 def test_figure_with_one_invalid_argument_changes_nothing() -> None:
     plot = _figure_plot()
     before = plot.to_snapshot()

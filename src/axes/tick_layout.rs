@@ -6,7 +6,10 @@
 //! Both positions and labels come from the canonical implementations in
 //! [`super::ticks`], so a layout computed here matches what any backend draws.
 
-use super::{AxisScale, format_tick_labels_for_scale, generate_ticks_for_scale};
+use super::{
+    AxisScale, format_tick_labels_for_scale, format_tick_labels_with_notation,
+    generate_ticks_for_scale,
+};
 
 /// Complete tick layout for an axis
 ///
@@ -69,6 +72,28 @@ impl TickLayout {
         scale: &AxisScale,
         target_ticks: usize,
     ) -> Self {
+        Self::compute_with_notation(
+            data_min,
+            data_max,
+            pixel_min,
+            pixel_max,
+            scale,
+            target_ticks,
+            None,
+        )
+    }
+
+    /// [`Self::compute`] with the tick notation decided by the caller
+    /// (`Some(true)` scientific, `Some(false)` plain, `None` automatic).
+    pub fn compute_with_notation(
+        data_min: f64,
+        data_max: f64,
+        pixel_min: f32,
+        pixel_max: f32,
+        scale: &AxisScale,
+        target_ticks: usize,
+        scientific: Option<bool>,
+    ) -> Self {
         // Generate tick positions in data coordinates
         let data_positions = generate_ticks_for_scale(data_min, data_max, target_ticks, scale);
 
@@ -85,7 +110,7 @@ impl TickLayout {
             .collect();
 
         // Format labels through the canonical, per-axis formatter
-        let labels = format_tick_labels_for_scale(&data_positions, scale);
+        let labels = format_tick_labels_with_notation(&data_positions, scale, scientific);
 
         Self {
             data_positions,
@@ -107,6 +132,29 @@ impl TickLayout {
         scale: &AxisScale,
         target_ticks: usize,
     ) -> Self {
+        Self::compute_y_axis_with_notation(
+            data_min,
+            data_max,
+            pixel_top,
+            pixel_bottom,
+            scale,
+            target_ticks,
+            None,
+        )
+    }
+
+    /// [`Self::compute_y_axis`] with the tick notation decided by the caller
+    /// (`Some(true)` scientific, `Some(false)` plain, `None` automatic).
+    #[allow(clippy::too_many_arguments)]
+    pub fn compute_y_axis_with_notation(
+        data_min: f64,
+        data_max: f64,
+        pixel_top: f32,
+        pixel_bottom: f32,
+        scale: &AxisScale,
+        target_ticks: usize,
+        scientific: Option<bool>,
+    ) -> Self {
         // Generate tick positions in data coordinates
         let data_positions = generate_ticks_for_scale(data_min, data_max, target_ticks, scale);
 
@@ -125,7 +173,7 @@ impl TickLayout {
             .collect();
 
         // Format labels through the canonical, per-axis formatter
-        let labels = format_tick_labels_for_scale(&data_positions, scale);
+        let labels = format_tick_labels_with_notation(&data_positions, scale, scientific);
 
         Self {
             data_positions,

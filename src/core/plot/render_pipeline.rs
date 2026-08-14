@@ -28,6 +28,10 @@ pub struct RenderPipeline {
     pub(crate) auto_optimized: bool,
     /// Allow internally prepared interactive frames below the public minimum DPI.
     pub(crate) allow_subminimum_dpi: bool,
+    /// Whether `dpi()` was called explicitly. `max_resolution` treats an
+    /// explicit DPI as a request to keep, only reducing it to honour the
+    /// bounds; a default DPI is scaled freely to fit them.
+    pub(crate) explicit_dpi: bool,
     /// Exact output pixels requested by an internal rendering target.
     pub(crate) explicit_output_pixels: Option<(u32, u32)>,
     /// Allow positive child subplot canvases below the top-level dimension minimum.
@@ -50,6 +54,7 @@ impl RenderPipeline {
             backend: None,
             auto_optimized: false,
             allow_subminimum_dpi: false,
+            explicit_dpi: false,
             explicit_output_pixels: None,
             allow_subplot_dimensions: false,
             #[cfg(feature = "gpu")]

@@ -38,10 +38,9 @@ pub struct LayoutManager {
     pub(crate) grid_style: GridStyle,
     /// Tick configuration
     pub(crate) tick_config: TickConfig,
-    /// Margin around plot area (fraction of canvas)
-    pub(crate) margin: Option<f32>,
-    /// Whether to use scientific notation on axes
-    pub(crate) scientific_notation: bool,
+    /// Forced tick-label notation: `Some(true)` always scientific, `Some(false)`
+    /// always plain, `None` lets each axis pick automatically per range.
+    pub(crate) scientific_notation: Option<bool>,
     /// Manual X-axis limits (min, max)
     pub(crate) x_limits: Option<(f64, f64)>,
     /// Manual Y-axis limits (min, max)
@@ -65,8 +64,7 @@ impl LayoutManager {
             legend: LegendConfig::default(),
             grid_style: GridStyle::default(),
             tick_config: TickConfig::default(),
-            margin: None,
-            scientific_notation: false,
+            scientific_notation: None,
             x_limits: None,
             y_limits: None,
             x_scale: AxisScale::Linear,
@@ -208,27 +206,15 @@ impl LayoutManager {
         &self.y_scale
     }
 
-    // Margin methods
-
-    /// Set margin as fraction of canvas
-    pub fn set_margin(&mut self, margin: f32) {
-        self.margin = Some(margin);
-    }
-
-    /// Get margin
-    pub fn margin(&self) -> Option<f32> {
-        self.margin
-    }
-
     // Scientific notation
 
-    /// Enable or disable scientific notation on axes
+    /// Force scientific (`true`) or plain (`false`) tick notation on both axes
     pub fn set_scientific_notation(&mut self, enabled: bool) {
-        self.scientific_notation = enabled;
+        self.scientific_notation = Some(enabled);
     }
 
-    /// Check if scientific notation is enabled
-    pub fn scientific_notation(&self) -> bool {
+    /// The forced tick notation, if any (`None` means automatic per axis)
+    pub fn scientific_notation(&self) -> Option<bool> {
         self.scientific_notation
     }
 }
@@ -243,8 +229,7 @@ mod tests {
         assert!(!layout.legend_enabled());
         assert!(layout.xlim().is_none());
         assert!(layout.ylim().is_none());
-        assert!(layout.margin().is_none());
-        assert!(!layout.scientific_notation());
+        assert!(layout.scientific_notation().is_none());
     }
 
     #[test]

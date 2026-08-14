@@ -761,6 +761,7 @@ impl Plot {
     ///     .save("print.png")?;
     /// ```
     pub fn dpi(mut self, dpi: u32) -> Self {
+        self.render.explicit_dpi = true;
         self.display.config.figure.dpi = dpi.max(72) as f32;
         self.display.dpi = dpi.max(72);
         // Update dimensions to reflect new DPI
@@ -807,9 +808,27 @@ impl Plot {
     ///
     /// Both produce identical results when properly configured:
     /// - `.max_resolution(1920, 1440)` ≈ `.dpi(300)` for default 6.4×4.8 figure
+    ///
+    /// Combined with an explicit `dpi()`, the bounds act as a cap: a DPI whose
+    /// output already fits is kept, a larger one is reduced to fit. Bounds
+    /// small enough to imply a DPI below the render minimum are still honoured,
+    /// exactly like an explicit pixel size.
     pub fn max_resolution(mut self, max_width: u32, max_height: u32) -> Self {
         let fig_width = self.display.config.figure.width;
         let fig_height = self.display.config.figure.height;
+
+        // An explicitly requested DPI is only capped, never raised: with
+        // `dpi(300)` already inside the bounds, the bounds change nothing.
+        // A default DPI scales freely to fit the requested resolution.
+        if self.render.explicit_dpi {
+            let current_dpi = self.display.config.figure.dpi;
+            if fig_width * current_dpi <= max_width as f32
+                && fig_height * current_dpi <= max_height as f32
+            {
+                return self;
+            }
+        }
+
         let aspect = fig_width / fig_height;
 
         // Try fitting to max_width
@@ -828,6 +847,9 @@ impl Plot {
         // Calculate DPI to achieve these dimensions with current figure size
         let dpi = width as f32 / fig_width;
 
+        // The bounds are an explicit pixel budget: like an exact pixel size,
+        // honour them even when they imply a DPI below the render minimum.
+        self.render.allow_subminimum_dpi = dpi < crate::core::constants::dpi::MIN as f32;
         self.display.config.figure.dpi = dpi;
         self.display.dpi = dpi as u32;
         self.display.dimensions = (width, height);
@@ -1712,13 +1734,20 @@ impl Plot {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn margin(mut self, margin: f32) -> Self {
-        self.layout.margin = Some(margin.clamp(0.0, 0.5));
+        let margin = margin.clamp(0.0, 0.5);
+        self.display.config.margins = MarginConfig::Proportional {
+            left: margin,
+            right: margin,
+            top: margin,
+            bottom: margin,
+        };
         self
     }
 
-    /// Enable/disable scientific notation on axes
+    /// Force tick labels into scientific (`true`) or plain (`false`) notation
+    /// on both axes. Unset, each axis picks automatically per range.
     pub fn scientific_notation(mut self, enabled: bool) -> Self {
-        self.layout.scientific_notation = enabled;
+        self.layout.scientific_notation = Some(enabled);
         self
     }
 }

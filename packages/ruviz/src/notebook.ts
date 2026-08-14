@@ -29,7 +29,14 @@ function ensureRawModuleInitialized(): void {
   }
 
   initSync(rawModuleSource);
-  register_default_browser_fonts_js();
+  try {
+    register_default_browser_fonts_js();
+  } catch {
+    // A build without the embedded-font feature has no default face until a
+    // font is registered — which needs the module first. The render entry
+    // points re-check and report the actionable error, so initialization
+    // must not fail here.
+  }
   rawModuleInitialized = true;
 }
 
