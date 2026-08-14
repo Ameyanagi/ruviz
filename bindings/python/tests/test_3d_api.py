@@ -7,6 +7,9 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 import ruviz
+# Compare against the constant, not a literal: pinning the number here
+# makes every legitimate schema bump look like a regression.
+from ruviz._api import _SNAPSHOT_SCHEMA_VERSION
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -225,7 +228,7 @@ def test_plot3d_rejects_observable_and_dataframe_inputs() -> None:
 def test_plot3d_snapshot_carries_schema_version() -> None:
     plot = ruviz.scatter3d([0, 1], [0, 1], [0, 1]).title("versioned")
 
-    assert plot.to_snapshot()["schemaVersion"] == 1
+    assert plot.to_snapshot()["schemaVersion"] == _SNAPSHOT_SCHEMA_VERSION
 
 
 @pytest.mark.parametrize("axis", ["x", "y", "z"], ids=["x", "y", "z"])

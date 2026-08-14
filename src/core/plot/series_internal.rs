@@ -389,7 +389,12 @@ impl Plot {
         mode: RenderExecutionMode,
     ) -> Result<Option<SeriesRasterPlan>> {
         let color = series.color_with_alpha(Color::from_rgb(0, 0, 0));
-        let line_width = self.dpi_scaled_line_width(series.props.line_width.value_or(2.0));
+        let line_width = self.dpi_scaled_line_width(
+            series
+                .props
+                .line_width
+                .value_or(self.display.config.lines.data_width),
+        );
         let line_style = series.props.line_style.value_or(LineStyle::Solid);
         let clip_rect = clip_rect_from_plot_area(plot_area);
 
@@ -752,7 +757,12 @@ impl Plot {
         let base_color = series.props.color.value_or(Color::from_rgb(0, 0, 0));
         let alpha = series.props.alpha.value_or(1.0);
         let color = series.color_with_alpha(Color::from_rgb(0, 0, 0)); // Default black
-        let line_width = self.dpi_scaled_line_width(series.props.line_width.value_or(2.0));
+        let line_width = self.dpi_scaled_line_width(
+            series
+                .props
+                .line_width
+                .value_or(self.display.config.lines.data_width),
+        );
         let line_style = series.props.line_style.value_or(LineStyle::Solid);
         let clip_rect = clip_rect_from_plot_area(plot_area);
 
@@ -1381,7 +1391,12 @@ impl Plot {
         mode: RenderExecutionMode,
     ) -> Result<()> {
         let color = series.color_with_alpha(Color::from_rgb(0, 0, 0));
-        let line_width = self.dpi_scaled_line_width(series.props.line_width.value_or(2.0));
+        let line_width = self.dpi_scaled_line_width(
+            series
+                .props
+                .line_width
+                .value_or(self.display.config.lines.data_width),
+        );
         let line_style = series.props.line_style.value_or(LineStyle::Solid);
         let clip_rect = (
             plot_area.x(),

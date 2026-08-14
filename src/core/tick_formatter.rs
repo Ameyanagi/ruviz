@@ -314,6 +314,29 @@ impl TickFormatter {
         self.scientific_labels(values)
     }
 
+    /// Format a whole axis with the notation decided by the caller instead of
+    /// the automatic switch: `Some(true)` forces scientific labels,
+    /// `Some(false)` plain decimals (widened as far as distinctness needs),
+    /// `None` keeps the automatic choice of [`Self::format_ticks`].
+    pub fn format_ticks_with_notation(
+        &self,
+        values: &[f64],
+        scientific: Option<bool>,
+    ) -> Vec<String> {
+        if values.is_empty() {
+            return Vec::new();
+        }
+        match scientific {
+            Some(true) => self.scientific_labels(values),
+            Some(false) => {
+                let mut plain_only = self.clone();
+                plain_only.use_scientific = false;
+                plain_only.format_ticks(values)
+            }
+            None => self.format_ticks(values),
+        }
+    }
+
     /// Format every tick as a plain decimal with one shared precision.
     ///
     /// The precision is the largest any tick needs to be represented exactly,

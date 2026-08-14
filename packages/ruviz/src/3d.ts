@@ -91,7 +91,14 @@ let rawModulePromise: Promise<RawModule> | null = null;
 async function ensureRawModule(): Promise<RawModule> {
   if (!rawModulePromise) {
     rawModulePromise = initRaw().then(() => {
-      raw.register_default_browser_fonts_js();
+      try {
+        raw.register_default_browser_fonts_js();
+      } catch {
+        // A build without the embedded-font feature has no default face until
+        // registerFont() supplies one — which needs this module first. Every
+        // render entry point re-checks and reports the actionable error, so
+        // module init must not fail here.
+      }
       return raw;
     });
   }

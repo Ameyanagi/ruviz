@@ -8,6 +8,7 @@ display outside notebooks.
 from __future__ import annotations
 
 import asyncio
+import math
 import operator
 import sys
 import weakref
@@ -265,13 +266,23 @@ def _normalize_observable_math_input(value: Any) -> Any:
 
 #: Messages for the whole-number plot dimensions, shared with the native handle.
 _SIZE_PX_MESSAGE = "plot dimensions must be integers greater than zero"
-_DPI_MESSAGE = "plot dpi must be an integer greater than zero"
+_DPI_MESSAGE = "plot dpi must be an integer between 72 and 4294967295"
+_MAX_RESOLUTION_MESSAGE = (
+    "max resolution bounds must be integers greater than zero, at most 4294967295"
+)
+
+#: Bounds of the native f32/u32 figure parameters, enforced while staging so
+#: the native layer can never reject a value validation already accepted --
+#: that would break figure()'s atomicity.
+_F32_MAX = 3.4028234663852886e38
+_F32_TINY = 1.1754943508222875e-38
+_U32_MAX = 4_294_967_295
 _SIZE_PX_3D_MESSAGE = "3D plot dimensions must be integers greater than zero"
 _DPI_3D_MESSAGE = "3D plot dpi must be an integer greater than zero"
 
 #: Snapshot layout version carried by :meth:`Plot.to_snapshot` and
 #: :meth:`Plot3D.to_snapshot`; consumers must ignore fields they do not know.
-_SNAPSHOT_SCHEMA_VERSION = 1
+_SNAPSHOT_SCHEMA_VERSION = 2
 
 
 def _heatmap_matrix(series: dict[str, Any]) -> list[list[float]]:
@@ -365,6 +376,37 @@ def _exact_int(value: Any, message: str) -> int:
         return operator.index(value)
     except TypeError:
         raise ValueError(message) from None
+
+
+def _finite_positive(value: Any, name: str) -> float:
+    """Reject a value the core builder would silently clamp to a default.
+
+    Clamping is right for Rust call sites, but from Python it turns a typo into
+    a subtly wrong figure rather than an error.
+    """
+    number = float(value)
+    if not math.isfinite(number) or not _F32_TINY <= number <= _F32_MAX:
+        raise ValueError(f"{name} must be a finite positive number")
+    return number
+
+
+def _size_inches(value: Any, name: str) -> float:
+    """Reject a figure dimension below the core builder's 1.0 inch floor.
+
+    The core clamps smaller values, which would silently change both the
+    figure's physical size and its aspect ratio.
+    """
+    number = float(value)
+    if not math.isfinite(number) or not 1.0 <= number <= _F32_MAX:
+        raise ValueError(f"{name} must be a finite number of at least 1.0 inch")
+    return number
+
+
+def _pair(value: Any, name: str) -> tuple[Any, Any]:
+    """Unpack a ``(width, height)`` argument, rejecting any other shape."""
+    if isinstance(value, str) or not isinstance(value, Sequence) or len(value) != 2:
+        raise ValueError(f"{name} must be a (width, height) pair")
+    return value[0], value[1]
 
 
 def _style_count(name: str, minimum: int) -> Callable[[Any], int]:
@@ -537,13 +579,33 @@ def _style_keywords(series: dict[str, Any]) -> dict[str, Any]:
     return {_STYLE_KEYWORDS.get(key, key): value for key, value in style.items()}
 
 
-#: Snapshot key -> (method name shared by ``Plot`` and the native handle, whether
-#: the stored value is an argument list). Applied before the series so replayed
-#: plots and rebuilt native handles configure the axes identically.
+#: Snapshot key -> (native-handle method name, whether the stored value is an
+#: argument list). Applied before the series so replayed plots and rebuilt
+#: native handles configure the axes identically.
+#: The order here is the dependency order, not an arbitrary listing:
+#:
+#: * figure geometry leads, because dpi, max resolution and tight layout are
+#:   all measured against it, and ``sizeIn`` follows ``sizePx`` so an explicit
+#:   physical size wins over a pixel hint;
+#: * ``theme`` precedes the typography and line settings, because applying a
+#:   theme replaces ``config.typography`` and ``config.lines`` wholesale and
+#:   would otherwise discard an explicitly requested font size or family;
+#: * ``titleSize`` follows ``fontSize``, which it is stored relative to;
+#: * ``tightLayoutPad`` is last, because it measures the title and axis labels
+#:   it packs the margins around.
 _PLOT_SETTINGS: tuple[tuple[str, str, bool], ...] = (
     ("sizePx", "size_px", True),
+    ("sizeIn", "size", True),
     ("dpi", "dpi", False),
+    ("maxResolution", "max_resolution", True),
+    ("scientificNotation", "scientific_notation", False),
+    ("margin", "margin", False),
     ("theme", "theme", False),
+    ("fontFamily", "font_family", False),
+    ("fontSize", "font_size", False),
+    ("titleSize", "title_size", False),
+    ("scaleTypography", "scale_typography", False),
+    ("lineWidthPt", "line_width_pt", False),
     ("ticks", "ticks", False),
     ("title", "title", False),
     ("xLabel", "xlabel", False),
@@ -554,6 +616,7 @@ _PLOT_SETTINGS: tuple[tuple[str, str, bool], ...] = (
     ("yLim", "ylim", True),
     ("xScale", "xscale", True),
     ("yScale", "yscale", True),
+    ("tightLayoutPad", "tight_layout_pad", False),
 )
 
 
@@ -610,7 +673,9 @@ class ObservableSeries:
             bindings.append((value, token))
             weakref.finalize(observable, value._unregister_derived, token)
 
-        observable._derivation = _ObservableDerivation(ufunc=ufunc, inputs=normalized_inputs, bindings=bindings)
+        observable._derivation = _ObservableDerivation(
+            ufunc=ufunc, inputs=normalized_inputs, bindings=bindings
+        )
         return observable
 
     @staticmethod
@@ -881,8 +946,7 @@ class ObservableSeries:
         if copy is False:
             if dtype is not None and np.dtype(dtype) != self._values.dtype:
                 raise ValueError(
-                    "cannot return an ObservableSeries view with a different dtype "
-                    "without copying"
+                    "cannot return an ObservableSeries view with a different dtype without copying"
                 )
             view = self._values.view()
             view.flags.writeable = False
@@ -1047,13 +1111,13 @@ class Plot:
         self._native_plot = native_plot
 
     @staticmethod
-    def _apply_snapshot_metadata(target: Any, snapshot: dict[str, Any]) -> None:
-        """Replay plot-level settings onto a ``Plot`` or a native handle."""
+    def _apply_snapshot_metadata(native_plot: Any, snapshot: dict[str, Any]) -> None:
+        """Replay plot-level settings onto a native handle."""
         for key, method, unpack in _PLOT_SETTINGS:
             value = snapshot.get(key)
             if value is None:
                 continue
-            setter = getattr(target, method)
+            setter = getattr(native_plot, method)
             setter(*value) if unpack else setter(value)
 
     @staticmethod
@@ -1073,7 +1137,11 @@ class Plot:
     ) -> "Plot":
         observable_lookup = observable_lookup or {}
         plot = cls()
-        cls._apply_snapshot_metadata(plot, snapshot)
+        cls._apply_snapshot_metadata(plot._native_plot, snapshot)
+        for key, _method, _unpack in _PLOT_SETTINGS:
+            value = snapshot.get(key)
+            if value is not None:
+                plot._state[key] = deepcopy(value)
 
         for series in snapshot["series"]:
             spec, method = _series_kind(series)
@@ -1129,10 +1197,116 @@ class Plot:
         self._invalidate_snapshot_cache()
         return self
 
+    def figure(
+        self,
+        *,
+        size: tuple[float, float] | None = None,
+        dpi: int | None = None,
+        font_size: float | None = None,
+        title_size: float | None = None,
+        font_family: str | None = None,
+        scale_typography: float | None = None,
+        line_width_pt: float | None = None,
+        margin: float | None = None,
+        tight_layout_pad: float | None = None,
+        scientific_notation: bool | None = None,
+        max_resolution: tuple[int, int] | None = None,
+    ) -> "Plot":
+        """Apply figure-level presentation settings in one call.
+
+        These are chosen as a set -- a journal's column width, body point size
+        and rule weight are one decision -- so they are grouped rather than
+        spread over separate setters. Arguments left as ``None`` keep their
+        current value.
+
+        ``size`` is in inches, the unit journals specify: a single-column
+        figure is typically 3.25 in wide, a double-column one 6.5 in.
+
+        The call is atomic: every argument is validated before any is applied,
+        so a rejected value leaves the plot unchanged. Values the core would
+        silently clamp are rejected instead: sizes below 1.0 inch, dpi below
+        72, font sizes below 4 points and line widths below 0.1 points.
+
+        >>> plot.figure(size=(3.25, 2.5), dpi=300, font_size=9, font_family="serif")
+        """
+        staged: dict[str, Any] = {}
+
+        if size is not None:
+            width_in, height_in = _pair(size, "figure size")
+            staged["sizeIn"] = [
+                _size_inches(width_in, "figure width"),
+                _size_inches(height_in, "figure height"),
+            ]
+
+        if dpi is not None:
+            normalized = _exact_int(dpi, _DPI_MESSAGE)
+            if not 72 <= normalized <= _U32_MAX:
+                raise ValueError(_DPI_MESSAGE)
+            staged["dpi"] = normalized
+
+        if font_size is not None:
+            value = _finite_positive(font_size, "font size")
+            # The core clamps font sizes below 4pt; reject them instead.
+            if value < 4.0:
+                raise ValueError("font size must be at least 4 points")
+            staged["fontSize"] = value
+
+        if title_size is not None:
+            staged["titleSize"] = _finite_positive(title_size, "title size")
+
+        if font_family is not None:
+            if not isinstance(font_family, str) or not font_family.strip():
+                raise ValueError("font family must be a non-empty string")
+            staged["fontFamily"] = font_family
+
+        if scale_typography is not None:
+            staged["scaleTypography"] = _finite_positive(scale_typography, "typography scale")
+
+        if line_width_pt is not None:
+            value = _finite_positive(line_width_pt, "line width")
+            # The core clamps line widths below 0.1pt; reject them instead.
+            if value < 0.1:
+                raise ValueError("line width must be at least 0.1 points")
+            staged["lineWidthPt"] = value
+
+        if margin is not None:
+            value = float(margin)
+            # The core builder clamps to 0.0-0.5; reject out-of-range here
+            # instead so 0.9 does not silently render as 0.5.
+            if not math.isfinite(value) or not 0.0 <= value <= 0.5:
+                raise ValueError("figure margin must be a fraction between 0.0 and 0.5")
+            staged["margin"] = value
+
+        if tight_layout_pad is not None:
+            value = float(tight_layout_pad)
+            if not math.isfinite(value) or not 0 <= value <= _F32_MAX:
+                raise ValueError(
+                    "tight layout padding must be a finite, non-negative number of points"
+                )
+            staged["tightLayoutPad"] = value
+
+        if scientific_notation is not None:
+            if not isinstance(scientific_notation, bool):
+                raise ValueError("scientific notation must be a boolean")
+            staged["scientificNotation"] = scientific_notation
+
+        if max_resolution is not None:
+            max_width, max_height = _pair(max_resolution, "max resolution")
+            normalized_width = _exact_int(max_width, _MAX_RESOLUTION_MESSAGE)
+            normalized_height = _exact_int(max_height, _MAX_RESOLUTION_MESSAGE)
+            if not 0 < normalized_width <= _U32_MAX or not 0 < normalized_height <= _U32_MAX:
+                raise ValueError(_MAX_RESOLUTION_MESSAGE)
+            staged["maxResolution"] = [normalized_width, normalized_height]
+
+        self._apply_snapshot_metadata(self._native_plot, staged)
+        self._state.update(staged)
+        self._invalidate_snapshot_cache()
+        return self
+
     def dpi(self, dpi: int) -> "Plot":
-        """Set output dots per inch, scaling the exported pixels from ``size_px``."""
+        """Set output dots per inch, scaling the exported pixels from the figure size."""
         normalized = _exact_int(dpi, _DPI_MESSAGE)
-        if normalized < 1:
+        if not 72 <= normalized <= _U32_MAX:
             raise ValueError(_DPI_MESSAGE)
         self._native_plot.dpi(normalized)
         self._state["dpi"] = normalized
@@ -1289,7 +1463,9 @@ class Plot:
                 "markerSize": marker_size,
             },
         )
-        self._apply_native_series(self._native_plot, series, native_sources={"x": native_x, "y": native_y})
+        self._apply_native_series(
+            self._native_plot, series, native_sources={"x": native_x, "y": native_y}
+        )
         if x_observable is not None:
             self._track_observable(x_observable, series, "x")
         if y_observable is not None:
@@ -1328,7 +1504,9 @@ class Plot:
                 "markerSize": marker_size,
             },
         )
-        self._apply_native_series(self._native_plot, series, native_sources={"x": native_x, "y": native_y})
+        self._apply_native_series(
+            self._native_plot, series, native_sources={"x": native_x, "y": native_y}
+        )
         if x_observable is not None:
             self._track_observable(x_observable, series, "x")
         if y_observable is not None:
@@ -1358,7 +1536,9 @@ class Plot:
             {"categories": categories, "values": values},
             {"label": label, "color": color, "alpha": alpha},
         )
-        self._apply_native_series(self._native_plot, series, native_sources={"values": native_values})
+        self._apply_native_series(
+            self._native_plot, series, native_sources={"values": native_values}
+        )
         if observable is not None:
             self._track_observable(observable, series, "values")
         self._append_series_snapshot(series)
@@ -1521,7 +1701,9 @@ class Plot:
         y_error_values, native_y_errors, y_error_observable = self._build_native_numeric_source(
             _column_values(data, y_errors), "error_bars_xy y_errors"
         )
-        self._ensure_equal_length("error-bars-xy", x_values, y_values, x_error_values, y_error_values)
+        self._ensure_equal_length(
+            "error-bars-xy", x_values, y_values, x_error_values, y_error_values
+        )
         series = _styled_series(
             "error-bars-xy",
             {
@@ -1772,7 +1954,9 @@ class Plot:
             self._snapshot_dirty = False
         return cast(PlotSnapshot, _copy_materialized(self._snapshot_cache))
 
-    def _track_observable(self, observable: ObservableSeries, series: dict[str, Any], key: str) -> None:
+    def _track_observable(
+        self, observable: ObservableSeries, series: dict[str, Any], key: str
+    ) -> None:
         self._observable_bindings.append((observable, series, key))
         if observable in self._observables:
             return

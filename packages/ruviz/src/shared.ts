@@ -293,14 +293,38 @@ export type PlotSeriesSnapshot =
   | PolarLineSeriesSnapshot;
 
 /** Snapshot layout version written by this build; consumers ignore unknown keys. */
-export const SNAPSHOT_SCHEMA_VERSION = 1;
+export const SNAPSHOT_SCHEMA_VERSION = 2;
 
 export interface PlotSnapshot {
   /** Snapshot layout version; absent on snapshots written before it existed. */
   schemaVersion?: number;
   sizePx?: [number, number];
-  /** Output DPI; applied after `sizePx`, so raising it scales the exported pixels. */
+  /**
+   * Figure size in inches — the unit journals specify (single column is
+   * typically 3.25, double column 6.5). Applied before `dpi`, which then fixes
+   * the exported pixel dimensions. Takes precedence over `sizePx`.
+   */
+  sizeIn?: [number, number];
+  /** Output DPI; applied after the figure size, so raising it scales the exported pixels. */
   dpi?: number;
+  /** Base text size in points; every other text size derives from it. */
+  fontSize?: number;
+  /** Title size in points, absolute rather than relative to `fontSize`. */
+  titleSize?: number;
+  /** `serif` | `sans-serif` | `monospace` | `cursive` | `fantasy`, or a registered family name. */
+  fontFamily?: string;
+  /** Scales every text size at once, preserving the typographic hierarchy. */
+  scaleTypography?: number;
+  /** Data line width in points. */
+  lineWidthPt?: number;
+  /** Plot margin as a fraction of the figure, 0.0–0.5. */
+  margin?: number;
+  /** Shrink margins to fit text, leaving this many points of slack. */
+  tightLayoutPad?: number;
+  /** Scientific notation on axis tick labels. */
+  scientificNotation?: boolean;
+  /** Caps exported pixel dimensions while preserving aspect ratio. */
+  maxResolution?: [number, number];
   theme?: PlotTheme;
   ticks?: boolean;
   title?: string;
@@ -436,6 +460,60 @@ export function validateColor(value: string): void {
 export function validateName(table: readonly string[], kind: string, name: string): void {
   if (!table.includes(name)) {
     throw new RangeError(`unsupported ${kind} '${name}'; expected one of: ${table.join(", ")}`);
+  }
+}
+
+/**
+ * Figure-level presentation settings, applied together by `PlotBuilder.figure`.
+ *
+ * These are grouped rather than exposed as individual chained setters because
+ * they are chosen as a set — a journal's column width, body point size and rule
+ * weight are one decision, not eight. Every field is optional; omitting one
+ * leaves the current value untouched.
+ */
+export interface FigureOptions {
+  /** Figure size in inches, `[width, height]` — the unit journals specify. */
+  size?: [number, number];
+  /** Output DPI, applied after `size` to fix the exported pixel dimensions. */
+  dpi?: number;
+  /** Base text size in points; other text sizes derive from it. */
+  fontSize?: number;
+  /** Title size in points, absolute rather than relative to `fontSize`. */
+  titleSize?: number;
+  /** `serif` | `sans-serif` | `monospace` | `cursive` | `fantasy`, or a registered family. */
+  fontFamily?: string;
+  /** Scales every text size at once, preserving the typographic hierarchy. */
+  scaleTypography?: number;
+  /** Data line width in points. */
+  lineWidthPt?: number;
+  /** Plot margin as a fraction of the figure, 0.0–0.5. */
+  margin?: number;
+  /** Shrink margins to fit the text, leaving this many points of slack. */
+  tightLayoutPad?: number;
+  /** Scientific notation on axis tick labels. */
+  scientificNotation?: boolean;
+  /** Cap exported pixel dimensions while preserving aspect ratio. */
+  maxResolution?: [number, number];
+}
+
+/**
+ * Reject values the core builders would silently clamp to a default. Clamping
+ * is right for Rust call sites, but from JS an `undefined` arrives as NaN and
+ * would otherwise produce a wrong figure with no diagnostic.
+ */
+export function assertFinitePositive(value: number, label: string): void {
+  // Bounded to positive finite f32 values: the wasm layer stores these as
+  // f32, and a value that overflows to Infinity (or rounds to zero) there
+  // would be rejected only later, at rebuild time.
+  if (!Number.isFinite(value) || value < 1.1754943508222875e-38 || value > 3.4028234663852886e38) {
+    throw new RangeError(`${label} must be a finite number greater than zero`);
+  }
+}
+
+/** Reject a `[width, height]` pair that is not actually a two-element array. */
+export function assertPair(value: unknown, label: string): asserts value is [number, number] {
+  if (!Array.isArray(value) || value.length !== 2) {
+    throw new TypeError(`${label} must be a [width, height] pair`);
   }
 }
 

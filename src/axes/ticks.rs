@@ -640,10 +640,24 @@ pub fn format_tick_labels(values: &[f64]) -> Vec<String> {
 /// region around zero keeps linear labels, which is the whole point of the
 /// scale.
 pub fn format_tick_labels_for_scale(values: &[f64], scale: &AxisScale) -> Vec<String> {
+    format_tick_labels_with_notation(values, scale, None)
+}
+
+/// [`format_tick_labels_for_scale`] with the notation decided by the caller.
+///
+/// `Some(true)` forces every label into scientific/exponent form, `Some(false)`
+/// keeps every label a plain decimal, and `None` preserves the automatic
+/// per-axis choice. Rendering and the layout measurement pass must agree on
+/// this value, or the reserved label space will not match the drawn labels.
+pub fn format_tick_labels_with_notation(
+    values: &[f64],
+    scale: &AxisScale,
+    scientific: Option<bool>,
+) -> Vec<String> {
     match scale {
-        AxisScale::Linear => format_tick_labels(values),
-        AxisScale::Log => format_log_labels(values, 0.0),
-        AxisScale::SymLog { linthresh } => format_log_labels(values, linthresh.abs()),
+        AxisScale::Linear => shared_formatter().format_ticks_with_notation(values, scientific),
+        AxisScale::Log => format_log_labels(values, 0.0, scientific),
+        AxisScale::SymLog { linthresh } => format_log_labels(values, linthresh.abs(), scientific),
     }
 }
 
@@ -657,16 +671,31 @@ const LOG_PLAIN_LABEL_MAX: f64 = 1e5;
 ///
 /// `linthresh` is the symlog linear threshold; `0.0` means every tick belongs
 /// to the logarithmic region, which is the plain log case.
-fn format_log_labels(values: &[f64], linthresh: f64) -> Vec<String> {
-    let plain = format_tick_labels(values);
+///
+/// A forced notation (`scientific`) moves the whole logarithmic region:
+/// `Some(true)` always uses the exponent form there, `Some(false)` always the
+/// plain decimals. A symlog linear region keeps plain labels either way —
+/// linear labels around zero are the point of the scale.
+fn format_log_labels(values: &[f64], linthresh: f64, scientific: Option<bool>) -> Vec<String> {
+    let plain_notation = if scientific == Some(false) {
+        Some(false)
+    } else {
+        None
+    };
+    let plain = shared_formatter().format_ticks_with_notation(values, plain_notation);
+    if scientific == Some(false) {
+        return plain;
+    }
     let in_log_region = |value: f64| value.abs() > linthresh;
 
-    let reads_plain = values
-        .iter()
-        .zip(&plain)
-        .all(|(&value, label)| !in_log_region(value) || plain_log_label_is_nice(value, label));
-    if reads_plain {
-        return plain;
+    if scientific != Some(true) {
+        let reads_plain = values
+            .iter()
+            .zip(&plain)
+            .all(|(&value, label)| !in_log_region(value) || plain_log_label_is_nice(value, label));
+        if reads_plain {
+            return plain;
+        }
     }
 
     values

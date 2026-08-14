@@ -17,6 +17,8 @@ import {
   SNAPSHOT_SCHEMA_VERSION,
   toNumberArray,
   validateColor,
+  assertFinitePositive,
+  assertPair,
   validateName,
   type AxisScaleName,
   type AxisScaleSnapshot,
@@ -31,6 +33,7 @@ import {
   type EcdfSeriesSnapshot,
   type ErrorBarsSeriesSnapshot,
   type ErrorBarsXYSeriesSnapshot,
+  type FigureOptions,
   type HeatmapSeriesSnapshot,
   type HistogramSeriesSnapshot,
   type HistogramSeriesStyle,
@@ -87,6 +90,7 @@ export type {
   AxisScaleName,
   AxisScaleSnapshot,
   BackendPreference,
+  FigureOptions,
   BarSeriesSnapshot,
   BoxplotSeriesStyle,
   CanvasSessionOptions,
@@ -260,7 +264,17 @@ type PlotSeriesDefinition =
 
 interface PlotState {
   sizePx?: [number, number];
+  sizeIn?: [number, number];
   dpi?: number;
+  fontSize?: number;
+  titleSize?: number;
+  fontFamily?: string;
+  scaleTypography?: number;
+  lineWidthPt?: number;
+  margin?: number;
+  tightLayoutPad?: number;
+  scientificNotation?: boolean;
+  maxResolution?: [number, number];
   theme?: PlotTheme;
   ticks?: boolean;
   title?: string;
@@ -322,7 +336,14 @@ function readBooleanProperty(record: unknown, snakeName: string, camelName: stri
 async function ensureRawModule(): Promise<RawModule> {
   if (!rawModulePromise) {
     rawModulePromise = initRaw().then(() => {
-      raw.register_default_browser_fonts_js();
+      try {
+        raw.register_default_browser_fonts_js();
+      } catch {
+        // A build without the embedded-font feature has no default face until
+        // registerFont() supplies one — which needs this module first. Every
+        // render entry point re-checks and reports the actionable error, so
+        // module init must not fail here.
+      }
       return raw;
     });
   }
@@ -1122,14 +1143,166 @@ export class PlotBuilder {
     return this;
   }
 
-  /** Sets the output DPI, scaling the pixels exported from `sizePx`. */
+  /**
+   * Applies figure-level presentation settings in one call.
+   *
+   * These are chosen as a set — a journal's column width, body point size and
+   * rule weight are one decision — so they are grouped rather than spread over
+   * individual chained setters. Omitted fields keep their current value.
+   *
+   * The call is atomic: every option is validated before any is applied, so a
+   * rejected value leaves the plot unchanged.
+   *
+   * ```ts
+   * plot.figure({ size: [3.25, 2.5], dpi: 300, fontSize: 9, fontFamily: "serif" });
+   * ```
+   */
+  figure(options: FigureOptions): this {
+    if (options === null || typeof options !== "object") {
+      throw new TypeError("figure options must be an object");
+    }
+
+    const {
+      size,
+      dpi,
+      fontSize,
+      titleSize,
+      fontFamily,
+      scaleTypography,
+      lineWidthPt,
+      margin,
+      tightLayoutPad,
+      scientificNotation,
+      maxResolution,
+      ...unknown
+    } = options;
+
+    // A misspelled key would otherwise be silently dropped and yield a figure
+    // that looks nearly right — the worst outcome for a print submission.
+    const unknownKeys = Object.keys(unknown);
+    if (unknownKeys.length > 0) {
+      throw new TypeError(`unknown figure option(s): ${unknownKeys.join(", ")}`);
+    }
+
+    // Validate every option into `staged` before touching #state, so a
+    // rejected value leaves the plot (and its render caches) unchanged.
+    const staged: Partial<Omit<PlotState, "series">> = {};
+
+    if (typeof size !== "undefined") {
+      assertPair(size, "figure size");
+      for (const [value, label] of [
+        [size[0], "figure width"],
+        [size[1], "figure height"],
+      ] as const) {
+        assertFinitePositive(value, label);
+        // The core builder clamps sizes below 1.0 inch, which would silently
+        // change both the physical size and the aspect ratio.
+        if (value < 1) {
+          throw new RangeError(`${label} must be a finite number of at least 1.0 inch`);
+        }
+      }
+      staged.sizeIn = [size[0], size[1]];
+    }
+
+    if (typeof dpi !== "undefined") {
+      // The core clamps dpi below 72; reject it instead.
+      if (!(Number.isInteger(dpi) && dpi >= 72 && dpi <= 4294967295)) {
+        throw new RangeError("figure dpi must be an integer between 72 and 4294967295");
+      }
+      staged.dpi = dpi;
+    }
+
+    if (typeof fontSize !== "undefined") {
+      assertFinitePositive(fontSize, "font size");
+      // The core clamps font sizes below 4pt; reject them instead.
+      if (fontSize < 4) {
+        throw new RangeError("font size must be at least 4 points");
+      }
+      staged.fontSize = fontSize;
+    }
+
+    if (typeof titleSize !== "undefined") {
+      assertFinitePositive(titleSize, "title size");
+      staged.titleSize = titleSize;
+    }
+
+    if (typeof fontFamily !== "undefined") {
+      if (typeof fontFamily !== "string" || fontFamily.trim() === "") {
+        throw new TypeError("font family must be a non-empty string");
+      }
+      staged.fontFamily = fontFamily;
+    }
+
+    if (typeof scaleTypography !== "undefined") {
+      assertFinitePositive(scaleTypography, "typography scale");
+      staged.scaleTypography = scaleTypography;
+    }
+
+    if (typeof lineWidthPt !== "undefined") {
+      assertFinitePositive(lineWidthPt, "line width");
+      // The core clamps line widths below 0.1pt; reject them instead.
+      if (lineWidthPt < 0.1) {
+        throw new RangeError("line width must be at least 0.1 points");
+      }
+      staged.lineWidthPt = lineWidthPt;
+    }
+
+    if (typeof margin !== "undefined") {
+      // The core builder clamps to 0.0–0.5; reject out-of-range here instead
+      // so 0.9 does not silently render as 0.5.
+      if (!Number.isFinite(margin) || margin < 0 || margin > 0.5) {
+        throw new RangeError("figure margin must be a fraction between 0.0 and 0.5");
+      }
+      staged.margin = margin;
+    }
+
+    if (typeof tightLayoutPad !== "undefined") {
+      if (
+        !Number.isFinite(tightLayoutPad) ||
+        tightLayoutPad < 0 ||
+        tightLayoutPad > 3.4028234663852886e38
+      ) {
+        throw new RangeError(
+          "tight layout padding must be a finite, non-negative number of points",
+        );
+      }
+      staged.tightLayoutPad = tightLayoutPad;
+    }
+
+    if (typeof scientificNotation !== "undefined") {
+      if (typeof scientificNotation !== "boolean") {
+        throw new TypeError("scientificNotation must be a boolean");
+      }
+      staged.scientificNotation = scientificNotation;
+    }
+
+    if (typeof maxResolution !== "undefined") {
+      assertPair(maxResolution, "max resolution");
+      for (const [value, label] of [
+        [maxResolution[0], "max resolution width"],
+        [maxResolution[1], "max resolution height"],
+      ] as const) {
+        if (!(Number.isInteger(value) && value > 0 && value <= 4294967295)) {
+          throw new RangeError(`${label} must be an integer greater than zero, at most 4294967295`);
+        }
+      }
+      staged.maxResolution = [maxResolution[0], maxResolution[1]];
+    }
+
+    Object.assign(this.#state, staged);
+    this.#markDirty();
+    return this;
+  }
+
+  /** Sets the output DPI, scaling the pixels exported from the figure size. */
   dpi(dpi: number): this {
     return this.setDpi(dpi);
   }
 
   setDpi(dpi: number): this {
-    if (!(Number.isInteger(dpi) && dpi > 0)) {
-      throw new RangeError("plot dpi must be an integer greater than zero");
+    // The core clamps dpi below 72; reject it instead.
+    if (!(Number.isInteger(dpi) && dpi >= 72 && dpi <= 4294967295)) {
+      throw new RangeError("plot dpi must be an integer between 72 and 4294967295");
     }
     this.#state.dpi = dpi;
     this.#markDirty();

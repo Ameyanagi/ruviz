@@ -22,6 +22,10 @@ import numpy as np
 import pytest
 import ruviz
 
+# Compare against the constant, not a literal: pinning the number here
+# makes every legitimate schema bump look like a regression.
+from ruviz._api import _SNAPSHOT_SCHEMA_VERSION
+
 PNG_HEADER = b"\x89PNG\r\n\x1a\n"
 
 
@@ -252,10 +256,10 @@ def test_observable_render_updates_native_plot() -> None:
 def test_snapshot_carries_schema_version_through_copies_and_replay() -> None:
     plot = ruviz.plot().line([0, 1, 2], [0, 1, 4]).title("versioned")
 
-    assert plot.to_snapshot()["schemaVersion"] == 1
-    assert plot.clone().to_snapshot()["schemaVersion"] == 1
-    assert copy(plot).to_snapshot()["schemaVersion"] == 1
-    assert deepcopy(plot).to_snapshot()["schemaVersion"] == 1
+    assert plot.to_snapshot()["schemaVersion"] == _SNAPSHOT_SCHEMA_VERSION
+    assert plot.clone().to_snapshot()["schemaVersion"] == _SNAPSHOT_SCHEMA_VERSION
+    assert copy(plot).to_snapshot()["schemaVersion"] == _SNAPSHOT_SCHEMA_VERSION
+    assert deepcopy(plot).to_snapshot()["schemaVersion"] == _SNAPSHOT_SCHEMA_VERSION
 
 
 def test_replay_tolerates_and_reemits_schema_version() -> None:
@@ -275,7 +279,9 @@ def test_clone_rebuilds_native_plot_from_mixed_series_shapes() -> None:
     assert clone.to_snapshot() == plot.to_snapshot()
 
 
-@pytest.mark.parametrize(("name", "builder"), LARGE_RASTER_CASES, ids=[name for name, _ in LARGE_RASTER_CASES])
+@pytest.mark.parametrize(
+    ("name", "builder"), LARGE_RASTER_CASES, ids=[name for name, _ in LARGE_RASTER_CASES]
+)
 def test_large_plot_public_png_paths(name: str, builder: object, tmp_path: Path) -> None:
     plot = builder()
 
@@ -289,7 +295,9 @@ def test_large_plot_public_png_paths(name: str, builder: object, tmp_path: Path)
     assert saved == png
 
 
-@pytest.mark.parametrize(("name", "builder"), LARGE_VECTOR_CASES, ids=[name for name, _ in LARGE_VECTOR_CASES])
+@pytest.mark.parametrize(
+    ("name", "builder"), LARGE_VECTOR_CASES, ids=[name for name, _ in LARGE_VECTOR_CASES]
+)
 def test_large_plot_public_vector_paths(name: str, builder: object, tmp_path: Path) -> None:
     plot = builder()
 
@@ -307,7 +315,9 @@ def test_large_plot_public_vector_paths(name: str, builder: object, tmp_path: Pa
     assert pdf_path.stat().st_size > 1_024
 
 
-@pytest.mark.parametrize(("name", "builder"), LARGE_WIDGET_CASES, ids=[name for name, _ in LARGE_WIDGET_CASES])
+@pytest.mark.parametrize(
+    ("name", "builder"), LARGE_WIDGET_CASES, ids=[name for name, _ in LARGE_WIDGET_CASES]
+)
 def test_large_plot_widget_snapshot_smoke(name: str, builder: object) -> None:
     plot = builder()
 
@@ -317,7 +327,9 @@ def test_large_plot_widget_snapshot_smoke(name: str, builder: object) -> None:
     assert widget.snapshot["series"][0]["kind"] == name
 
 
-@pytest.mark.parametrize(("name", "builder"), LARGE_WIDGET_CASES, ids=[name for name, _ in LARGE_WIDGET_CASES])
+@pytest.mark.parametrize(
+    ("name", "builder"), LARGE_WIDGET_CASES, ids=[name for name, _ in LARGE_WIDGET_CASES]
+)
 def test_large_plot_show_uses_static_image_in_notebooks(name: str, builder: object) -> None:
     plot = builder()
 
@@ -987,9 +999,10 @@ def test_plot_level_settings_default_to_absent() -> None:
 @pytest.mark.parametrize(
     ("apply", "message"),
     [
-        (lambda plot: plot.dpi(0), "plot dpi must be an integer greater than zero"),
-        (lambda plot: plot.dpi(0.5), "plot dpi must be an integer greater than zero"),
-        (lambda plot: plot.dpi(True), "plot dpi must be an integer greater than zero"),
+        (lambda plot: plot.dpi(0), "plot dpi must be an integer between 72 and 4294967295"),
+        (lambda plot: plot.dpi(50), "plot dpi must be an integer between 72 and 4294967295"),
+        (lambda plot: plot.dpi(0.5), "plot dpi must be an integer between 72 and 4294967295"),
+        (lambda plot: plot.dpi(True), "plot dpi must be an integer between 72 and 4294967295"),
         (
             lambda plot: plot.size_px(200.5, 150),
             "plot dimensions must be integers greater than zero",
@@ -1176,7 +1189,12 @@ def test_unbound_observable_can_resize_freely() -> None:
     ("method", "args", "style", "message"),
     [
         ("line", ([0.0, 1.0], [0.0, 1.0]), {"alpha": 1.5}, "alpha must be between 0.0 and 1.0"),
-        ("line", ([0.0, 1.0], [0.0, 1.0]), {"width": 0.0}, "width must be a finite positive number"),
+        (
+            "line",
+            ([0.0, 1.0], [0.0, 1.0]),
+            {"width": 0.0},
+            "width must be a finite positive number",
+        ),
         (
             "scatter",
             ([0.0, 1.0], [0.0, 1.0]),
@@ -1502,7 +1520,10 @@ def test_data_rejects_a_source_that_cannot_be_indexed_by_name() -> None:
     [
         (lambda: ruviz.plot().histogram([0.0, 1.0, 2.0], bins=2.9), "bins must be an integer >= 1"),
         (lambda: ruviz.plot().histogram([0.0, 1.0, 2.0], bins=2.0), "bins must be an integer >= 1"),
-        (lambda: ruviz.plot().histogram([0.0, 1.0, 2.0], bins=True), "bins must be an integer >= 1"),
+        (
+            lambda: ruviz.plot().histogram([0.0, 1.0, 2.0], bins=True),
+            "bins must be an integer >= 1",
+        ),
         (
             lambda: ruviz.plot().contour([0.0, 1.0], [0.0, 1.0], [0.0, 1.0, 2.0, 3.0], levels=2.5),
             "levels must be an integer >= 2",
@@ -1627,3 +1648,161 @@ def test_resize_vetoed_by_the_second_of_two_plots_is_atomic() -> None:
     assert strict.to_snapshot()["series"][0]["y"]["values"] == [2.0, 4.0, 6.0]
     assert permissive.render_png().startswith(PNG_HEADER)
     assert strict.render_png().startswith(PNG_HEADER)
+
+
+def _figure_plot() -> "ruviz.Plot":
+    return ruviz.plot().line([1.0, 2.0, 3.0], [1.0, 4.0, 9.0]).title("t").xlabel("x").ylabel("y")
+
+
+def test_figure_records_every_setting_under_its_snapshot_key() -> None:
+    plot = _figure_plot().figure(
+        size=(3.25, 2.5),
+        dpi=300,
+        font_size=9.0,
+        title_size=10.0,
+        font_family="serif",
+        scale_typography=1.1,
+        line_width_pt=0.8,
+        margin=0.12,
+        tight_layout_pad=2.0,
+        scientific_notation=True,
+        max_resolution=(1920, 1440),
+    )
+
+    snapshot = plot.to_snapshot()
+    assert snapshot["sizeIn"] == [3.25, 2.5]
+    assert snapshot["dpi"] == 300
+    assert snapshot["fontSize"] == 9.0
+    assert snapshot["titleSize"] == 10.0
+    assert snapshot["fontFamily"] == "serif"
+    assert snapshot["scaleTypography"] == 1.1
+    assert snapshot["lineWidthPt"] == 0.8
+    assert snapshot["margin"] == 0.12
+    assert snapshot["tightLayoutPad"] == 2.0
+    assert snapshot["scientificNotation"] is True
+    assert snapshot["maxResolution"] == [1920, 1440]
+
+
+def test_figure_settings_survive_a_snapshot_replay() -> None:
+    plot = _figure_plot().figure(size=(3.25, 2.5), font_size=9.0, font_family="serif")
+    assert plot.clone().to_snapshot() == plot.to_snapshot()
+
+
+def test_figure_settings_change_the_rendered_output() -> None:
+    baseline = _figure_plot().render_svg()
+    preset = (
+        _figure_plot().figure(size=(3.25, 2.5), font_size=9.0, font_family="serif").render_svg()
+    )
+    assert preset != baseline
+
+
+def test_theme_does_not_discard_an_explicit_font_size() -> None:
+    """A theme replaces the typography config wholesale in the core builder.
+
+    ``_PLOT_SETTINGS`` orders ``theme`` before the typography keys so the
+    explicit request wins no matter which order the caller used.
+    """
+    theme_only = _figure_plot().theme("publication").render_svg()
+    set_before = _figure_plot().figure(font_size=20.0).theme("publication").render_svg()
+    set_after = _figure_plot().theme("publication").figure(font_size=20.0).render_svg()
+
+    assert set_before != theme_only
+    assert set_before == set_after
+
+
+def test_tight_layout_pad_is_applied_after_the_labels_it_measures() -> None:
+    padded = _figure_plot().figure(tight_layout_pad=8.0).render_svg()
+    assert padded != _figure_plot().render_svg()
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"size": (0.0, 2.0)}, "figure width must be a finite number of at least 1.0 inch"),
+        (
+            {"size": (float("nan"), 2.0)},
+            "figure width must be a finite number of at least 1.0 inch",
+        ),
+        ({"size": (0.5, 2.0)}, "figure width must be a finite number of at least 1.0 inch"),
+        ({"size": (2.0, 0.5)}, "figure height must be a finite number of at least 1.0 inch"),
+        ({"size": 3.25}, r"figure size must be a \(width, height\) pair"),
+        ({"font_size": -1.0}, "font size must be a finite positive number"),
+        ({"title_size": 0.0}, "title size must be a finite positive number"),
+        ({"scale_typography": 0.0}, "typography scale must be a finite positive number"),
+        ({"line_width_pt": -0.5}, "line width must be a finite positive number"),
+        ({"font_family": "  "}, "font family must be a non-empty string"),
+        ({"scientific_notation": "false"}, "scientific notation must be a boolean"),
+        ({"margin": float("inf")}, "figure margin must be a fraction between 0.0 and 0.5"),
+        ({"margin": 0.9}, "figure margin must be a fraction between 0.0 and 0.5"),
+        ({"margin": -0.1}, "figure margin must be a fraction between 0.0 and 0.5"),
+        ({"tight_layout_pad": -1.0}, "tight layout padding must be"),
+        ({"max_resolution": (0, 10)}, "max resolution bounds must be integers greater than zero"),
+        (
+            {"max_resolution": (2**40, 10)},
+            "max resolution bounds must be integers greater than zero",
+        ),
+        ({"dpi": 0}, "plot dpi must be an integer between 72 and 4294967295"),
+        ({"dpi": 50}, "plot dpi must be an integer between 72 and 4294967295"),
+        ({"font_size": 1.0}, "font size must be at least 4 points"),
+        ({"font_size": 1e300}, "font size must be a finite positive number"),
+        ({"line_width_pt": 0.01}, "line width must be at least 0.1 points"),
+        ({"size": (1e300, 2.0)}, "figure width must be a finite number of at least 1.0 inch"),
+    ],
+)
+def test_figure_rejects_values_the_core_would_silently_clamp(kwargs, message) -> None:
+    with pytest.raises(ValueError, match=message):
+        _figure_plot().figure(**kwargs)
+
+
+def test_figure_accepts_the_margin_boundaries() -> None:
+    assert _figure_plot().figure(margin=0.0).to_snapshot()["margin"] == 0.0
+    assert _figure_plot().figure(margin=0.5).to_snapshot()["margin"] == 0.5
+
+
+def test_copy_and_deepcopy_replay_figure_settings() -> None:
+    plot = _figure_plot().figure(size=(3.25, 2.5), font_size=9.0)
+    for clone in (copy(plot), deepcopy(plot)):
+        snapshot = clone.to_snapshot()
+        assert snapshot["sizeIn"] == [3.25, 2.5]
+        assert snapshot["fontSize"] == 9.0
+
+
+def _png_size(png: bytes) -> tuple[int, int]:
+    return int.from_bytes(png[16:20], "big"), int.from_bytes(png[20:24], "big")
+
+
+def test_figure_margin_changes_the_rendered_layout() -> None:
+    assert _figure_plot().figure(margin=0.3).render_svg() != _figure_plot().render_svg()
+
+
+def test_figure_scientific_notation_changes_the_tick_labels() -> None:
+    assert (
+        _figure_plot().figure(scientific_notation=True).render_svg() != _figure_plot().render_svg()
+    )
+
+
+def test_figure_line_width_changes_the_rendered_lines() -> None:
+    assert _figure_plot().figure(line_width_pt=5.0).render_svg() != _figure_plot().render_svg()
+
+
+def test_max_resolution_caps_an_explicit_dpi_without_replacing_it() -> None:
+    png = _figure_plot().figure(size=(3.25, 2.5), dpi=300, max_resolution=(1920, 1440)).render_png()
+    assert _png_size(png) == (975, 750)
+
+
+def test_max_resolution_reduces_an_explicit_dpi_that_overflows_it() -> None:
+    png = _figure_plot().figure(size=(4.0, 3.0), dpi=300, max_resolution=(800, 600)).render_png()
+    assert _png_size(png) == (800, 600)
+
+
+def test_small_max_resolution_still_renders() -> None:
+    width, height = _png_size(_figure_plot().figure(max_resolution=(400, 400)).render_png())
+    assert width <= 400 and height <= 400
+
+
+def test_figure_with_one_invalid_argument_changes_nothing() -> None:
+    plot = _figure_plot()
+    before = plot.to_snapshot()
+    with pytest.raises(ValueError):
+        plot.figure(font_size=9.0, max_resolution=(0, 10))
+    assert plot.to_snapshot() == before

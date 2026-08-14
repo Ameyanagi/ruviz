@@ -321,8 +321,12 @@ impl PreparedPlot {
                         {
                             let color =
                                 series.color_with_alpha(crate::render::Color::from_rgb(0, 0, 0));
-                            let line_width =
-                                plot.dpi_scaled_line_width(series.props.line_width.value_or(2.0));
+                            let line_width = plot.dpi_scaled_line_width(
+                                series
+                                    .props
+                                    .line_width
+                                    .value_or(plot.display.config.lines.data_width),
+                            );
                             let line_style = series
                                 .props
                                 .line_style

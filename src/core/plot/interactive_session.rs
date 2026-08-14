@@ -4604,6 +4604,7 @@ fn compute_plot_layout_from_frame(
         layout_plot.display.config.typography.family.clone(),
     )?;
     renderer.set_text_engine_mode(layout_plot.display.text_engine);
+    renderer.set_tick_notation(layout_plot.layout.scientific_notation);
     renderer.set_render_scale(layout_plot.render_scale());
 
     let content =
@@ -4618,8 +4619,16 @@ fn compute_plot_layout_from_frame(
         &renderer,
         &content,
         dpi,
-        &crate::axes::format_tick_labels_for_scale(&x_ticks, &layout_plot.layout.x_scale),
-        &crate::axes::format_tick_labels_for_scale(&y_ticks, &layout_plot.layout.y_scale),
+        &crate::axes::format_tick_labels_with_notation(
+            &x_ticks,
+            &layout_plot.layout.x_scale,
+            layout_plot.layout.scientific_notation,
+        ),
+        &crate::axes::format_tick_labels_with_notation(
+            &y_ticks,
+            &layout_plot.layout.y_scale,
+            layout_plot.layout.scientific_notation,
+        ),
     )?;
     let layout = layout_plot.compute_layout_from_measurements(
         size_px,

@@ -20,7 +20,14 @@ targets = []
 crate-type = ["cdylib", "rlib"]
 
 [features]
-default = []
+default = ["embedded-font"]
+# Bundles a Noto Sans face (~569 KB) into the wasm and registers it
+# automatically. On by default so the module renders text out of the box.
+# Turn it off to drop that weight from the module and supply a face yourself
+# via `register_font_bytes_js` — as a separate cacheable, subsettable asset.
+# Without it, any render that needs text fails with an actionable error rather
+# than drawing blanks.
+"embedded-font" = []
 "3d" = ["ruviz/3d"]
 "3d-gpu" = ["3d", "ruviz/gpu", "dep:wgpu", "dep:wasm-bindgen-futures"]
 

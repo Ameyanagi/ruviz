@@ -41,11 +41,16 @@
 
 #[cfg(target_arch = "wasm32")]
 mod wasm {
-    use std::{mem, sync::OnceLock};
+    use std::mem;
+    // Only the embedded-font registration memoizes through a OnceLock.
+    #[cfg(feature = "embedded-font")]
+    use std::sync::OnceLock;
 
     use js_sys::{Array, Object, Reflect};
     #[cfg(feature = "3d-gpu")]
     use ruviz::core::{GpuSurfacePresentStatus3D, GpuSurfaceSession3D, RenderDiagnostics3D};
+    #[cfg(not(feature = "embedded-font"))]
+    use ruviz::render::has_registered_fonts;
     use ruviz::{
         axes::AxisScale,
         core::{
@@ -54,7 +59,7 @@ mod wasm {
         },
         data::{Observable, Signal},
         plots::{LineConfig, PlotConfig, ScatterConfig},
-        render::{Color, LineStyle, MarkerStyle, register_font_bytes},
+        render::{Color, FontFamily, LineStyle, MarkerStyle, register_font_bytes},
     };
     #[cfg(feature = "3d")]
     use ruviz::{
@@ -67,8 +72,14 @@ mod wasm {
         OffscreenCanvasRenderingContext2d,
     };
 
+    // Gated so a size-sensitive consumer can drop the ~569 KB face from the wasm
+    // and supply its own through `register_font_bytes_js` — as a separately
+    // cacheable (and subsettable) asset — instead of paying for it in every
+    // module download. On by default: the default build behaves as it always has.
+    #[cfg(feature = "embedded-font")]
     const DEFAULT_BROWSER_FONT_BYTES: &[u8] = include_bytes!("../assets/NotoSans-Regular.ttf");
 
+    #[cfg(feature = "embedded-font")]
     static DEFAULT_BROWSER_FONT_REGISTRATION: OnceLock<std::result::Result<(), String>> =
         OnceLock::new();
 
@@ -81,6 +92,34 @@ mod wasm {
         JsValue::from_str(&err.to_string())
     }
 
+    /// Reject the values that would silently become a clamped default.
+    /// The core builders clamp rather than fail, which is right for Rust call
+    /// sites but hides typos coming from JS, where `undefined` arrives as NaN.
+    fn finite_positive_f32(value: f32, field: &str) -> Result<f32, JsValue> {
+        if !value.is_finite() || value <= 0.0 {
+            return Err(JsValue::from_str(&format!(
+                "{field} must be a finite number greater than zero"
+            )));
+        }
+        Ok(value)
+    }
+
+    /// Map a CSS-style generic family name onto `FontFamily`, falling back to
+    /// treating the string as a specific registered family.
+    fn font_family_from_str(family: &str) -> FontFamily {
+        // Trim the fallback too: `"Arial "` must match the registered family
+        // `"Arial"`, not silently fall back to the default face.
+        let family = family.trim();
+        match family.to_ascii_lowercase().as_str() {
+            "serif" => FontFamily::Serif,
+            "sans-serif" | "sans_serif" | "sansserif" => FontFamily::SansSerif,
+            "monospace" | "mono" => FontFamily::Monospace,
+            "cursive" => FontFamily::Cursive,
+            "fantasy" => FontFamily::Fantasy,
+            _ => FontFamily::Name(family.to_string()),
+        }
+    }
+
     fn browser_bool(global_or_object: &JsValue, property: &str) -> bool {
         Reflect::has(global_or_object, &JsValue::from_str(property)).unwrap_or(false)
     }
@@ -91,6 +130,7 @@ mod wasm {
             .and_then(|value| value.as_f64())
     }
 
+    #[cfg(feature = "embedded-font")]
     fn ensure_default_browser_fonts() -> Result<(), JsValue> {
         DEFAULT_BROWSER_FONT_REGISTRATION
             .get_or_init(|| {
@@ -99,6 +139,18 @@ mod wasm {
             })
             .clone()
             .map_err(|err| JsValue::from_str(&err))
+    }
+
+    #[cfg(not(feature = "embedded-font"))]
+    fn ensure_default_browser_fonts() -> Result<(), JsValue> {
+        if has_registered_fonts() {
+            return Ok(());
+        }
+        Err(JsValue::from_str(
+            "ruviz-web was built without the `embedded-font` feature, so it has no \
+             default face. Register one before rendering text: \
+             `await registerFont(new Uint8Array(await (await fetch(fontUrl)).arrayBuffer()))`.",
+        ))
     }
 
     #[wasm_bindgen]
@@ -1208,8 +1260,27 @@ mod wasm {
             self.update_plot(|plot| plot.size_px(width, height));
         }
 
-        /// Sets the output DPI, which scales the exported pixels from `size_px`.
-        /// Apply it after `size_px`, which fixes the figure size in inches.
+        /// Sets the figure size in inches — the unit journals specify (a
+        /// single-column figure is typically 3.25 in, double-column 6.5 in).
+        /// Combine with `dpi` to fix the exported pixel dimensions.
+        /// Values below 1.0 inch are clamped.
+        pub fn size(&mut self, width_in: f32, height_in: f32) -> Result<(), JsValue> {
+            if !width_in.is_finite() || !height_in.is_finite() {
+                return Err(JsValue::from_str(
+                    "plot size must be finite numbers in inches",
+                ));
+            }
+            if width_in <= 0.0 || height_in <= 0.0 {
+                return Err(JsValue::from_str(
+                    "plot size must be greater than zero inches",
+                ));
+            }
+            self.update_plot(|plot| plot.size(width_in, height_in));
+            Ok(())
+        }
+
+        /// Sets the output DPI, which scales the exported pixels from the
+        /// figure size. Apply it after `size`/`size_px`.
         pub fn dpi(&mut self, dpi: u32) -> Result<(), JsValue> {
             if dpi == 0 {
                 return Err(JsValue::from_str(
@@ -1217,6 +1288,91 @@ mod wasm {
                 ));
             }
             self.update_plot(|plot| plot.dpi(dpi));
+            Ok(())
+        }
+
+        /// Sets the base font size in points, which every other text size is
+        /// derived from. Sizes below 4pt are clamped.
+        pub fn font_size(&mut self, points: f32) -> Result<(), JsValue> {
+            let points = finite_positive_f32(points, "font_size")?;
+            self.update_plot(|plot| plot.font_size(points));
+            Ok(())
+        }
+
+        /// Sets the title font size in points, absolute rather than relative to
+        /// `font_size`. Apply it after `font_size`, which it is measured against.
+        pub fn title_size(&mut self, points: f32) -> Result<(), JsValue> {
+            let points = finite_positive_f32(points, "title_size")?;
+            self.update_plot(|plot| plot.title_size(points));
+            Ok(())
+        }
+
+        /// Sets the font family for titles, axis labels, tick labels and
+        /// legends. Accepts a generic name — `serif`, `sans-serif`,
+        /// `monospace`, `cursive`, `fantasy` — or any specific family name,
+        /// which must have been registered with `register_font_bytes_js`.
+        pub fn font_family(&mut self, family: &str) -> Result<(), JsValue> {
+            if family.trim().is_empty() {
+                return Err(JsValue::from_str("font family must be a non-empty string"));
+            }
+            let family = font_family_from_str(family);
+            self.update_plot(|plot| plot.font_family(family.clone()));
+            Ok(())
+        }
+
+        /// Scales every typographic size by `factor` at once, preserving the
+        /// relative hierarchy between title, labels and ticks.
+        pub fn scale_typography(&mut self, factor: f32) -> Result<(), JsValue> {
+            let factor = finite_positive_f32(factor, "scale_typography")?;
+            self.update_plot(|plot| plot.scale_typography(factor));
+            Ok(())
+        }
+
+        /// Sets the data line width in points. Widths below 0.1 are clamped.
+        pub fn line_width_pt(&mut self, points: f32) -> Result<(), JsValue> {
+            let points = finite_positive_f32(points, "line_width_pt")?;
+            self.update_plot(|plot| plot.line_width_pt(points));
+            Ok(())
+        }
+
+        /// Sets the plot margin as a fraction of the figure, 0.0–0.5.
+        pub fn margin(&mut self, fraction: f32) -> Result<(), JsValue> {
+            // The core builder clamps to 0.0..=0.5; reject out-of-range here
+            // instead so 0.9 does not silently render as 0.5.
+            if !fraction.is_finite() || !(0.0..=0.5).contains(&fraction) {
+                return Err(JsValue::from_str(
+                    "margin must be a fraction between 0.0 and 0.5",
+                ));
+            }
+            self.update_plot(|plot| plot.margin(fraction));
+            Ok(())
+        }
+
+        /// Shrinks margins to fit the text, leaving `pad` points of slack.
+        pub fn tight_layout_pad(&mut self, points: f32) -> Result<(), JsValue> {
+            if !points.is_finite() || points < 0.0 {
+                return Err(JsValue::from_str(
+                    "tight_layout_pad must be a finite, non-negative number of points",
+                ));
+            }
+            self.update_plot(|plot| plot.tight_layout_pad(points));
+            Ok(())
+        }
+
+        /// Enables scientific notation on the axis tick labels.
+        pub fn scientific_notation(&mut self, enabled: bool) {
+            self.update_plot(|plot| plot.scientific_notation(enabled));
+        }
+
+        /// Caps the exported pixel dimensions while preserving the figure's
+        /// aspect ratio. Use for screen output; use `dpi` for print.
+        pub fn max_resolution(&mut self, max_width: u32, max_height: u32) -> Result<(), JsValue> {
+            if max_width == 0 || max_height == 0 {
+                return Err(JsValue::from_str(
+                    "max_resolution bounds must be integers greater than zero",
+                ));
+            }
+            self.update_plot(|plot| plot.max_resolution(max_width, max_height));
             Ok(())
         }
 
@@ -1422,10 +1578,10 @@ mod wasm {
         }
 
         fn export_png(&mut self) -> Result<Vec<u8>, JsValue> {
-            if let Some((version, cached)) = &self.export_png_cache {
-                if *version == self.frame_version {
-                    return Ok(cached.clone());
-                }
+            if let Some((version, cached)) = &self.export_png_cache
+                && *version == self.frame_version
+            {
+                return Ok(cached.clone());
             }
 
             let png = self
@@ -1444,10 +1600,10 @@ mod wasm {
         }
 
         fn export_svg(&mut self) -> Result<String, JsValue> {
-            if let Some((version, cached)) = &self.export_svg_cache {
-                if *version == self.frame_version {
-                    return Ok(cached.clone());
-                }
+            if let Some((version, cached)) = &self.export_svg_cache
+                && *version == self.frame_version
+            {
+                return Ok(cached.clone());
             }
 
             let mut plot = self

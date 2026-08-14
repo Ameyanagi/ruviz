@@ -317,6 +317,19 @@ pub fn initialize_text_system() {
     log::info!("Text rendering system initialized");
 }
 
+/// Whether at least one font has been registered via [`register_font_bytes`].
+///
+/// `register_font_bytes` deliberately treats malformed or unnamed data as a
+/// successful no-op, so its `Ok(())` does not prove a usable face exists. Call
+/// this when that distinction matters — notably on wasm, where there are no
+/// system fonts to fall back to and the difference is blank text versus an
+/// actionable error.
+pub fn has_registered_fonts() -> bool {
+    font_registry::snapshot()
+        .map(|snapshot| !snapshot.fonts.is_empty())
+        .unwrap_or(false)
+}
+
 /// Register a font from raw bytes with the global text system.
 pub fn register_font_bytes(bytes: Vec<u8>) -> Result<()> {
     // Preserve the historical successful no-op for malformed or unnamed data.

@@ -190,6 +190,9 @@ pub struct SkiaRenderer {
     render_scale: RenderScale,
     /// Active text rendering engine.
     text_engine_mode: TextEngineMode,
+    /// Forced tick-label notation (`Some(true)` scientific, `Some(false)`
+    /// plain, `None` automatic). Must match the layout measurement pass.
+    tick_notation: Option<bool>,
     clip_mask_cache: HashMap<ClipMaskKey, Arc<Mask>>,
     marker_path_cache: HashMap<MarkerPathKey, Arc<tiny_skia::Path>>,
     marker_sprite_cache: HashMap<MarkerSpriteKey, Arc<MarkerSprite>>,
@@ -233,6 +236,7 @@ impl SkiaRenderer {
             x_tick_label_plan: XTickLabelPlan::default(),
             render_scale: RenderScale::from_canvas_size(width, height, crate::core::REFERENCE_DPI),
             text_engine_mode: TextEngineMode::Plain,
+            tick_notation: None,
             clip_mask_cache: HashMap::new(),
             marker_path_cache: HashMap::new(),
             marker_sprite_cache: HashMap::new(),
@@ -300,6 +304,11 @@ impl SkiaRenderer {
     /// Set text rendering backend mode.
     pub fn set_text_engine_mode(&mut self, mode: TextEngineMode) {
         self.text_engine_mode = mode;
+    }
+
+    /// Set the forced tick-label notation (`None` keeps the automatic choice).
+    pub fn set_tick_notation(&mut self, notation: Option<bool>) {
+        self.tick_notation = notation;
     }
 
     /// Get text rendering backend mode.
@@ -1707,7 +1716,8 @@ impl SkiaRenderer {
         tick_size: f32,
         color: Color,
     ) -> Result<()> {
-        let y_labels = format_tick_labels_for_scale(y_ticks, y_scale);
+        let y_labels =
+            crate::axes::format_tick_labels_with_notation(y_ticks, y_scale, self.tick_notation);
 
         for (tick_value, label_text) in y_ticks.iter().zip(y_labels.iter()) {
             let y_pixel =
@@ -1757,7 +1767,8 @@ impl SkiaRenderer {
         })?;
 
         if show_tick_labels {
-            let x_labels = format_tick_labels_for_scale(x_ticks, x_scale);
+            let x_labels =
+                crate::axes::format_tick_labels_with_notation(x_ticks, x_scale, self.tick_notation);
             for (tick_value, label_text) in x_ticks.iter().zip(x_labels.iter()) {
                 let x_pixel =
                     Self::x_label_center_scaled(plot_area, *tick_value, x_min, x_max, x_scale);
