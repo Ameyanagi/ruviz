@@ -2836,13 +2836,36 @@ mod tests {
         (controller, frames)
     }
 
+    /// Block until `condition` holds, or fail with enough detail to diagnose why.
+    ///
+    /// This times out intermittently on Linux CI and has not been reproduced
+    /// anywhere else — not on macOS or Windows CI, not locally, and not under
+    /// a Linux container capped at 2 or 4 CPUs (issue #152). The bare message
+    /// it used to fail with could not distinguish a worker that never ran from
+    /// one that ran and never finished, so every theory about it stayed a
+    /// theory.
+    ///
+    /// The poll count is the discriminator. A waiter that spun millions of
+    /// times was not itself starved of CPU, which is the reading the spin
+    /// invites; one that barely polled was descheduled and the machine, not
+    /// this loop, is the story. `available_parallelism` records how many cores
+    /// the failing runner actually had, which is otherwise guesswork.
+    ///
+    /// Do not change the waiting primitive to "fix" the flake without a
+    /// reproduction and a control run: swapping `yield_now` for a 1ms sleep
+    /// was tried and made these tests fail 11 runs out of 12 under load.
     fn wait_for(condition: impl Fn() -> bool) {
         let start = Instant::now();
+        let mut polls: u64 = 0;
         while !condition() {
+            let elapsed = start.elapsed();
             assert!(
-                start.elapsed() < Duration::from_secs(10),
-                "timed out waiting for render worker"
+                elapsed < Duration::from_secs(10),
+                "timed out waiting for render worker after {polls} polls in {elapsed:?} \
+                 (available_parallelism: {:?})",
+                std::thread::available_parallelism(),
             );
+            polls += 1;
             std::thread::yield_now();
         }
     }
