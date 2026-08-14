@@ -81,13 +81,18 @@ export function applySnapshotMetadata(rawPlot: RawJsPlot, snapshot: PlotSnapshot
 
   // Shape-checked rather than `!== undefined`: a foreign snapshot with a null
   // or malformed value should degrade like every other field, not fail replay
-  // in the fallible wasm setter.
-  if (
-    Array.isArray(snapshot.maxResolution) &&
-    snapshot.maxResolution.length === 2 &&
-    snapshot.maxResolution.every((value) => Number.isInteger(value) && value > 0)
-  ) {
-    rawPlot.max_resolution(snapshot.maxResolution[0], snapshot.maxResolution[1]);
+  // in the fallible wasm setter. Destructuring turns sparse-array holes into
+  // undefined (`.every` would skip them), and the u32 ceiling is what the
+  // wasm setter can actually accept.
+  if (Array.isArray(snapshot.maxResolution) && snapshot.maxResolution.length === 2) {
+    const [maxWidth, maxHeight] = snapshot.maxResolution;
+    if (
+      [maxWidth, maxHeight].every(
+        (value) => Number.isInteger(value) && value > 0 && value <= 4294967295,
+      )
+    ) {
+      rawPlot.max_resolution(maxWidth, maxHeight);
+    }
   }
 
   if (typeof snapshot.scientificNotation === "boolean") {
