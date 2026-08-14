@@ -2,10 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [0.8.0] - 2026-08-15
 
 ### Added
 
+- A grouped `figure()` presentation call in the Python and web bindings
+  (`Plot.figure(...)` / `PlotBuilder.figure({...})`, with matching setters on
+  the raw wasm handle): figure size in inches, dpi, font and title size, font
+  family, typography scale, line width, margin, tight-layout padding,
+  scientific notation and a maximum resolution, chosen as one set the way a
+  journal specifies them. The call is atomic — every argument is validated
+  before any is applied — and the settings are recorded under snapshot schema
+  version 2, so copies, notebook widgets and worker replay reproduce them.
+  Validation rejects the values the core would silently clamp: sizes below
+  1.0 inch, dpi below 72, font sizes below 4pt and line widths below 0.1pt.
 - `Theme` gains four knobs that let a theme express a panel-based look:
   `panel_background: Option<Color>` fills the plot area before the grid,
   `frame: bool` removes every spine, `tick_marks: bool` removes the tick marks
@@ -28,6 +38,20 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- The default data line width is now the documented matplotlib 1.5pt. The
+  renderer used to hard-code 2.0pt for a line series with no explicit width,
+  ignoring both `line_width_pt()` and the width the active theme asked for
+  (publication's 0.75pt included); the fallback now reads the configured
+  width, so those finally apply.
+- `max_resolution()` is a true cap when `dpi()` was set explicitly: a DPI
+  whose output already fits the bounds is kept, an overflowing one is reduced
+  to fit. Without an explicit DPI it scales to fit the bounds as before.
+  Bounds small enough to imply a DPI below the render minimum are honoured
+  like an exact pixel size instead of failing every subsequent render.
+- `scientific_notation(bool)` now forces tick-label notation on both axes —
+  `true` always scientific, `false` always plain decimals — where unset keeps
+  the automatic per-axis choice. A symlog axis keeps its linear region's
+  labels plain either way.
 - `Theme::seaborn()` is now a faithful port of `seaborn.set_theme()` rather than
   a loose approximation: an `#EAEAF2` data panel on a white figure, white grid
   lines drawn on that panel, no spines and no tick marks, soft near-black text
@@ -83,6 +107,23 @@ All notable changes to this project will be documented in this file.
   corner-most tick labels used to come to rest a few pixels apart and read as
   one number ("2 2"). The y label is now stepped clear of the x label, and
   dropped if it cannot be.
+
+### Fixed
+
+- `margin()` and `scientific_notation()` were recorded but never read by any
+  render path; both now reach the layout and the tick formatter. `margin()`
+  writes the proportional margins the layout actually consumes, on all four
+  sides.
+- A font family with surrounding whitespace (`"Arial "`) now matches the
+  registered family instead of silently falling back to the default face, and
+  the wasm binding rejects empty family names like the other bindings.
+- A web build without the `embedded-font` feature could never follow its own
+  error message: module initialization demanded a registered font before
+  `registerFont()` could supply one. Initialization now succeeds font-free
+  and the render entry points keep reporting the actionable error.
+- Snapshot replay tolerates malformed foreign metadata — a null, sparse or
+  out-of-range `maxResolution` is skipped instead of aborting the plot
+  rebuild.
 
 ## [0.7.0] - 2026-08-05
 
