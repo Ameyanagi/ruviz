@@ -10,6 +10,21 @@ High-performance 2D and 3D plotting for Rust. One builder, 29 plot types
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue)](LICENSE)
 [![CI](https://github.com/Ameyanagi/ruviz/actions/workflows/ci.yml/badge.svg)](https://github.com/Ameyanagi/ruviz/actions/workflows/ci.yml)
 
+## Demo
+
+<!-- Two links on purpose: github.com renders the bare attachment URL as an
+     inline player, crates.io sanitises it away and shows only the thumbnail
+     that links to YouTube. Dropping either one blanks the demo on that site.
+     See f8c433f. -->
+
+https://github.com/user-attachments/assets/bce842b5-50d8-43e4-893d-074bf6738975
+
+[![Watch the ruviz demo on YouTube](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/readme/demo-thumbnail.png)](https://youtu.be/6MT_hu8xpjo)
+
+A 77-second tour: 29 plot types from one builder, the built-in themes, Typst
+mathematics and CJK text, 3D and animation, and the Python and WebAssembly
+bindings. Every figure in it is real ruviz output.
+
 ## Install
 
 ```toml
@@ -257,7 +272,6 @@ enabling `performance` ([benchmarks](docs/benchmarks/rust-feature-impact.md)).
 - [Gallery](docs/gallery/README.md) — every plot type with runnable source
 - Migrating from [matplotlib](docs/migration/matplotlib.md) or [seaborn](docs/migration/seaborn.md)
 - Examples: `cargo run --release --example doc_line_plot` (see `examples/`)
-- [Demo video](https://youtu.be/6MT_hu8xpjo) — 77-second tour of the library
 
 ## License
 
