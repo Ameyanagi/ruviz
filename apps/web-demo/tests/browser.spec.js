@@ -1733,6 +1733,6 @@ test("the builder rejects unusable style and axis names at the call", async ({ p
     "unsupported linestyle 'wavy'; expected one of: solid, dashed, dotted, dash-dot, dash-dot-dot",
     "unsupported legend position 'nowhere'; expected one of: best, upper_right, upper_left, lower_left, lower_right, right, center_left, center_right, lower_center, upper_center, center, outside_right, outside_left, outside_upper, outside_lower",
     "unsupported axis scale 'logarithmic'; expected one of: linear, log, symlog",
-    "plot dpi must be an integer greater than zero",
+    "plot dpi must be an integer between 72 and 4294967295",
   ]);
 });
