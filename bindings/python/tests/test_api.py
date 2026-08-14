@@ -999,9 +999,10 @@ def test_plot_level_settings_default_to_absent() -> None:
 @pytest.mark.parametrize(
     ("apply", "message"),
     [
-        (lambda plot: plot.dpi(0), "plot dpi must be an integer greater than zero"),
-        (lambda plot: plot.dpi(0.5), "plot dpi must be an integer greater than zero"),
-        (lambda plot: plot.dpi(True), "plot dpi must be an integer greater than zero"),
+        (lambda plot: plot.dpi(0), "plot dpi must be an integer between 72 and 4294967295"),
+        (lambda plot: plot.dpi(50), "plot dpi must be an integer between 72 and 4294967295"),
+        (lambda plot: plot.dpi(0.5), "plot dpi must be an integer between 72 and 4294967295"),
+        (lambda plot: plot.dpi(True), "plot dpi must be an integer between 72 and 4294967295"),
         (
             lambda plot: plot.size_px(200.5, 150),
             "plot dimensions must be integers greater than zero",
@@ -1730,12 +1731,22 @@ def test_tight_layout_pad_is_applied_after_the_labels_it_measures() -> None:
         ({"scale_typography": 0.0}, "typography scale must be a finite positive number"),
         ({"line_width_pt": -0.5}, "line width must be a finite positive number"),
         ({"font_family": "  "}, "font family must be a non-empty string"),
+        ({"scientific_notation": "false"}, "scientific notation must be a boolean"),
         ({"margin": float("inf")}, "figure margin must be a fraction between 0.0 and 0.5"),
         ({"margin": 0.9}, "figure margin must be a fraction between 0.0 and 0.5"),
         ({"margin": -0.1}, "figure margin must be a fraction between 0.0 and 0.5"),
         ({"tight_layout_pad": -1.0}, "tight layout padding must be"),
         ({"max_resolution": (0, 10)}, "max resolution bounds must be integers greater than zero"),
-        ({"dpi": 0}, "plot dpi must be an integer greater than zero"),
+        (
+            {"max_resolution": (2**40, 10)},
+            "max resolution bounds must be integers greater than zero",
+        ),
+        ({"dpi": 0}, "plot dpi must be an integer between 72 and 4294967295"),
+        ({"dpi": 50}, "plot dpi must be an integer between 72 and 4294967295"),
+        ({"font_size": 1.0}, "font size must be at least 4 points"),
+        ({"font_size": 1e300}, "font size must be a finite positive number"),
+        ({"line_width_pt": 0.01}, "line width must be at least 0.1 points"),
+        ({"size": (1e300, 2.0)}, "figure width must be a finite number of at least 1.0 inch"),
     ],
 )
 def test_figure_rejects_values_the_core_would_silently_clamp(kwargs, message) -> None:

@@ -1187,9 +1187,10 @@ export class PlotBuilder {
         [size[0], "figure width"],
         [size[1], "figure height"],
       ] as const) {
+        assertFinitePositive(value, label);
         // The core builder clamps sizes below 1.0 inch, which would silently
         // change both the physical size and the aspect ratio.
-        if (!Number.isFinite(value) || value < 1) {
+        if (value < 1) {
           throw new RangeError(`${label} must be a finite number of at least 1.0 inch`);
         }
       }
@@ -1197,14 +1198,19 @@ export class PlotBuilder {
     }
 
     if (typeof dpi !== "undefined") {
-      if (!(Number.isInteger(dpi) && dpi > 0)) {
-        throw new RangeError("figure dpi must be an integer greater than zero");
+      // The core clamps dpi below 72; reject it instead.
+      if (!(Number.isInteger(dpi) && dpi >= 72 && dpi <= 4294967295)) {
+        throw new RangeError("figure dpi must be an integer between 72 and 4294967295");
       }
       staged.dpi = dpi;
     }
 
     if (typeof fontSize !== "undefined") {
       assertFinitePositive(fontSize, "font size");
+      // The core clamps font sizes below 4pt; reject them instead.
+      if (fontSize < 4) {
+        throw new RangeError("font size must be at least 4 points");
+      }
       staged.fontSize = fontSize;
     }
 
@@ -1227,6 +1233,10 @@ export class PlotBuilder {
 
     if (typeof lineWidthPt !== "undefined") {
       assertFinitePositive(lineWidthPt, "line width");
+      // The core clamps line widths below 0.1pt; reject them instead.
+      if (lineWidthPt < 0.1) {
+        throw new RangeError("line width must be at least 0.1 points");
+      }
       staged.lineWidthPt = lineWidthPt;
     }
 
@@ -1240,7 +1250,11 @@ export class PlotBuilder {
     }
 
     if (typeof tightLayoutPad !== "undefined") {
-      if (!Number.isFinite(tightLayoutPad) || tightLayoutPad < 0) {
+      if (
+        !Number.isFinite(tightLayoutPad) ||
+        tightLayoutPad < 0 ||
+        tightLayoutPad > 3.4028234663852886e38
+      ) {
         throw new RangeError(
           "tight layout padding must be a finite, non-negative number of points",
         );
@@ -1261,8 +1275,8 @@ export class PlotBuilder {
         [maxResolution[0], "max resolution width"],
         [maxResolution[1], "max resolution height"],
       ] as const) {
-        if (!(Number.isInteger(value) && value > 0)) {
-          throw new RangeError(`${label} must be an integer greater than zero`);
+        if (!(Number.isInteger(value) && value > 0 && value <= 4294967295)) {
+          throw new RangeError(`${label} must be an integer greater than zero, at most 4294967295`);
         }
       }
       staged.maxResolution = [maxResolution[0], maxResolution[1]];
@@ -1279,8 +1293,9 @@ export class PlotBuilder {
   }
 
   setDpi(dpi: number): this {
-    if (!(Number.isInteger(dpi) && dpi > 0)) {
-      throw new RangeError("plot dpi must be an integer greater than zero");
+    // The core clamps dpi below 72; reject it instead.
+    if (!(Number.isInteger(dpi) && dpi >= 72 && dpi <= 4294967295)) {
+      throw new RangeError("plot dpi must be an integer between 72 and 4294967295");
     }
     this.#state.dpi = dpi;
     this.#markDirty();

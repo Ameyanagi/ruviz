@@ -266,8 +266,17 @@ def _normalize_observable_math_input(value: Any) -> Any:
 
 #: Messages for the whole-number plot dimensions, shared with the native handle.
 _SIZE_PX_MESSAGE = "plot dimensions must be integers greater than zero"
-_DPI_MESSAGE = "plot dpi must be an integer greater than zero"
-_MAX_RESOLUTION_MESSAGE = "max resolution bounds must be integers greater than zero"
+_DPI_MESSAGE = "plot dpi must be an integer between 72 and 4294967295"
+_MAX_RESOLUTION_MESSAGE = (
+    "max resolution bounds must be integers greater than zero, at most 4294967295"
+)
+
+#: Bounds of the native f32/u32 figure parameters, enforced while staging so
+#: the native layer can never reject a value validation already accepted --
+#: that would break figure()'s atomicity.
+_F32_MAX = 3.4028234663852886e38
+_F32_TINY = 1.1754943508222875e-38
+_U32_MAX = 4_294_967_295
 _SIZE_PX_3D_MESSAGE = "3D plot dimensions must be integers greater than zero"
 _DPI_3D_MESSAGE = "3D plot dpi must be an integer greater than zero"
 
@@ -376,7 +385,7 @@ def _finite_positive(value: Any, name: str) -> float:
     a subtly wrong figure rather than an error.
     """
     number = float(value)
-    if not math.isfinite(number) or number <= 0:
+    if not math.isfinite(number) or not _F32_TINY <= number <= _F32_MAX:
         raise ValueError(f"{name} must be a finite positive number")
     return number
 
@@ -388,7 +397,7 @@ def _size_inches(value: Any, name: str) -> float:
     figure's physical size and its aspect ratio.
     """
     number = float(value)
-    if not math.isfinite(number) or number < 1.0:
+    if not math.isfinite(number) or not 1.0 <= number <= _F32_MAX:
         raise ValueError(f"{name} must be a finite number of at least 1.0 inch")
     return number
 
@@ -1214,7 +1223,9 @@ class Plot:
         figure is typically 3.25 in wide, a double-column one 6.5 in.
 
         The call is atomic: every argument is validated before any is applied,
-        so a rejected value leaves the plot unchanged.
+        so a rejected value leaves the plot unchanged. Values the core would
+        silently clamp are rejected instead: sizes below 1.0 inch, dpi below
+        72, font sizes below 4 points and line widths below 0.1 points.
 
         >>> plot.figure(size=(3.25, 2.5), dpi=300, font_size=9, font_family="serif")
         """
@@ -1229,12 +1240,16 @@ class Plot:
 
         if dpi is not None:
             normalized = _exact_int(dpi, _DPI_MESSAGE)
-            if normalized < 1:
+            if not 72 <= normalized <= _U32_MAX:
                 raise ValueError(_DPI_MESSAGE)
             staged["dpi"] = normalized
 
         if font_size is not None:
-            staged["fontSize"] = _finite_positive(font_size, "font size")
+            value = _finite_positive(font_size, "font size")
+            # The core clamps font sizes below 4pt; reject them instead.
+            if value < 4.0:
+                raise ValueError("font size must be at least 4 points")
+            staged["fontSize"] = value
 
         if title_size is not None:
             staged["titleSize"] = _finite_positive(title_size, "title size")
@@ -1248,7 +1263,11 @@ class Plot:
             staged["scaleTypography"] = _finite_positive(scale_typography, "typography scale")
 
         if line_width_pt is not None:
-            staged["lineWidthPt"] = _finite_positive(line_width_pt, "line width")
+            value = _finite_positive(line_width_pt, "line width")
+            # The core clamps line widths below 0.1pt; reject them instead.
+            if value < 0.1:
+                raise ValueError("line width must be at least 0.1 points")
+            staged["lineWidthPt"] = value
 
         if margin is not None:
             value = float(margin)
@@ -1260,20 +1279,22 @@ class Plot:
 
         if tight_layout_pad is not None:
             value = float(tight_layout_pad)
-            if not math.isfinite(value) or value < 0:
+            if not math.isfinite(value) or not 0 <= value <= _F32_MAX:
                 raise ValueError(
                     "tight layout padding must be a finite, non-negative number of points"
                 )
             staged["tightLayoutPad"] = value
 
         if scientific_notation is not None:
-            staged["scientificNotation"] = bool(scientific_notation)
+            if not isinstance(scientific_notation, bool):
+                raise ValueError("scientific notation must be a boolean")
+            staged["scientificNotation"] = scientific_notation
 
         if max_resolution is not None:
             max_width, max_height = _pair(max_resolution, "max resolution")
             normalized_width = _exact_int(max_width, _MAX_RESOLUTION_MESSAGE)
             normalized_height = _exact_int(max_height, _MAX_RESOLUTION_MESSAGE)
-            if normalized_width <= 0 or normalized_height <= 0:
+            if not 0 < normalized_width <= _U32_MAX or not 0 < normalized_height <= _U32_MAX:
                 raise ValueError(_MAX_RESOLUTION_MESSAGE)
             staged["maxResolution"] = [normalized_width, normalized_height]
 
@@ -1285,7 +1306,7 @@ class Plot:
     def dpi(self, dpi: int) -> "Plot":
         """Set output dots per inch, scaling the exported pixels from the figure size."""
         normalized = _exact_int(dpi, _DPI_MESSAGE)
-        if normalized < 1:
+        if not 72 <= normalized <= _U32_MAX:
             raise ValueError(_DPI_MESSAGE)
         self._native_plot.dpi(normalized)
         self._state["dpi"] = normalized

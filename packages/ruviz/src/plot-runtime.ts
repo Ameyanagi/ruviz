@@ -80,8 +80,13 @@ export function applySnapshotMetadata(rawPlot: RawJsPlot, snapshot: PlotSnapshot
   }
 
   // Shape-checked rather than `!== undefined`: a foreign snapshot with a null
-  // or malformed value should degrade like every other field, not fail replay.
-  if (Array.isArray(snapshot.maxResolution)) {
+  // or malformed value should degrade like every other field, not fail replay
+  // in the fallible wasm setter.
+  if (
+    Array.isArray(snapshot.maxResolution) &&
+    snapshot.maxResolution.length === 2 &&
+    snapshot.maxResolution.every((value) => Number.isInteger(value) && value > 0)
+  ) {
     rawPlot.max_resolution(snapshot.maxResolution[0], snapshot.maxResolution[1]);
   }
 

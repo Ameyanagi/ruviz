@@ -502,7 +502,10 @@ export interface FigureOptions {
  * would otherwise produce a wrong figure with no diagnostic.
  */
 export function assertFinitePositive(value: number, label: string): void {
-  if (!Number.isFinite(value) || value <= 0) {
+  // Bounded to positive finite f32 values: the wasm layer stores these as
+  // f32, and a value that overflows to Infinity (or rounds to zero) there
+  // would be rejected only later, at rebuild time.
+  if (!Number.isFinite(value) || value < 1.1754943508222875e-38 || value > 3.4028234663852886e38) {
     throw new RangeError(`${label} must be a finite number greater than zero`);
   }
 }
