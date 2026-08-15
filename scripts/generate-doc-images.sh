@@ -60,6 +60,12 @@ for example in "$PROJECT_ROOT"/examples/doc_*.rs; do
         doc_typst_text)
             run_example "$name" "typst-math"
             ;;
+        doc_surface3d_animation)
+            run_example "$name" "3d,animation"
+            ;;
+        doc_line3d|doc_scatter3d|doc_surface3d|doc_wireframe3d)
+            run_example "$name" "3d"
+            ;;
         *)
             run_example "$name"
             ;;
