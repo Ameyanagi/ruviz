@@ -1800,6 +1800,12 @@ def test_small_max_resolution_still_renders() -> None:
     assert width <= 400 and height <= 400
 
 
+def test_size_px_pixels_survive_the_inch_round_trip() -> None:
+    # 420px stores as 4.2in, which is 419.99997px back at 100dpi; the canvas
+    # must snap to the requested pixels, not truncate to 419.
+    assert _png_size(_figure_plot().size_px(900, 420).render_png()) == (900, 420)
+
+
 def test_figure_with_one_invalid_argument_changes_nothing() -> None:
     plot = _figure_plot()
     before = plot.to_snapshot()

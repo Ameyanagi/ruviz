@@ -66,9 +66,21 @@ impl FigureConfig {
     ///
     /// `(width_px, height_px)` tuple
     pub fn canvas_size(&self) -> (u32, u32) {
+        // Snap to the nearest integer when the product is within float noise of
+        // it: `size_px(900, 420)` stores 4.2 in, which is 419.99997 back at
+        // 100 dpi, and plain truncation would ship a 419px canvas. A genuinely
+        // fractional size (6.4 in at 72 dpi = 460.8) keeps truncating.
+        fn snap_trunc(px: f32) -> u32 {
+            let snapped = px.round();
+            if (px - snapped).abs() < 1e-2 {
+                snapped as u32
+            } else {
+                px as u32
+            }
+        }
         (
-            in_to_px(self.width, self.dpi) as u32,
-            in_to_px(self.height, self.dpi) as u32,
+            snap_trunc(in_to_px(self.width, self.dpi)),
+            snap_trunc(in_to_px(self.height, self.dpi)),
         )
     }
 
@@ -1178,6 +1190,16 @@ mod tests {
         let (w, h) = config.canvas_size();
         assert_eq!(w, 1920);
         assert_eq!(h, 1440);
+
+        // A pixel size that is not exactly representable in inches must
+        // survive the round trip: 420px -> 4.2in -> 419.99997px -> 420px.
+        let config = FigureConfig::new(9.0, 4.2, 100.0);
+        assert_eq!(config.canvas_size(), (900, 420));
+
+        // A genuinely fractional product keeps truncating: 4.8in at 72dpi
+        // is 345.6px and stays 345, not 346.
+        let config = FigureConfig::new(6.4, 4.8, 72.0);
+        assert_eq!(config.canvas_size(), (460, 345));
     }
 
     #[test]
