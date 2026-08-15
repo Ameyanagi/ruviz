@@ -478,6 +478,8 @@ impl Plot {
                 let auto_density = self.render.fast
                     && x.len() as f64
                         > f64::from(plot_area.width()) * f64::from(plot_area.height());
+                let marker_size =
+                    self.dpi_scaled_line_width(series.props.marker_size.value_or(10.0));
                 if series.density || auto_density {
                     raster_plan.push_density(DensityBatch::from_xy(
                         x,
@@ -490,12 +492,13 @@ impl Plot {
                         &self.layout.x_scale,
                         &self.layout.y_scale,
                         color,
+                        // The same footprint the exact markers would paint, so
+                        // the density silhouette matches the marker render.
+                        marker_size,
                     ));
                     return Ok(Some(raster_plan));
                 }
 
-                let marker_size =
-                    self.dpi_scaled_line_width(series.props.marker_size.value_or(10.0));
                 let marker_style = series.props.marker_style.value_or(MarkerStyle::Circle);
                 let points = project_xy_points(
                     x,

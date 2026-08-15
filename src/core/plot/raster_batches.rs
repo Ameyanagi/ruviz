@@ -215,6 +215,73 @@ fn aggregate_density_counts(x_data: &[f64], y_data: &[f64], spec: DensityGridSpe
     }
 }
 
+/// Spread per-pixel center counts over the marker's disk footprint.
+///
+/// The aggregation counts marker *centers*, but the exact renderer paints
+/// each point as a disk `footprint_px` wide — a lone outlier is a fat dot,
+/// not one pixel of dust. Convolving the count grid with that disk makes a
+/// density pixel answer "how many markers cover me", so the density render
+/// keeps the exact render's silhouette. Cost stays pixel-scaled:
+/// per-row prefix sums make it O(pixels × footprint rows).
+fn convolve_disk_footprint(
+    counts: Vec<u32>,
+    width: usize,
+    height: usize,
+    footprint_px: f32,
+) -> Vec<u32> {
+    let radius = footprint_px / 2.0;
+    let spreads_beyond_one_pixel = radius.is_finite() && radius > 0.5;
+    if !spreads_beyond_one_pixel || width == 0 || height == 0 {
+        return counts;
+    }
+    let radius_rows = radius as i64;
+
+    // Half-width of the disk at each row offset: dx² + dy² ≤ r².
+    let half_widths: Vec<i64> = (-radius_rows..=radius_rows)
+        .map(|dy| {
+            (radius as f64)
+                .mul_add(radius as f64, -((dy * dy) as f64))
+                .sqrt() as i64
+        })
+        .collect();
+
+    // One prefix-sum row per grid row, so any horizontal span sums in O(1).
+    let mut prefix = vec![0u64; (width + 1) * height];
+    for row in 0..height {
+        let source = &counts[row * width..(row + 1) * width];
+        let target = &mut prefix[row * (width + 1)..(row + 1) * (width + 1)];
+        for (column, &count) in source.iter().enumerate() {
+            target[column + 1] = target[column] + u64::from(count);
+        }
+    }
+
+    let covered_row = |row: usize| -> Vec<u32> {
+        let mut out = vec![0u32; width];
+        for (offset, &half_width) in half_widths.iter().enumerate() {
+            let source_row = row as i64 + offset as i64 - radius_rows;
+            if source_row < 0 || source_row >= height as i64 {
+                continue;
+            }
+            let row_prefix =
+                &prefix[source_row as usize * (width + 1)..(source_row as usize + 1) * (width + 1)];
+            for (column, value) in out.iter_mut().enumerate() {
+                let left = (column as i64 - half_width).max(0) as usize;
+                let right = ((column as i64 + half_width + 1).min(width as i64)) as usize;
+                let sum = row_prefix[right] - row_prefix[left];
+                *value = value.saturating_add(sum.min(u64::from(u32::MAX)) as u32);
+            }
+        }
+        out
+    };
+
+    #[cfg(feature = "parallel")]
+    let rows: Vec<Vec<u32>> = (0..height).into_par_iter().map(covered_row).collect();
+    #[cfg(not(feature = "parallel"))]
+    let rows: Vec<Vec<u32>> = (0..height).map(covered_row).collect();
+
+    rows.concat()
+}
+
 impl DensityBatch {
     #[allow(clippy::too_many_arguments)]
     pub(super) fn from_xy(
@@ -228,6 +295,7 @@ impl DensityBatch {
         x_scale: &crate::axes::AxisScale,
         y_scale: &crate::axes::AxisScale,
         color: Color,
+        footprint_px: f32,
     ) -> Self {
         let width = plot_area.width().ceil().max(1.0) as usize;
         let height = plot_area.height().ceil().max(1.0) as usize;
@@ -242,8 +310,14 @@ impl DensityBatch {
             y_scale: *y_scale,
         };
 
+        let counts = convolve_disk_footprint(
+            aggregate_density_counts(x_data, y_data, spec),
+            width,
+            height,
+            footprint_px,
+        );
         Self {
-            counts: aggregate_density_counts(x_data, y_data, spec).into(),
+            counts: counts.into(),
             width: width as u32,
             height: height as u32,
             color,
@@ -785,6 +859,32 @@ mod tests {
         let parallel = aggregate_density_counts_parallel(&x, &y, spec);
 
         assert_eq!(parallel, serial);
+    }
+
+    #[test]
+    fn test_disk_footprint_spreads_a_center_count_hand_checked() {
+        // One marker center in the middle of a 7x7 grid, footprint 5px
+        // (radius 2.5): the covered disk rows are 3, 5, 5, 5, 3 wide.
+        let mut counts = vec![0u32; 49];
+        counts[3 * 7 + 3] = 1;
+        let covered = convolve_disk_footprint(counts, 7, 7, 5.0);
+
+        let expected_rows: [(usize, i64); 5] = [(1, 1), (2, 2), (3, 2), (4, 2), (5, 1)];
+        let mut expected = vec![0u32; 49];
+        for (row, half_width) in expected_rows {
+            for column in (3 - half_width as usize)..=(3 + half_width as usize) {
+                expected[row * 7 + column] = 1;
+            }
+        }
+        assert_eq!(covered, expected);
+        assert_eq!(covered.iter().sum::<u32>(), 21);
+    }
+
+    #[test]
+    fn test_disk_footprint_of_one_pixel_is_identity() {
+        let counts: Vec<u32> = (0..12).collect();
+        assert_eq!(convolve_disk_footprint(counts.clone(), 4, 3, 1.0), counts);
+        assert_eq!(convolve_disk_footprint(counts.clone(), 4, 3, 0.0), counts);
     }
 
     #[test]
