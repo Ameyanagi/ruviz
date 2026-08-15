@@ -5397,6 +5397,7 @@ dependencies = [
  "softbuffer",
  "svg2pdf",
  "swash",
+ "sys-locale",
  "tempfile",
  "thiserror 2.0.18",
  "tiny-skia 0.12.0",

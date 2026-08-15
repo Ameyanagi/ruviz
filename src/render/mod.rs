@@ -4,6 +4,7 @@ pub mod backend;
 pub mod color;
 pub mod colorbar;
 pub mod cosmic_text_renderer;
+pub(crate) mod font_cache;
 pub(crate) mod font_registry;
 #[cfg(feature = "gpu")]
 pub mod gpu;
