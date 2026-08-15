@@ -231,9 +231,9 @@ polars = ["polars_support"]
 # it: tiles are rendered through `rayon` at
 # `src/render/three_d/software/raster.rs`, with a serial fallback that
 # `serial_and_parallel_software_tiles_are_byte_identical` pins as byte-identical.
-# It does *not* reach the 2D raster path at all: the unreachable 2D
-# series-parallel renderer was deleted in 2026-07, so `parallel` changes no 2D
-# output and no 2D timing.
+# The unreachable 2D series-parallel backend was deleted in 2026-07; the feature
+# now also parallelizes only the pixel-local 2D marker compositor across
+# disjoint row bands, with point order preserved independently in every band.
 parallel = ["dep:rayon"]
 gpu = ["dep:wgpu", "dep:bytemuck", "dep:pollster", "dep:futures-intrusive"]
 simd = ["dep:wide"]

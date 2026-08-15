@@ -1119,9 +1119,10 @@ impl Plot {
         match requested_backend {
             BackendType::Skia => unreachable!("Skia resolution returned above"),
             // There is no 2D series-parallel raster backend in any build
-            // configuration; the `parallel` cargo feature only parallelizes the
-            // software 3D tile rasterizer. So this is always a fallback, and the
-            // reason never depends on the feature flag.
+            // configuration. The `parallel` cargo feature accelerates internal
+            // pixel-local work (software 3D tiles and 2D marker row bands), but
+            // does not restore that backend. So this is always a fallback, and
+            // the reason never depends on the feature flag.
             BackendType::Parallel => {
                 self.backend_fallback(BackendFallbackReason::UnsupportedOperation)
             }
