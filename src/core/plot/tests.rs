@@ -422,6 +422,7 @@ fn test_plot_series_static_source_helpers_materialize_values() {
         label: None,
         props: SeriesStyleProps::default(),
         marker_edge: None,
+        density: false,
         y_errors: None,
         x_errors: None,
         error_config: None,
@@ -452,6 +453,42 @@ fn test_plot_series_static_source_helpers_materialize_values() {
     assert!(series.props.marker_size.source().is_none());
     assert_eq!(series.props.alpha.cloned(), Some(1.0));
     assert!(series.props.alpha.source().is_none());
+}
+
+#[test]
+fn test_scatter_density_defaults_to_exact_byte_identical_rendering() {
+    let x = [0.0, 0.4, 0.8, 1.2, 1.6, 2.0];
+    let y = [0.2, 0.9, 0.6, 1.7, 1.2, 1.9];
+    let default_plot: Plot = Plot::new().scatter(&x, &y).into();
+    let explicit_off: Plot = Plot::new().scatter(&x, &y).density(false).into();
+
+    assert!(!default_plot.series_mgr.series()[0].density);
+    assert!(!explicit_off.series_mgr.series()[0].density);
+    assert_eq!(
+        default_plot
+            .render()
+            .expect("default scatter should render")
+            .pixels,
+        explicit_off
+            .render()
+            .expect("explicit density(false) scatter should render")
+            .pixels
+    );
+}
+
+#[test]
+fn test_density_scatter_svg_reports_clear_unsupported_error() {
+    let plot: Plot = Plot::new()
+        .scatter(&[0.0, 1.0], &[0.0, 1.0])
+        .density(true)
+        .into();
+
+    let error = plot
+        .render_to_svg()
+        .expect_err("density SVG export should be rejected explicitly");
+    let message = error.to_string();
+    assert!(message.contains("SVG export does not support density scatter series"));
+    assert!(message.contains("render to PNG or disable density mode"));
 }
 
 #[test]
@@ -1510,6 +1547,21 @@ fn test_auto_datashader_policy_keeps_large_scatter_series_eligible() {
 
     assert!(DataShader::should_activate(total_points));
     assert!(Plot::should_auto_use_datashader(
+        &snapshot_series,
+        total_points
+    ));
+}
+
+#[test]
+fn test_opt_in_density_scatter_bypasses_legacy_auto_datashader() {
+    let x: Vec<f64> = (0..100_000).map(|i| i as f64).collect();
+    let y: Vec<f64> = x.iter().map(|x| x.sin()).collect();
+    let plot = Plot::new().scatter(&x, &y).density(true).end_series();
+    let snapshot_series = plot.snapshot_series(0.0);
+    let total_points = Plot::calculate_total_points_for_series(&snapshot_series);
+
+    assert!(DataShader::should_activate(total_points));
+    assert!(!Plot::should_auto_use_datashader(
         &snapshot_series,
         total_points
     ));

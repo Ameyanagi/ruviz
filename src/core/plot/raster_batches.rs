@@ -4,6 +4,9 @@ use crate::plots::{PlotArea, heatmap::HeatmapData};
 use crate::render::{Color, LineStyle, MarkerStyle, skia::SkiaRenderer};
 use std::sync::Arc;
 
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
+
 pub(super) type ClipRect = (f32, f32, f32, f32);
 
 #[derive(Debug, Clone)]
@@ -86,6 +89,175 @@ impl MarkerBatch {
             self.color,
             self.edge,
             self.clip_rect,
+        )
+    }
+}
+
+/// A plot-area density grid for one opt-in scatter series.
+///
+/// Counts are retained rather than expanded into projected points. Executing
+/// the batch converts at most one plot pixel per bin and composites the result
+/// as a single image, keeping both aggregation and drawing independent of the
+/// number of input samples after the direct pass below.
+#[derive(Debug, Clone)]
+pub(super) struct DensityBatch {
+    counts: Arc<[u32]>,
+    width: u32,
+    height: u32,
+    color: Color,
+    plot_area: tiny_skia::Rect,
+}
+
+#[derive(Clone, Copy)]
+struct DensityGridSpec {
+    width: usize,
+    height: usize,
+    x_min: f64,
+    x_max: f64,
+    y_min: f64,
+    y_max: f64,
+    x_scale: crate::axes::AxisScale,
+    y_scale: crate::axes::AxisScale,
+}
+
+impl DensityGridSpec {
+    fn len(self) -> usize {
+        self.width.saturating_mul(self.height)
+    }
+
+    /// Project one raw coordinate pair directly to its density-grid cell.
+    ///
+    /// The normalized positions are the same ones used by the regular marker
+    /// projection. The upper/right endpoints belong to the final cell, while
+    /// samples outside manual axis limits are clipped before aggregation.
+    #[inline]
+    fn bin_index(self, x: f64, y: f64) -> Option<usize> {
+        if !sample_is_representable(x, y, &self.x_scale, &self.y_scale) {
+            return None;
+        }
+
+        let normalized_x = self.x_scale.normalized_position(x, self.x_min, self.x_max);
+        let normalized_y = self.y_scale.normalized_position(y, self.y_min, self.y_max);
+        let col = density_axis_bin(normalized_x, self.width)?;
+        let row = density_axis_bin(1.0 - normalized_y, self.height)?;
+        Some(row * self.width + col)
+    }
+}
+
+#[inline]
+fn density_axis_bin(normalized: f64, bins: usize) -> Option<usize> {
+    if !normalized.is_finite() || !(0.0..=1.0).contains(&normalized) || bins == 0 {
+        return None;
+    }
+    Some(((normalized * bins as f64) as usize).min(bins - 1))
+}
+
+fn zeroed_density_grid(len: usize) -> Vec<u32> {
+    vec![0; len]
+}
+
+#[cfg(any(not(feature = "parallel"), test))]
+fn aggregate_density_counts_serial(
+    x_data: &[f64],
+    y_data: &[f64],
+    spec: DensityGridSpec,
+) -> Vec<u32> {
+    let mut counts = zeroed_density_grid(spec.len());
+    for (&x, &y) in x_data.iter().zip(y_data) {
+        if let Some(index) = spec.bin_index(x, y) {
+            counts[index] = counts[index].saturating_add(1);
+        }
+    }
+    counts
+}
+
+#[cfg(feature = "parallel")]
+fn aggregate_density_counts_parallel(
+    x_data: &[f64],
+    y_data: &[f64],
+    spec: DensityGridSpec,
+) -> Vec<u32> {
+    let grid_len = spec.len();
+    let sample_count = x_data.len().min(y_data.len());
+    let min_samples_per_grid = sample_count.div_ceil(rayon::current_num_threads()).max(1);
+    x_data
+        .par_iter()
+        .zip(y_data.par_iter())
+        .with_min_len(min_samples_per_grid)
+        .fold(
+            || zeroed_density_grid(grid_len),
+            |mut counts, (&x, &y)| {
+                if let Some(index) = spec.bin_index(x, y) {
+                    counts[index] = counts[index].saturating_add(1);
+                }
+                counts
+            },
+        )
+        .reduce(
+            || zeroed_density_grid(grid_len),
+            |mut left, right| {
+                for (left_count, right_count) in left.iter_mut().zip(right) {
+                    *left_count = left_count.saturating_add(right_count);
+                }
+                left
+            },
+        )
+}
+
+fn aggregate_density_counts(x_data: &[f64], y_data: &[f64], spec: DensityGridSpec) -> Vec<u32> {
+    #[cfg(feature = "parallel")]
+    {
+        aggregate_density_counts_parallel(x_data, y_data, spec)
+    }
+    #[cfg(not(feature = "parallel"))]
+    {
+        aggregate_density_counts_serial(x_data, y_data, spec)
+    }
+}
+
+impl DensityBatch {
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn from_xy(
+        x_data: &[f64],
+        y_data: &[f64],
+        x_min: f64,
+        x_max: f64,
+        y_min: f64,
+        y_max: f64,
+        plot_area: tiny_skia::Rect,
+        x_scale: &crate::axes::AxisScale,
+        y_scale: &crate::axes::AxisScale,
+        color: Color,
+    ) -> Self {
+        let width = plot_area.width().ceil().max(1.0) as usize;
+        let height = plot_area.height().ceil().max(1.0) as usize;
+        let spec = DensityGridSpec {
+            width,
+            height,
+            x_min,
+            x_max,
+            y_min,
+            y_max,
+            x_scale: *x_scale,
+            y_scale: *y_scale,
+        };
+
+        Self {
+            counts: aggregate_density_counts(x_data, y_data, spec).into(),
+            width: width as u32,
+            height: height as u32,
+            color,
+            plot_area,
+        }
+    }
+
+    fn execute(&self, renderer: &mut SkiaRenderer) -> Result<()> {
+        renderer.draw_density_grid(
+            self.counts.as_ref(),
+            self.width,
+            self.height,
+            self.color,
+            self.plot_area,
         )
     }
 }
@@ -173,6 +345,7 @@ impl RectGridBatch {
 pub(super) enum StaticRasterBatch {
     Polyline(PolylineBatch),
     Markers(MarkerBatch),
+    Density(DensityBatch),
     RectGrid(RectGridBatch),
 }
 
@@ -181,6 +354,7 @@ impl StaticRasterBatch {
         match self {
             Self::Polyline(batch) => batch.execute(renderer),
             Self::Markers(batch) => batch.execute(renderer),
+            Self::Density(batch) => batch.execute(renderer),
             Self::RectGrid(batch) => batch.execute(renderer),
         }
     }
@@ -223,6 +397,10 @@ impl SeriesRasterPlan {
             .push(StaticRasterBatch::Markers(MarkerBatch::new(
                 points, size, style, color, edge, clip_rect,
             )));
+    }
+
+    pub(super) fn push_density(&mut self, batch: DensityBatch) {
+        self.batches.push(StaticRasterBatch::Density(batch));
     }
 
     pub(super) fn push_rect_grid(&mut self, batch: RectGridBatch) {
@@ -561,6 +739,53 @@ pub(super) fn plot_area_from_rect(
 mod tests {
     use super::*;
     use crate::axes::AxisScale;
+
+    fn density_spec(width: usize, height: usize) -> DensityGridSpec {
+        DensityGridSpec {
+            width,
+            height,
+            x_min: 0.0,
+            x_max: width as f64,
+            y_min: 0.0,
+            y_max: height as f64,
+            x_scale: AxisScale::Linear,
+            y_scale: AxisScale::Linear,
+        }
+    }
+
+    #[test]
+    fn test_density_aggregator_counts_hand_checked_grid() {
+        let x = [0.0, 1.0, 3.999, 4.0, 2.0, -1.0];
+        let y = [3.0, 2.0, 0.0, 3.0, 1.5, 1.0];
+
+        let counts = aggregate_density_counts_serial(&x, &y, density_spec(4, 3));
+
+        assert_eq!(
+            counts,
+            vec![
+                1, 0, 0, 1, // top row: (0, 3) and inclusive (4, 3)
+                0, 1, 1, 0, // middle row: (1, 2) and (2, 1.5)
+                0, 0, 0, 1, // bottom row: (3.999, 0)
+            ]
+        );
+    }
+
+    #[cfg(feature = "parallel")]
+    #[test]
+    fn test_density_parallel_aggregation_matches_serial() {
+        let x = (0..50_000)
+            .map(|index| ((index * 37) % 1_009) as f64 / 1_008.0 * 64.0)
+            .collect::<Vec<_>>();
+        let y = (0..50_000)
+            .map(|index| ((index * 91) % 1_013) as f64 / 1_012.0 * 48.0)
+            .collect::<Vec<_>>();
+        let spec = density_spec(64, 48);
+
+        let serial = aggregate_density_counts_serial(&x, &y, spec);
+        let parallel = aggregate_density_counts_parallel(&x, &y, spec);
+
+        assert_eq!(parallel, serial);
+    }
 
     #[test]
     fn test_linear_projection_fast_path_matches_scaled_mapper() {

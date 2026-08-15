@@ -476,7 +476,7 @@ _SERIES_KINDS: dict[str, _SeriesKind] = {
     "scatter": _SeriesKind(
         ("x", "y"),
         frozenset({"x", "y"}),
-        style=_COMMON_STYLE | {"marker", "markerSize"},
+        style=_COMMON_STYLE | {"marker", "markerSize", "density"},
     ),
     "bar": _SeriesKind(("categories", "values"), frozenset({"values"}), style=_COMMON_STYLE),
     "histogram": _SeriesKind(
@@ -1484,8 +1484,15 @@ class Plot:
         alpha: float | None = None,
         marker: MarkerName | None = None,
         marker_size: float | None = None,
+        density: bool = False,
     ) -> "Plot":
-        """Add a scatter series from x/y arrays or dataframe columns."""
+        """Add a scatter series from x/y arrays or dataframe columns.
+
+        ``density=True`` directly aggregates points into a plot-area pixel
+        grid. This is an opt-in approximation for very large scatters: color
+        and overlap alpha are preserved, while marker shape, size, edges, and
+        antialiasing are not reproduced.
+        """
         x_values, native_x, x_observable = self._build_native_numeric_source(
             _column_values(data, x), "scatter x"
         )
@@ -1502,6 +1509,7 @@ class Plot:
                 "alpha": alpha,
                 "marker": marker,
                 "markerSize": marker_size,
+                "density": density,
             },
         )
         self._apply_native_series(

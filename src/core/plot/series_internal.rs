@@ -1,7 +1,7 @@
 use super::*;
 use crate::core::Point2f;
 use crate::core::plot::raster_batches::{
-    RectGridBatch, SeriesRasterPlan, clip_rect_from_plot_area, plot_area_from_rect,
+    DensityBatch, RectGridBatch, SeriesRasterPlan, clip_rect_from_plot_area, plot_area_from_rect,
     project_xy_points, project_xy_subpaths,
 };
 use crate::core::plot::raster_fast_path::{
@@ -294,6 +294,7 @@ impl Plot {
         series.marker_edge = config
             .resolved_edge_spec()
             .map(|(color, width)| MarkerEdge { color, width });
+        series.density = config.density;
         series.group_id = group_id;
 
         self.push_grouped_series(series, consume_palette_index)
@@ -470,6 +471,23 @@ impl Plot {
                 Some(raster_plan)
             }
             (SeriesType::Scatter { .. }, ResolvedSeries::Scatter { x, y }) => {
+                let mut raster_plan = SeriesRasterPlan::default();
+                if series.density {
+                    raster_plan.push_density(DensityBatch::from_xy(
+                        x,
+                        y,
+                        x_min,
+                        x_max,
+                        y_min,
+                        y_max,
+                        plot_area,
+                        &self.layout.x_scale,
+                        &self.layout.y_scale,
+                        color,
+                    ));
+                    return Ok(Some(raster_plan));
+                }
+
                 let marker_size =
                     self.dpi_scaled_line_width(series.props.marker_size.value_or(10.0));
                 let marker_style = series.props.marker_style.value_or(MarkerStyle::Circle);
@@ -485,7 +503,6 @@ impl Plot {
                     &self.layout.y_scale,
                 );
                 let marker_edge = self.resolved_marker_edge(series, color);
-                let mut raster_plan = SeriesRasterPlan::default();
                 raster_plan.push_markers(
                     points,
                     marker_size,

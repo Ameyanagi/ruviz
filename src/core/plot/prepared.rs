@@ -504,6 +504,29 @@ mod tests {
     }
 
     #[test]
+    fn test_prepared_plot_routes_opt_in_scatter_through_density_batch() {
+        let x = (0..20_000)
+            .map(|index| ((index * 37) % 1_009) as f64 / 1_008.0)
+            .collect::<Vec<_>>();
+        let y = (0..20_000)
+            .map(|index| ((index * 91) % 1_013) as f64 / 1_012.0)
+            .collect::<Vec<_>>();
+        let exact: Plot = Plot::new().scatter(&x, &y).alpha(0.08).into();
+        let density: Plot = Plot::new().scatter(&x, &y).alpha(0.08).density(true).into();
+
+        let exact_png = exact
+            .prepare()
+            .render_png_bytes()
+            .expect("prepared exact scatter should render");
+        let density_png = density
+            .prepare()
+            .render_png_bytes()
+            .expect("prepared density scatter should render");
+
+        assert_ne!(density_png, exact_png);
+    }
+
+    #[test]
     fn test_prepared_plot_render_png_bytes_uncached_matches_cached_path_for_line() {
         let x: Vec<f64> = (0..4_096).map(|index| index as f64 * 0.01).collect();
         let y: Vec<f64> = x

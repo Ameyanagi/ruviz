@@ -2713,6 +2713,17 @@ impl_terminal_methods!(crate::plots::basic::LineConfig);
 // ============================================================================
 
 impl PlotBuilder<crate::plots::basic::ScatterConfig> {
+    /// Enable or disable plot-area density aggregation for this scatter.
+    ///
+    /// The density path bins each point directly into a pixel-sized grid and
+    /// composites occupied bins in the series color. It deliberately does not
+    /// reproduce marker shape, size, edges, or antialiasing. The default is
+    /// `false`, preserving exact marker rendering unless explicitly requested.
+    pub fn density(mut self, density: bool) -> Self {
+        self.config.density = density;
+        self
+    }
+
     /// Set marker style
     ///
     /// # Example

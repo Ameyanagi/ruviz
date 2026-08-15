@@ -1002,6 +1002,27 @@ fn test_draw_datashader_image_preserves_transparent_bins() {
     );
 }
 
+#[test]
+fn test_draw_density_grid_uses_series_color_and_repeated_source_over_alpha() {
+    let mut theme = Theme::light();
+    theme.background = Color::TRANSPARENT;
+    let mut renderer = SkiaRenderer::new(2, 1, theme).expect("renderer should be created");
+    let plot_area = tiny_skia::Rect::from_xywh(0.0, 0.0, 2.0, 1.0)
+        .expect("density test plot area should be valid");
+    let color = Color::from_rgba(20, 100, 220, 127);
+
+    renderer
+        .draw_density_grid(&[0, 2], 2, 1, color, plot_area)
+        .expect("density grid should draw");
+    let image = renderer.into_image_demultiplied();
+
+    assert_eq!(&image.pixels[0..4], &[0, 0, 0, 0]);
+    assert_eq!(&image.pixels[4..7], &[20, 100, 220]);
+    let point_alpha = f32::from(color.a) / 255.0;
+    let expected_alpha = ((1.0 - (1.0 - point_alpha).powi(2)) * 255.0).round() as u8;
+    assert_eq!(image.pixels[7], expected_alpha);
+}
+
 #[cfg(feature = "typst-math")]
 #[test]
 fn test_typst_raster_uses_native_1x_scale() {

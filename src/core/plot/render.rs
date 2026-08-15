@@ -2936,6 +2936,17 @@ impl Plot {
         use crate::export::SvgRenderer;
 
         self.validate_runtime_environment()?;
+        if let Some(series_index) = self
+            .series_mgr
+            .series
+            .iter()
+            .position(|series| series.density)
+        {
+            return Err(PlottingError::RenderError(format!(
+                "SVG export does not support density scatter series at index {series_index}; \
+                 render to PNG or disable density mode"
+            )));
+        }
         if !frame.series.is_empty() {
             self.validate_resolved_series(&frame.series)?;
         }

@@ -953,6 +953,35 @@ def test_histogram_density_rejects_non_boolean_values(value: object) -> None:
         ruviz._native.NativePlotHandle().histogram(STYLE_SAMPLES, {"density": value})
 
 
+def test_scatter_density_renders_large_series_and_differs_from_exact_markers() -> None:
+    rng = np.random.default_rng(20260815)
+    x = rng.normal(size=200_000)
+    y = 0.6 * x + rng.normal(scale=0.7, size=x.size)
+
+    exact = _density_base().scatter(x, y, alpha=0.08).render_png()
+    density = _density_base().scatter(x, y, alpha=0.08, density=True).render_png()
+
+    assert density.startswith(PNG_HEADER)
+    assert density != exact
+
+
+def test_scatter_density_defaults_off_and_stays_out_of_the_snapshot() -> None:
+    explicit_off = _density_base().scatter(STYLE_X, STYLE_Y, density=False)
+    default = _density_base().scatter(STYLE_X, STYLE_Y)
+
+    assert "style" not in explicit_off.to_snapshot()["series"][0]
+    assert explicit_off.render_png() == default.render_png()
+
+
+@pytest.mark.parametrize("value", [1, 0, 1.0, "yes"], ids=["int-1", "int-0", "float", "string"])
+def test_scatter_density_rejects_non_boolean_values(value: object) -> None:
+    with pytest.raises(TypeError, match="density must be a bool"):
+        ruviz.plot().scatter(STYLE_X, STYLE_Y, density=value)  # type: ignore[arg-type]
+
+    with pytest.raises(TypeError, match="density must be a bool"):
+        ruviz._native.NativePlotHandle().scatter(STYLE_X, STYLE_Y, {"density": value})
+
+
 PLOT_SETTING_CASES = [
     ("dpi", lambda plot: plot.dpi(200), "dpi", 200),
     ("legend", lambda plot: plot.legend("upper_left"), "legend", "upper_left"),
