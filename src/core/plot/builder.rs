@@ -2737,7 +2737,7 @@ impl PlotBuilder<crate::plots::basic::ScatterConfig> {
     /// `false`, preserving exact marker rendering unless explicitly
     /// requested; see the performance guide's capability table.
     pub fn density(mut self, density: bool) -> Self {
-        self.config.density = density;
+        self.config.density = Some(density);
         self
     }
 

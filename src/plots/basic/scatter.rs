@@ -65,7 +65,9 @@ pub struct ScatterConfig {
     /// pixel is drawn in the series color with the alpha produced by repeatedly
     /// compositing the configured point alpha. Marker shape, size, edges, and
     /// antialiasing are intentionally not reproduced.
-    pub density: bool,
+    /// `None` leaves the choice to the plot (fast mode may aggregate an
+    /// overdrawn series); an explicit value always wins in both directions.
+    pub density: Option<bool>,
 }
 
 impl Default for ScatterConfig {
@@ -85,7 +87,7 @@ impl Default for ScatterConfig {
             // shifts the whole series away from its palette colour, and on
             // markers of a few points it *is* the marker. See `show_edge`.
             show_edge: false,
-            density: false,
+            density: None,
         }
     }
 }
@@ -181,7 +183,7 @@ impl ScatterConfig {
     /// `PlotSeriesBuilder::density` for which marker shapes the footprint
     /// models exactly.
     pub fn density(mut self, density: bool) -> Self {
-        self.density = density;
+        self.density = Some(density);
         self
     }
 
@@ -230,7 +232,7 @@ mod tests {
             "a default marker is exactly its series colour: a contrasting rim \
              darkens whatever it overlaps and swallows small markers"
         );
-        assert!(!config.density, "density rendering must be opt-in");
+        assert!(config.density.is_none(), "density rendering must be opt-in");
     }
 
     #[test]
@@ -250,7 +252,7 @@ mod tests {
         assert!((config.alpha - 0.8).abs() < f32::EPSILON);
         assert_eq!(config.edge_color, Some(Color::BLACK));
         assert!((config.edge_width - 1.5).abs() < f32::EPSILON);
-        assert!(config.density);
+        assert_eq!(config.density, Some(true));
     }
 
     #[test]

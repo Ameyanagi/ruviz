@@ -227,7 +227,7 @@ def main() -> None:
     parser.add_argument("--repetitions", type=int, default=3)
     parser.add_argument("--timeout", type=float, default=180)
     parser.add_argument("--memory-gib", type=float, default=28)
-    parser.add_argument("--out", type=Path, default=SCRATCH / "static-scatter-results.json")
+    parser.add_argument("--out", type=Path, default=Path("static-scatter-results.json"))
     args = parser.parse_args()
     if args.child:
         result = child_run(args.library, args.n)

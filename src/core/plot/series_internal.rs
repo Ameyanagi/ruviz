@@ -483,14 +483,38 @@ impl Plot {
                 let mut raster_plan = SeriesRasterPlan::default();
                 // Fast mode upgrades a heavily overdrawn scatter to density
                 // aggregation: past one point per plot pixel, exact markers
-                // mostly repaint pixels that are already covered.
-                let auto_density = self.render.fast
-                    && x.len() as f64
-                        > f64::from(plot_area.width()) * f64::from(plot_area.height());
+                // mostly repaint pixels that are already covered. Under
+                // manual axis limits only the points inside the window can
+                // overdraw it, so a zoomed view with a large but mostly
+                // clipped dataset stays exact.
+                let auto_density = self.render.fast && {
+                    let plot_pixels = f64::from(plot_area.width()) * f64::from(plot_area.height());
+                    if (x.len() as f64) <= plot_pixels {
+                        false
+                    } else if self.layout.x_limits.is_some() || self.layout.y_limits.is_some() {
+                        let visible = x
+                            .iter()
+                            .zip(y.iter())
+                            .filter(|&(&px, &py)| {
+                                px.is_finite()
+                                    && py.is_finite()
+                                    && px >= x_min
+                                    && px <= x_max
+                                    && py >= y_min
+                                    && py <= y_max
+                            })
+                            .count();
+                        visible as f64 > plot_pixels
+                    } else {
+                        true
+                    }
+                };
                 let marker_size =
                     self.dpi_scaled_line_width(series.props.marker_size.value_or(10.0));
                 let marker_style = series.props.marker_style.value_or(MarkerStyle::Circle);
-                if series.density || auto_density {
+                // An explicit per-series choice wins in both directions;
+                // only an unset series takes fast mode's automatic upgrade.
+                if series.density.unwrap_or(auto_density) {
                     raster_plan.push_density(DensityBatch::from_xy(
                         x,
                         y,
@@ -1490,6 +1514,16 @@ impl Plot {
                 }
             }
             (SeriesType::Scatter { .. }, ResolvedSeries::Scatter { x, y }) => {
+                // Density aggregation has no GPU implementation; erroring
+                // matches SVG export rather than silently rendering the
+                // per-marker output the series opted out of.
+                if series.density == Some(true) {
+                    return Err(PlottingError::RenderError(
+                        "the GPU backend does not support density scatter series; \
+                         render through the default backend or disable density mode"
+                            .to_string(),
+                    ));
+                }
                 // Use GPU for coordinate transformation
                 let viewport = (
                     plot_area.x(),

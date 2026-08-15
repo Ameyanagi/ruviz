@@ -217,6 +217,20 @@ figures, diffing pipelines — stay in exact mode.
 - An explicit per-series `density(...)` always wins over fast mode's
   automatic threshold, in both directions.
 
+### Limitations in Python and the notebook widget
+
+- The Python extension renders through a thread pool (rayon). A process that
+  renders once and then **forks** — Linux `multiprocessing`'s default start
+  method — inherits a pool whose worker threads do not exist, and a render in
+  the child hangs. Use the `"spawn"` (or `"forkserver"`) start method when
+  combining ruviz with `multiprocessing`, or render only in the children.
+  This is the same caveat as NumPy/polars and every other pooled native
+  library.
+- The notebook widget replays snapshots in the browser, which ignores the
+  plot-level `fast` flag: a fast plot's widget view renders exactly (slower,
+  never wrong). Per-series `density=True` is honored everywhere, including
+  the widget.
+
 ### Limitations of fast mode on lines
 
 - Fast mode reduces a marked solid line's stroke to its per-column min/max

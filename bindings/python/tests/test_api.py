@@ -937,10 +937,12 @@ def test_histogram_density_puts_a_kde_overlay_on_the_same_scale() -> None:
     assert density_with_kde != counts
 
 
-def test_histogram_density_defaults_off_and_stays_out_of_the_snapshot() -> None:
+def test_histogram_density_false_is_recorded_and_renders_like_default() -> None:
     plot = ruviz.plot().histogram(STYLE_SAMPLES, bins=4, density=False)
 
-    assert plot.to_snapshot()["series"][0]["style"] == {"bins": 4}
+    # An explicit density=False is recorded like any other explicit choice
+    # (it renders identically to the default for a histogram).
+    assert plot.to_snapshot()["series"][0]["style"] == {"bins": 4, "density": False}
     assert plot.render_png() == ruviz.plot().histogram(STYLE_SAMPLES, bins=4).render_png()
 
 
@@ -965,12 +967,30 @@ def test_scatter_density_renders_large_series_and_differs_from_exact_markers() -
     assert density != exact
 
 
-def test_scatter_density_defaults_off_and_stays_out_of_the_snapshot() -> None:
+def test_scatter_density_defaults_off_and_false_pins_exact() -> None:
     explicit_off = _density_base().scatter(STYLE_X, STYLE_Y, density=False)
     default = _density_base().scatter(STYLE_X, STYLE_Y)
 
-    assert "style" not in explicit_off.to_snapshot()["series"][0]
+    # The default leaves the choice unset; an explicit False is a real
+    # choice and is recorded, though it renders identically here.
+    assert "style" not in default.to_snapshot()["series"][0]
+    assert explicit_off.to_snapshot()["series"][0]["style"] == {"density": False}
     assert explicit_off.render_png() == default.render_png()
+
+
+def test_density_false_overrides_fast_mode_auto_upgrade() -> None:
+    rng = np.random.default_rng(20260815)
+    x = rng.normal(size=200_000)
+    y = 0.6 * x + rng.normal(scale=0.7, size=x.size)
+
+    exact = _density_base().scatter(x, y, alpha=0.08).render_png()
+    pinned = _density_base().scatter(x, y, alpha=0.08, density=False).fast().render_png()
+    upgraded = _density_base().scatter(x, y, alpha=0.08).fast().render_png()
+
+    # density=False wins over fast mode's automatic threshold...
+    assert pinned == exact
+    # ...which otherwise upgrades this overdrawn series.
+    assert upgraded != exact
 
 
 @pytest.mark.parametrize("value", [1, 0, 1.0, "yes"], ids=["int-1", "int-0", "float", "string"])

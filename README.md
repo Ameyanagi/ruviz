@@ -38,15 +38,15 @@ ruviz = "0.8.0"
 use ruviz::prelude::*;
 
 fn main() -> PlotResult<()> {
-    let x: Vec<f64> = (0..100).map(|i| i as f64 * 0.1).collect();
-    let y: Vec<f64> = x.iter().map(|&v| v.sin()).collect();
+    let x: Vec<f64> = (0..50).map(|i| i as f64 * 0.1).collect();
+    let y: Vec<f64> = x.iter().map(|&x| x * x).collect();
 
     Plot::new()
         .line(&x, &y)
-        .title("Sine Wave")
+        .title("Quadratic Function")
         .xlabel("x")
-        .ylabel("sin(x)")
-        .save("sine.png")?;
+        .ylabel("y = x^2")
+        .save("quadratic.png")?;
 
     Ok(())
 }

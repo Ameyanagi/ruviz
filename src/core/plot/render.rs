@@ -2940,7 +2940,7 @@ impl Plot {
             .series_mgr
             .series
             .iter()
-            .position(|series| series.density)
+            .position(|series| series.density == Some(true))
         {
             return Err(PlottingError::RenderError(format!(
                 "SVG export does not support density scatter series at index {series_index}; \

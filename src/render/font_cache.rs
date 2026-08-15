@@ -7,6 +7,13 @@
 //! resulting database is built by the same code either way. Only the
 //! *discovery* of which files exist is cached, never their parsed contents.
 //!
+//! The cache is active on macOS and Windows, where `fontdb` scans a fixed,
+//! knowable list of directories. On Linux the scanned set is defined by the
+//! fontconfig configuration (`fontdb` 0.23 with the `fontconfig` feature
+//! reads every `<dir>` from `fonts.conf` and `conf.d`), so no mtime guard
+//! over a directory list can be sound there — Linux always performs the
+//! full scan.
+//!
 //! The cache is invalidated by any change to the cached font files (path,
 //! mtime, size) or to any directory beneath the platform font roots that
 //! `fontdb` scans — recorded recursively, so a font installed into a
@@ -34,6 +41,11 @@ const CACHE_HEADER: &str = "ruviz-font-cache\tv1";
 /// Equivalent to `fontdb::Database::load_system_fonts()` in every observable
 /// way; the cache only skips the directory walk.
 pub(crate) fn system_font_database() -> Database {
+    // Only macOS and Windows have a fixed scan list the guards can cover;
+    // Linux's fontconfig-driven set cannot be validated by directory mtimes.
+    if !(cfg!(target_os = "macos") || cfg!(windows)) {
+        return scanned_database();
+    }
     if std::env::var_os("RUVIZ_FONT_CACHE").is_some_and(|v| v == "0") {
         return scanned_database();
     }
@@ -101,9 +113,11 @@ fn file_stamp(path: &Path) -> Option<(String, u64)> {
     Some((mtime, meta.len()))
 }
 
-/// The directories `fontdb` 0.21 scans on this platform (pinned in
-/// `Cargo.lock`). Kept in sync manually; drift can only make the cache
-/// mismatch and rescan, never resolve differently.
+/// The directories `fontdb` 0.23 scans on macOS and Windows (pinned in
+/// `Cargo.lock`; cosmic-text resolves fontdb 0.23, not the 0.21 other
+/// dependencies use). Kept in sync manually; drift can only make the cache
+/// mismatch and rescan, never resolve differently. Linux is absent by
+/// design: the cache is disabled there (see the module docs).
 fn platform_font_roots() -> Vec<PathBuf> {
     let mut roots = Vec::new();
     if cfg!(target_os = "macos") {
@@ -124,17 +138,6 @@ fn platform_font_roots() -> Vec<PathBuf> {
             let profile = PathBuf::from(profile);
             roots.push(profile.join("AppData\\Local\\Microsoft\\Windows\\Fonts"));
             roots.push(profile.join("AppData\\Roaming\\Microsoft\\Windows\\Fonts"));
-        }
-    } else {
-        roots.push(PathBuf::from("/usr/share/fonts"));
-        roots.push(PathBuf::from("/usr/local/share/fonts"));
-        if let Some(home) = std::env::var_os("HOME") {
-            let home = PathBuf::from(home);
-            roots.push(home.join(".fonts"));
-            match std::env::var_os("XDG_DATA_HOME") {
-                Some(xdg) if !xdg.is_empty() => roots.push(PathBuf::from(xdg).join("fonts")),
-                _ => roots.push(home.join(".local/share/fonts")),
-            }
         }
     }
     roots

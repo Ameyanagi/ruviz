@@ -1854,7 +1854,7 @@ pub(super) fn series_from_style(series_type: SeriesType, style: SeriesStyle) -> 
         label: style.label,
         props: style.props,
         marker_edge: None,
-        density: false,
+        density: None,
         y_errors: style.y_errors,
         x_errors: style.x_errors,
         error_config: style.error_config,

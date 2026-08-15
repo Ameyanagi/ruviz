@@ -680,7 +680,8 @@ pub(crate) struct PlotSeries {
     /// Marker edge styling, or `None` for bare markers.
     pub(super) marker_edge: Option<MarkerEdge>,
     /// Whether this scatter uses plot-area density aggregation.
-    pub(super) density: bool,
+    /// Explicit per-series density choice; `None` lets fast mode decide.
+    pub(super) density: Option<bool>,
     /// Optional Y error bar data (attached to series)
     pub(super) y_errors: Option<ErrorValues>,
     /// Optional X error bar data (attached to series)
@@ -1830,7 +1831,7 @@ mod reactive_style_tests {
             label: None,
             props: SeriesStyleProps::default(),
             marker_edge: None,
-            density: false,
+            density: None,
             y_errors: None,
             x_errors: None,
             error_config: None,

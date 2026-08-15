@@ -546,10 +546,10 @@ def _styled_series(kind: str, fields: dict[str, Any], options: dict[str, Any]) -
                 f"accepted: {accepted or 'none'}"
             )
         normalized = _STYLE_OPTIONS[key](value)
-        if normalized is False:
-            # Flag options are off by default, so `False` is the absence of
-            # styling: validate it, then keep it out of the snapshot.
-            continue
+        # An explicit False is stored, not dropped: for scatter density it is
+        # a real choice (pinning exact rendering against fast mode's
+        # automatic upgrade), and for plain flags it renders identically to
+        # the default anyway.
         style[key] = normalized
 
     series = {"kind": kind, **fields}
@@ -1390,7 +1390,8 @@ class Plot:
         (see ``scatter(density=True)``) instead of compositing every marker,
         and a marked solid line's stroke takes the same min/max reduction a
         bare solid line always gets, while its markers stay complete. An
-        explicit ``density=`` on a series always wins.
+        explicit ``density=`` on a series always wins. The notebook widget
+        ignores this flag and renders exactly.
         """
         if not isinstance(enabled, bool):
             raise ValueError("fast must be a boolean")
@@ -1504,7 +1505,7 @@ class Plot:
         alpha: float | None = None,
         marker: MarkerName | None = None,
         marker_size: float | None = None,
-        density: bool = False,
+        density: bool | None = None,
     ) -> "Plot":
         """Add a scatter series from x/y arrays or dataframe columns.
 

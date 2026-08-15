@@ -422,7 +422,7 @@ fn test_plot_series_static_source_helpers_materialize_values() {
         label: None,
         props: SeriesStyleProps::default(),
         marker_edge: None,
-        density: false,
+        density: None,
         y_errors: None,
         x_errors: None,
         error_config: None,
@@ -462,8 +462,8 @@ fn test_scatter_density_defaults_to_exact_byte_identical_rendering() {
     let default_plot: Plot = Plot::new().scatter(&x, &y).into();
     let explicit_off: Plot = Plot::new().scatter(&x, &y).density(false).into();
 
-    assert!(!default_plot.series_mgr.series()[0].density);
-    assert!(!explicit_off.series_mgr.series()[0].density);
+    assert!(default_plot.series_mgr.series()[0].density.is_none());
+    assert_eq!(explicit_off.series_mgr.series()[0].density, Some(false));
     assert_eq!(
         default_plot
             .render()
@@ -559,6 +559,27 @@ fn test_fast_mode_reduces_marked_line_strokes_but_keeps_small_lines_exact() {
     assert_eq!(
         small_exact.render().expect("small exact").pixels,
         small_fast.render().expect("small fast").pixels
+    );
+}
+
+#[test]
+fn test_explicit_density_false_wins_over_fast_auto_upgrade() {
+    let n = 40_000;
+    let x: Vec<f64> = (0..n).map(|i| (i % 200) as f64).collect();
+    let y: Vec<f64> = (0..n).map(|i| (i / 200) as f64).collect();
+
+    let exact: Plot = Plot::new().size_px(120, 120).scatter(&x, &y).into();
+    let pinned: Plot = Plot::new()
+        .size_px(120, 120)
+        .scatter(&x, &y)
+        .density(false)
+        .into();
+    let pinned = pinned.fast(true);
+    // An overdrawn series pinned to exact rendering keeps exact bytes even
+    // under fast mode.
+    assert_eq!(
+        exact.render().expect("exact").pixels,
+        pinned.render().expect("pinned exact under fast").pixels
     );
 }
 
