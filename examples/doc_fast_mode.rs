@@ -48,13 +48,11 @@ fn main() -> PlotResult<()> {
         .scatter(&x, &y)
         .save("docs/assets/rustdoc/fast_mode_scatter_exact.png")?;
 
-    let fast_scatter: Plot = Plot::new()
+    Plot::new()
         .size_px(640, 320)
         .title("Fast: density with the marker footprint")
-        .scatter(&x, &y)
-        .into();
-    fast_scatter
         .fast(true)
+        .scatter(&x, &y)
         .save("docs/assets/rustdoc/fast_mode_scatter_fast.png")?;
 
     let line_n = 200_000;
@@ -71,14 +69,12 @@ fn main() -> PlotResult<()> {
         .marker(MarkerStyle::Circle)
         .save("docs/assets/rustdoc/fast_mode_line_exact.png")?;
 
-    let fast_line: Plot = Plot::new()
+    Plot::new()
         .size_px(640, 320)
         .title("Fast: reduced stroke, exact markers")
+        .fast(true)
         .line(&lx, &ly)
         .marker(MarkerStyle::Circle)
-        .into();
-    fast_line
-        .fast(true)
         .save("docs/assets/rustdoc/fast_mode_line_fast.png")?;
 
     println!("✓ Generated docs/assets/rustdoc/fast_mode_*.png");

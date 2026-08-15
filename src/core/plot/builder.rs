@@ -945,6 +945,15 @@ where
         self
     }
 
+    /// Trade exactness for speed on large data.
+    ///
+    /// This method forwards to the inner Plot. See [`super::Plot::fast`] for
+    /// what fast mode substitutes and its documented limitations.
+    pub fn fast(mut self, enabled: bool) -> Self {
+        self.plot = self.plot.fast(enabled);
+        self
+    }
+
     /// Set the font family used for plot text.
     ///
     /// This method forwards to the inner Plot.

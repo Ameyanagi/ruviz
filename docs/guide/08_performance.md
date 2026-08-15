@@ -136,9 +136,8 @@ let x: Vec<f64> = (0..points).map(|i| (i as f64 * 0.37).sin()).collect();
 let y: Vec<f64> = (0..points).map(|i| (i as f64 * 0.91).cos()).collect();
 
 Plot::new()
-    .scatter(&x, &y)
-    .into_plot()
     .fast(true)
+    .scatter(&x, &y)
     .save("fast_scatter.png")?;
 ```
 
