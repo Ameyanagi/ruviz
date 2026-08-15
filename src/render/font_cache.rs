@@ -8,8 +8,10 @@
 //! *discovery* of which files exist is cached, never their parsed contents.
 //!
 //! The cache is invalidated by any change to the cached font files (path,
-//! mtime, size), to the directories that contain them, or to the platform
-//! font roots that `fontdb` scans, in which case a full scan runs and the
+//! mtime, size) or to any directory beneath the platform font roots that
+//! `fontdb` scans — recorded recursively, so a font installed into a
+//! previously empty nested directory is caught — in which case a full scan
+//! runs and the
 //! cache is rewritten. A cache miss can therefore only ever cost one extra
 //! scan; it can not resolve fonts differently from an uncached run. File
 //! order is preserved from the original scan so duplicate-family
@@ -138,27 +140,49 @@ fn platform_font_roots() -> Vec<PathBuf> {
     roots
 }
 
-/// Every directory whose mtime guards this cache: the platform roots, the
-/// downloadable-font asset dirs beneath them, and the parents of every
-/// cached font file.
+/// Recursively record `dir` and every directory beneath it.
+///
+/// Entry file types come from the directory listing, so a symlinked
+/// directory reports as a symlink and is not followed — no cycle risk.
+fn push_dirs_recursive(dir: &Path, dirs: &mut BTreeSet<PathBuf>) {
+    if !dirs.insert(dir.to_path_buf()) {
+        return;
+    }
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+                push_dirs_recursive(&entry.path(), dirs);
+            }
+        }
+    }
+}
+
+/// Every directory whose mtime guards this cache: the platform roots and
+/// every directory beneath them — recursively, so a font installed into a
+/// previously empty nested directory changes a recorded mtime — plus the
+/// downloadable-font asset dirs and the parents of every cached font file.
 fn guard_directories(files: &[PathBuf]) -> Vec<PathBuf> {
     let mut dirs = BTreeSet::new();
     for root in platform_font_roots() {
-        if cfg!(target_os = "macos")
-            && root.ends_with("AssetsV2")
-            && let Ok(entries) = fs::read_dir(&root)
-        {
-            for entry in entries.flatten() {
-                if entry
-                    .file_name()
-                    .to_string_lossy()
-                    .starts_with("com_apple_MobileAsset_Font")
-                {
-                    dirs.insert(entry.path());
+        if cfg!(target_os = "macos") && root.ends_with("AssetsV2") {
+            // AssetsV2 holds thousands of unrelated asset dirs; guard the
+            // root itself (new font asset dirs touch its mtime) and recurse
+            // only into the font assets fontdb actually scans.
+            if let Ok(entries) = fs::read_dir(&root) {
+                for entry in entries.flatten() {
+                    if entry
+                        .file_name()
+                        .to_string_lossy()
+                        .starts_with("com_apple_MobileAsset_Font")
+                    {
+                        push_dirs_recursive(&entry.path(), &mut dirs);
+                    }
                 }
             }
+            dirs.insert(root);
+        } else {
+            push_dirs_recursive(&root, &mut dirs);
         }
-        dirs.insert(root);
     }
     for file in files {
         if let Some(parent) = file.parent() {
