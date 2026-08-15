@@ -166,18 +166,41 @@ every row of it is one centered span:
 | `cross`, `star` | approximated by their bounding disk — an X splits a row into two spans |
 | `circle-open`, `square-open`, `triangle-open`, `diamond-open` | rendered filled — a hollow interior also needs two spans per row |
 
-### What density rendering gives up
+### The exactness guarantee
+
+Exact rendering is the default and nothing in this section changes it: a
+plot that never calls `fast(...)` or `density(...)` renders byte-identically
+whether or not these features exist. Fast mode itself is also exact below
+its thresholds — a scatter under one point per plot pixel and any line short
+enough to skip stroke reduction produce the same bytes with fast mode on or
+off. When output must be reproducible to the byte — golden tests, archival
+figures, diffing pipelines — stay in exact mode.
+
+### Limitations of density rendering
 
 - Output is close to, but not pixel-identical with, exact rendering: marker
   edge antialiasing and the exact per-marker compositing order are replaced
-  by the per-pixel alpha formula. Anything that must be reproducible to the
-  byte should stay in exact mode, which remains the default.
+  by the per-pixel alpha formula.
+- `cross` and `star` markers are approximated by their bounding disk, and
+  open (outline-only) markers render filled — see the footprint table above.
 - Marker rims (`edge_color`/`edge_width`) are not drawn; the footprint is the
   filled shape.
 - SVG export reports a clear unsupported error for density series — render to
   PNG, or disable density for vector output.
+- Density applies to scatter series only; other plot kinds always render
+  exactly.
 - An explicit per-series `density(...)` always wins over fast mode's
   automatic threshold, in both directions.
+
+### Limitations of fast mode on lines
+
+- Fast mode reduces a marked solid line's stroke to its per-column min/max
+  envelope. The stroke's bytes change (the envelope is visually equivalent
+  for a solid stroke but not pixel-identical); every marker is still drawn
+  at its exact position.
+- Dashed and dotted lines are never reduced — decimation would scramble the
+  dash phase — so a very dense non-solid line stays at full cost in every
+  mode. If that cost matters, decimate the data before plotting.
 
 ## Benchmark Template
 
