@@ -46,7 +46,9 @@ import {
   type NumericReactiveSourceSnapshot,
   type NormalizedSineSignalOptions,
   type NumericArray,
+  type ReferenceLineStyle,
   type PieSeriesSnapshot,
+  type PlotAnnotationSnapshot,
   type PlotSnapshot,
   type PlotSaveOptions,
   type PlotSeriesSnapshot,
@@ -60,6 +62,7 @@ import {
   type SineSignalOptions,
   type StaticSourceSnapshot,
   type StrokedSeriesStyle,
+  type TextAnnotationStyle,
   type ViolinSeriesSnapshot,
   type WorkerSessionOptions,
   type XSourceSnapshot,
@@ -91,6 +94,12 @@ export type {
   AxisScaleSnapshot,
   BackendPreference,
   FigureOptions,
+  HLineAnnotationSnapshot,
+  PlotAnnotationSnapshot,
+  ReferenceLineStyle,
+  TextAnnotationSnapshot,
+  TextAnnotationStyle,
+  VLineAnnotationSnapshot,
   BarSeriesSnapshot,
   BoxplotSeriesStyle,
   CanvasSessionOptions,
@@ -286,6 +295,8 @@ interface PlotState {
   yLim?: [number, number];
   xScale?: AxisScaleSnapshot;
   yScale?: AxisScaleSnapshot;
+  /** Plot-level annotations in call order; absent until the first one is added. */
+  annotations?: PlotAnnotationSnapshot[];
   series: PlotSeriesDefinition[];
 }
 
@@ -1443,6 +1454,105 @@ export class PlotBuilder {
       throw new RangeError("symlog linthresh must be a finite positive number");
     }
     return [scale, threshold];
+  }
+
+  /**
+   * Adds a vertical reference line spanning the plot height at data
+   * x-coordinate `x` — an absorption edge, a threshold, a boundary. Without a
+   * style it renders as the core default, a 1pt dashed gray.
+   */
+  vline(x: number, style?: ReferenceLineStyle): this {
+    PlotBuilder.#finiteCoordinate(x, "vline x");
+    this.#pushAnnotation({
+      kind: "vline",
+      x,
+      ...PlotBuilder.#referenceLineStyle(style, "vline"),
+    });
+    return this;
+  }
+
+  /**
+   * Adds a horizontal reference line spanning the plot width at data
+   * y-coordinate `y`. Without a style it renders as the core default, a 1pt
+   * dashed gray.
+   */
+  hline(y: number, style?: ReferenceLineStyle): this {
+    PlotBuilder.#finiteCoordinate(y, "hline y");
+    this.#pushAnnotation({
+      kind: "hline",
+      y,
+      ...PlotBuilder.#referenceLineStyle(style, "hline"),
+    });
+    return this;
+  }
+
+  /**
+   * Adds a text annotation at data coordinates — a reference-line label, a
+   * peak marker. The default is 10pt black, so pass a `color` when the plot
+   * uses a dark theme.
+   */
+  annotateText(x: number, y: number, text: string, style?: TextAnnotationStyle): this {
+    PlotBuilder.#finiteCoordinate(x, "annotation x");
+    PlotBuilder.#finiteCoordinate(y, "annotation y");
+    if (typeof text !== "string" || text === "") {
+      throw new TypeError("annotation text must be a non-empty string");
+    }
+
+    let validated: { style: TextAnnotationStyle } | undefined;
+    if (style !== undefined) {
+      const { color, fontSize, ...unknown } = style;
+      const unknownKeys = Object.keys(unknown);
+      if (unknownKeys.length > 0) {
+        throw new TypeError(`unknown annotation style option(s): ${unknownKeys.join(", ")}`);
+      }
+      if (color !== undefined) {
+        validateColor(color);
+      }
+      if (fontSize !== undefined) {
+        assertFinitePositive(fontSize, "annotation fontSize");
+      }
+      validated = { style: { ...style } };
+    }
+
+    this.#pushAnnotation({ kind: "text", x, y, text, ...validated });
+    return this;
+  }
+
+  #pushAnnotation(annotation: PlotAnnotationSnapshot): void {
+    (this.#state.annotations ??= []).push(annotation);
+    this.#markDirty();
+  }
+
+  static #finiteCoordinate(value: number, label: string): void {
+    if (!Number.isFinite(value)) {
+      throw new RangeError(`${label} must be a finite number`);
+    }
+  }
+
+  /** Validate a reference-line style, returning a spreadable `{style}` or nothing. */
+  static #referenceLineStyle(
+    style: ReferenceLineStyle | undefined,
+    kind: string,
+  ): { style: ReferenceLineStyle } | undefined {
+    if (style === undefined) {
+      return undefined;
+    }
+
+    const { color, width, linestyle, ...unknown } = style;
+    const unknownKeys = Object.keys(unknown);
+    if (unknownKeys.length > 0) {
+      throw new TypeError(`unknown ${kind} style option(s): ${unknownKeys.join(", ")}`);
+    }
+    if (color !== undefined) {
+      validateColor(color);
+    }
+    if (width !== undefined) {
+      assertFinitePositive(width, `${kind} width`);
+    }
+    if (linestyle !== undefined) {
+      validateName(LINE_STYLE_NAMES, "linestyle", linestyle);
+    }
+    return { style: { ...style } };
   }
 
   line(input: LineSeriesInput): this {

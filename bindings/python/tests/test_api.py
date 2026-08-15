@@ -1883,3 +1883,76 @@ def test_figure_with_one_invalid_argument_changes_nothing() -> None:
     with pytest.raises(ValueError):
         plot.figure(font_size=9.0, max_resolution=(0, 10))
     assert plot.to_snapshot() == before
+
+
+def test_annotations_record_render_and_replay() -> None:
+    base = _figure_plot()
+    marked = (
+        _figure_plot()
+        .vline(2.0, color="red", linestyle="dotted", width=2.0)
+        .hline(4.0)
+        .annotate_text(2.05, 8.0, "K edge", color="red", font_size=9)
+    )
+
+    assert marked.render_svg() != base.render_svg()
+
+    snapshot = marked.to_snapshot()
+    assert snapshot["annotations"] == [
+        {
+            "kind": "vline",
+            "x": 2.0,
+            "style": {"color": "red", "width": 2.0, "linestyle": "dotted"},
+        },
+        {"kind": "hline", "y": 4.0},
+        {
+            "kind": "text",
+            "x": 2.05,
+            "y": 8.0,
+            "text": "K edge",
+            "style": {"color": "red", "fontSize": 9.0},
+        },
+    ]
+
+    clone = marked.clone()
+    assert clone.to_snapshot() == snapshot
+    assert clone.render_svg() == marked.render_svg()
+
+
+def test_unstyled_and_styled_reference_lines_differ() -> None:
+    plain = _figure_plot().vline(2.0).render_svg()
+    styled = _figure_plot().vline(2.0, color="red", width=3.0, linestyle="solid").render_svg()
+    assert plain != styled
+
+
+def test_annotation_linestyle_accepts_matplotlib_shorthands() -> None:
+    shorthand = _figure_plot().vline(2.0, linestyle="--").to_snapshot()
+    assert shorthand["annotations"][0]["style"] == {"linestyle": "dashed"}
+
+
+@pytest.mark.parametrize(
+    ("build", "message"),
+    [
+        (lambda p: p.vline(float("nan")), "vline x must be a finite number"),
+        (lambda p: p.hline(float("inf")), "hline y must be a finite number"),
+        (lambda p: p.annotate_text(1.0, 1.0, ""), "annotation text must be a non-empty string"),
+        (lambda p: p.vline(1.0, width=-1.0), "vline width must be a finite positive number"),
+        (lambda p: p.vline(1.0, linestyle="wiggly"), "unsupported linestyle 'wiggly'"),
+        (
+            lambda p: p.annotate_text(1.0, 1.0, "x", font_size=0),
+            "annotation font size must be a finite positive number",
+        ),
+    ],
+)
+def test_annotations_reject_values_that_would_misrender(build, message) -> None:
+    with pytest.raises(ValueError, match=message):
+        build(_figure_plot())
+
+
+def test_native_annotation_style_arguments_are_optional() -> None:
+    """The stub declares ``style`` optional; the runtime must agree."""
+    from ruviz import _native
+
+    handle = _native.NativePlotHandle()
+    handle.vline(1.0)
+    handle.hline(2.0)
+    handle.annotate_text(1.0, 2.0, "label")

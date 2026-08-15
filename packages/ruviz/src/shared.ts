@@ -280,6 +280,45 @@ export interface PolarLineSeriesSnapshot {
   theta: number[];
 }
 
+/** Styling for `vline`/`hline` reference lines; unset fields keep the core default, 1pt dashed gray. */
+export interface ReferenceLineStyle {
+  color?: string;
+  width?: number;
+  linestyle?: LineStyleName;
+}
+
+/** Styling for a text annotation; the default is 10pt black, so set a color on dark themes. */
+export interface TextAnnotationStyle {
+  color?: string;
+  fontSize?: number;
+}
+
+export interface VLineAnnotationSnapshot {
+  kind: "vline";
+  x: number;
+  style?: ReferenceLineStyle;
+}
+
+export interface HLineAnnotationSnapshot {
+  kind: "hline";
+  y: number;
+  style?: ReferenceLineStyle;
+}
+
+export interface TextAnnotationSnapshot {
+  kind: "text";
+  x: number;
+  y: number;
+  text: string;
+  style?: TextAnnotationStyle;
+}
+
+/** One plot-level annotation; the list preserves the order the calls were made in. */
+export type PlotAnnotationSnapshot =
+  | VLineAnnotationSnapshot
+  | HLineAnnotationSnapshot
+  | TextAnnotationSnapshot;
+
 export type PlotSeriesSnapshot =
   | LineSeriesSnapshot
   | ScatterSeriesSnapshot
@@ -298,7 +337,7 @@ export type PlotSeriesSnapshot =
   | PolarLineSeriesSnapshot;
 
 /** Snapshot layout version written by this build; consumers ignore unknown keys. */
-export const SNAPSHOT_SCHEMA_VERSION = 2;
+export const SNAPSHOT_SCHEMA_VERSION = 3;
 
 export interface PlotSnapshot {
   /** Snapshot layout version; absent on snapshots written before it existed. */
@@ -341,6 +380,8 @@ export interface PlotSnapshot {
   yLim?: [number, number];
   xScale?: AxisScaleSnapshot;
   yScale?: AxisScaleSnapshot;
+  /** Plot-level annotations — reference lines and text labels — in call order. */
+  annotations?: PlotAnnotationSnapshot[];
   series: PlotSeriesSnapshot[];
 }
 

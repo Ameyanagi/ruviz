@@ -54,8 +54,8 @@ mod wasm {
     use ruviz::{
         axes::AxisScale,
         core::{
-            Image, ImageTarget, InteractivePlotSession, IntoPlot, LegendPosition, Plot,
-            PlotBuilder, PlotInputEvent, SurfaceTarget, ViewportPoint, ViewportRect,
+            Annotation, Image, ImageTarget, InteractivePlotSession, IntoPlot, LegendPosition, Plot,
+            PlotBuilder, PlotInputEvent, SurfaceTarget, TextStyle, ViewportPoint, ViewportRect,
         },
         data::{Observable, Signal},
         plots::{LineConfig, PlotConfig, ScatterConfig},
@@ -500,6 +500,94 @@ mod wasm {
         value
             .as_string()
             .ok_or_else(|| JsValue::from_str(&format!("{name} must be a string")))
+    }
+
+    /// Validate an annotation's data coordinate: NaN or infinity would place
+    /// the line or label nowhere while reporting success.
+    fn annotation_coordinate(value: f64, name: &str) -> Result<f64, JsValue> {
+        if !value.is_finite() {
+            return Err(JsValue::from_str(&format!(
+                "{name} must be a finite number"
+            )));
+        }
+        Ok(value)
+    }
+
+    /// Parse a reference-line style object into `(color, width, line_style)`.
+    ///
+    /// `None` (no style at all) lets the caller use the core's un-styled
+    /// constructor. A present object fills unset fields with the core
+    /// defaults — 1pt dashed `gray(128)` — so a partial style like
+    /// `{color: "red"}` keeps the default dash and width. Unknown keys are
+    /// skipped like `SeriesStyle::from_js` skips them, so a snapshot written
+    /// by a newer build still renders.
+    fn parse_reference_line_style(
+        style: Option<Object>,
+        kind: &str,
+    ) -> Result<Option<(Color, f32, LineStyle)>, JsValue> {
+        let Some(style) = style else {
+            return Ok(None);
+        };
+
+        let mut color = Color::from_rgb(128, 128, 128);
+        let mut width = 1.0_f32;
+        let mut line_style = LineStyle::Dashed;
+
+        for entry in Object::entries(&style).iter() {
+            let entry = Array::from(&entry);
+            let key = style_string(&entry.get(0), "style key")?;
+            let value = entry.get(1);
+            if value.is_undefined() || value.is_null() {
+                continue;
+            }
+            match key.as_str() {
+                "color" => {
+                    color = parse_color(&style_string(&value, &format!("{kind} color"))?)?;
+                }
+                "width" => {
+                    width = finite_positive(&value, &format!("{kind} width"))? as f32;
+                }
+                "linestyle" => {
+                    line_style = lookup(
+                        &LINE_STYLES,
+                        "linestyle",
+                        &style_string(&value, &format!("{kind} linestyle"))?,
+                    )?;
+                }
+                _ => {}
+            }
+        }
+
+        Ok(Some((color, width, line_style)))
+    }
+
+    /// Parse a text-annotation style object accepting `color` and `fontSize`.
+    /// `None` lets the caller use the core default, 10pt black.
+    fn parse_text_annotation_style(style: Option<Object>) -> Result<Option<TextStyle>, JsValue> {
+        let Some(style) = style else {
+            return Ok(None);
+        };
+
+        let mut text_style = TextStyle::default();
+        for entry in Object::entries(&style).iter() {
+            let entry = Array::from(&entry);
+            let key = style_string(&entry.get(0), "style key")?;
+            let value = entry.get(1);
+            if value.is_undefined() || value.is_null() {
+                continue;
+            }
+            match key.as_str() {
+                "color" => {
+                    text_style.color = parse_color(&style_string(&value, "annotation color")?)?;
+                }
+                "fontSize" => {
+                    text_style.font_size = finite_positive(&value, "annotation fontSize")? as f32;
+                }
+                _ => {}
+            }
+        }
+
+        Ok(Some(text_style))
     }
 
     fn style_number(value: &JsValue, name: &str) -> Result<f64, JsValue> {
@@ -1411,6 +1499,57 @@ mod wasm {
         pub fn legend(&mut self, position: &str) -> Result<(), JsValue> {
             let position = lookup(&LEGEND_POSITIONS, "legend position", position)?;
             self.update_plot(|plot| plot.legend(position));
+            Ok(())
+        }
+
+        /// Adds a vertical reference line spanning the plot height at data
+        /// x-coordinate `x` — an absorption edge, a threshold, a boundary.
+        /// Without a style it renders as the core default, a 1pt dashed gray.
+        pub fn vline(&mut self, x: f64, style: Option<Object>) -> Result<(), JsValue> {
+            let x = annotation_coordinate(x, "vline x")?;
+            match parse_reference_line_style(style, "vline")? {
+                Some((color, width, line_style)) => {
+                    self.update_plot(|plot| plot.vline_styled(x, color, width, line_style));
+                }
+                None => self.update_plot(|plot| plot.vline(x)),
+            }
+            Ok(())
+        }
+
+        /// Adds a horizontal reference line spanning the plot width at data
+        /// y-coordinate `y`. Without a style it renders as the core default,
+        /// a 1pt dashed gray.
+        pub fn hline(&mut self, y: f64, style: Option<Object>) -> Result<(), JsValue> {
+            let y = annotation_coordinate(y, "hline y")?;
+            match parse_reference_line_style(style, "hline")? {
+                Some((color, width, line_style)) => {
+                    self.update_plot(|plot| plot.hline_styled(y, color, width, line_style));
+                }
+                None => self.update_plot(|plot| plot.hline(y)),
+            }
+            Ok(())
+        }
+
+        /// Adds a text annotation at data coordinates — a reference-line label,
+        /// a peak marker. The style accepts `color` and `fontSize`; the default
+        /// is 10pt black, so pass a color when the plot uses a dark theme.
+        pub fn annotate_text(
+            &mut self,
+            x: f64,
+            y: f64,
+            text: &str,
+            style: Option<Object>,
+        ) -> Result<(), JsValue> {
+            let x = annotation_coordinate(x, "annotation x")?;
+            let y = annotation_coordinate(y, "annotation y")?;
+            if text.is_empty() {
+                return Err(JsValue::from_str("annotation text must not be empty"));
+            }
+            let annotation = match parse_text_annotation_style(style)? {
+                Some(text_style) => Annotation::text_styled(x, y, text, text_style),
+                None => Annotation::text(x, y, text),
+            };
+            self.update_plot(|plot| plot.annotate(annotation));
             Ok(())
         }
 

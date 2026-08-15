@@ -183,6 +183,27 @@ export function applySnapshotMetadata(rawPlot: RawJsPlot, snapshot: PlotSnapshot
   if (typeof snapshot.tightLayoutPad === "number") {
     rawPlot.tight_layout_pad(snapshot.tightLayoutPad);
   }
+
+  // Annotations replay in call order; the core keeps them on a separate layer
+  // drawn after the data series, so their position in this apply sequence
+  // only fixes their order relative to each other.
+  for (const annotation of snapshot.annotations ?? []) {
+    switch (annotation.kind) {
+      case "vline":
+        rawPlot.vline(annotation.x, annotation.style);
+        break;
+      case "hline":
+        rawPlot.hline(annotation.y, annotation.style);
+        break;
+      case "text":
+        rawPlot.annotate_text(annotation.x, annotation.y, annotation.text, annotation.style);
+        break;
+      default:
+        // A snapshot from a newer build may carry kinds this runtime does not
+        // know; skip them rather than failing the whole plot.
+        break;
+    }
+  }
 }
 
 export function buildRawPlotFromSnapshot(snapshot: PlotSnapshot, module: RawModule): RawJsPlot {

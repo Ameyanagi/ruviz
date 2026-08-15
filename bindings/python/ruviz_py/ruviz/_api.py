@@ -282,7 +282,7 @@ _DPI_3D_MESSAGE = "3D plot dpi must be an integer greater than zero"
 
 #: Snapshot layout version carried by :meth:`Plot.to_snapshot` and
 #: :meth:`Plot3D.to_snapshot`; consumers must ignore fields they do not know.
-_SNAPSHOT_SCHEMA_VERSION = 2
+_SNAPSHOT_SCHEMA_VERSION = 3
 
 
 def _heatmap_matrix(series: dict[str, Any]) -> list[list[float]]:
@@ -407,6 +407,43 @@ def _pair(value: Any, name: str) -> tuple[Any, Any]:
     if isinstance(value, str) or not isinstance(value, Sequence) or len(value) != 2:
         raise ValueError(f"{name} must be a (width, height) pair")
     return value[0], value[1]
+
+
+def _annotation_coordinate(value: Any, name: str) -> float:
+    """Validate an annotation's data coordinate: NaN or infinity would place
+    the line or label nowhere while reporting success."""
+    number = float(value)
+    if not math.isfinite(number):
+        raise ValueError(f"{name} must be a finite number")
+    return number
+
+
+_ANNOTATION_LINESTYLE = _style_text("linestyle", _LINESTYLE_ALIASES)
+
+
+def _reference_line_style(
+    kind: str,
+    color: Any,
+    width: Any,
+    linestyle: Any,
+) -> dict[str, Any] | None:
+    """Normalize reference-line styling into its snapshot form, or ``None``.
+
+    ``None`` keeps the core's un-styled default, a 1pt dashed gray.
+    """
+    style: dict[str, Any] = {}
+    if color is not None:
+        style["color"] = _style_color(color)
+    if width is not None:
+        style["width"] = _finite_positive(width, f"{kind} width")
+    if linestyle is not None:
+        style["linestyle"] = _ANNOTATION_LINESTYLE(linestyle)
+    return style or None
+
+
+def _style_entry(style: dict[str, Any] | None) -> dict[str, Any]:
+    """A spreadable ``{"style": ...}`` entry, or nothing when there is no style."""
+    return {"style": dict(style)} if style else {}
 
 
 def _style_count(name: str, minimum: int) -> Callable[[Any], int]:
@@ -1113,13 +1150,27 @@ class Plot:
 
     @staticmethod
     def _apply_snapshot_metadata(native_plot: Any, snapshot: dict[str, Any]) -> None:
-        """Replay plot-level settings onto a native handle."""
+        """Replay plot-level settings and annotations onto a native handle."""
         for key, method, unpack in _PLOT_SETTINGS:
             value = snapshot.get(key)
             if value is None:
                 continue
             setter = getattr(native_plot, method)
             setter(*value) if unpack else setter(value)
+
+        for annotation in snapshot.get("annotations", []):
+            kind = annotation.get("kind")
+            style = annotation.get("style")
+            if kind == "vline":
+                native_plot.vline(annotation["x"], style)
+            elif kind == "hline":
+                native_plot.hline(annotation["y"], style)
+            elif kind == "text":
+                native_plot.annotate_text(
+                    annotation["x"], annotation["y"], annotation["text"], style
+                )
+            # A snapshot from a newer build may carry kinds this build does not
+            # know; skip them rather than failing the whole plot.
 
     @staticmethod
     def _resolve_numeric_source(
@@ -1143,6 +1194,10 @@ class Plot:
             value = snapshot.get(key)
             if value is not None:
                 plot._state[key] = deepcopy(value)
+
+        annotations = snapshot.get("annotations")
+        if annotations:
+            plot._state["annotations"] = deepcopy(annotations)
 
         for series in snapshot["series"]:
             spec, method = _series_kind(series)
@@ -1303,6 +1358,78 @@ class Plot:
         self._state.update(staged)
         self._invalidate_snapshot_cache()
         return self
+
+    def vline(
+        self,
+        x: float,
+        *,
+        color: str | None = None,
+        width: float | None = None,
+        linestyle: LineStyleName | None = None,
+    ) -> "Plot":
+        """Add a vertical reference line spanning the plot height at data ``x``.
+
+        Marks an absorption edge, a threshold, a boundary. Without styling it
+        renders as the core default, a 1pt dashed gray. ``linestyle`` accepts
+        the same names and matplotlib shorthands as line series.
+        """
+        style = _reference_line_style("vline", color, width, linestyle)
+        self._native_plot.vline(_annotation_coordinate(x, "vline x"), style)
+        self._push_annotation({"kind": "vline", "x": float(x), **_style_entry(style)})
+        return self
+
+    def hline(
+        self,
+        y: float,
+        *,
+        color: str | None = None,
+        width: float | None = None,
+        linestyle: LineStyleName | None = None,
+    ) -> "Plot":
+        """Add a horizontal reference line spanning the plot width at data ``y``.
+
+        Without styling it renders as the core default, a 1pt dashed gray.
+        """
+        style = _reference_line_style("hline", color, width, linestyle)
+        self._native_plot.hline(_annotation_coordinate(y, "hline y"), style)
+        self._push_annotation({"kind": "hline", "y": float(y), **_style_entry(style)})
+        return self
+
+    def annotate_text(
+        self,
+        x: float,
+        y: float,
+        text: str,
+        *,
+        color: str | None = None,
+        font_size: float | None = None,
+    ) -> "Plot":
+        """Add a text annotation at data coordinates.
+
+        Labels a reference line, marks a peak. The default is 10pt black, so
+        pass ``color`` when the plot uses a dark theme.
+        """
+        if not isinstance(text, str) or not text:
+            raise ValueError("annotation text must be a non-empty string")
+        style: dict[str, Any] = {}
+        if color is not None:
+            style["color"] = _style_color(color)
+        if font_size is not None:
+            style["fontSize"] = _finite_positive(font_size, "annotation font size")
+        self._native_plot.annotate_text(
+            _annotation_coordinate(x, "annotation x"),
+            _annotation_coordinate(y, "annotation y"),
+            text,
+            style or None,
+        )
+        self._push_annotation(
+            {"kind": "text", "x": float(x), "y": float(y), "text": text, **_style_entry(style or None)}
+        )
+        return self
+
+    def _push_annotation(self, annotation: dict[str, Any]) -> None:
+        self._state.setdefault("annotations", []).append(annotation)
+        self._invalidate_snapshot_cache()
 
     def dpi(self, dpi: int) -> "Plot":
         """Set output dots per inch, scaling the exported pixels from the figure size."""

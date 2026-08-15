@@ -10,7 +10,7 @@ use pyo3::{
 use ruviz::{
     axes::AxisScale,
     core::{
-        IntoPlot, LegendPosition, Plot, PlotBuilder, PreparedPlot,
+        Annotation, IntoPlot, LegendPosition, Plot, PlotBuilder, PreparedPlot, TextStyle,
         plot::{IntoPlotData, PlotData},
     },
     data::Observable,
@@ -471,7 +471,32 @@ struct NativePlotState {
     y_limits: Option<(f64, f64)>,
     x_scale: Option<AxisScale>,
     y_scale: Option<AxisScale>,
+    annotations: Vec<NativeAnnotation>,
     series: Vec<NativeSeries>,
+}
+
+/// One plot-level annotation, stored in call order.
+///
+/// `style: None` on a line means "use the core's un-styled constructor" — the
+/// 1pt dashed gray default — so an unstyled call and a styled one replay
+/// identically to how they were made.
+#[derive(Clone)]
+enum NativeAnnotation {
+    VLine {
+        x: f64,
+        style: Option<(Color, f32, LineStyle)>,
+    },
+    HLine {
+        y: f64,
+        style: Option<(Color, f32, LineStyle)>,
+    },
+    Text {
+        x: f64,
+        y: f64,
+        text: String,
+        color: Option<Color>,
+        font_size: Option<f32>,
+    },
 }
 
 impl NativePlotState {
@@ -587,12 +612,121 @@ impl NativePlotState {
             plot = plot.tight_layout_pad(pad);
         }
 
+        // Annotations render on their own layer above the data, so their order
+        // here only fixes their order relative to each other.
+        for annotation in &self.annotations {
+            plot = match annotation {
+                NativeAnnotation::VLine { x, style } => match style {
+                    Some((color, width, line_style)) => {
+                        plot.vline_styled(*x, *color, *width, line_style.clone())
+                    }
+                    None => plot.vline(*x),
+                },
+                NativeAnnotation::HLine { y, style } => match style {
+                    Some((color, width, line_style)) => {
+                        plot.hline_styled(*y, *color, *width, line_style.clone())
+                    }
+                    None => plot.hline(*y),
+                },
+                NativeAnnotation::Text {
+                    x,
+                    y,
+                    text,
+                    color,
+                    font_size,
+                } => {
+                    let mut style = TextStyle::default();
+                    if let Some(color) = color {
+                        style.color = *color;
+                    }
+                    if let Some(size) = font_size {
+                        style.font_size = *size;
+                    }
+                    plot.annotate(Annotation::text_styled(*x, *y, text.clone(), style))
+                }
+            };
+        }
+
         for series in &self.series {
             plot = apply_series(plot, &series.data, &series.style)?;
         }
 
         Ok(plot)
     }
+}
+
+/// Validate an annotation's data coordinate: NaN or infinity would place the
+/// line or label nowhere while reporting success.
+fn annotation_coordinate(value: f64, name: &str) -> PyResult<f64> {
+    if !value.is_finite() {
+        return Err(PyValueError::new_err(format!(
+            "{name} must be a finite number"
+        )));
+    }
+    Ok(value)
+}
+
+/// Parse a reference-line style dict into `(color, width, line_style)`.
+///
+/// `None` keeps the core's un-styled default (1pt dashed gray); a present dict
+/// fills unset fields with those same defaults so a partial style like
+/// `{"color": "red"}` keeps the default dash and width. Unknown keys are
+/// skipped so a snapshot written by a newer build still replays.
+fn extract_reference_line_style(
+    style: Option<&Bound<'_, PyDict>>,
+    kind: &str,
+) -> PyResult<Option<(Color, f32, LineStyle)>> {
+    let Some(style) = style else {
+        return Ok(None);
+    };
+
+    let mut color = Color::from_rgb(128, 128, 128);
+    let mut width = 1.0_f32;
+    let mut line_style = LineStyle::Dashed;
+
+    for (key, value) in style.iter() {
+        let key: String = key.extract()?;
+        if value.is_none() {
+            continue;
+        }
+        match key.as_str() {
+            "color" => color = parse_color(&value.extract::<String>()?)?,
+            "width" => width = finite_positive(&value, &format!("{kind} width"))? as f32,
+            "linestyle" => {
+                line_style = lookup(&LINE_STYLES, "linestyle", &value.extract::<String>()?)?;
+            }
+            _ => {}
+        }
+    }
+
+    Ok(Some((color, width, line_style)))
+}
+
+/// Parse a text-annotation style dict accepting `color` and `fontSize`.
+fn extract_text_annotation_style(
+    style: Option<&Bound<'_, PyDict>>,
+) -> PyResult<(Option<Color>, Option<f32>)> {
+    let Some(style) = style else {
+        return Ok((None, None));
+    };
+
+    let mut color = None;
+    let mut font_size = None;
+    for (key, value) in style.iter() {
+        let key: String = key.extract()?;
+        if value.is_none() {
+            continue;
+        }
+        match key.as_str() {
+            "color" => color = Some(parse_color(&value.extract::<String>()?)?),
+            "fontSize" => {
+                font_size = Some(finite_positive(&value, "annotation fontSize")? as f32);
+            }
+            _ => {}
+        }
+    }
+
+    Ok((color, font_size))
 }
 
 /// Reject values the core builders would silently clamp. Clamping suits Rust
@@ -1053,6 +1187,53 @@ impl NativePlotHandle {
 
     fn scientific_notation(&mut self, enabled: bool) -> PyResult<()> {
         self.state.scientific_notation = Some(enabled);
+        self.mark_dirty();
+        Ok(())
+    }
+
+    #[pyo3(signature = (x, style=None))]
+    fn vline(&mut self, x: f64, style: Option<&Bound<'_, PyDict>>) -> PyResult<()> {
+        let x = annotation_coordinate(x, "vline x")?;
+        let style = extract_reference_line_style(style, "vline")?;
+        self.state
+            .annotations
+            .push(NativeAnnotation::VLine { x, style });
+        self.mark_dirty();
+        Ok(())
+    }
+
+    #[pyo3(signature = (y, style=None))]
+    fn hline(&mut self, y: f64, style: Option<&Bound<'_, PyDict>>) -> PyResult<()> {
+        let y = annotation_coordinate(y, "hline y")?;
+        let style = extract_reference_line_style(style, "hline")?;
+        self.state
+            .annotations
+            .push(NativeAnnotation::HLine { y, style });
+        self.mark_dirty();
+        Ok(())
+    }
+
+    #[pyo3(signature = (x, y, text, style=None))]
+    fn annotate_text(
+        &mut self,
+        x: f64,
+        y: f64,
+        text: &str,
+        style: Option<&Bound<'_, PyDict>>,
+    ) -> PyResult<()> {
+        let x = annotation_coordinate(x, "annotation x")?;
+        let y = annotation_coordinate(y, "annotation y")?;
+        if text.is_empty() {
+            return Err(PyValueError::new_err("annotation text must not be empty"));
+        }
+        let (color, font_size) = extract_text_annotation_style(style)?;
+        self.state.annotations.push(NativeAnnotation::Text {
+            x,
+            y,
+            text: text.to_string(),
+            color,
+            font_size,
+        });
         self.mark_dirty();
         Ok(())
     }

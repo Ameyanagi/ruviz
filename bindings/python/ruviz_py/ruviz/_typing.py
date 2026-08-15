@@ -246,6 +246,57 @@ class _PlotSnapshot(TypedDict):
     series: list[SeriesSnapshot]
 
 
+class ReferenceLineStyleSnapshot(TypedDict, total=False):
+    """Styling for a ``vline``/``hline``; unset fields keep the 1pt dashed gray default."""
+
+    color: str
+    width: float
+    linestyle: LineStyleName
+
+
+class TextAnnotationStyleSnapshot(TypedDict, total=False):
+    """Styling for a text annotation; the default is 10pt black."""
+
+    color: str
+    fontSize: float
+
+
+class _VLineAnnotationSnapshot(TypedDict):
+    kind: Literal["vline"]
+    x: float
+
+
+class VLineAnnotationSnapshot(_VLineAnnotationSnapshot, total=False):
+    style: ReferenceLineStyleSnapshot
+
+
+class _HLineAnnotationSnapshot(TypedDict):
+    kind: Literal["hline"]
+    y: float
+
+
+class HLineAnnotationSnapshot(_HLineAnnotationSnapshot, total=False):
+    style: ReferenceLineStyleSnapshot
+
+
+class _TextAnnotationSnapshot(TypedDict):
+    kind: Literal["text"]
+    x: float
+    y: float
+    text: str
+
+
+class TextAnnotationSnapshot(_TextAnnotationSnapshot, total=False):
+    style: TextAnnotationStyleSnapshot
+
+
+#: One plot-level annotation; the list preserves call order, and the literal
+#: ``kind`` fields let a type checker narrow the union.
+AnnotationSnapshot: TypeAlias = (
+    VLineAnnotationSnapshot | HLineAnnotationSnapshot | TextAnnotationSnapshot
+)
+
+
 class PlotSnapshot(_PlotSnapshot, total=False):
     """JSON-friendly snapshot of a :class:`ruviz.Plot`.
 
@@ -280,6 +331,8 @@ class PlotSnapshot(_PlotSnapshot, total=False):
     yLim: list[float]
     xScale: list[str | float]
     yScale: list[str | float]
+    #: Plot-level annotations — reference lines and text labels — in call order.
+    annotations: list[AnnotationSnapshot]
 
 
 class _Series3DSnapshot(TypedDict):
