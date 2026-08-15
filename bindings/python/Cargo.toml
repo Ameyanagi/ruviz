@@ -20,7 +20,7 @@ crate-type = ["cdylib"]
 numpy = "0.24"
 pollster = "0.4"
 pyo3 = { version = "0.24", features = ["abi3-py310"] }
-ruviz = { path = "../..", version = "0.8.0", default-features = false, features = ["3d", "pdf", "svg"] }
+ruviz = { path = "../..", version = "0.8.0", default-features = false, features = ["3d", "parallel", "pdf", "svg"] }
 
 [dev-dependencies]
 image = { version = "0.25", default-features = false, features = ["png"] }
