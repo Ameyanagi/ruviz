@@ -477,6 +477,48 @@ fn test_scatter_density_defaults_to_exact_byte_identical_rendering() {
 }
 
 #[test]
+fn test_fast_mode_upgrades_only_overdrawn_scatters_to_density() {
+    // Enough points to exceed the plot pixel count of a small canvas.
+    let n = 40_000;
+    let x: Vec<f64> = (0..n).map(|i| (i % 200) as f64).collect();
+    let y: Vec<f64> = (0..n).map(|i| (i / 200) as f64).collect();
+
+    let fast: Plot = Plot::new().size_px(120, 120).scatter(&x, &y).into();
+    let fast = fast.fast(true);
+    let explicit: Plot = Plot::new()
+        .size_px(120, 120)
+        .scatter(&x, &y)
+        .density(true)
+        .into();
+    // An overdrawn scatter under fast mode renders exactly like an explicit
+    // density series.
+    assert_eq!(
+        fast.render().expect("fast scatter should render").pixels,
+        explicit
+            .render()
+            .expect("density scatter should render")
+            .pixels
+    );
+
+    // A small scatter is untouched by fast mode: exact output, byte for byte.
+    let small_x = [0.0, 0.4, 0.8, 1.2];
+    let small_y = [0.2, 0.9, 0.6, 1.7];
+    let small_fast: Plot = Plot::new()
+        .size_px(120, 120)
+        .scatter(&small_x, &small_y)
+        .into();
+    let small_fast = small_fast.fast(true);
+    let small_exact: Plot = Plot::new()
+        .size_px(120, 120)
+        .scatter(&small_x, &small_y)
+        .into();
+    assert_eq!(
+        small_fast.render().expect("fast small scatter").pixels,
+        small_exact.render().expect("exact small scatter").pixels
+    );
+}
+
+#[test]
 fn test_density_scatter_svg_reports_clear_unsupported_error() {
     let plot: Plot = Plot::new()
         .scatter(&[0.0, 1.0], &[0.0, 1.0])

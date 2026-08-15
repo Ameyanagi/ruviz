@@ -599,6 +599,7 @@ _PLOT_SETTINGS: tuple[tuple[str, str, bool], ...] = (
     ("dpi", "dpi", False),
     ("maxResolution", "max_resolution", True),
     ("scientificNotation", "scientific_notation", False),
+    ("fast", "fast", False),
     ("margin", "margin", False),
     ("theme", "theme", False),
     ("fontFamily", "font_family", False),
@@ -1376,6 +1377,23 @@ class Plot:
         normalized = bool(enabled)
         self._native_plot.grid(normalized)
         self._state["grid"] = normalized
+        self._invalidate_snapshot_cache()
+        return self
+
+    def fast(self, enabled: bool = True) -> "Plot":
+        """Trade exactness for speed on large data.
+
+        Off (the default), every series renders exactly. On, the renderer may
+        substitute cheaper approximations whose output is close to, but not
+        pixel-identical with, exact rendering: currently a scatter series with
+        more points than the plot has pixels renders through density
+        aggregation (see ``scatter(density=True)``) instead of compositing
+        every marker. An explicit ``density=`` on a series always wins.
+        """
+        if not isinstance(enabled, bool):
+            raise ValueError("fast must be a boolean")
+        self._native_plot.fast(enabled)
+        self._state["fast"] = enabled
         self._invalidate_snapshot_cache()
         return self
 

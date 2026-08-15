@@ -472,7 +472,13 @@ impl Plot {
             }
             (SeriesType::Scatter { .. }, ResolvedSeries::Scatter { x, y }) => {
                 let mut raster_plan = SeriesRasterPlan::default();
-                if series.density {
+                // Fast mode upgrades a heavily overdrawn scatter to density
+                // aggregation: past one point per plot pixel, exact markers
+                // mostly repaint pixels that are already covered.
+                let auto_density = self.render.fast
+                    && x.len() as f64
+                        > f64::from(plot_area.width()) * f64::from(plot_area.height());
+                if series.density || auto_density {
                     raster_plan.push_density(DensityBatch::from_xy(
                         x,
                         y,

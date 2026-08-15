@@ -1752,4 +1752,18 @@ impl Plot {
         self.layout.scientific_notation = Some(enabled);
         self
     }
+
+    /// Trade exactness for speed on large data.
+    ///
+    /// Off (the default), every series renders exactly. On, the renderer may
+    /// substitute cheaper approximations whose output is close to, but not
+    /// byte-identical with, exact rendering. Currently that means a scatter
+    /// series whose point count exceeds the plot pixel count renders through
+    /// density aggregation (see `ScatterConfig::density`) instead of
+    /// compositing every marker; an explicit `.density(true)` on a series
+    /// forces aggregation regardless of this flag.
+    pub fn fast(mut self, enabled: bool) -> Self {
+        self.render.fast = enabled;
+        self
+    }
 }

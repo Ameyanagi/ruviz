@@ -982,6 +982,28 @@ def test_scatter_density_rejects_non_boolean_values(value: object) -> None:
         ruviz._native.NativePlotHandle().scatter(STYLE_X, STYLE_Y, {"density": value})
 
 
+def test_fast_mode_upgrades_overdrawn_scatters_and_round_trips() -> None:
+    rng = np.random.default_rng(20260815)
+    x = rng.normal(size=200_000)
+    y = 0.6 * x + rng.normal(scale=0.7, size=x.size)
+
+    fast = _density_base().scatter(x, y, alpha=0.08).fast()
+    density = _density_base().scatter(x, y, alpha=0.08, density=True)
+    # Past one point per plot pixel, fast mode renders through the same
+    # density aggregation an explicit density=True series uses.
+    assert fast.render_png() == density.render_png()
+    assert fast.to_snapshot()["fast"] is True
+    assert deepcopy(fast).to_snapshot()["fast"] is True
+
+    # A small scatter is untouched: fast output stays exact, byte for byte.
+    small_fast = _density_base().scatter(STYLE_X, STYLE_Y).fast()
+    small_exact = _density_base().scatter(STYLE_X, STYLE_Y)
+    assert small_fast.render_png() == small_exact.render_png()
+
+    with pytest.raises(ValueError, match="fast must be a boolean"):
+        ruviz.plot().fast("yes")  # type: ignore[arg-type]
+
+
 PLOT_SETTING_CASES = [
     ("dpi", lambda plot: plot.dpi(200), "dpi", 200),
     ("legend", lambda plot: plot.legend("upper_left"), "legend", "upper_left"),

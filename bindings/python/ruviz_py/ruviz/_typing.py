@@ -268,6 +268,7 @@ class PlotSnapshot(_PlotSnapshot, total=False):
     margin: float
     tightLayoutPad: float
     scientificNotation: bool
+    fast: bool
     theme: Theme
     ticks: bool
     title: str

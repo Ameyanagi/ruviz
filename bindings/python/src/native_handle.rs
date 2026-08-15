@@ -459,6 +459,7 @@ struct NativePlotState {
     margin: Option<f32>,
     tight_layout_pad: Option<f32>,
     scientific_notation: Option<bool>,
+    fast: bool,
     theme: Option<String>,
     ticks: Option<bool>,
     title: Option<String>,
@@ -500,6 +501,10 @@ impl NativePlotState {
 
         if let Some(enabled) = self.scientific_notation {
             plot = plot.scientific_notation(enabled);
+        }
+
+        if self.fast {
+            plot = plot.fast(true);
         }
 
         if let Some(margin) = self.margin {
@@ -1048,6 +1053,12 @@ impl NativePlotHandle {
 
     fn scientific_notation(&mut self, enabled: bool) -> PyResult<()> {
         self.state.scientific_notation = Some(enabled);
+        self.mark_dirty();
+        Ok(())
+    }
+
+    fn fast(&mut self, enabled: bool) -> PyResult<()> {
+        self.state.fast = enabled;
         self.mark_dirty();
         Ok(())
     }
