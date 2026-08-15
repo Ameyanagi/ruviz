@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::sync::Arc;
 
 use numpy::{PyReadonlyArray1, PyReadonlyArray2};
 use pyo3::{
@@ -48,7 +49,7 @@ fn lookup_theme(name: &str) -> Option<Theme> {
 
 #[derive(Clone)]
 enum NumericSourceState {
-    Static(Vec<f64>),
+    Static(Arc<Vec<f64>>),
     Observable(Observable<Vec<f64>>),
 }
 
@@ -62,7 +63,7 @@ impl NumericSourceState {
 
     fn to_plot_data(&self) -> PlotData {
         match self {
-            Self::Static(values) => values.clone().into_plot_data(),
+            Self::Static(values) => Arc::clone(values).into_plot_data(),
             Self::Observable(values) => values.clone().into_plot_data(),
         }
     }
@@ -581,7 +582,7 @@ impl NativePlotState {
         }
 
         for series in &self.series {
-            plot = apply_series(plot, series.data.clone(), &series.style)?;
+            plot = apply_series(plot, &series.data, &series.style)?;
         }
 
         Ok(plot)
@@ -629,7 +630,7 @@ fn ensure_same_len(lengths: &[usize], message: &str) -> Result<(), String> {
 
 fn apply_series(
     plot: Plot,
-    series: NativeSeriesState,
+    series: &NativeSeriesState,
     style: &SeriesStyle,
 ) -> Result<Plot, String> {
     match series {
@@ -670,13 +671,13 @@ fn apply_series(
                 &[categories.len(), values.len()],
                 "bar categories and values must have the same length",
             )?;
-            let builder = plot.bar_source(&categories, values.to_plot_data());
+            let builder = plot.bar_source(categories, values.to_plot_data());
             Ok(styled(builder, style).into_plot())
         }
         NativeSeriesState::Histogram { data } => {
             let mut builder = match data {
-                NumericSourceState::Static(values) => plot.histogram(&values),
-                NumericSourceState::Observable(values) => plot.histogram_source(values),
+                NumericSourceState::Static(values) => plot.histogram(values.as_ref()),
+                NumericSourceState::Observable(values) => plot.histogram_source(values.clone()),
             };
             if let Some(bins) = style.bins {
                 builder = builder.bins(bins);
@@ -691,10 +692,10 @@ fn apply_series(
             Ok(styled(builder, style).into_plot())
         }
         NativeSeriesState::Heatmap { values, rows, cols } => {
-            if rows == 0 || cols == 0 || values.len() != rows.saturating_mul(cols) {
+            if *rows == 0 || *cols == 0 || values.len() != rows.saturating_mul(*cols) {
                 return Err("heatmap values length must match rows * cols".to_string());
             }
-            let matrix: Vec<Vec<f64>> = values.chunks(cols).map(|chunk| chunk.to_vec()).collect();
+            let matrix: Vec<Vec<f64>> = values.chunks(*cols).map(|chunk| chunk.to_vec()).collect();
             Ok(plot.heatmap(&matrix).into_plot())
         }
         NativeSeriesState::ErrorBars { x, y, y_errors } => {
@@ -750,7 +751,7 @@ fn apply_series(
                     &[values.len(), labels.len()],
                     "pie values and labels must have the same length",
                 )?;
-                Ok(builder.labels(&labels).into_plot())
+                Ok(builder.labels(labels).into_plot())
             } else {
                 Ok(builder.into_plot())
             }
@@ -760,7 +761,7 @@ fn apply_series(
                 return Err("radar labels must not be empty".to_string());
             }
 
-            let mut builder = plot.radar(&labels);
+            let mut builder = plot.radar(labels);
             for (name, values) in series {
                 ensure_same_len(
                     &[labels.len(), values.len()],
@@ -838,6 +839,7 @@ fn extract_numeric_source(source: &Bound<'_, PyAny>) -> PyResult<NumericSourceSt
     }
 
     extract_f64_vec(source)
+        .map(Arc::new)
         .map(NumericSourceState::Static)
         .map_err(|_| PyTypeError::new_err("expected a numeric list or NativeObservable1D source"))
 }
@@ -1543,7 +1545,7 @@ mod tests {
     }
 
     fn static_source(values: &[f64]) -> NumericSourceState {
-        NumericSourceState::Static(values.to_vec())
+        NumericSourceState::Static(Arc::new(values.to_vec()))
     }
 
     #[test]

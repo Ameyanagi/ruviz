@@ -786,6 +786,30 @@ mod tests {
     }
 
     #[test]
+    fn test_prepared_plot_keeps_shared_static_series_allocations() {
+        let x = Arc::new(vec![0.0, 1.0, 2.0]);
+        let y = Arc::new(vec![0.0, 1.0, 4.0]);
+        let plot: Plot = Plot::new()
+            .line_source(Arc::clone(&x), Arc::clone(&y))
+            .into();
+        let prepared = plot.prepare();
+
+        let super::super::SeriesType::Line { x_data, y_data } =
+            &prepared.plot.series_mgr.series[0].series_type
+        else {
+            panic!("prepared shared-static series should remain a line");
+        };
+        let super::super::PlotData::SharedStatic(prepared_x) = x_data else {
+            panic!("prepared x data should stay shared");
+        };
+        let super::super::PlotData::SharedStatic(prepared_y) = y_data else {
+            panic!("prepared y data should stay shared");
+        };
+        assert!(Arc::ptr_eq(&x, prepared_x));
+        assert!(Arc::ptr_eq(&y, prepared_y));
+    }
+
+    #[test]
     fn test_prepared_style_shell_uses_pre_sample_version_key() {
         let color = Observable::new(Color::RED);
         let plot: Plot = Plot::new()

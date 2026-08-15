@@ -344,6 +344,15 @@ pub(super) fn project_xy_points(
         x_data, y_data, x_min, x_max, y_min, y_max, plot_area, x_scale, y_scale,
     );
 
+    // Every render path validates both arrays as finite before projection, and
+    // finiteness is the complete representability rule for linear axes. Log
+    // and mixed-scale paths still need the scan for finite zero/negative data.
+    if matches!(x_scale, crate::axes::AxisScale::Linear)
+        && matches!(y_scale, crate::axes::AxisScale::Linear)
+    {
+        return projected;
+    }
+
     if all_samples_representable(x_data, y_data, x_scale, y_scale) {
         return projected;
     }
@@ -392,6 +401,18 @@ pub(super) fn project_xy_subpaths(
     let projected = project_xy_points_unchecked(
         x_data, y_data, x_min, x_max, y_min, y_max, plot_area, x_scale, y_scale,
     );
+
+    // See `project_xy_points`: validation already establishes the only
+    // representability condition linear axes impose.
+    if matches!(x_scale, crate::axes::AxisScale::Linear)
+        && matches!(y_scale, crate::axes::AxisScale::Linear)
+    {
+        return if projected.is_empty() {
+            Vec::new()
+        } else {
+            vec![projected]
+        };
+    }
 
     if all_samples_representable(x_data, y_data, x_scale, y_scale) {
         return if projected.is_empty() {

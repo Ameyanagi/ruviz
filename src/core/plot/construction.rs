@@ -12,7 +12,7 @@ fn resolve_plot_data<'a>(
     cache: &mut Vec<CachedResolvedData>,
     acknowledgements: &mut Vec<crate::data::StreamingBuffer<f64>>,
 ) -> ResolvedData<'a> {
-    if let PlotData::Static(values) = source {
+    if let Some(values) = source.as_static() {
         return ResolvedData::Cow(Cow::Borrowed(values));
     }
 
@@ -24,7 +24,9 @@ fn resolve_plot_data<'a>(
     }
 
     let values = match source {
-        PlotData::Static(_) => unreachable!("static data returned before cache lookup"),
+        PlotData::Static(_) | PlotData::SharedStatic(_) => {
+            unreachable!("static data returned before cache lookup")
+        }
         PlotData::Temporal(signal) => signal.at(time),
         PlotData::Reactive(observable) => observable.get(),
         PlotData::Streaming(stream) => {
