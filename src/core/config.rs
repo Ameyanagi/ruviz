@@ -66,13 +66,17 @@ impl FigureConfig {
     ///
     /// `(width_px, height_px)` tuple
     pub fn canvas_size(&self) -> (u32, u32) {
-        // Snap to the nearest integer when the product is within float noise of
-        // it: `size_px(900, 420)` stores 4.2 in, which is 419.99997 back at
-        // 100 dpi, and plain truncation would ship a 419px canvas. A genuinely
-        // fractional size (6.4 in at 72 dpi = 460.8) keeps truncating.
+        // Snap to the nearest integer when the product is within f32
+        // representation noise of it: `size_px(900, 420)` stores 4.2 in, which
+        // is 419.99997 back at 100 dpi, and plain truncation would ship a
+        // 419px canvas. The threshold is relative — representation error is a
+        // couple of ULPs (~2e-7 of the value) — so a genuinely fractional
+        // size keeps truncating, whether it is far from an integer (6.4 in at
+        // 72 dpi = 460.8) or deliberately close to one (1.9999 in at 4 dpi =
+        // 7.9996, which a fitted-frame DPI computation relies on truncating).
         fn snap_trunc(px: f32) -> u32 {
             let snapped = px.round();
-            if (px - snapped).abs() < 1e-2 {
+            if (px - snapped).abs() < px.abs().max(1.0) * 1e-5 {
                 snapped as u32
             } else {
                 px as u32
@@ -1200,6 +1204,12 @@ mod tests {
         // is 345.6px and stays 345, not 346.
         let config = FigureConfig::new(6.4, 4.8, 72.0);
         assert_eq!(config.canvas_size(), (460, 345));
+
+        // So does a product deliberately close to an integer: fitted-frame
+        // DPI computations produce sizes like 1.9999in at 4dpi = 7.9996px
+        // and depend on truncation to reproduce the requested pixels.
+        let config = FigureConfig::new(1024.0001, 1.9999, 4.0);
+        assert_eq!(config.canvas_size(), (4096, 7));
     }
 
     #[test]
