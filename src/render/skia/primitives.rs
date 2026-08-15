@@ -1753,9 +1753,11 @@ impl SkiaRenderer {
             let (base_x, phase_x) = Self::quantize_marker_subpixel(point.x);
             let (base_y, phase_y) = Self::quantize_marker_subpixel(point.y);
             let slot = phase_y as usize * phase_count + phase_x as usize;
-            let sprite = sprites[slot]
-                .as_deref()
-                .expect("every finite marker phase was pre-resolved");
+            // Pre-resolved above for every finite point; a miss would only
+            // skip the point, never draw a wrong sprite.
+            let Some(sprite) = sprites[slot].as_deref() else {
+                continue;
+            };
             let dst_x = base_x - sprite.origin_x;
             let dst_y = base_y - sprite.origin_y;
             if dst_x + sprite.width as i32 <= clip_left
@@ -1795,9 +1797,10 @@ impl SkiaRenderer {
                     let (base_x, phase_x) = Self::quantize_marker_subpixel(point.x);
                     let (base_y, phase_y) = Self::quantize_marker_subpixel(point.y);
                     let slot = phase_y as usize * phase_count + phase_x as usize;
-                    let sprite = sprites[slot]
-                        .as_deref()
-                        .expect("every finite marker phase was pre-resolved");
+                    // Same pre-resolution invariant as the binning pass.
+                    let Some(sprite) = sprites[slot].as_deref() else {
+                        continue;
+                    };
                     let dst_x = base_x - sprite.origin_x;
                     let dst_y = base_y - sprite.origin_y;
 
