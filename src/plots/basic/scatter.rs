@@ -173,10 +173,13 @@ impl ScatterConfig {
 
     /// Enable or disable plot-area density aggregation.
     ///
-    /// Density rendering makes aggregation work scale with plot pixels rather
-    /// than projected marker geometry. It is disabled by default and is most
-    /// useful for scatters containing hundreds of thousands or millions of
-    /// points.
+    /// Density rendering makes work scale with plot pixels rather than
+    /// points: counts are aggregated per pixel, spread over the marker's
+    /// footprint, and colored at the scatter-equivalent alpha, keeping the
+    /// exact render's silhouette. Disabled by default; most useful for
+    /// scatters containing hundreds of thousands or millions of points. See
+    /// `PlotSeriesBuilder::density` for which marker shapes the footprint
+    /// models exactly.
     pub fn density(mut self, density: bool) -> Self {
         self.density = density;
         self

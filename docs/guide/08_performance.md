@@ -101,6 +101,82 @@ println!("public PNG backend: {}", plot.resolved_backend_name());
 Use explicit `BackendType::DataShader` only when you deliberately want density
 aggregation instead of per-point scatter markers.
 
+## Density Scatters and Fast Mode
+
+Exact rendering composites every marker, so its cost grows with the point
+count. A density scatter instead aggregates points into a plot-area count
+grid and colors each pixel once, so its cost grows with the plot's pixel
+count — a 10,000,000-point scatter renders in tens of milliseconds instead
+of seconds. Ask for it per series:
+
+```rust
+use ruviz::prelude::*;
+
+let points = 2_000_000;
+let x: Vec<f64> = (0..points).map(|i| (i as f64 * 0.37).sin()).collect();
+let y: Vec<f64> = (0..points).map(|i| (i as f64 * 0.91).cos()).collect();
+
+Plot::new()
+    .scatter(&x, &y)
+    .density(true)
+    .save("density_scatter.png")?;
+```
+
+Or opt into fast mode, which upgrades any scatter series holding more points
+than the plot has pixels — one point per pixel — and leaves everything below
+that threshold byte-identical to exact rendering:
+
+```rust
+use ruviz::prelude::*;
+
+let points = 2_000_000;
+let x: Vec<f64> = (0..points).map(|i| (i as f64 * 0.37).sin()).collect();
+let y: Vec<f64> = (0..points).map(|i| (i as f64 * 0.91).cos()).collect();
+
+Plot::new()
+    .scatter(&x, &y)
+    .into_plot()
+    .fast(true)
+    .save("fast_scatter.png")?;
+```
+
+In Python the same pair is `scatter(x, y, density=True)` and `plot.fast()`.
+
+### What density rendering preserves
+
+Each pixel takes the series color at the scatter-equivalent alpha
+`1 - (1 - alpha)^covering_markers`, where the count grid is spread over the
+series' marker footprint — so the density image keeps the exact render's
+silhouette and reads as what the markers converge to, not as a heatmap.
+Series z-order, explicit colors, and palette colors all behave as in exact
+mode.
+
+The footprint is described row by row, which models a marker exactly when
+every row of it is one centered span:
+
+| Marker | Density footprint |
+|---|---|
+| `circle` | exact (disk profile) |
+| `square` | exact (box profile) |
+| `diamond` | exact (linear taper) |
+| `triangle`, `triangle-down` | exact (asymmetric row profiles) |
+| `plus` | exact (narrow arms, full-width crossbar) |
+| `cross`, `star` | approximated by their bounding disk — an X splits a row into two spans |
+| `circle-open`, `square-open`, `triangle-open`, `diamond-open` | rendered filled — a hollow interior also needs two spans per row |
+
+### What density rendering gives up
+
+- Output is close to, but not pixel-identical with, exact rendering: marker
+  edge antialiasing and the exact per-marker compositing order are replaced
+  by the per-pixel alpha formula. Anything that must be reproducible to the
+  byte should stay in exact mode, which remains the default.
+- Marker rims (`edge_color`/`edge_width`) are not drawn; the footprint is the
+  filled shape.
+- SVG export reports a clear unsupported error for density series — render to
+  PNG, or disable density for vector output.
+- An explicit per-series `density(...)` always wins over fast mode's
+  automatic threshold, in both directions.
+
 ## Benchmark Template
 
 ```rust
@@ -130,6 +206,8 @@ println!(
 
 ## Related Guides
 
+- [Scatter benchmarks](../benchmarks.md) — measured cold/warm comparisons
+  against xy and matplotlib, with the reproduction commands.
 - [Backend Selection](07_backends.md)
 - [Installation](02_installation.md)
 - [Advanced Usage](11_advanced.md)

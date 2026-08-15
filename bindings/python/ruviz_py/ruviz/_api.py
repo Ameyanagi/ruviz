@@ -1507,9 +1507,14 @@ class Plot:
         """Add a scatter series from x/y arrays or dataframe columns.
 
         ``density=True`` directly aggregates points into a plot-area pixel
-        grid. This is an opt-in approximation for very large scatters: color
-        and overlap alpha are preserved, while marker shape, size, edges, and
-        antialiasing are not reproduced.
+        grid whose counts are spread over the series' marker footprint, so
+        the result keeps the exact render's silhouette while its cost scales
+        with pixels instead of points. It is an opt-in approximation: color,
+        overlap alpha, marker size, and marker shape are preserved for
+        markers whose rows are one centered span (circle, square, diamond,
+        triangles, plus); ``cross`` and ``star`` use their bounding disk,
+        open markers render filled, and edges and antialiasing are not
+        reproduced. Density series cannot be exported to SVG.
         """
         x_values, native_x, x_observable = self._build_native_numeric_source(
             _column_values(data, x), "scatter x"
