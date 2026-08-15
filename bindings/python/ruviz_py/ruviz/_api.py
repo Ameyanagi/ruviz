@@ -1385,10 +1385,12 @@ class Plot:
 
         Off (the default), every series renders exactly. On, the renderer may
         substitute cheaper approximations whose output is close to, but not
-        pixel-identical with, exact rendering: currently a scatter series with
-        more points than the plot has pixels renders through density
-        aggregation (see ``scatter(density=True)``) instead of compositing
-        every marker. An explicit ``density=`` on a series always wins.
+        pixel-identical with, exact rendering: a scatter series with more
+        points than the plot has pixels renders through density aggregation
+        (see ``scatter(density=True)``) instead of compositing every marker,
+        and a marked solid line's stroke takes the same min/max reduction a
+        bare solid line always gets, while its markers stay complete. An
+        explicit ``density=`` on a series always wins.
         """
         if not isinstance(enabled, bool):
             raise ValueError("fast must be a boolean")

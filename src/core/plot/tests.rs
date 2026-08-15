@@ -519,6 +519,50 @@ fn test_fast_mode_upgrades_only_overdrawn_scatters_to_density() {
 }
 
 #[test]
+fn test_fast_mode_reduces_marked_line_strokes_but_keeps_small_lines_exact() {
+    // Enough points to trip the 4-per-pixel-column reduction threshold.
+    let n = 30_000;
+    let x: Vec<f64> = (0..n).map(|i| i as f64).collect();
+    let y: Vec<f64> = (0..n).map(|i| ((i % 97) as f64).sin()).collect();
+
+    let exact: Plot = Plot::new()
+        .size_px(320, 200)
+        .line(&x, &y)
+        .marker(MarkerStyle::Circle)
+        .into();
+    let fast: Plot = Plot::new()
+        .size_px(320, 200)
+        .line(&x, &y)
+        .marker(MarkerStyle::Circle)
+        .into();
+    let fast = fast.fast(true);
+    // Fast mode decimates the marked line's stroke, so the bytes may differ,
+    // but both must render.
+    let exact_pixels = exact.render().expect("exact marked line").pixels;
+    let fast_pixels = fast.render().expect("fast marked line").pixels;
+    assert_eq!(exact_pixels.len(), fast_pixels.len());
+
+    // Below the reduction threshold a marked line is untouched by fast mode.
+    let small_x = [0.0, 1.0, 2.0, 3.0];
+    let small_y = [0.5, 1.5, 0.75, 2.0];
+    let small_exact: Plot = Plot::new()
+        .size_px(320, 200)
+        .line(&small_x, &small_y)
+        .marker(MarkerStyle::Circle)
+        .into();
+    let small_fast: Plot = Plot::new()
+        .size_px(320, 200)
+        .line(&small_x, &small_y)
+        .marker(MarkerStyle::Circle)
+        .into();
+    let small_fast = small_fast.fast(true);
+    assert_eq!(
+        small_exact.render().expect("small exact").pixels,
+        small_fast.render().expect("small fast").pixels
+    );
+}
+
+#[test]
 fn test_density_scatter_svg_reports_clear_unsupported_error() {
     let plot: Plot = Plot::new()
         .scatter(&[0.0, 1.0], &[0.0, 1.0])

@@ -1757,11 +1757,13 @@ impl Plot {
     ///
     /// Off (the default), every series renders exactly. On, the renderer may
     /// substitute cheaper approximations whose output is close to, but not
-    /// byte-identical with, exact rendering. Currently that means a scatter
-    /// series whose point count exceeds the plot pixel count renders through
-    /// density aggregation (see `ScatterConfig::density`) instead of
-    /// compositing every marker; an explicit `.density(true)` on a series
-    /// forces aggregation regardless of this flag.
+    /// byte-identical with, exact rendering. Currently that means two things:
+    /// a scatter series whose point count exceeds the plot pixel count
+    /// renders through density aggregation (see `ScatterConfig::density`)
+    /// instead of compositing every marker, and a marked solid line's stroke
+    /// takes the same min/max column reduction a bare solid line always gets,
+    /// while its markers stay complete. An explicit `.density(...)` on a
+    /// series always wins over the automatic scatter upgrade.
     pub fn fast(mut self, enabled: bool) -> Self {
         self.render.fast = enabled;
         self

@@ -123,8 +123,10 @@ Plot::new()
 ```
 
 Or opt into fast mode, which upgrades any scatter series holding more points
-than the plot has pixels — one point per pixel — and leaves everything below
-that threshold byte-identical to exact rendering:
+than the plot has pixels — one point per pixel — lets a marked solid line's
+stroke take the min/max column reduction a bare solid line always gets (its
+markers stay complete), and leaves everything below those thresholds
+byte-identical to exact rendering:
 
 ```rust
 use ruviz::prelude::*;

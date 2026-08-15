@@ -421,7 +421,14 @@ impl Plot {
                 let mut marker_points: Vec<Point2f> = Vec::new();
 
                 for mut points in subpaths {
-                    if series.props.marker_style.value().is_none()
+                    let has_markers = series.props.marker_style.value().is_some();
+                    if has_markers {
+                        // Captured before any decimation: reducing the
+                        // polyline must never move or drop a marker.
+                        marker_points.extend_from_slice(points.as_ref());
+                    }
+
+                    if !has_markers
                         && series.x_errors.is_none()
                         && series.y_errors.is_none()
                         && let Some(canonicalized) = canonicalize_line_points_exact(points.as_ref())
@@ -430,7 +437,13 @@ impl Plot {
                         points = canonicalized.into();
                     }
 
-                    if mode.allows_raster_line_reduction()
+                    // A marked line keeps its full polyline by default —
+                    // decimating the stroke changes its bytes — but under
+                    // fast mode the stroke takes the same min/max reduction
+                    // a bare solid line always gets, while the markers above
+                    // stay complete.
+                    if (!has_markers || self.render.fast)
+                        && mode.allows_raster_line_reduction()
                         && should_reduce_line_series(series, points.len(), plot_area.width())
                         && let Some(reduced) = reduce_line_points_for_raster(
                             points.as_ref(),
@@ -440,10 +453,6 @@ impl Plot {
                     {
                         raster_plan.note_raster_line_reduction();
                         points = reduced.into();
-                    }
-
-                    if series.props.marker_style.value().is_some() {
-                        marker_points.extend_from_slice(points.as_ref());
                     }
 
                     raster_plan.push_polyline(
