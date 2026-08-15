@@ -5203,7 +5203,7 @@ dependencies = [
 
 [[package]]
 name = "ruviz"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "base64",
  "bytemuck",
@@ -5229,7 +5229,7 @@ dependencies = [
 
 [[package]]
 name = "ruviz-egui"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "eframe",
  "egui",
@@ -5240,7 +5240,7 @@ dependencies = [
 
 [[package]]
 name = "ruviz-iced"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "arboard",
  "async-channel",
@@ -5254,7 +5254,7 @@ dependencies = [
 
 [[package]]
 name = "ruviz-slint"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "arboard",
  "i-slint-backend-testing",

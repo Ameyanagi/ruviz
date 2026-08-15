@@ -24,7 +24,7 @@ gpui = { git = "https://github.com/zed-industries/zed", rev = "3060e4170ea5ef0e6
 
 [package]
 name = "ruviz-gpui"
-version = "0.7.0"
+version = "0.8.0"
 edition = "2024"
 rust-version = "1.92"
 license = "MIT OR Apache-2.0"
@@ -45,7 +45,7 @@ gpu = ["ruviz/gpu"]
 "3d-gpu" = ["3d", "gpu"]
 
 [dependencies]
-ruviz = { version = "0.7.0", path = "../.." }
+ruviz = { version = "0.8.0", path = "../.." }
 image = "0.25"
 smallvec = "1.15"
 futures = "0.3"

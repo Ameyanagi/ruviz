@@ -33,7 +33,7 @@ async-channel = "2"
 bytes = "1.9"
 arboard = "3.6.1"
 rfd = "0.15"
-ruviz = { version = "=0.7.0", path = "../../.." }
+ruviz = { version = "=0.8.0", path = "../../.." }
 
 [dev-dependencies]
 # `default-features = false` drops iced's default renderer set, so `wgpu` and
