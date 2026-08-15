@@ -1729,26 +1729,69 @@ impl SkiaRenderer {
         let canvas_width_i32 = self.width as i32;
         let canvas_height_i32 = self.height as i32;
         let canvas_stride = canvas_width * 4;
-        let rows_per_band = canvas_height.div_ceil(worker_count);
+        // Several bands per worker: dense data (a gaussian scatter, say)
+        // concentrates points in the middle rows, and with one band per worker
+        // the busiest band caps the speedup. Finer bands let rayon's work
+        // stealing even the load out; the floor keeps a band taller than a
+        // typical marker so most sprites still land in a single band.
+        let rows_per_band = canvas_height.div_ceil(worker_count * 4).max(16);
         let bytes_per_band = rows_per_band * canvas_stride;
+        let band_count = canvas_height.div_ceil(rows_per_band.max(1)).max(1);
+
+        // One ordered pass assigns each point index to the bands its sprite
+        // rows touch (almost always exactly one), so a band walks only its own
+        // points instead of the full list — at 10M points the full-list walk
+        // per band was itself the bottleneck. Indices stay in submission order
+        // inside every band, which is what keeps each pixel's source-over
+        // sequence identical to the serial compositor. A sprite with no
+        // visible row draws nothing in either path and is dropped here.
+        let mut band_points: Vec<Vec<u32>> = vec![Vec::new(); band_count];
+        for (index, point) in points.iter().enumerate() {
+            if !point.x.is_finite() || !point.y.is_finite() {
+                continue;
+            }
+            let (base_x, phase_x) = Self::quantize_marker_subpixel(point.x);
+            let (base_y, phase_y) = Self::quantize_marker_subpixel(point.y);
+            let slot = phase_y as usize * phase_count + phase_x as usize;
+            let sprite = sprites[slot]
+                .as_deref()
+                .expect("every finite marker phase was pre-resolved");
+            let dst_x = base_x - sprite.origin_x;
+            let dst_y = base_y - sprite.origin_y;
+            if dst_x + sprite.width as i32 <= clip_left
+                || dst_x >= clip_right
+                || dst_y + sprite.height as i32 <= clip_top
+                || dst_y >= clip_bottom
+            {
+                continue;
+            }
+            let first_row = dst_y.max(0);
+            let last_row = (dst_y + sprite.height as i32 - 1).min(canvas_height_i32 - 1);
+            if first_row > last_row {
+                continue;
+            }
+            let first_band = first_row as usize / rows_per_band;
+            let last_band = last_row as usize / rows_per_band;
+            for band in band_points.iter_mut().take(last_band + 1).skip(first_band) {
+                band.push(index as u32);
+            }
+        }
 
         let used_scanline_blit = self
             .pixmap
             .data_mut()
             .par_chunks_mut(bytes_per_band)
+            .zip(band_points.par_iter())
             .enumerate()
-            .map(|(band_index, band_pixels)| {
+            .map(|(band_index, (band_pixels, band_indices))| {
                 let band_top = band_index * rows_per_band;
                 let band_bottom = band_top + band_pixels.len() / canvas_stride;
                 let mut band_used_scanline_blit = false;
 
-                // Every band observes points in submission order. Therefore
-                // every pixel observes exactly the same source-over sequence as
-                // the serial compositor, while disjoint bands can run freely.
-                for point in points {
-                    if !point.x.is_finite() || !point.y.is_finite() {
-                        continue;
-                    }
+                // Band membership was decided above; each index here is
+                // finite, clip-visible, and touches this band's rows.
+                for &index in band_indices {
+                    let point = &points[index as usize];
                     let (base_x, phase_x) = Self::quantize_marker_subpixel(point.x);
                     let (base_y, phase_y) = Self::quantize_marker_subpixel(point.y);
                     let slot = phase_y as usize * phase_count + phase_x as usize;
@@ -1757,13 +1800,6 @@ impl SkiaRenderer {
                         .expect("every finite marker phase was pre-resolved");
                     let dst_x = base_x - sprite.origin_x;
                     let dst_y = base_y - sprite.origin_y;
-                    if dst_x + sprite.width as i32 <= clip_left
-                        || dst_x >= clip_right
-                        || dst_y + sprite.height as i32 <= clip_top
-                        || dst_y >= clip_bottom
-                    {
-                        continue;
-                    }
 
                     if Self::can_use_unmasked_marker_scanline_blit(
                         sprite,
