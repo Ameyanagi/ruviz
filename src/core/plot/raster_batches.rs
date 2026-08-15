@@ -215,35 +215,74 @@ fn aggregate_density_counts(x_data: &[f64], y_data: &[f64], spec: DensityGridSpe
     }
 }
 
-/// Spread per-pixel center counts over the marker's disk footprint.
+/// Per-row half-widths of a marker's solid footprint: `(dy, half_width)`
+/// pairs, `dy` running down the marker from its center.
+///
+/// Exact for every shape whose rows are one centered span — circle, square,
+/// diamond, both triangles, plus. Cross and star strokes split a row into
+/// two spans, which this representation cannot carry, so they fall back to
+/// the disk that bounds them; open variants use their filled outline, since
+/// a hollow interior would also need two spans per row.
+fn marker_footprint_profile(style: MarkerStyle, footprint_px: f32) -> Vec<(i64, i64)> {
+    let radius = f64::from(footprint_px) / 2.0;
+    let radius_rows = radius as i64;
+    let disk = |dy: i64| radius.mul_add(radius, -((dy * dy) as f64)).sqrt() as i64;
+    let rows = -radius_rows..=radius_rows;
+
+    match style {
+        MarkerStyle::Square | MarkerStyle::SquareOpen => rows.map(|dy| (dy, radius_rows)).collect(),
+        MarkerStyle::Diamond | MarkerStyle::DiamondOpen => rows
+            .map(|dy| (dy, (radius - dy.abs() as f64) as i64))
+            .collect(),
+        // Apex up: the top row is the point, the bottom row the base.
+        MarkerStyle::Triangle | MarkerStyle::TriangleOpen => rows
+            .map(|dy| (dy, ((dy + radius_rows) as f64 / 2.0) as i64))
+            .collect(),
+        MarkerStyle::TriangleDown => rows
+            .map(|dy| (dy, ((radius_rows - dy) as f64 / 2.0) as i64))
+            .collect(),
+        MarkerStyle::Plus => {
+            // Arms roughly a third of the marker wide, like the drawn stroke.
+            let half_arm = (f64::from(footprint_px) / 6.0) as i64;
+            rows.map(|dy| {
+                (
+                    dy,
+                    if dy.abs() <= half_arm {
+                        radius_rows
+                    } else {
+                        half_arm
+                    },
+                )
+            })
+            .collect()
+        }
+        MarkerStyle::Circle | MarkerStyle::CircleOpen | MarkerStyle::Cross | MarkerStyle::Star => {
+            rows.map(|dy| (dy, disk(dy))).collect()
+        }
+    }
+}
+
+/// Spread per-pixel center counts over the series' marker footprint.
 ///
 /// The aggregation counts marker *centers*, but the exact renderer paints
-/// each point as a disk `footprint_px` wide — a lone outlier is a fat dot,
-/// not one pixel of dust. Convolving the count grid with that disk makes a
-/// density pixel answer "how many markers cover me", so the density render
-/// keeps the exact render's silhouette. Cost stays pixel-scaled:
-/// per-row prefix sums make it O(pixels × footprint rows).
-fn convolve_disk_footprint(
+/// each point as a `footprint_px`-wide marker — a lone outlier is a fat dot,
+/// not one pixel of dust. Convolving the count grid with the marker's row
+/// profile makes a density pixel answer "how many markers cover me", so the
+/// density render keeps the exact render's silhouette. Cost stays
+/// pixel-scaled: per-row prefix sums make it O(pixels × footprint rows).
+fn convolve_marker_footprint(
     counts: Vec<u32>,
     width: usize,
     height: usize,
     footprint_px: f32,
+    style: MarkerStyle,
 ) -> Vec<u32> {
     let radius = footprint_px / 2.0;
     let spreads_beyond_one_pixel = radius.is_finite() && radius > 0.5;
     if !spreads_beyond_one_pixel || width == 0 || height == 0 {
         return counts;
     }
-    let radius_rows = radius as i64;
-
-    // Half-width of the disk at each row offset: dx² + dy² ≤ r².
-    let half_widths: Vec<i64> = (-radius_rows..=radius_rows)
-        .map(|dy| {
-            (radius as f64)
-                .mul_add(radius as f64, -((dy * dy) as f64))
-                .sqrt() as i64
-        })
-        .collect();
+    let profile = marker_footprint_profile(style, footprint_px);
 
     // One prefix-sum row per grid row, so any horizontal span sums in O(1).
     let mut prefix = vec![0u64; (width + 1) * height];
@@ -257,8 +296,10 @@ fn convolve_disk_footprint(
 
     let covered_row = |row: usize| -> Vec<u32> {
         let mut out = vec![0u32; width];
-        for (offset, &half_width) in half_widths.iter().enumerate() {
-            let source_row = row as i64 + offset as i64 - radius_rows;
+        for &(dy, half_width) in &profile {
+            // A marker at center c covers pixel p when p - c is in the
+            // footprint, so the centers covering p sit at p - dy.
+            let source_row = row as i64 - dy;
             if source_row < 0 || source_row >= height as i64 {
                 continue;
             }
@@ -296,6 +337,7 @@ impl DensityBatch {
         y_scale: &crate::axes::AxisScale,
         color: Color,
         footprint_px: f32,
+        footprint_style: MarkerStyle,
     ) -> Self {
         let width = plot_area.width().ceil().max(1.0) as usize;
         let height = plot_area.height().ceil().max(1.0) as usize;
@@ -310,11 +352,12 @@ impl DensityBatch {
             y_scale: *y_scale,
         };
 
-        let counts = convolve_disk_footprint(
+        let counts = convolve_marker_footprint(
             aggregate_density_counts(x_data, y_data, spec),
             width,
             height,
             footprint_px,
+            footprint_style,
         );
         Self {
             counts: counts.into(),
@@ -861,14 +904,22 @@ mod tests {
         assert_eq!(parallel, serial);
     }
 
-    #[test]
-    fn test_disk_footprint_spreads_a_center_count_hand_checked() {
-        // One marker center in the middle of a 7x7 grid, footprint 5px
-        // (radius 2.5): the covered disk rows are 3, 5, 5, 5, 3 wide.
+    fn footprint_of(style: MarkerStyle, footprint_px: f32) -> Vec<u32> {
+        // One marker center in the middle of a 7x7 grid.
         let mut counts = vec![0u32; 49];
         counts[3 * 7 + 3] = 1;
-        let covered = convolve_disk_footprint(counts, 7, 7, 5.0);
+        convolve_marker_footprint(counts, 7, 7, footprint_px, style)
+    }
 
+    fn rows_of(grid: &[u32]) -> Vec<Vec<u32>> {
+        grid.chunks(7).map(<[u32]>::to_vec).collect()
+    }
+
+    #[test]
+    fn test_disk_footprint_spreads_a_center_count_hand_checked() {
+        // Footprint 5px (radius 2.5): the covered disk rows are 3, 5, 5, 5, 3
+        // wide.
+        let covered = footprint_of(MarkerStyle::Circle, 5.0);
         let expected_rows: [(usize, i64); 5] = [(1, 1), (2, 2), (3, 2), (4, 2), (5, 1)];
         let mut expected = vec![0u32; 49];
         for (row, half_width) in expected_rows {
@@ -881,10 +932,62 @@ mod tests {
     }
 
     #[test]
+    fn test_square_footprint_is_a_full_box() {
+        let covered = footprint_of(MarkerStyle::Square, 5.0);
+        // A 5px square covers the full 5x5 box around the center.
+        for (row, cells) in rows_of(&covered).into_iter().enumerate() {
+            let expected: Vec<u32> = (0..7)
+                .map(|col| u32::from((1..=5).contains(&row) && (1..=5).contains(&col)))
+                .collect();
+            assert_eq!(cells, expected, "row {row}");
+        }
+    }
+
+    #[test]
+    fn test_diamond_footprint_narrows_linearly() {
+        let covered = footprint_of(MarkerStyle::Diamond, 5.0);
+        // Rows 1, 3, 5, 3, 1 wide: half-widths 0, 1, 2, 1, 0.
+        let widths: Vec<u32> = rows_of(&covered)
+            .iter()
+            .map(|row| row.iter().sum())
+            .collect();
+        assert_eq!(widths, [0, 1, 3, 5, 3, 1, 0]);
+    }
+
+    #[test]
+    fn test_triangle_footprints_are_asymmetric_mirrors() {
+        let up = footprint_of(MarkerStyle::Triangle, 5.0);
+        let down = footprint_of(MarkerStyle::TriangleDown, 5.0);
+        let up_widths: Vec<u32> = rows_of(&up).iter().map(|row| row.iter().sum()).collect();
+        let down_widths: Vec<u32> = rows_of(&down).iter().map(|row| row.iter().sum()).collect();
+        // Apex-up narrows toward the top; apex-down is its vertical mirror.
+        assert_eq!(up_widths, [0, 1, 1, 3, 3, 5, 0]);
+        assert_eq!(down_widths, [0, 5, 3, 3, 1, 1, 0]);
+    }
+
+    #[test]
+    fn test_cross_footprint_falls_back_to_the_bounding_disk() {
+        assert_eq!(
+            footprint_of(MarkerStyle::Cross, 5.0),
+            footprint_of(MarkerStyle::Circle, 5.0)
+        );
+        assert_eq!(
+            footprint_of(MarkerStyle::Star, 5.0),
+            footprint_of(MarkerStyle::Circle, 5.0)
+        );
+    }
+
+    #[test]
     fn test_disk_footprint_of_one_pixel_is_identity() {
         let counts: Vec<u32> = (0..12).collect();
-        assert_eq!(convolve_disk_footprint(counts.clone(), 4, 3, 1.0), counts);
-        assert_eq!(convolve_disk_footprint(counts.clone(), 4, 3, 0.0), counts);
+        assert_eq!(
+            convolve_marker_footprint(counts.clone(), 4, 3, 1.0, MarkerStyle::Circle),
+            counts
+        );
+        assert_eq!(
+            convolve_marker_footprint(counts.clone(), 4, 3, 0.0, MarkerStyle::Square),
+            counts
+        );
     }
 
     #[test]
