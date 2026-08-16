@@ -2838,12 +2838,15 @@ mod tests {
 
     /// Block until `condition` holds, or fail with enough detail to diagnose why.
     ///
-    /// This times out intermittently on Linux CI and has not been reproduced
-    /// anywhere else — not on macOS or Windows CI, not locally, and not under
-    /// a Linux container capped at 2 or 4 CPUs (issue #152). The bare message
-    /// it used to fail with could not distinguish a worker that never ran from
-    /// one that ran and never finished, so every theory about it stayed a
-    /// theory.
+    /// This times out intermittently on CI (issue #152) — first on Linux and,
+    /// as of 2026-08, on a 4-core Windows runner, where four 3D tests failed
+    /// together at ~18M polls each: the waiters had CPU, the render workers
+    /// did not. Four concurrent 3D renders (each with a rayon tile pool) plus
+    /// four yield-spinning waiters oversubscribe a 4-core runner heavily,
+    /// which is why CI now runs these suites with --test-threads=1. The bare
+    /// message it used to fail with could not distinguish a worker that never
+    /// ran from one that ran and never finished, so every theory about it
+    /// stayed a theory.
     ///
     /// The poll count is the discriminator. A waiter that spun millions of
     /// times was not itself starved of CPU, which is the reading the spin
