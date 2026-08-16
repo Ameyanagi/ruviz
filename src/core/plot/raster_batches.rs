@@ -4,6 +4,9 @@ use crate::plots::{PlotArea, heatmap::HeatmapData};
 use crate::render::{Color, LineStyle, MarkerStyle, skia::SkiaRenderer};
 use std::sync::Arc;
 
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
+
 pub(super) type ClipRect = (f32, f32, f32, f32);
 
 #[derive(Debug, Clone)]
@@ -86,6 +89,292 @@ impl MarkerBatch {
             self.color,
             self.edge,
             self.clip_rect,
+        )
+    }
+}
+
+/// A plot-area density grid for one opt-in scatter series.
+///
+/// Counts are retained rather than expanded into projected points. Executing
+/// the batch converts at most one plot pixel per bin and composites the result
+/// as a single image, keeping both aggregation and drawing independent of the
+/// number of input samples after the direct pass below.
+#[derive(Debug, Clone)]
+pub(super) struct DensityBatch {
+    counts: Arc<[u32]>,
+    width: u32,
+    height: u32,
+    color: Color,
+    plot_area: tiny_skia::Rect,
+}
+
+#[derive(Clone, Copy)]
+struct DensityGridSpec {
+    width: usize,
+    height: usize,
+    x_min: f64,
+    x_max: f64,
+    y_min: f64,
+    y_max: f64,
+    x_scale: crate::axes::AxisScale,
+    y_scale: crate::axes::AxisScale,
+}
+
+impl DensityGridSpec {
+    fn len(self) -> usize {
+        self.width.saturating_mul(self.height)
+    }
+
+    /// Project one raw coordinate pair directly to its density-grid cell.
+    ///
+    /// The normalized positions are the same ones used by the regular marker
+    /// projection. The upper/right endpoints belong to the final cell, while
+    /// samples outside manual axis limits are clipped before aggregation.
+    #[inline]
+    fn bin_index(self, x: f64, y: f64) -> Option<usize> {
+        if !sample_is_representable(x, y, &self.x_scale, &self.y_scale) {
+            return None;
+        }
+
+        let normalized_x = self.x_scale.normalized_position(x, self.x_min, self.x_max);
+        let normalized_y = self.y_scale.normalized_position(y, self.y_min, self.y_max);
+        let col = density_axis_bin(normalized_x, self.width)?;
+        let row = density_axis_bin(1.0 - normalized_y, self.height)?;
+        Some(row * self.width + col)
+    }
+}
+
+#[inline]
+fn density_axis_bin(normalized: f64, bins: usize) -> Option<usize> {
+    if !normalized.is_finite() || !(0.0..=1.0).contains(&normalized) || bins == 0 {
+        return None;
+    }
+    Some(((normalized * bins as f64) as usize).min(bins - 1))
+}
+
+fn zeroed_density_grid(len: usize) -> Vec<u32> {
+    vec![0; len]
+}
+
+#[cfg(any(not(feature = "parallel"), test))]
+fn aggregate_density_counts_serial(
+    x_data: &[f64],
+    y_data: &[f64],
+    spec: DensityGridSpec,
+) -> Vec<u32> {
+    let mut counts = zeroed_density_grid(spec.len());
+    for (&x, &y) in x_data.iter().zip(y_data) {
+        if let Some(index) = spec.bin_index(x, y) {
+            counts[index] = counts[index].saturating_add(1);
+        }
+    }
+    counts
+}
+
+#[cfg(feature = "parallel")]
+fn aggregate_density_counts_parallel(
+    x_data: &[f64],
+    y_data: &[f64],
+    spec: DensityGridSpec,
+) -> Vec<u32> {
+    let grid_len = spec.len();
+    let sample_count = x_data.len().min(y_data.len());
+    let min_samples_per_grid = sample_count.div_ceil(rayon::current_num_threads()).max(1);
+    x_data
+        .par_iter()
+        .zip(y_data.par_iter())
+        .with_min_len(min_samples_per_grid)
+        .fold(
+            || zeroed_density_grid(grid_len),
+            |mut counts, (&x, &y)| {
+                if let Some(index) = spec.bin_index(x, y) {
+                    counts[index] = counts[index].saturating_add(1);
+                }
+                counts
+            },
+        )
+        .reduce(
+            || zeroed_density_grid(grid_len),
+            |mut left, right| {
+                for (left_count, right_count) in left.iter_mut().zip(right) {
+                    *left_count = left_count.saturating_add(right_count);
+                }
+                left
+            },
+        )
+}
+
+fn aggregate_density_counts(x_data: &[f64], y_data: &[f64], spec: DensityGridSpec) -> Vec<u32> {
+    #[cfg(feature = "parallel")]
+    {
+        aggregate_density_counts_parallel(x_data, y_data, spec)
+    }
+    #[cfg(not(feature = "parallel"))]
+    {
+        aggregate_density_counts_serial(x_data, y_data, spec)
+    }
+}
+
+/// Per-row half-widths of a marker's solid footprint: `(dy, half_width)`
+/// pairs, `dy` running down the marker from its center.
+///
+/// Exact for every shape whose rows are one centered span — circle, square,
+/// diamond, both triangles, plus. Cross and star strokes split a row into
+/// two spans, which this representation cannot carry, so they fall back to
+/// the disk that bounds them; open variants use their filled outline, since
+/// a hollow interior would also need two spans per row.
+fn marker_footprint_profile(style: MarkerStyle, footprint_px: f32) -> Vec<(i64, i64)> {
+    let radius = f64::from(footprint_px) / 2.0;
+    let radius_rows = radius as i64;
+    let disk = |dy: i64| radius.mul_add(radius, -((dy * dy) as f64)).sqrt() as i64;
+    let rows = -radius_rows..=radius_rows;
+
+    match style {
+        MarkerStyle::Square | MarkerStyle::SquareOpen => rows.map(|dy| (dy, radius_rows)).collect(),
+        MarkerStyle::Diamond | MarkerStyle::DiamondOpen => rows
+            .map(|dy| (dy, (radius - dy.abs() as f64) as i64))
+            .collect(),
+        // Apex up: the top row is the point, the bottom row the base.
+        MarkerStyle::Triangle | MarkerStyle::TriangleOpen => rows
+            .map(|dy| (dy, ((dy + radius_rows) as f64 / 2.0) as i64))
+            .collect(),
+        MarkerStyle::TriangleDown => rows
+            .map(|dy| (dy, ((radius_rows - dy) as f64 / 2.0) as i64))
+            .collect(),
+        MarkerStyle::Plus => {
+            // Arms roughly a third of the marker wide, like the drawn stroke.
+            let half_arm = (f64::from(footprint_px) / 6.0) as i64;
+            rows.map(|dy| {
+                (
+                    dy,
+                    if dy.abs() <= half_arm {
+                        radius_rows
+                    } else {
+                        half_arm
+                    },
+                )
+            })
+            .collect()
+        }
+        MarkerStyle::Circle | MarkerStyle::CircleOpen | MarkerStyle::Cross | MarkerStyle::Star => {
+            rows.map(|dy| (dy, disk(dy))).collect()
+        }
+    }
+}
+
+/// Spread per-pixel center counts over the series' marker footprint.
+///
+/// The aggregation counts marker *centers*, but the exact renderer paints
+/// each point as a `footprint_px`-wide marker — a lone outlier is a fat dot,
+/// not one pixel of dust. Convolving the count grid with the marker's row
+/// profile makes a density pixel answer "how many markers cover me", so the
+/// density render keeps the exact render's silhouette. Cost stays
+/// pixel-scaled: per-row prefix sums make it O(pixels × footprint rows).
+fn convolve_marker_footprint(
+    counts: Vec<u32>,
+    width: usize,
+    height: usize,
+    footprint_px: f32,
+    style: MarkerStyle,
+) -> Vec<u32> {
+    let radius = footprint_px / 2.0;
+    let spreads_beyond_one_pixel = radius.is_finite() && radius > 0.5;
+    if !spreads_beyond_one_pixel || width == 0 || height == 0 {
+        return counts;
+    }
+    let profile = marker_footprint_profile(style, footprint_px);
+
+    // One prefix-sum row per grid row, so any horizontal span sums in O(1).
+    let mut prefix = vec![0u64; (width + 1) * height];
+    for row in 0..height {
+        let source = &counts[row * width..(row + 1) * width];
+        let target = &mut prefix[row * (width + 1)..(row + 1) * (width + 1)];
+        for (column, &count) in source.iter().enumerate() {
+            target[column + 1] = target[column] + u64::from(count);
+        }
+    }
+
+    let covered_row = |row: usize| -> Vec<u32> {
+        let mut out = vec![0u32; width];
+        for &(dy, half_width) in &profile {
+            // A marker at center c covers pixel p when p - c is in the
+            // footprint, so the centers covering p sit at p - dy.
+            let source_row = row as i64 - dy;
+            if source_row < 0 || source_row >= height as i64 {
+                continue;
+            }
+            let row_prefix =
+                &prefix[source_row as usize * (width + 1)..(source_row as usize + 1) * (width + 1)];
+            for (column, value) in out.iter_mut().enumerate() {
+                let left = (column as i64 - half_width).max(0) as usize;
+                let right = ((column as i64 + half_width + 1).min(width as i64)) as usize;
+                let sum = row_prefix[right] - row_prefix[left];
+                *value = value.saturating_add(sum.min(u64::from(u32::MAX)) as u32);
+            }
+        }
+        out
+    };
+
+    #[cfg(feature = "parallel")]
+    let rows: Vec<Vec<u32>> = (0..height).into_par_iter().map(covered_row).collect();
+    #[cfg(not(feature = "parallel"))]
+    let rows: Vec<Vec<u32>> = (0..height).map(covered_row).collect();
+
+    rows.concat()
+}
+
+impl DensityBatch {
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn from_xy(
+        x_data: &[f64],
+        y_data: &[f64],
+        x_min: f64,
+        x_max: f64,
+        y_min: f64,
+        y_max: f64,
+        plot_area: tiny_skia::Rect,
+        x_scale: &crate::axes::AxisScale,
+        y_scale: &crate::axes::AxisScale,
+        color: Color,
+        footprint_px: f32,
+        footprint_style: MarkerStyle,
+    ) -> Self {
+        let width = plot_area.width().ceil().max(1.0) as usize;
+        let height = plot_area.height().ceil().max(1.0) as usize;
+        let spec = DensityGridSpec {
+            width,
+            height,
+            x_min,
+            x_max,
+            y_min,
+            y_max,
+            x_scale: *x_scale,
+            y_scale: *y_scale,
+        };
+
+        let counts = convolve_marker_footprint(
+            aggregate_density_counts(x_data, y_data, spec),
+            width,
+            height,
+            footprint_px,
+            footprint_style,
+        );
+        Self {
+            counts: counts.into(),
+            width: width as u32,
+            height: height as u32,
+            color,
+            plot_area,
+        }
+    }
+
+    fn execute(&self, renderer: &mut SkiaRenderer) -> Result<()> {
+        renderer.draw_density_grid(
+            self.counts.as_ref(),
+            self.width,
+            self.height,
+            self.color,
+            self.plot_area,
         )
     }
 }
@@ -173,6 +462,7 @@ impl RectGridBatch {
 pub(super) enum StaticRasterBatch {
     Polyline(PolylineBatch),
     Markers(MarkerBatch),
+    Density(DensityBatch),
     RectGrid(RectGridBatch),
 }
 
@@ -181,6 +471,7 @@ impl StaticRasterBatch {
         match self {
             Self::Polyline(batch) => batch.execute(renderer),
             Self::Markers(batch) => batch.execute(renderer),
+            Self::Density(batch) => batch.execute(renderer),
             Self::RectGrid(batch) => batch.execute(renderer),
         }
     }
@@ -223,6 +514,10 @@ impl SeriesRasterPlan {
             .push(StaticRasterBatch::Markers(MarkerBatch::new(
                 points, size, style, color, edge, clip_rect,
             )));
+    }
+
+    pub(super) fn push_density(&mut self, batch: DensityBatch) {
+        self.batches.push(StaticRasterBatch::Density(batch));
     }
 
     pub(super) fn push_rect_grid(&mut self, batch: RectGridBatch) {
@@ -344,6 +639,15 @@ pub(super) fn project_xy_points(
         x_data, y_data, x_min, x_max, y_min, y_max, plot_area, x_scale, y_scale,
     );
 
+    // Every render path validates both arrays as finite before projection, and
+    // finiteness is the complete representability rule for linear axes. Log
+    // and mixed-scale paths still need the scan for finite zero/negative data.
+    if matches!(x_scale, crate::axes::AxisScale::Linear)
+        && matches!(y_scale, crate::axes::AxisScale::Linear)
+    {
+        return projected;
+    }
+
     if all_samples_representable(x_data, y_data, x_scale, y_scale) {
         return projected;
     }
@@ -392,6 +696,18 @@ pub(super) fn project_xy_subpaths(
     let projected = project_xy_points_unchecked(
         x_data, y_data, x_min, x_max, y_min, y_max, plot_area, x_scale, y_scale,
     );
+
+    // See `project_xy_points`: validation already establishes the only
+    // representability condition linear axes impose.
+    if matches!(x_scale, crate::axes::AxisScale::Linear)
+        && matches!(y_scale, crate::axes::AxisScale::Linear)
+    {
+        return if projected.is_empty() {
+            Vec::new()
+        } else {
+            vec![projected]
+        };
+    }
 
     if all_samples_representable(x_data, y_data, x_scale, y_scale) {
         return if projected.is_empty() {
@@ -540,6 +856,139 @@ pub(super) fn plot_area_from_rect(
 mod tests {
     use super::*;
     use crate::axes::AxisScale;
+
+    fn density_spec(width: usize, height: usize) -> DensityGridSpec {
+        DensityGridSpec {
+            width,
+            height,
+            x_min: 0.0,
+            x_max: width as f64,
+            y_min: 0.0,
+            y_max: height as f64,
+            x_scale: AxisScale::Linear,
+            y_scale: AxisScale::Linear,
+        }
+    }
+
+    #[test]
+    fn test_density_aggregator_counts_hand_checked_grid() {
+        let x = [0.0, 1.0, 3.999, 4.0, 2.0, -1.0];
+        let y = [3.0, 2.0, 0.0, 3.0, 1.5, 1.0];
+
+        let counts = aggregate_density_counts_serial(&x, &y, density_spec(4, 3));
+
+        assert_eq!(
+            counts,
+            vec![
+                1, 0, 0, 1, // top row: (0, 3) and inclusive (4, 3)
+                0, 1, 1, 0, // middle row: (1, 2) and (2, 1.5)
+                0, 0, 0, 1, // bottom row: (3.999, 0)
+            ]
+        );
+    }
+
+    #[cfg(feature = "parallel")]
+    #[test]
+    fn test_density_parallel_aggregation_matches_serial() {
+        let x = (0..50_000)
+            .map(|index| ((index * 37) % 1_009) as f64 / 1_008.0 * 64.0)
+            .collect::<Vec<_>>();
+        let y = (0..50_000)
+            .map(|index| ((index * 91) % 1_013) as f64 / 1_012.0 * 48.0)
+            .collect::<Vec<_>>();
+        let spec = density_spec(64, 48);
+
+        let serial = aggregate_density_counts_serial(&x, &y, spec);
+        let parallel = aggregate_density_counts_parallel(&x, &y, spec);
+
+        assert_eq!(parallel, serial);
+    }
+
+    fn footprint_of(style: MarkerStyle, footprint_px: f32) -> Vec<u32> {
+        // One marker center in the middle of a 7x7 grid.
+        let mut counts = vec![0u32; 49];
+        counts[3 * 7 + 3] = 1;
+        convolve_marker_footprint(counts, 7, 7, footprint_px, style)
+    }
+
+    fn rows_of(grid: &[u32]) -> Vec<Vec<u32>> {
+        grid.chunks(7).map(<[u32]>::to_vec).collect()
+    }
+
+    #[test]
+    fn test_disk_footprint_spreads_a_center_count_hand_checked() {
+        // Footprint 5px (radius 2.5): the covered disk rows are 3, 5, 5, 5, 3
+        // wide.
+        let covered = footprint_of(MarkerStyle::Circle, 5.0);
+        let expected_rows: [(usize, i64); 5] = [(1, 1), (2, 2), (3, 2), (4, 2), (5, 1)];
+        let mut expected = vec![0u32; 49];
+        for (row, half_width) in expected_rows {
+            for column in (3 - half_width as usize)..=(3 + half_width as usize) {
+                expected[row * 7 + column] = 1;
+            }
+        }
+        assert_eq!(covered, expected);
+        assert_eq!(covered.iter().sum::<u32>(), 21);
+    }
+
+    #[test]
+    fn test_square_footprint_is_a_full_box() {
+        let covered = footprint_of(MarkerStyle::Square, 5.0);
+        // A 5px square covers the full 5x5 box around the center.
+        for (row, cells) in rows_of(&covered).into_iter().enumerate() {
+            let expected: Vec<u32> = (0..7)
+                .map(|col| u32::from((1..=5).contains(&row) && (1..=5).contains(&col)))
+                .collect();
+            assert_eq!(cells, expected, "row {row}");
+        }
+    }
+
+    #[test]
+    fn test_diamond_footprint_narrows_linearly() {
+        let covered = footprint_of(MarkerStyle::Diamond, 5.0);
+        // Rows 1, 3, 5, 3, 1 wide: half-widths 0, 1, 2, 1, 0.
+        let widths: Vec<u32> = rows_of(&covered)
+            .iter()
+            .map(|row| row.iter().sum())
+            .collect();
+        assert_eq!(widths, [0, 1, 3, 5, 3, 1, 0]);
+    }
+
+    #[test]
+    fn test_triangle_footprints_are_asymmetric_mirrors() {
+        let up = footprint_of(MarkerStyle::Triangle, 5.0);
+        let down = footprint_of(MarkerStyle::TriangleDown, 5.0);
+        let up_widths: Vec<u32> = rows_of(&up).iter().map(|row| row.iter().sum()).collect();
+        let down_widths: Vec<u32> = rows_of(&down).iter().map(|row| row.iter().sum()).collect();
+        // Apex-up narrows toward the top; apex-down is its vertical mirror.
+        assert_eq!(up_widths, [0, 1, 1, 3, 3, 5, 0]);
+        assert_eq!(down_widths, [0, 5, 3, 3, 1, 1, 0]);
+    }
+
+    #[test]
+    fn test_cross_footprint_falls_back_to_the_bounding_disk() {
+        assert_eq!(
+            footprint_of(MarkerStyle::Cross, 5.0),
+            footprint_of(MarkerStyle::Circle, 5.0)
+        );
+        assert_eq!(
+            footprint_of(MarkerStyle::Star, 5.0),
+            footprint_of(MarkerStyle::Circle, 5.0)
+        );
+    }
+
+    #[test]
+    fn test_disk_footprint_of_one_pixel_is_identity() {
+        let counts: Vec<u32> = (0..12).collect();
+        assert_eq!(
+            convolve_marker_footprint(counts.clone(), 4, 3, 1.0, MarkerStyle::Circle),
+            counts
+        );
+        assert_eq!(
+            convolve_marker_footprint(counts.clone(), 4, 3, 0.0, MarkerStyle::Square),
+            counts
+        );
+    }
 
     #[test]
     fn test_linear_projection_fast_path_matches_scaled_mapper() {

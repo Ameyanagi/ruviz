@@ -476,7 +476,7 @@ _SERIES_KINDS: dict[str, _SeriesKind] = {
     "scatter": _SeriesKind(
         ("x", "y"),
         frozenset({"x", "y"}),
-        style=_COMMON_STYLE | {"marker", "markerSize"},
+        style=_COMMON_STYLE | {"marker", "markerSize", "density"},
     ),
     "bar": _SeriesKind(("categories", "values"), frozenset({"values"}), style=_COMMON_STYLE),
     "histogram": _SeriesKind(
@@ -546,10 +546,10 @@ def _styled_series(kind: str, fields: dict[str, Any], options: dict[str, Any]) -
                 f"accepted: {accepted or 'none'}"
             )
         normalized = _STYLE_OPTIONS[key](value)
-        if normalized is False:
-            # Flag options are off by default, so `False` is the absence of
-            # styling: validate it, then keep it out of the snapshot.
-            continue
+        # An explicit False is stored, not dropped: for scatter density it is
+        # a real choice (pinning exact rendering against fast mode's
+        # automatic upgrade), and for plain flags it renders identically to
+        # the default anyway.
         style[key] = normalized
 
     series = {"kind": kind, **fields}
@@ -599,6 +599,7 @@ _PLOT_SETTINGS: tuple[tuple[str, str, bool], ...] = (
     ("dpi", "dpi", False),
     ("maxResolution", "max_resolution", True),
     ("scientificNotation", "scientific_notation", False),
+    ("fast", "fast", False),
     ("margin", "margin", False),
     ("theme", "theme", False),
     ("fontFamily", "font_family", False),
@@ -1379,6 +1380,26 @@ class Plot:
         self._invalidate_snapshot_cache()
         return self
 
+    def fast(self, enabled: bool = True) -> "Plot":
+        """Trade exactness for speed on large data.
+
+        Off (the default), every series renders exactly. On, the renderer may
+        substitute cheaper approximations whose output is close to, but not
+        pixel-identical with, exact rendering: a scatter series with more
+        points than the plot has pixels renders through density aggregation
+        (see ``scatter(density=True)``) instead of compositing every marker,
+        and a marked solid line's stroke takes the same min/max reduction a
+        bare solid line always gets, while its markers stay complete. An
+        explicit ``density=`` on a series always wins. The notebook widget
+        ignores this flag and renders exactly.
+        """
+        if not isinstance(enabled, bool):
+            raise ValueError("fast must be a boolean")
+        self._native_plot.fast(enabled)
+        self._state["fast"] = enabled
+        self._invalidate_snapshot_cache()
+        return self
+
     def _set_limit(self, axis: str, minimum: float, maximum: float) -> "Plot":
         lower = float(minimum)
         upper = float(maximum)
@@ -1484,8 +1505,20 @@ class Plot:
         alpha: float | None = None,
         marker: MarkerName | None = None,
         marker_size: float | None = None,
+        density: bool | None = None,
     ) -> "Plot":
-        """Add a scatter series from x/y arrays or dataframe columns."""
+        """Add a scatter series from x/y arrays or dataframe columns.
+
+        ``density=True`` directly aggregates points into a plot-area pixel
+        grid whose counts are spread over the series' marker footprint, so
+        the result keeps the exact render's silhouette while its cost scales
+        with pixels instead of points. It is an opt-in approximation: color,
+        overlap alpha, marker size, and marker shape are preserved for
+        markers whose rows are one centered span (circle, square, diamond,
+        triangles, plus); ``cross`` and ``star`` use their bounding disk,
+        open markers render filled, and edges and antialiasing are not
+        reproduced. Density series cannot be exported to SVG.
+        """
         x_values, native_x, x_observable = self._build_native_numeric_source(
             _column_values(data, x), "scatter x"
         )
@@ -1502,6 +1535,7 @@ class Plot:
                 "alpha": alpha,
                 "marker": marker,
                 "markerSize": marker_size,
+                "density": density,
             },
         )
         self._apply_native_series(
@@ -1550,7 +1584,7 @@ class Plot:
         *,
         data: DataSource = None,
         bins: int | None = None,
-        density: bool = False,
+        density: bool | None = None,
         label: str | None = None,
         color: str | None = None,
         alpha: float | None = None,

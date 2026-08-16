@@ -5135,6 +5135,7 @@ dependencies = [
  "pollster 0.4.0",
  "rayon",
  "swash",
+ "sys-locale",
  "thiserror 2.0.19",
  "tiny-skia 0.12.0",
  "tiny-skia-path 0.12.0",

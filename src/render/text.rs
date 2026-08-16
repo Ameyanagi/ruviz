@@ -243,6 +243,22 @@ static FONT_SYSTEM: OnceLock<Mutex<FontSystem>> = OnceLock::new();
 /// Global SwashCache singleton - caches rasterized glyphs
 static SWASH_CACHE: OnceLock<Mutex<SwashCache>> = OnceLock::new();
 
+#[cfg(not(target_arch = "wasm32"))]
+fn font_system_with_registered_fonts(snapshot: &font_registry::RegistrySnapshot) -> FontSystem {
+    // Same construction `FontSystem::new()` performs — locale from
+    // `sys_locale`, system fonts, the cosmic-text generic-family defaults —
+    // except the system font discovery goes through the disk cache, which
+    // turns the ~60ms first-render directory walk into a ~10ms reload.
+    let mut database = crate::render::font_cache::system_font_database();
+    database.set_monospace_family("Noto Sans Mono");
+    database.set_sans_serif_family("Open Sans");
+    database.set_serif_family("DejaVu Serif");
+    let locale = sys_locale::get_locale().unwrap_or_else(|| String::from("en-US"));
+    font_registry::load_with_registered_precedence(&mut database, snapshot);
+    FontSystem::new_with_locale_and_db(locale, database)
+}
+
+#[cfg(target_arch = "wasm32")]
 fn font_system_with_registered_fonts(snapshot: &font_registry::RegistrySnapshot) -> FontSystem {
     let baseline = FontSystem::new();
     let locale = baseline.locale().to_string();

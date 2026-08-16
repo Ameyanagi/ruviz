@@ -945,6 +945,15 @@ where
         self
     }
 
+    /// Trade exactness for speed on large data.
+    ///
+    /// This method forwards to the inner Plot. See [`super::Plot::fast`] for
+    /// what fast mode substitutes and its documented limitations.
+    pub fn fast(mut self, enabled: bool) -> Self {
+        self.plot = self.plot.fast(enabled);
+        self
+    }
+
     /// Set the font family used for plot text.
     ///
     /// This method forwards to the inner Plot.
@@ -2713,6 +2722,25 @@ impl_terminal_methods!(crate::plots::basic::LineConfig);
 // ============================================================================
 
 impl PlotBuilder<crate::plots::basic::ScatterConfig> {
+    /// Enable or disable plot-area density aggregation for this scatter.
+    ///
+    /// The density path bins each point directly into a pixel-sized grid,
+    /// spreads the counts over the series' marker footprint, and composites
+    /// each pixel in the series color at the scatter-equivalent alpha
+    /// `1 - (1 - alpha)^covering_markers` — so the result keeps the exact
+    /// render's silhouette while its cost scales with plot pixels rather
+    /// than points. Marker size and shape are honored for every marker whose
+    /// rows are one centered span (circle, square, diamond, the triangles,
+    /// plus); `Cross` and `Star` fall back to their bounding disk, open
+    /// variants render filled, and edges and antialiasing are not
+    /// reproduced. Density series cannot be exported to SVG. The default is
+    /// `false`, preserving exact marker rendering unless explicitly
+    /// requested; see the performance guide's capability table.
+    pub fn density(mut self, density: bool) -> Self {
+        self.config.density = Some(density);
+        self
+    }
+
     /// Set marker style
     ///
     /// # Example

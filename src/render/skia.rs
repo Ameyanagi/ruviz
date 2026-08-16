@@ -1346,6 +1346,63 @@ impl SkiaRenderer {
         Ok(())
     }
 
+    /// Composite an opt-in scatter density grid in its series color.
+    ///
+    /// A bin containing `count` points receives the source-over alpha produced
+    /// by drawing the same point alpha `count` times:
+    /// `1 - (1 - point_alpha)^count`. The grid already matches the plot-area
+    /// pixel density, so nearest-neighbor placement preserves one independent
+    /// bin per target pixel without introducing marker antialiasing.
+    pub(crate) fn draw_density_grid(
+        &mut self,
+        counts: &[u32],
+        width: u32,
+        height: u32,
+        color: Color,
+        plot_area: Rect,
+    ) -> Result<()> {
+        let expected_len = (width as usize).saturating_mul(height as usize);
+        if counts.len() != expected_len {
+            return Err(PlottingError::RenderError(
+                "density grid count buffer does not match its dimensions".to_string(),
+            ));
+        }
+
+        let mut density_pixmap = Pixmap::new(width, height).ok_or(PlottingError::OutOfMemory)?;
+        let point_alpha = f32::from(color.a) / 255.0;
+        for (&count, pixel) in counts
+            .iter()
+            .zip(density_pixmap.data_mut().chunks_exact_mut(4))
+        {
+            if count == 0 {
+                continue;
+            }
+
+            let alpha = 1.0 - (1.0 - point_alpha).powf(count as f32);
+            let alpha_byte = (alpha * 255.0).round() as u8;
+            pixel[0] = (f32::from(color.r) * alpha).round() as u8;
+            pixel[1] = (f32::from(color.g) * alpha).round() as u8;
+            pixel[2] = (f32::from(color.b) * alpha).round() as u8;
+            pixel[3] = alpha_byte;
+        }
+
+        let transform = Transform::from_scale(
+            plot_area.width() / width as f32,
+            plot_area.height() / height as f32,
+        )
+        .post_translate(plot_area.x(), plot_area.y());
+        self.pixmap.draw_pixmap(
+            0,
+            0,
+            density_pixmap.as_ref(),
+            &PixmapPaint::default(),
+            transform,
+            None,
+        );
+
+        Ok(())
+    }
+
     /// Draw text at the specified position using cosmic-text (professional quality).
     /// `y` is interpreted as the top of the text rendering area.
     pub fn draw_text(&mut self, text: &str, x: f32, y: f32, size: f32, color: Color) -> Result<()> {

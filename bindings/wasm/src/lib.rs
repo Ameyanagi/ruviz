@@ -564,7 +564,8 @@ mod wasm {
             "marker",
             "markerSize",
         ];
-        pub(super) const SCATTER: &[&str] = &["label", "color", "alpha", "marker", "markerSize"];
+        pub(super) const SCATTER: &[&str] =
+            &["label", "color", "alpha", "marker", "markerSize", "density"];
         pub(super) const HISTOGRAM: &[&str] = &["label", "color", "alpha", "bins", "density"];
         pub(super) const BOXPLOT: &[&str] = &["label", "color", "alpha", "width", "linestyle"];
         pub(super) const KDE: &[&str] = &["label", "color", "alpha", "width", "bandwidth"];
@@ -713,6 +714,9 @@ mod wasm {
         }
         if let Some(size) = style.marker_size {
             builder = builder.marker_size(size);
+        }
+        if let Some(density) = style.density {
+            builder = builder.density(density);
         }
         builder
     }

@@ -83,7 +83,12 @@ export interface SeriesStyleSnapshot {
   marker?: MarkerName;
   markerSize?: number;
   bins?: number;
-  /** Normalize histogram bars to a probability density, so a KDE overlay lines up. */
+  /**
+   * On a histogram: normalize bars to a probability density, so a KDE overlay
+   * lines up. On a scatter: render through plot-area density aggregation
+   * instead of compositing every marker — an opt-in approximation for very
+   * large series whose cost scales with pixels, not points.
+   */
   density?: boolean;
   bandwidth?: number;
   levels?: number;
@@ -96,7 +101,7 @@ export type StrokedSeriesStyle = CommonSeriesStyle & Pick<SeriesStyleSnapshot, "
 export type LineSeriesStyle = StrokedSeriesStyle &
   Pick<SeriesStyleSnapshot, "linestyle" | "marker" | "markerSize">;
 export type ScatterSeriesStyle = CommonSeriesStyle &
-  Pick<SeriesStyleSnapshot, "marker" | "markerSize">;
+  Pick<SeriesStyleSnapshot, "marker" | "markerSize" | "density">;
 export type BoxplotSeriesStyle = StrokedSeriesStyle & Pick<SeriesStyleSnapshot, "linestyle">;
 export type HistogramSeriesStyle = CommonSeriesStyle &
   Pick<SeriesStyleSnapshot, "bins" | "density">;

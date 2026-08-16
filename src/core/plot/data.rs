@@ -161,6 +161,7 @@ pub type PlotSource<T> = ReactiveValue<T>;
 ///
 /// `PlotData` supports:
 /// - static vectors
+/// - shared static vectors
 /// - `Signal<Vec<f64>>` temporal sources
 /// - `Observable<Vec<f64>>` push-based sources
 /// - `StreamingBuffer<f64>` live streaming sources
@@ -168,6 +169,11 @@ pub type PlotSource<T> = ReactiveValue<T>;
 pub enum PlotData {
     /// Concrete static data.
     Static(Vec<f64>),
+    /// Reference-counted static data.
+    ///
+    /// This keeps large immutable inputs cheap to clone when a plot is prepared
+    /// or retained by more than one front end.
+    SharedStatic(Arc<Vec<f64>>),
     /// Time-varying data evaluated at render time.
     Temporal(Signal<Vec<f64>>),
     /// Push-based reactive data read at render time.
@@ -182,6 +188,7 @@ impl PlotData {
     pub fn resolve_cow(&self, time: f64) -> Cow<'_, [f64]> {
         match self {
             Self::Static(data) => Cow::Borrowed(data.as_slice()),
+            Self::SharedStatic(data) => Cow::Borrowed(data.as_slice()),
             Self::Temporal(signal) => Cow::Owned(signal.at(time)),
             Self::Reactive(obs) => Cow::Owned(obs.get()),
             Self::Streaming(buffer) => Cow::Owned(buffer.read()),
@@ -196,7 +203,7 @@ impl PlotData {
 
     pub(crate) fn clone_without_static_values(&self) -> Self {
         match self {
-            Self::Static(_) => Self::Static(Vec::new()),
+            Self::Static(_) | Self::SharedStatic(_) => Self::Static(Vec::new()),
             Self::Temporal(signal) => Self::Temporal(signal.clone()),
             Self::Reactive(observable) => Self::Reactive(observable.clone()),
             Self::Streaming(stream) => Self::Streaming(stream.clone()),
@@ -215,7 +222,7 @@ impl PlotData {
     /// Check if this data is static.
     #[inline]
     pub fn is_static(&self) -> bool {
-        matches!(self, Self::Static(_))
+        matches!(self, Self::Static(_) | Self::SharedStatic(_))
     }
 
     /// Check if this data is temporal.
@@ -235,6 +242,7 @@ impl PlotData {
     pub fn as_static(&self) -> Option<&Vec<f64>> {
         match self {
             Self::Static(data) => Some(data),
+            Self::SharedStatic(data) => Some(data.as_ref()),
             _ => None,
         }
     }
@@ -243,6 +251,7 @@ impl PlotData {
     pub fn len(&self) -> usize {
         match self {
             Self::Static(data) => data.len(),
+            Self::SharedStatic(data) => data.len(),
             Self::Temporal(signal) => signal.at(0.0).len(),
             Self::Reactive(obs) => obs.get().len(),
             Self::Streaming(buffer) => buffer.len(),
@@ -322,16 +331,15 @@ impl PlotData {
                     buffer.unsubscribe(id);
                 }));
             }
-            Self::Static(_) | Self::Temporal(_) => {}
+            Self::Static(_) | Self::SharedStatic(_) | Self::Temporal(_) => {}
         }
     }
 }
 
 impl std::fmt::Debug for PlotData {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Static(data) => f
-                .debug_tuple("Static")
+        let fmt_static = |data: &[f64], f: &mut std::fmt::Formatter<'_>| {
+            f.debug_tuple("Static")
                 .field(&format!(
                     "[{}; {}]",
                     if data.is_empty() {
@@ -341,7 +349,12 @@ impl std::fmt::Debug for PlotData {
                     },
                     data.len()
                 ))
-                .finish(),
+                .finish()
+        };
+
+        match self {
+            Self::Static(data) => fmt_static(data, f),
+            Self::SharedStatic(data) => fmt_static(data, f),
             Self::Temporal(_) => f
                 .debug_tuple("Temporal")
                 .field(&"Signal<Vec<f64>>")
@@ -372,6 +385,13 @@ impl IntoPlotData for Vec<f64> {
     #[inline]
     fn into_plot_data(self) -> PlotData {
         PlotData::Static(self)
+    }
+}
+
+impl IntoPlotData for Arc<Vec<f64>> {
+    #[inline]
+    fn into_plot_data(self) -> PlotData {
+        PlotData::SharedStatic(self)
     }
 }
 
@@ -510,6 +530,17 @@ mod tests {
     fn test_into_plot_data_vec() {
         let data: PlotData = vec![1.0, 2.0].into_plot_data();
         assert!(data.is_static());
+    }
+
+    #[test]
+    fn test_into_plot_data_shared_vec_keeps_allocation() {
+        let values = Arc::new(vec![1.0, 2.0]);
+        let data = Arc::clone(&values).into_plot_data();
+
+        let PlotData::SharedStatic(shared) = data else {
+            panic!("Arc<Vec<f64>> should remain shared static data");
+        };
+        assert!(Arc::ptr_eq(&values, &shared));
     }
 
     #[test]

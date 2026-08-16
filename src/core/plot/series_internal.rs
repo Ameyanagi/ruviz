@@ -1,7 +1,7 @@
 use super::*;
 use crate::core::Point2f;
 use crate::core::plot::raster_batches::{
-    RectGridBatch, SeriesRasterPlan, clip_rect_from_plot_area, plot_area_from_rect,
+    DensityBatch, RectGridBatch, SeriesRasterPlan, clip_rect_from_plot_area, plot_area_from_rect,
     project_xy_points, project_xy_subpaths,
 };
 use crate::core::plot::raster_fast_path::{
@@ -294,6 +294,7 @@ impl Plot {
         series.marker_edge = config
             .resolved_edge_spec()
             .map(|(color, width)| MarkerEdge { color, width });
+        series.density = config.density;
         series.group_id = group_id;
 
         self.push_grouped_series(series, consume_palette_index)
@@ -420,7 +421,14 @@ impl Plot {
                 let mut marker_points: Vec<Point2f> = Vec::new();
 
                 for mut points in subpaths {
-                    if series.props.marker_style.value().is_none()
+                    let has_markers = series.props.marker_style.value().is_some();
+                    if has_markers {
+                        // Captured before any decimation: reducing the
+                        // polyline must never move or drop a marker.
+                        marker_points.extend_from_slice(points.as_ref());
+                    }
+
+                    if !has_markers
                         && series.x_errors.is_none()
                         && series.y_errors.is_none()
                         && let Some(canonicalized) = canonicalize_line_points_exact(points.as_ref())
@@ -429,7 +437,13 @@ impl Plot {
                         points = canonicalized.into();
                     }
 
-                    if mode.allows_raster_line_reduction()
+                    // A marked line keeps its full polyline by default —
+                    // decimating the stroke changes its bytes — but under
+                    // fast mode the stroke takes the same min/max reduction
+                    // a bare solid line always gets, while the markers above
+                    // stay complete.
+                    if (!has_markers || self.render.fast)
+                        && mode.allows_raster_line_reduction()
                         && should_reduce_line_series(series, points.len(), plot_area.width())
                         && let Some(reduced) = reduce_line_points_for_raster(
                             points.as_ref(),
@@ -439,10 +453,6 @@ impl Plot {
                     {
                         raster_plan.note_raster_line_reduction();
                         points = reduced.into();
-                    }
-
-                    if series.props.marker_style.value().is_some() {
-                        marker_points.extend_from_slice(points.as_ref());
                     }
 
                     raster_plan.push_polyline(
@@ -470,9 +480,60 @@ impl Plot {
                 Some(raster_plan)
             }
             (SeriesType::Scatter { .. }, ResolvedSeries::Scatter { x, y }) => {
+                let mut raster_plan = SeriesRasterPlan::default();
+                // Fast mode upgrades a heavily overdrawn scatter to density
+                // aggregation: past one point per plot pixel, exact markers
+                // mostly repaint pixels that are already covered. Under
+                // manual axis limits only the points inside the window can
+                // overdraw it, so a zoomed view with a large but mostly
+                // clipped dataset stays exact.
+                let auto_density = self.render.fast && {
+                    let plot_pixels = f64::from(plot_area.width()) * f64::from(plot_area.height());
+                    if (x.len() as f64) <= plot_pixels {
+                        false
+                    } else if self.layout.x_limits.is_some() || self.layout.y_limits.is_some() {
+                        let visible = x
+                            .iter()
+                            .zip(y.iter())
+                            .filter(|&(&px, &py)| {
+                                px.is_finite()
+                                    && py.is_finite()
+                                    && px >= x_min
+                                    && px <= x_max
+                                    && py >= y_min
+                                    && py <= y_max
+                            })
+                            .count();
+                        visible as f64 > plot_pixels
+                    } else {
+                        true
+                    }
+                };
                 let marker_size =
                     self.dpi_scaled_line_width(series.props.marker_size.value_or(10.0));
                 let marker_style = series.props.marker_style.value_or(MarkerStyle::Circle);
+                // An explicit per-series choice wins in both directions;
+                // only an unset series takes fast mode's automatic upgrade.
+                if series.density.unwrap_or(auto_density) {
+                    raster_plan.push_density(DensityBatch::from_xy(
+                        x,
+                        y,
+                        x_min,
+                        x_max,
+                        y_min,
+                        y_max,
+                        plot_area,
+                        &self.layout.x_scale,
+                        &self.layout.y_scale,
+                        color,
+                        // The same footprint the exact markers would paint, so
+                        // the density silhouette matches the marker render.
+                        marker_size,
+                        marker_style,
+                    ));
+                    return Ok(Some(raster_plan));
+                }
+
                 let points = project_xy_points(
                     x,
                     y,
@@ -485,7 +546,6 @@ impl Plot {
                     &self.layout.y_scale,
                 );
                 let marker_edge = self.resolved_marker_edge(series, color);
-                let mut raster_plan = SeriesRasterPlan::default();
                 raster_plan.push_markers(
                     points,
                     marker_size,
@@ -1454,6 +1514,16 @@ impl Plot {
                 }
             }
             (SeriesType::Scatter { .. }, ResolvedSeries::Scatter { x, y }) => {
+                // Density aggregation has no GPU implementation; erroring
+                // matches SVG export rather than silently rendering the
+                // per-marker output the series opted out of.
+                if series.density == Some(true) {
+                    return Err(PlottingError::RenderError(
+                        "the GPU backend does not support density scatter series; \
+                         render through the default backend or disable density mode"
+                            .to_string(),
+                    ));
+                }
                 // Use GPU for coordinate transformation
                 let viewport = (
                     plot_area.x(),

@@ -153,6 +153,7 @@ impl Plot {
 
     pub(super) fn series_supports_auto_datashader(series: &PlotSeries) -> bool {
         matches!(series.series_type, SeriesType::Scatter { .. })
+            && series.density != Some(true)
             && series.x_errors.is_none()
             && series.y_errors.is_none()
     }

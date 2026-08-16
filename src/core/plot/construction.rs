@@ -12,7 +12,7 @@ fn resolve_plot_data<'a>(
     cache: &mut Vec<CachedResolvedData>,
     acknowledgements: &mut Vec<crate::data::StreamingBuffer<f64>>,
 ) -> ResolvedData<'a> {
-    if let PlotData::Static(values) = source {
+    if let Some(values) = source.as_static() {
         return ResolvedData::Cow(Cow::Borrowed(values));
     }
 
@@ -24,7 +24,9 @@ fn resolve_plot_data<'a>(
     }
 
     let values = match source {
-        PlotData::Static(_) => unreachable!("static data returned before cache lookup"),
+        PlotData::Static(_) | PlotData::SharedStatic(_) => {
+            unreachable!("static data returned before cache lookup")
+        }
         PlotData::Temporal(signal) => signal.at(time),
         PlotData::Reactive(observable) => observable.get(),
         PlotData::Streaming(stream) => {
@@ -1748,6 +1750,22 @@ impl Plot {
     /// on both axes. Unset, each axis picks automatically per range.
     pub fn scientific_notation(mut self, enabled: bool) -> Self {
         self.layout.scientific_notation = Some(enabled);
+        self
+    }
+
+    /// Trade exactness for speed on large data.
+    ///
+    /// Off (the default), every series renders exactly. On, the renderer may
+    /// substitute cheaper approximations whose output is close to, but not
+    /// byte-identical with, exact rendering. Currently that means two things:
+    /// a scatter series whose point count exceeds the plot pixel count
+    /// renders through density aggregation (see `ScatterConfig::density`)
+    /// instead of compositing every marker, and a marked solid line's stroke
+    /// takes the same min/max column reduction a bare solid line always gets,
+    /// while its markers stay complete. An explicit `.density(...)` on a
+    /// series always wins over the automatic scatter upgrade.
+    pub fn fast(mut self, enabled: bool) -> Self {
+        self.render.fast = enabled;
         self
     }
 }

@@ -6,6 +6,15 @@ pre-commit:
     - name: clippy
       files: echo Cargo.toml
       run: cargo clippy --all-features -- -D warnings
+    - name: clippy-python
+      files: echo Cargo.toml
+      run: PYO3_PYTHON=bindings/python/.venv/bin/python cargo clippy -p ruviz-py --all-features -- -D warnings
+    - name: lockfiles
+      # The CI failure mode pre-commit clippy cannot see: CI builds the
+      # adapter workspaces with --locked, so a new ruviz dependency must land
+      # in their lockfiles too. cargo metadata checks that without compiling.
+      files: git diff --cached --name-only --diff-filter=ACMR | grep -E 'Cargo\.(toml|lock)$' || true
+      run: cargo metadata --locked --format-version 1 > /dev/null && cargo metadata --locked --format-version 1 --manifest-path adapters/gpui/Cargo.toml > /dev/null && cargo metadata --locked --format-version 1 --manifest-path adapters/gui/Cargo.toml > /dev/null
     - name: docs-examples
       files: git diff --cached --name-only --diff-filter=ACMR | grep -E '(^|/)[^/]+\.md$|^scripts/check_docs\.py$|^lefthook\.yml$' || true
       run: uv run python scripts/check_docs.py

@@ -32,6 +32,11 @@ pub struct RenderPipeline {
     /// explicit DPI as a request to keep, only reducing it to honour the
     /// bounds; a default DPI is scaled freely to fit them.
     pub(crate) explicit_dpi: bool,
+    /// Speed-over-fidelity mode: rendering may substitute cheaper
+    /// approximations (currently density aggregation for scatter series whose
+    /// point count exceeds the plot pixel count). Off by default, where every
+    /// output is exact.
+    pub(crate) fast: bool,
     /// Exact output pixels requested by an internal rendering target.
     pub(crate) explicit_output_pixels: Option<(u32, u32)>,
     /// Allow positive child subplot canvases below the top-level dimension minimum.
@@ -55,6 +60,7 @@ impl RenderPipeline {
             auto_optimized: false,
             allow_subminimum_dpi: false,
             explicit_dpi: false,
+            fast: false,
             explicit_output_pixels: None,
             allow_subplot_dimensions: false,
             #[cfg(feature = "gpu")]

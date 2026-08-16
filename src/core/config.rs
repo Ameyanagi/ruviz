@@ -69,14 +69,16 @@ impl FigureConfig {
         // Snap to the nearest integer when the product is within f32
         // representation noise of it: `size_px(900, 420)` stores 4.2 in, which
         // is 419.99997 back at 100 dpi, and plain truncation would ship a
-        // 419px canvas. The threshold is relative — representation error is a
-        // couple of ULPs (~2e-7 of the value) — so a genuinely fractional
-        // size keeps truncating, whether it is far from an integer (6.4 in at
-        // 72 dpi = 460.8) or deliberately close to one (1.9999 in at 4 dpi =
-        // 7.9996, which a fitted-frame DPI computation relies on truncating).
+        // 419px canvas. The threshold is relative and tight — representation
+        // error is a couple of ULPs (~2e-7 of the value), so 1e-6 covers it
+        // with margin while every genuinely fractional size keeps truncating:
+        // far from an integer (6.4 in at 72 dpi = 460.8), deliberately close
+        // (1.9999 in at 4 dpi = 7.9996, which fitted-frame DPI computations
+        // rely on truncating), or merely near (4.999975 in at 2 dpi =
+        // 9.99995, rel 5e-6).
         fn snap_trunc(px: f32) -> u32 {
             let snapped = px.round();
-            if (px - snapped).abs() < px.abs().max(1.0) * 1e-5 {
+            if (px - snapped).abs() < px.abs().max(1.0) * 1e-6 {
                 snapped as u32
             } else {
                 px as u32
@@ -1210,6 +1212,12 @@ mod tests {
         // and depend on truncation to reproduce the requested pixels.
         let config = FigureConfig::new(1024.0001, 1.9999, 4.0);
         assert_eq!(config.canvas_size(), (4096, 7));
+
+        // Near-integer but real fractions stay truncated too: 4.999975 in at
+        // 2 dpi is 9.99995px, only 5e-6 away from 10 relative, and must not
+        // snap up.
+        let config = FigureConfig::new(4.999975, 4.999975, 2.0);
+        assert_eq!(config.canvas_size(), (9, 9));
     }
 
     #[test]

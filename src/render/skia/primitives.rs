@@ -4,6 +4,9 @@ use crate::{
     render::color::{scale_premultiplied_rgba, source_over_premultiplied_rgba},
 };
 
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
+
 /// Hairline width used by the legacy `draw_rectangle(.., filled = false)` path,
 /// in raw device pixels. Matches `tiny_skia::Stroke::default().width`.
 const LEGACY_OUTLINE_WIDTH_PX: f32 = 1.0;
@@ -11,6 +14,16 @@ const LEGACY_OUTLINE_WIDTH_PX: f32 = 1.0;
 /// Lower bound on a rectangle edge stroke so a requested edge never vanishes.
 /// Mirrors the floor `draw_line` applies to its own stroke width.
 const MIN_RECT_EDGE_WIDTH_PX: f32 = 0.1;
+
+/// Point count below which visiting every point once per band costs more than
+/// the disjoint-row parallelism saves.
+#[cfg(feature = "parallel")]
+const PARALLEL_MARKER_BLIT_THRESHOLD: usize = 10_000;
+
+/// Bound the number of row-band tasks submitted to Rayon's shared pool. This
+/// keeps a single plot render from flooding a host application's executor.
+#[cfg(feature = "parallel")]
+const MAX_PARALLEL_MARKER_BLIT_WORKERS: usize = 8;
 
 impl SkiaRenderer {
     // ------------------------------------------------------------------
@@ -1563,6 +1576,48 @@ impl SkiaRenderer {
         edge: Option<(Color, f32)>,
         clip_rect: (f32, f32, f32, f32),
     ) -> Result<()> {
+        #[cfg(feature = "parallel")]
+        {
+            let worker_count = Self::marker_blit_worker_count(points.len(), self.height);
+            if worker_count > 1 {
+                return self.draw_markers_with_sprite_compositor_parallel(
+                    points,
+                    size,
+                    style,
+                    color,
+                    edge,
+                    clip_rect,
+                    worker_count,
+                );
+            }
+        }
+
+        self.draw_markers_with_sprite_compositor_serial(points, size, style, color, edge, clip_rect)
+    }
+
+    #[cfg(feature = "parallel")]
+    fn marker_blit_worker_count(point_count: usize, canvas_height: u32) -> usize {
+        if point_count < PARALLEL_MARKER_BLIT_THRESHOLD {
+            return 1;
+        }
+
+        std::thread::available_parallelism()
+            .map_or(1, std::num::NonZeroUsize::get)
+            .min(MAX_PARALLEL_MARKER_BLIT_WORKERS)
+            .min(canvas_height as usize)
+    }
+
+    /// The feature-off path deliberately stays as the original point-ordered
+    /// compositor. It is also the byte-exact oracle for the parallel test.
+    fn draw_markers_with_sprite_compositor_serial(
+        &mut self,
+        points: &[Point2f],
+        size: f32,
+        style: MarkerStyle,
+        color: Color,
+        edge: Option<(Color, f32)>,
+        clip_rect: (f32, f32, f32, f32),
+    ) -> Result<()> {
         let phase_count = Self::marker_subpixel_phases() as usize;
         let mut sprites = vec![None; phase_count * phase_count];
         let mask = self.get_clip_mask(clip_rect)?;
@@ -1600,7 +1655,7 @@ impl SkiaRenderer {
                 continue;
             }
 
-            if self.can_use_unmasked_marker_scanline_blit(
+            if Self::can_use_unmasked_marker_scanline_blit(
                 &sprite,
                 dst_x,
                 dst_y,
@@ -1624,6 +1679,172 @@ impl SkiaRenderer {
                     self.height as i32,
                 );
             }
+        }
+
+        Ok(())
+    }
+
+    #[cfg(feature = "parallel")]
+    #[allow(clippy::too_many_arguments)]
+    fn draw_markers_with_sprite_compositor_parallel(
+        &mut self,
+        points: &[Point2f],
+        size: f32,
+        style: MarkerStyle,
+        color: Color,
+        edge: Option<(Color, f32)>,
+        clip_rect: (f32, f32, f32, f32),
+        worker_count: usize,
+    ) -> Result<()> {
+        debug_assert!(worker_count > 1);
+
+        let phase_count = Self::marker_subpixel_phases() as usize;
+        let mut sprites = vec![None; phase_count * phase_count];
+        let mask = self.get_clip_mask(clip_rect)?;
+        self.note_marker_sprite_compositor();
+
+        // The sprite caches require `&mut self`. Resolve phases in their first
+        // point-occurrence order, matching the serial path, before any pixel
+        // slice is lent to Rayon.
+        for point in points {
+            if !point.x.is_finite() || !point.y.is_finite() {
+                continue;
+            }
+            let (_, phase_x) = Self::quantize_marker_subpixel(point.x);
+            let (_, phase_y) = Self::quantize_marker_subpixel(point.y);
+            let slot = phase_y as usize * phase_count + phase_x as usize;
+            if sprites[slot].is_none() {
+                sprites[slot] =
+                    Some(self.marker_sprite(style, size, color, edge, phase_x, phase_y)?);
+            }
+        }
+
+        let mask_data = mask.data();
+        let clip_left = clip_rect.0.floor() as i32 - 1;
+        let clip_top = clip_rect.1.floor() as i32 - 1;
+        let clip_right = (clip_rect.0 + clip_rect.2).ceil() as i32 + 1;
+        let clip_bottom = (clip_rect.1 + clip_rect.3).ceil() as i32 + 1;
+        let canvas_width = self.width as usize;
+        let canvas_height = self.height as usize;
+        let canvas_width_i32 = self.width as i32;
+        let canvas_height_i32 = self.height as i32;
+        let canvas_stride = canvas_width * 4;
+        // Several bands per worker: dense data (a gaussian scatter, say)
+        // concentrates points in the middle rows, and with one band per worker
+        // the busiest band caps the speedup. Finer bands let rayon's work
+        // stealing even the load out; the floor keeps a band taller than a
+        // typical marker so most sprites still land in a single band.
+        let rows_per_band = canvas_height.div_ceil(worker_count * 4).max(16);
+        let bytes_per_band = rows_per_band * canvas_stride;
+        let band_count = canvas_height.div_ceil(rows_per_band.max(1)).max(1);
+
+        // One ordered pass assigns each point index to the bands its sprite
+        // rows touch (almost always exactly one), so a band walks only its own
+        // points instead of the full list — at 10M points the full-list walk
+        // per band was itself the bottleneck. Indices stay in submission order
+        // inside every band, which is what keeps each pixel's source-over
+        // sequence identical to the serial compositor. A sprite with no
+        // visible row draws nothing in either path and is dropped here.
+        let mut band_points: Vec<Vec<u32>> = vec![Vec::new(); band_count];
+        for (index, point) in points.iter().enumerate() {
+            if !point.x.is_finite() || !point.y.is_finite() {
+                continue;
+            }
+            let (base_x, phase_x) = Self::quantize_marker_subpixel(point.x);
+            let (base_y, phase_y) = Self::quantize_marker_subpixel(point.y);
+            let slot = phase_y as usize * phase_count + phase_x as usize;
+            // Pre-resolved above for every finite point; a miss would only
+            // skip the point, never draw a wrong sprite.
+            let Some(sprite) = sprites[slot].as_deref() else {
+                continue;
+            };
+            let dst_x = base_x - sprite.origin_x;
+            let dst_y = base_y - sprite.origin_y;
+            if dst_x + sprite.width as i32 <= clip_left
+                || dst_x >= clip_right
+                || dst_y + sprite.height as i32 <= clip_top
+                || dst_y >= clip_bottom
+            {
+                continue;
+            }
+            let first_row = dst_y.max(0);
+            let last_row = (dst_y + sprite.height as i32 - 1).min(canvas_height_i32 - 1);
+            if first_row > last_row {
+                continue;
+            }
+            let first_band = first_row as usize / rows_per_band;
+            let last_band = last_row as usize / rows_per_band;
+            for band in band_points.iter_mut().take(last_band + 1).skip(first_band) {
+                band.push(index as u32);
+            }
+        }
+
+        let used_scanline_blit = self
+            .pixmap
+            .data_mut()
+            .par_chunks_mut(bytes_per_band)
+            .zip(band_points.par_iter())
+            .enumerate()
+            .map(|(band_index, (band_pixels, band_indices))| {
+                let band_top = band_index * rows_per_band;
+                let band_bottom = band_top + band_pixels.len() / canvas_stride;
+                let mut band_used_scanline_blit = false;
+
+                // Band membership was decided above; each index here is
+                // finite, clip-visible, and touches this band's rows.
+                for &index in band_indices {
+                    let point = &points[index as usize];
+                    let (base_x, phase_x) = Self::quantize_marker_subpixel(point.x);
+                    let (base_y, phase_y) = Self::quantize_marker_subpixel(point.y);
+                    let slot = phase_y as usize * phase_count + phase_x as usize;
+                    // Same pre-resolution invariant as the binning pass.
+                    let Some(sprite) = sprites[slot].as_deref() else {
+                        continue;
+                    };
+                    let dst_x = base_x - sprite.origin_x;
+                    let dst_y = base_y - sprite.origin_y;
+
+                    if Self::can_use_unmasked_marker_scanline_blit(
+                        sprite,
+                        dst_x,
+                        dst_y,
+                        clip_rect,
+                        0,
+                        0,
+                        canvas_width_i32,
+                        canvas_height_i32,
+                    ) {
+                        band_used_scanline_blit = true;
+                        Self::blit_marker_sprite_scanlines_unmasked_in_band(
+                            band_pixels,
+                            canvas_width,
+                            band_top,
+                            band_bottom,
+                            sprite,
+                            dst_x,
+                            dst_y,
+                        );
+                    } else {
+                        Self::blit_marker_sprite_masked_in_band(
+                            band_pixels,
+                            canvas_width,
+                            canvas_height,
+                            band_top,
+                            band_bottom,
+                            sprite,
+                            dst_x,
+                            dst_y,
+                            mask_data,
+                        );
+                    }
+                }
+
+                band_used_scanline_blit
+            })
+            .reduce(|| false, |left, right| left || right);
+
+        if used_scanline_blit {
+            self.note_marker_scanline_blit();
         }
 
         Ok(())
@@ -1712,7 +1933,6 @@ impl SkiaRenderer {
     }
 
     fn can_use_unmasked_marker_scanline_blit(
-        &self,
         sprite: &MarkerSprite,
         dst_x: i32,
         dst_y: i32,
@@ -1793,6 +2013,141 @@ impl SkiaRenderer {
                 let dst_idx = dst_row + (dst_x as usize + col) * 4;
                 Self::blend_premultiplied_rgba_unmasked(
                     &mut dst_data[dst_idx..dst_idx + 4],
+                    &sprite.pixels[src_idx..src_idx + 4],
+                );
+            }
+        }
+    }
+
+    #[cfg(feature = "parallel")]
+    #[allow(clippy::too_many_arguments)]
+    fn blit_marker_sprite_masked_in_band(
+        band_pixels: &mut [u8],
+        canvas_width: usize,
+        canvas_height: usize,
+        band_top: usize,
+        band_bottom: usize,
+        sprite: &MarkerSprite,
+        dst_x: i32,
+        dst_y: i32,
+        mask_data: &[u8],
+    ) {
+        let src_width = sprite.width as i32;
+        let src_height = sprite.height as i32;
+        let copy_left = dst_x.max(0);
+        let copy_top = dst_y.max(band_top as i32).max(0);
+        let copy_right = (dst_x + src_width).min(canvas_width as i32);
+        let copy_bottom = (dst_y + src_height)
+            .min(band_bottom as i32)
+            .min(canvas_height as i32);
+
+        if copy_left >= copy_right || copy_top >= copy_bottom {
+            return;
+        }
+
+        let src_offset_x = (copy_left - dst_x) as usize;
+        let src_offset_y = (copy_top - dst_y) as usize;
+        let copy_width = (copy_right - copy_left) as usize;
+        let copy_height = (copy_bottom - copy_top) as usize;
+        let sprite_stride = sprite.width as usize * 4;
+        let canvas_stride = canvas_width * 4;
+
+        for row in 0..copy_height {
+            let src_row = (src_offset_y + row) * sprite_stride + src_offset_x * 4;
+            let canvas_y = copy_top as usize + row;
+            let dst_row = (canvas_y - band_top) * canvas_stride + copy_left as usize * 4;
+            let mask_row = canvas_y * canvas_width + copy_left as usize;
+
+            for col in 0..copy_width {
+                let src_idx = src_row + col * 4;
+                if sprite.pixels[src_idx + 3] == 0 {
+                    continue;
+                }
+
+                let mask_alpha = mask_data[mask_row + col];
+                if mask_alpha == 0 {
+                    continue;
+                }
+
+                let dst_idx = dst_row + col * 4;
+                Self::blend_premultiplied_rgba(
+                    &mut band_pixels[dst_idx..dst_idx + 4],
+                    &sprite.pixels[src_idx..src_idx + 4],
+                    mask_alpha,
+                );
+            }
+        }
+    }
+
+    #[cfg(feature = "parallel")]
+    #[allow(clippy::too_many_arguments)]
+    fn blit_marker_sprite_scanlines_unmasked_in_band(
+        band_pixels: &mut [u8],
+        canvas_width: usize,
+        band_top: usize,
+        band_bottom: usize,
+        sprite: &MarkerSprite,
+        dst_x: i32,
+        dst_y: i32,
+    ) {
+        let Some(scanlines) = sprite.scanlines.as_ref() else {
+            return;
+        };
+
+        let sprite_top = dst_y as usize;
+        let first_sprite_row = band_top.max(sprite_top) - sprite_top;
+        let past_last_sprite_row = band_bottom
+            .min(sprite_top + sprite.height as usize)
+            .saturating_sub(sprite_top);
+        if first_sprite_row >= past_last_sprite_row {
+            return;
+        }
+
+        let sprite_stride = sprite.width as usize * 4;
+        let canvas_stride = canvas_width * 4;
+
+        for (row_index, scanline) in scanlines
+            .iter()
+            .enumerate()
+            .take(past_last_sprite_row)
+            .skip(first_sprite_row)
+        {
+            if scanline.end_x <= scanline.start_x {
+                continue;
+            }
+
+            let row_y = sprite_top + row_index;
+            let src_row = row_index * sprite_stride;
+            let dst_row = (row_y - band_top) * canvas_stride;
+            let start = scanline.start_x as usize;
+            let end = scanline.end_x as usize;
+            let opaque_start = scanline.opaque_start_x as usize;
+            let opaque_end = scanline.opaque_end_x as usize;
+
+            let left_partial_end = opaque_start.max(start).min(end);
+            for col in start..left_partial_end {
+                let src_idx = src_row + col * 4;
+                let dst_idx = dst_row + (dst_x as usize + col) * 4;
+                Self::blend_premultiplied_rgba_unmasked(
+                    &mut band_pixels[dst_idx..dst_idx + 4],
+                    &sprite.pixels[src_idx..src_idx + 4],
+                );
+            }
+
+            if opaque_end > opaque_start {
+                let src_start = src_row + opaque_start * 4;
+                let src_end = src_row + opaque_end * 4;
+                let dst_start = dst_row + (dst_x as usize + opaque_start) * 4;
+                let dst_end = dst_row + (dst_x as usize + opaque_end) * 4;
+                band_pixels[dst_start..dst_end].copy_from_slice(&sprite.pixels[src_start..src_end]);
+            }
+
+            let right_partial_start = opaque_end.max(start).min(end);
+            for col in right_partial_start..end {
+                let src_idx = src_row + col * 4;
+                let dst_idx = dst_row + (dst_x as usize + col) * 4;
+                Self::blend_premultiplied_rgba_unmasked(
+                    &mut band_pixels[dst_idx..dst_idx + 4],
                     &sprite.pixels[src_idx..src_idx + 4],
                 );
             }
@@ -1997,6 +2352,72 @@ mod tests {
     /// Full-canvas clip, so marker tests exercise the drawing, not the clipping.
     fn whole_canvas(width: f32, height: f32) -> (f32, f32, f32, f32) {
         (0.0, 0.0, width, height)
+    }
+
+    #[cfg(feature = "parallel")]
+    #[test]
+    fn serial_and_parallel_marker_blits_are_byte_identical() {
+        const WIDTH: u32 = 104;
+        const HEIGHT: u32 = 96;
+        const WORKERS: usize = 4;
+        const BAND_BOUNDARY_ROWS: [f32; 15] = [
+            4.75, 6.5, 7.0, 23.75, 24.0, 24.25, 47.75, 48.0, 48.25, 71.75, 72.0, 72.25, 88.75,
+            89.25, 90.0,
+        ];
+
+        let clip_rect = (8.25, 6.5, 87.5, 82.75);
+        let mut points = Vec::with_capacity(20_002);
+        for index in 0..20_000 {
+            // Four 24-row bands put boundaries at y=24, 48, and 72. The
+            // repeated centres straddle all three, while the first/last groups
+            // straddle the fractional clip edges. X covers both clip edges and
+            // cycles through every subpixel phase.
+            let x = 3.0 + ((index * 37) % 1584) as f32 / 16.0;
+            let y = BAND_BOUNDARY_ROWS[index % BAND_BOUNDARY_ROWS.len()]
+                + ((index / BAND_BOUNDARY_ROWS.len()) % 4) as f32 / 64.0;
+            points.push(Point2f::new(x, y));
+        }
+        points.push(Point2f::new(f32::NAN, 24.0));
+        points.push(Point2f::new(48.0, f32::INFINITY));
+
+        let mut serial = white_canvas(WIDTH, HEIGHT, 100.0);
+        serial
+            .draw_markers_with_sprite_compositor_serial(
+                &points,
+                11.5,
+                MarkerStyle::Circle,
+                Color::from_rgba(35, 140, 220, 173),
+                Some((Color::from_rgba(180, 30, 90, 211), 1.25)),
+                clip_rect,
+            )
+            .expect("serial marker blit should render");
+
+        let mut parallel = white_canvas(WIDTH, HEIGHT, 100.0);
+        parallel
+            .draw_markers_with_sprite_compositor_parallel(
+                &points,
+                11.5,
+                MarkerStyle::Circle,
+                Color::from_rgba(35, 140, 220, 173),
+                Some((Color::from_rgba(180, 30, 90, 211), 1.25)),
+                clip_rect,
+                WORKERS,
+            )
+            .expect("parallel marker blit should render");
+
+        assert_eq!(serial.pixmap.data(), parallel.pixmap.data());
+        assert_eq!(
+            serial.render_diagnostics(),
+            parallel.render_diagnostics(),
+            "parallel bands must report the same compositor/cache/blit totals"
+        );
+        assert!(serial.render_diagnostics().used_marker_scanline_blit);
+        assert_eq!(
+            serial.encode_png_bytes().expect("serial PNG should encode"),
+            parallel
+                .encode_png_bytes()
+                .expect("parallel PNG should encode")
+        );
     }
 
     #[test]

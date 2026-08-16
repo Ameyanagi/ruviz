@@ -422,6 +422,7 @@ fn test_plot_series_static_source_helpers_materialize_values() {
         label: None,
         props: SeriesStyleProps::default(),
         marker_edge: None,
+        density: None,
         y_errors: None,
         x_errors: None,
         error_config: None,
@@ -452,6 +453,149 @@ fn test_plot_series_static_source_helpers_materialize_values() {
     assert!(series.props.marker_size.source().is_none());
     assert_eq!(series.props.alpha.cloned(), Some(1.0));
     assert!(series.props.alpha.source().is_none());
+}
+
+#[test]
+fn test_scatter_density_defaults_to_exact_byte_identical_rendering() {
+    let x = [0.0, 0.4, 0.8, 1.2, 1.6, 2.0];
+    let y = [0.2, 0.9, 0.6, 1.7, 1.2, 1.9];
+    let default_plot: Plot = Plot::new().scatter(&x, &y).into();
+    let explicit_off: Plot = Plot::new().scatter(&x, &y).density(false).into();
+
+    assert!(default_plot.series_mgr.series()[0].density.is_none());
+    assert_eq!(explicit_off.series_mgr.series()[0].density, Some(false));
+    assert_eq!(
+        default_plot
+            .render()
+            .expect("default scatter should render")
+            .pixels,
+        explicit_off
+            .render()
+            .expect("explicit density(false) scatter should render")
+            .pixels
+    );
+}
+
+#[test]
+fn test_fast_mode_upgrades_only_overdrawn_scatters_to_density() {
+    // Enough points to exceed the plot pixel count of a small canvas.
+    let n = 40_000;
+    let x: Vec<f64> = (0..n).map(|i| (i % 200) as f64).collect();
+    let y: Vec<f64> = (0..n).map(|i| (i / 200) as f64).collect();
+
+    let fast: Plot = Plot::new().size_px(120, 120).scatter(&x, &y).into();
+    let fast = fast.fast(true);
+    let explicit: Plot = Plot::new()
+        .size_px(120, 120)
+        .scatter(&x, &y)
+        .density(true)
+        .into();
+    // An overdrawn scatter under fast mode renders exactly like an explicit
+    // density series.
+    assert_eq!(
+        fast.render().expect("fast scatter should render").pixels,
+        explicit
+            .render()
+            .expect("density scatter should render")
+            .pixels
+    );
+
+    // A small scatter is untouched by fast mode: exact output, byte for byte.
+    let small_x = [0.0, 0.4, 0.8, 1.2];
+    let small_y = [0.2, 0.9, 0.6, 1.7];
+    let small_fast: Plot = Plot::new()
+        .size_px(120, 120)
+        .scatter(&small_x, &small_y)
+        .into();
+    let small_fast = small_fast.fast(true);
+    let small_exact: Plot = Plot::new()
+        .size_px(120, 120)
+        .scatter(&small_x, &small_y)
+        .into();
+    assert_eq!(
+        small_fast.render().expect("fast small scatter").pixels,
+        small_exact.render().expect("exact small scatter").pixels
+    );
+}
+
+#[test]
+fn test_fast_mode_reduces_marked_line_strokes_but_keeps_small_lines_exact() {
+    // Enough points to trip the 4-per-pixel-column reduction threshold.
+    let n = 30_000;
+    let x: Vec<f64> = (0..n).map(|i| i as f64).collect();
+    let y: Vec<f64> = (0..n).map(|i| ((i % 97) as f64).sin()).collect();
+
+    let exact: Plot = Plot::new()
+        .size_px(320, 200)
+        .line(&x, &y)
+        .marker(MarkerStyle::Circle)
+        .into();
+    let fast: Plot = Plot::new()
+        .size_px(320, 200)
+        .line(&x, &y)
+        .marker(MarkerStyle::Circle)
+        .into();
+    let fast = fast.fast(true);
+    // Fast mode decimates the marked line's stroke, so the bytes may differ,
+    // but both must render.
+    let exact_pixels = exact.render().expect("exact marked line").pixels;
+    let fast_pixels = fast.render().expect("fast marked line").pixels;
+    assert_eq!(exact_pixels.len(), fast_pixels.len());
+
+    // Below the reduction threshold a marked line is untouched by fast mode.
+    let small_x = [0.0, 1.0, 2.0, 3.0];
+    let small_y = [0.5, 1.5, 0.75, 2.0];
+    let small_exact: Plot = Plot::new()
+        .size_px(320, 200)
+        .line(&small_x, &small_y)
+        .marker(MarkerStyle::Circle)
+        .into();
+    let small_fast: Plot = Plot::new()
+        .size_px(320, 200)
+        .line(&small_x, &small_y)
+        .marker(MarkerStyle::Circle)
+        .into();
+    let small_fast = small_fast.fast(true);
+    assert_eq!(
+        small_exact.render().expect("small exact").pixels,
+        small_fast.render().expect("small fast").pixels
+    );
+}
+
+#[test]
+fn test_explicit_density_false_wins_over_fast_auto_upgrade() {
+    let n = 40_000;
+    let x: Vec<f64> = (0..n).map(|i| (i % 200) as f64).collect();
+    let y: Vec<f64> = (0..n).map(|i| (i / 200) as f64).collect();
+
+    let exact: Plot = Plot::new().size_px(120, 120).scatter(&x, &y).into();
+    let pinned: Plot = Plot::new()
+        .size_px(120, 120)
+        .scatter(&x, &y)
+        .density(false)
+        .into();
+    let pinned = pinned.fast(true);
+    // An overdrawn series pinned to exact rendering keeps exact bytes even
+    // under fast mode.
+    assert_eq!(
+        exact.render().expect("exact").pixels,
+        pinned.render().expect("pinned exact under fast").pixels
+    );
+}
+
+#[test]
+fn test_density_scatter_svg_reports_clear_unsupported_error() {
+    let plot: Plot = Plot::new()
+        .scatter(&[0.0, 1.0], &[0.0, 1.0])
+        .density(true)
+        .into();
+
+    let error = plot
+        .render_to_svg()
+        .expect_err("density SVG export should be rejected explicitly");
+    let message = error.to_string();
+    assert!(message.contains("SVG export does not support density scatter series"));
+    assert!(message.contains("render to PNG or disable density mode"));
 }
 
 #[test]
@@ -1510,6 +1654,21 @@ fn test_auto_datashader_policy_keeps_large_scatter_series_eligible() {
 
     assert!(DataShader::should_activate(total_points));
     assert!(Plot::should_auto_use_datashader(
+        &snapshot_series,
+        total_points
+    ));
+}
+
+#[test]
+fn test_opt_in_density_scatter_bypasses_legacy_auto_datashader() {
+    let x: Vec<f64> = (0..100_000).map(|i| i as f64).collect();
+    let y: Vec<f64> = x.iter().map(|x| x.sin()).collect();
+    let plot = Plot::new().scatter(&x, &y).density(true).end_series();
+    let snapshot_series = plot.snapshot_series(0.0);
+    let total_points = Plot::calculate_total_points_for_series(&snapshot_series);
+
+    assert!(DataShader::should_activate(total_points));
+    assert!(!Plot::should_auto_use_datashader(
         &snapshot_series,
         total_points
     ));

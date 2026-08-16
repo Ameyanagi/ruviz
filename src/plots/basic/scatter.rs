@@ -59,6 +59,15 @@ pub struct ScatterConfig {
     /// this has no effect on the open styles or the line-drawn ones (plus,
     /// cross, star) — see [`MarkerStyle::takes_edge`].
     pub show_edge: bool,
+    /// Whether to aggregate points into a plot-area pixel density grid.
+    ///
+    /// This is an opt-in approximation for very large scatters. Each occupied
+    /// pixel is drawn in the series color with the alpha produced by repeatedly
+    /// compositing the configured point alpha. Marker shape, size, edges, and
+    /// antialiasing are intentionally not reproduced.
+    /// `None` leaves the choice to the plot (fast mode may aggregate an
+    /// overdrawn series); an explicit value always wins in both directions.
+    pub density: Option<bool>,
 }
 
 impl Default for ScatterConfig {
@@ -78,6 +87,7 @@ impl Default for ScatterConfig {
             // shifts the whole series away from its palette colour, and on
             // markers of a few points it *is* the marker. See `show_edge`.
             show_edge: false,
+            density: None,
         }
     }
 }
@@ -163,6 +173,20 @@ impl ScatterConfig {
         self
     }
 
+    /// Enable or disable plot-area density aggregation.
+    ///
+    /// Density rendering makes work scale with plot pixels rather than
+    /// points: counts are aggregated per pixel, spread over the marker's
+    /// footprint, and colored at the scatter-equivalent alpha, keeping the
+    /// exact render's silhouette. Disabled by default; most useful for
+    /// scatters containing hundreds of thousands or millions of points. See
+    /// `PlotSeriesBuilder::density` for which marker shapes the footprint
+    /// models exactly.
+    pub fn density(mut self, density: bool) -> Self {
+        self.density = Some(density);
+        self
+    }
+
     /// The configured marker edge as `(colour override, width in points)`.
     ///
     /// Returns `None` when no edge should be drawn — either
@@ -208,6 +232,7 @@ mod tests {
             "a default marker is exactly its series colour: a contrasting rim \
              darkens whatever it overlaps and swallows small markers"
         );
+        assert!(config.density.is_none(), "density rendering must be opt-in");
     }
 
     #[test]
@@ -218,7 +243,8 @@ mod tests {
             .color(Color::BLUE)
             .alpha(0.8)
             .edge_color(Color::BLACK)
-            .edge_width(1.5);
+            .edge_width(1.5)
+            .density(true);
 
         assert!(matches!(config.marker, MarkerStyle::Square));
         assert!((config.size - 12.0).abs() < f32::EPSILON);
@@ -226,6 +252,7 @@ mod tests {
         assert!((config.alpha - 0.8).abs() < f32::EPSILON);
         assert_eq!(config.edge_color, Some(Color::BLACK));
         assert!((config.edge_width - 1.5).abs() < f32::EPSILON);
+        assert_eq!(config.density, Some(true));
     }
 
     #[test]

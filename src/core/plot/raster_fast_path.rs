@@ -25,10 +25,10 @@ pub(super) fn should_reduce_line_series(
         return false;
     }
 
-    if series.props.marker_style.value().is_some()
-        || series.x_errors.is_some()
-        || series.y_errors.is_some()
-    {
+    // Markers are deliberately not checked here: the caller decides whether a
+    // marked line may reduce its stroke (only under fast mode), after
+    // capturing the marker positions from the unreduced points.
+    if series.x_errors.is_some() || series.y_errors.is_some() {
         return false;
     }
 
