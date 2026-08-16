@@ -2,6 +2,41 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.10.0] - 2026-08-16
+
+### Added
+
+- Annotations across every binding: `vline(x)`, `hline(y)`, and
+  `annotate_text(x, y, text)` on the Rust `Plot` builder, the Python `Plot`,
+  the web SDK's `PlotBuilder` (`annotateText`), and the raw wasm handle,
+  with optional styles — color, width, and linestyle for reference lines;
+  color and `fontSize` for text. Annotations are recorded under snapshot
+  schema version 3, so they survive cloning, worker transfer, notebook
+  widget replay, and cross-binding round trips; the un-styled default is
+  the core's 1pt dashed gray, defined once as
+  `Annotation::reference_line_defaults()` and filled from there by every
+  binding, so partial styles can never drift from un-styled lines. The
+  Python package exports the annotation snapshot types alongside
+  `SeriesSnapshot`.
+
+### Fixed
+
+- Snapshot replay treats malformed foreign annotations the way it treats
+  every other foreign field: a missing or null coordinate, a bad style
+  value, an unknown kind, or a non-array annotations container is skipped
+  instead of throwing wasm-side and blanking the notebook widget. A `null`
+  style is accepted as no-style everywhere, empty styles stay out of
+  snapshots (making TS and Python snapshots of equivalent plots identical),
+  and style numbers that would overflow f32 to infinity are rejected at
+  validation in both native layers — while KDE's genuinely-f64 bandwidth
+  keeps its full range. An end-to-end browser test pins all of it.
+- The GUI behavioral test suites run single-threaded in CI: issue #152's
+  render-worker timeout reproduced on a 4-core Windows runner with the
+  instrumented message showing the waiters had CPU while the render
+  workers did not — four concurrent 3D renders plus four spinning waiters
+  oversubscribed the runner. Serializing the suites removes the
+  competition without touching the waiting primitive.
+
 ## [0.9.0] - 2026-08-16
 
 ### Added
