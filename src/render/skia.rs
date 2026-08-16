@@ -1,8 +1,8 @@
 use crate::{
     core::{
-        ComputedMargins, CoordinateTransform, LayoutRect, Legend, LegendItem, LegendItemType,
-        LegendSpacingPixels, LegendStyle, PlottingError, RenderScale, Result, SpacingConfig,
-        SpineConfig, TextPosition,
+        ComputedMargins, CoordinateTransform, DIMMED_LEGEND_ALPHA, LayoutRect, Legend,
+        LegendHitRegion, LegendItem, LegendItemType, LegendSpacingPixels, LegendStyle,
+        PlottingError, RenderScale, Result, SpacingConfig, SpineConfig, TextPosition,
         legend::{
             LEGACY_LEGEND_SWATCH_EDGE_DARK, LEGACY_LEGEND_SWATCH_EDGE_LIGHT,
             LEGACY_LEGEND_SWATCH_EDGE_WIDTH_PT, LegendLayout, LegendOccupancy, LegendPlacement,
@@ -197,6 +197,9 @@ pub struct SkiaRenderer {
     marker_path_cache: HashMap<MarkerPathKey, Arc<tiny_skia::Path>>,
     marker_sprite_cache: HashMap<MarkerSpriteKey, Arc<MarkerSprite>>,
     render_diagnostics: RenderDiagnostics,
+    /// Clickable regions of the most recently drawn legend, for the
+    /// interactive session's legend hit-testing. Refreshed per legend draw.
+    legend_hit_regions: Vec<LegendHitRegion>,
 }
 
 impl SkiaRenderer {
@@ -241,6 +244,7 @@ impl SkiaRenderer {
             marker_path_cache: HashMap::new(),
             marker_sprite_cache: HashMap::new(),
             render_diagnostics: RenderDiagnostics::default(),
+            legend_hit_regions: Vec::new(),
         })
     }
 
@@ -2713,19 +2717,41 @@ impl SkiaRenderer {
             )?;
         }
 
+        self.legend_hit_regions = layout
+            .entries
+            .iter()
+            .map(|entry| LegendHitRegion {
+                rect: layout.entry_hit_rect(entry),
+                series_indices: items[entry.item_index].series_indices.clone(),
+            })
+            .collect();
+
         for entry in &layout.entries {
             let item = &items[entry.item_index];
+            let faded;
+            let (item, text_color) = if item.dimmed {
+                faded = item.faded(DIMMED_LEGEND_ALPHA);
+                (&faded, legend.text_color.scale_alpha(DIMMED_LEGEND_ALPHA))
+            } else {
+                (item, legend.text_color)
+            };
             self.draw_legend_handle(item, entry.handle_x, entry.handle_center_y, &layout.spacing)?;
             self.draw_text(
                 &item.label,
                 entry.label_x,
                 entry.label_top_y,
                 layout.font_size,
-                legend.text_color,
+                text_color,
             )?;
         }
 
         Ok(())
+    }
+
+    /// Clickable regions of the most recently drawn legend, in render-target
+    /// device pixels. Empty when no legend was drawn.
+    pub(crate) fn take_legend_hit_regions(&mut self) -> Vec<LegendHitRegion> {
+        std::mem::take(&mut self.legend_hit_regions)
     }
 
     /// Draw a colorbar for heatmaps

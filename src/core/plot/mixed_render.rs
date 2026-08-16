@@ -228,6 +228,9 @@ impl Plot {
         let inset_rects = self.inset_rects_for_series(series_list, plot_area, render_scale)?;
 
         for (idx, (series, resolved)) in series_list.iter().zip(resolved_series).enumerate() {
+            if !series.visible {
+                continue;
+            }
             let (series_area, series_bounds) = if let Some(inset_rect) = inset_rects[idx] {
                 (inset_rect, self.inset_bounds_from_resolved(resolved)?)
             } else {
@@ -531,6 +534,9 @@ impl Plot {
         let inset_rects = self.inset_rects_for_series(series_list, plot_area, render_scale)?;
 
         for (idx, (series, resolved)) in series_list.iter().zip(resolved_series).enumerate() {
+            if !series.visible {
+                continue;
+            }
             let (series_area, series_bounds) = if let Some(inset_rect) = inset_rects[idx] {
                 (inset_rect, self.inset_bounds_from_resolved(resolved)?)
             } else {

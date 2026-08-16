@@ -1085,6 +1085,8 @@ fn test_draw_legend_full_scales_font_with_render_dpi() {
                 width: 1.0,
             },
             has_error_bars: false,
+            series_indices: Vec::new(),
+            dimmed: false,
         }];
         let legend = Legend {
             enabled: true,

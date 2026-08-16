@@ -3891,7 +3891,16 @@ fn test_refresh_hit_result_drops_masked_log_heatmap_cells() {
             ViewportPoint::new(1.0, 1.0),
         ),
     };
-    assert!(refresh_hit_result(&masked, source_plot, &displayed_data, &geometry).is_none());
+    assert!(
+        refresh_hit_result(
+            &masked,
+            source_plot,
+            &displayed_data,
+            &geometry,
+            &std::collections::BTreeSet::new(),
+        )
+        .is_none()
+    );
 
     let valid = HitResult::HeatmapCell {
         series_index: 0,
@@ -3903,7 +3912,13 @@ fn test_refresh_hit_result_drops_masked_log_heatmap_cells() {
             ViewportPoint::new(1.0, 1.0),
         ),
     };
-    match refresh_hit_result(&valid, source_plot, &displayed_data, &geometry) {
+    match refresh_hit_result(
+        &valid,
+        source_plot,
+        &displayed_data,
+        &geometry,
+        &std::collections::BTreeSet::new(),
+    ) {
         Some(HitResult::HeatmapCell {
             row, col, value, ..
         }) => {
@@ -5213,4 +5228,173 @@ fn test_render_layers_stamped_matches_image_currentness_contract() {
 
     session.invalidate();
     assert!(!session.is_render_stamp_current(panned.render_stamp()));
+}
+
+#[test]
+fn test_format_tooltip_value_switches_to_scientific_outside_readable_range() {
+    assert_eq!(format_tooltip_value(1.0), "1.000");
+    assert_eq!(format_tooltip_value(0.0), "0.000");
+    assert_eq!(format_tooltip_value(-12.5), "-12.500");
+    assert_eq!(format_tooltip_value(4.2e-5), "4.200e-5");
+    assert_eq!(format_tooltip_value(7.3e6), "7.300e6");
+    assert_eq!(format_tooltip_value(99_999.9), "99999.900");
+}
+
+#[test]
+fn test_hover_tooltip_carries_series_label_and_adaptive_precision() {
+    let plot: Plot = Plot::new()
+        .line(&[0.0, 1.0, 2.0], &[1.0e-5, 4.2e-5, 9.0e-5])
+        .label("total")
+        .into();
+    let session = plot.prepare_interactive();
+    session
+        .render_to_surface(render_target())
+        .expect("base frame should render");
+
+    let geometry = session
+        .geometry_snapshot()
+        .expect("geometry should be available");
+    let (hover_x, hover_y) = map_data_to_pixels(
+        1.0,
+        4.2e-5,
+        geometry.x_bounds.0,
+        geometry.x_bounds.1,
+        geometry.y_bounds.0,
+        geometry.y_bounds.1,
+        geometry.plot_area,
+    );
+    session.apply_input(PlotInputEvent::Hover {
+        position_px: ViewportPoint::new(hover_x as f64, hover_y as f64),
+    });
+
+    let tooltip = session
+        .inner
+        .state
+        .lock()
+        .expect("InteractivePlotSession state lock poisoned")
+        .tooltip
+        .clone()
+        .expect("hover should produce a tooltip");
+    assert_eq!(tooltip.content, "total: x=1.000, y=4.200e-5");
+}
+
+#[test]
+fn test_hidden_series_skips_render_and_hits_and_restores_byte_identically() {
+    let plot: Plot = Plot::new()
+        .line(&[0.0, 1.0, 2.0], &[0.0, 1.0, 2.0])
+        .label("first")
+        .line(&[0.0, 1.0, 2.0], &[2.0, 1.0, 0.0])
+        .label("second")
+        .legend_best()
+        .into();
+    let session = plot.prepare_interactive();
+
+    assert_eq!(session.series_count(), 2);
+    assert_eq!(session.series_label(0).as_deref(), Some("first"));
+    assert_eq!(session.series_label(1).as_deref(), Some("second"));
+    assert!(session.series_visible(1));
+    assert!(!session.set_series_visible(7, false), "out of range");
+
+    let baseline = session
+        .render_to_surface(render_target())
+        .expect("baseline frame should render");
+
+    // Hover a point that only the second series occupies.
+    let geometry = session
+        .geometry_snapshot()
+        .expect("geometry should be available");
+    let (hit_x, hit_y) = map_data_to_pixels(
+        0.0,
+        2.0,
+        geometry.x_bounds.0,
+        geometry.x_bounds.1,
+        geometry.y_bounds.0,
+        geometry.y_bounds.1,
+        geometry.plot_area,
+    );
+    let position = ViewportPoint::new(hit_x as f64, hit_y as f64);
+    match session.hit_test(position) {
+        HitResult::SeriesPoint { series_index, .. } => assert_eq!(series_index, 1),
+        other => panic!("expected a hit on the visible second series, got {other:?}"),
+    }
+
+    assert!(session.set_series_visible(1, false));
+    assert!(!session.series_visible(1));
+    let hidden_frame = session
+        .render_to_surface(render_target())
+        .expect("frame with a hidden series should render");
+    assert_ne!(
+        baseline.image.pixels, hidden_frame.image.pixels,
+        "hiding a series must change the frame"
+    );
+    assert!(
+        matches!(session.hit_test(position), HitResult::None),
+        "a hidden series must not answer hit tests"
+    );
+
+    // The dimmed legend entry is still clickable and resolves to the series.
+    let regions = session
+        .inner
+        .state
+        .lock()
+        .expect("InteractivePlotSession state lock poisoned")
+        .base_cache
+        .as_ref()
+        .map(|cache| Arc::clone(&cache.legend_hit_regions))
+        .expect("base cache should exist after render");
+    assert_eq!(regions.len(), 2, "both legend entries should stay");
+    let second_entry = regions
+        .iter()
+        .find(|region| region.series_indices == vec![1])
+        .expect("hidden series keeps its legend region");
+    let (x, y, w, h) = second_entry.rect;
+    let center = ViewportPoint::new((x + w / 2.0) as f64, (y + h / 2.0) as f64);
+    assert_eq!(session.legend_entry_at(center), Some(1));
+    assert_eq!(
+        session.legend_entry_at(ViewportPoint::new(1.0, 1.0)),
+        None,
+        "a corner outside the legend resolves to no entry"
+    );
+
+    // Restoring visibility restores the exact previous frame.
+    assert!(session.set_series_visible(1, true));
+    let restored = session
+        .render_to_surface(render_target())
+        .expect("restored frame should render");
+    assert_eq!(
+        baseline.image.pixels, restored.image.pixels,
+        "restoring a series must reproduce the original frame byte-for-byte"
+    );
+}
+
+#[test]
+fn test_set_series_visible_toggles_a_group_together() {
+    let plot: Plot = Plot::new()
+        .group(|group| {
+            group
+                .group_label("pair")
+                .line(&[0.0, 1.0], &[0.0, 1.0])
+                .line(&[0.0, 1.0], &[1.0, 0.0])
+        })
+        .line(&[0.0, 1.0], &[0.5, 0.5])
+        .label("solo")
+        .legend_best()
+        .into();
+    let session = plot.prepare_interactive();
+    session
+        .render_to_surface(render_target())
+        .expect("group frame should render");
+
+    assert!(session.set_series_visible(0, false));
+    assert!(
+        !session.series_visible(0) && !session.series_visible(1),
+        "hiding one grouped series must hide its whole group"
+    );
+    assert!(session.series_visible(2), "the solo series stays visible");
+
+    assert!(session.set_series_visible(1, true));
+    assert!(
+        session.series_visible(0) && session.series_visible(1),
+        "restoring one grouped series must restore its whole group"
+    );
 }

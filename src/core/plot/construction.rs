@@ -325,17 +325,37 @@ impl Plot {
                 };
 
                 let default_color = self.display.theme.get_color(palette_slot);
-                if let Some(item) = series.to_legend_item_with_label(
+                if let Some(mut item) = series.to_legend_item_with_label(
                     label.to_string(),
                     default_color,
                     &self.display.theme,
                 ) {
+                    // The entry stands for the whole group, so it carries
+                    // every member and dims only when the group is hidden.
+                    let members: Vec<usize> = self
+                        .series_mgr
+                        .series
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, s)| s.group_id == Some(group_id))
+                        .map(|(i, _)| i)
+                        .collect();
+                    item.dimmed = members.iter().all(|&i| !self.series_mgr.series[i].visible);
+                    item.series_indices = members;
                     legend_items.push(item);
                 }
                 continue;
             }
 
-            legend_items.extend(series.to_legend_items(palette_slot, &self.display.theme));
+            legend_items.extend(
+                series
+                    .to_legend_items(palette_slot, &self.display.theme)
+                    .into_iter()
+                    .map(|mut item| {
+                        item.series_indices = vec![idx];
+                        item
+                    }),
+            );
         }
 
         // Labelled fills (confidence bands and friends) are annotations, not series,

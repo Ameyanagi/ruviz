@@ -930,6 +930,9 @@ struct SessionState {
     overlay_cache: Option<OverlayFrameCache>,
     geometry: Option<GeometrySnapshot>,
     last_reactive_epoch: u64,
+    /// Series toggled off via [`InteractivePlotSession::set_series_visible`].
+    /// Ordered so the frame key stays deterministic.
+    hidden_series: std::collections::BTreeSet<usize>,
 }
 
 impl Default for SessionState {
@@ -955,6 +958,7 @@ impl Default for SessionState {
             overlay_cache: None,
             geometry: None,
             last_reactive_epoch: 0,
+            hidden_series: std::collections::BTreeSet::new(),
         }
     }
 }
@@ -981,6 +985,7 @@ struct InteractiveFrameKey {
     y_min_bits: u64,
     y_max_bits: u64,
     versions: Vec<u64>,
+    hidden_series: Vec<usize>,
 }
 
 #[derive(Clone, Debug)]
@@ -1330,6 +1335,8 @@ struct InteractiveFrameCache {
     displayed_data: DisplayedFrameData,
     point_hit_index: LazyPointHitIndex,
     streaming_watermarks: StreamingFrameWatermarks,
+    /// Clickable regions of the legend drawn into this frame.
+    legend_hit_regions: Arc<Vec<crate::core::legend::LegendHitRegion>>,
 }
 
 #[derive(Clone, Default)]
@@ -2095,7 +2102,9 @@ impl InteractivePlotSession {
                     HitResult::None => None,
                     other => Some(other),
                 };
-                let next_tooltip = next_hovered.as_ref().map(tooltip_from_hit);
+                let next_tooltip = next_hovered
+                    .as_ref()
+                    .map(|hit| tooltip_from_hit(self.inner.prepared.plot(), hit));
                 let changed = state.hovered != next_hovered
                     || state.tooltip != next_tooltip
                     || state.tooltip_source != next_hovered.as_ref().map(|_| TooltipSource::Hover);
@@ -2267,9 +2276,124 @@ impl InteractivePlotSession {
             &displayed_data,
             &geometry,
             Some(&point_hit_index),
+            &self.hidden_series_snapshot(),
             position_px,
             tolerance_px,
         )
+    }
+
+    fn hidden_series_snapshot(&self) -> std::collections::BTreeSet<usize> {
+        self.inner
+            .state
+            .lock()
+            .expect("InteractivePlotSession state lock poisoned")
+            .hidden_series
+            .clone()
+    }
+
+    /// Number of series in the plot, in the order they were added.
+    pub fn series_count(&self) -> usize {
+        self.inner.prepared.plot().series_mgr.series.len()
+    }
+
+    /// The legend label of a series, if it has one.
+    pub fn series_label(&self, series_index: usize) -> Option<String> {
+        self.inner
+            .prepared
+            .plot()
+            .series_mgr
+            .series
+            .get(series_index)?
+            .label
+            .clone()
+    }
+
+    /// Whether a series is currently drawn. Out-of-range indices read as
+    /// visible, matching a plot that never toggled anything.
+    pub fn series_visible(&self, series_index: usize) -> bool {
+        !self
+            .inner
+            .state
+            .lock()
+            .expect("InteractivePlotSession state lock poisoned")
+            .hidden_series
+            .contains(&series_index)
+    }
+
+    /// Show or hide one series without rebuilding the plot.
+    ///
+    /// A hidden series is skipped by rendering and hit testing while its
+    /// legend entry stays, dimmed, so it can be toggled back — the way
+    /// matplotlib and Plotly legends behave. Axis bounds are untouched, so
+    /// the view stays put while series are compared. A series created inside
+    /// `Plot::group(...)` shares one legend entry with its group, so the
+    /// whole group toggles together.
+    ///
+    /// Returns `false` when the index is out of range.
+    pub fn set_series_visible(&self, series_index: usize, visible: bool) -> bool {
+        let plot = self.inner.prepared.plot();
+        let Some(series) = plot.series_mgr.series.get(series_index) else {
+            return false;
+        };
+        let members: Vec<usize> = match series.group_id {
+            Some(group_id) => plot
+                .series_mgr
+                .series
+                .iter()
+                .enumerate()
+                .filter(|(_, s)| s.group_id == Some(group_id))
+                .map(|(i, _)| i)
+                .collect(),
+            None => vec![series_index],
+        };
+
+        let changed = {
+            let mut state = self
+                .inner
+                .state
+                .lock()
+                .expect("InteractivePlotSession state lock poisoned");
+            let mut changed = false;
+            for index in members {
+                changed |= if visible {
+                    state.hidden_series.remove(&index)
+                } else {
+                    state.hidden_series.insert(index)
+                };
+            }
+            changed
+        };
+
+        if changed {
+            self.record_mutation(&[DirtyDomain::Data, DirtyDomain::Overlay]);
+            self.inner.change_hub.notify();
+        }
+        true
+    }
+
+    /// The series a legend entry at this screen position stands for, if any.
+    ///
+    /// Uses the legend geometry of the most recently rendered frame, so it
+    /// answers in the same device pixels as [`hit_test`](Self::hit_test).
+    /// Entries for annotations (which represent no series) and positions
+    /// outside every entry return `None`.
+    pub fn legend_entry_at(&self, position_px: ViewportPoint) -> Option<usize> {
+        let regions = self
+            .inner
+            .state
+            .lock()
+            .expect("InteractivePlotSession state lock poisoned")
+            .base_cache
+            .as_ref()
+            .map(|cache| Arc::clone(&cache.legend_hit_regions))?;
+        let (px, py) = (position_px.x as f32, position_px.y as f32);
+        regions
+            .iter()
+            .find(|region| {
+                let (x, y, w, h) = region.rect;
+                px >= x && px < x + w && py >= y && py < y + h
+            })
+            .and_then(|region| region.series_indices.first().copied())
     }
 
     fn displayed_frame_data(
@@ -2319,6 +2443,7 @@ impl InteractivePlotSession {
             &displayed_data,
             &geometry,
             Some(&point_hit_index),
+            &self.hidden_series_snapshot(),
             position_px,
             tolerance_px,
         )
@@ -2337,6 +2462,7 @@ impl InteractivePlotSession {
             self.inner.prepared.plot(),
             &displayed_data,
             &geometry,
+            &self.hidden_series_snapshot(),
             position_px,
             tolerance_px,
         )
@@ -3005,6 +3131,11 @@ impl InteractivePlotSession {
             .prepared_frame_shell_with_style(state.size_px, state.scale_factor, &frame.style)
             .xlim(geometry.x_bounds.0, geometry.x_bounds.1)
             .ylim(geometry.y_bounds.0, geometry.y_bounds.1);
+        for &index in &state.hidden_series {
+            if let Some(series) = plot.series_mgr.series.get_mut(index) {
+                series.visible = false;
+            }
+        }
         if self.prefer_gpu() {
             #[cfg(feature = "gpu")]
             {
@@ -3012,7 +3143,8 @@ impl InteractivePlotSession {
             }
         }
         let mode = plot.render_execution_mode(BackendOperation::Interactive);
-        let (renderer, _) = plot.render_renderer_with_frame_and_diagnostics(mode, frame)?;
+        let (mut renderer, _) = plot.render_renderer_with_frame_and_diagnostics(mode, frame)?;
+        let legend_hit_regions = Arc::new(renderer.take_legend_hit_regions());
         // Native premultiplied, no conversion. Straight alpha is derived on
         // demand by whoever needs it (compose, Surface, export).
         let layer = renderer.into_rendered_layer();
@@ -3029,6 +3161,7 @@ impl InteractivePlotSession {
                 displayed_data,
                 point_hit_index,
                 streaming_watermarks,
+                legend_hit_regions,
             },
             epoch_before_render,
         )?;
@@ -3253,19 +3386,34 @@ impl InteractivePlotSession {
             .map(|cache| (cache.geometry.clone(), cache.displayed_data.clone()))
             .ok_or_else(displayed_geometry_unavailable)?;
         let source_plot = self.inner.prepared.plot();
-        let refreshed_hovered = state_snapshot
-            .hovered
-            .as_ref()
-            .and_then(|hit| refresh_hit_result(hit, source_plot, &displayed_data, &geometry));
+        let refreshed_hovered = state_snapshot.hovered.as_ref().and_then(|hit| {
+            refresh_hit_result(
+                hit,
+                source_plot,
+                &displayed_data,
+                &geometry,
+                &state_snapshot.hidden_series,
+            )
+        });
         let refreshed_selected = state_snapshot
             .selected
             .iter()
-            .filter_map(|hit| refresh_hit_result(hit, source_plot, &displayed_data, &geometry))
+            .filter_map(|hit| {
+                refresh_hit_result(
+                    hit,
+                    source_plot,
+                    &displayed_data,
+                    &geometry,
+                    &state_snapshot.hidden_series,
+                )
+            })
             .collect::<Vec<_>>();
         let (refreshed_tooltip, refreshed_tooltip_source) =
             if state_snapshot.tooltip_source == Some(TooltipSource::Hover) {
                 (
-                    refreshed_hovered.as_ref().map(tooltip_from_hit),
+                    refreshed_hovered
+                        .as_ref()
+                        .map(|hit| tooltip_from_hit(source_plot, hit)),
                     refreshed_hovered.as_ref().map(|_| TooltipSource::Hover),
                 )
             } else {
@@ -3594,6 +3742,7 @@ impl InteractivePlotSession {
                 displayed_data,
                 point_hit_index,
                 streaming_watermarks,
+                legend_hit_regions: Arc::clone(&cached.legend_hit_regions),
             },
             epoch_before_render,
         )?;
@@ -3704,7 +3853,10 @@ impl InteractivePlotSession {
             data_position: point,
             distance_px: 0.0,
         });
-        state.tooltip = state.hovered.as_ref().map(tooltip_from_hit);
+        state.tooltip = state
+            .hovered
+            .as_ref()
+            .map(|hit| tooltip_from_hit(self.inner.prepared.plot(), hit));
         state.tooltip_source = state.hovered.as_ref().map(|_| TooltipSource::Hover);
         self.record_mutation(&[DirtyDomain::Overlay]);
         drop(state);
@@ -4297,6 +4449,7 @@ fn hit_test_displayed_frame_brute_force(
     plot: &Plot,
     displayed_data: &DisplayedFrameData,
     geometry: &GeometrySnapshot,
+    hidden_series: &std::collections::BTreeSet<usize>,
     position_px: ViewportPoint,
     tolerance_px: f64,
 ) -> HitResult {
@@ -4305,6 +4458,7 @@ fn hit_test_displayed_frame_brute_force(
         displayed_data,
         geometry,
         None,
+        hidden_series,
         position_px,
         tolerance_px,
     )
@@ -4315,6 +4469,7 @@ fn hit_test_displayed_frame(
     displayed_data: &DisplayedFrameData,
     geometry: &GeometrySnapshot,
     point_hit_index: Option<&PointHitIndex>,
+    hidden_series: &std::collections::BTreeSet<usize>,
     position_px: ViewportPoint,
     tolerance_px: f64,
 ) -> HitResult {
@@ -4326,6 +4481,9 @@ fn hit_test_displayed_frame(
     let mut best_distance = f64::INFINITY;
 
     for (series_index, series) in plot.series_mgr.series.iter().enumerate() {
+        if hidden_series.contains(&series_index) {
+            continue;
+        }
         match &series.series_type {
             SeriesType::Line { .. }
             | SeriesType::Scatter { .. }
@@ -4455,6 +4613,7 @@ fn build_frame_key(plot: &Plot, state: &SessionState) -> InteractiveFrameKey {
         y_min_bits: visible.y_min.to_bits(),
         y_max_bits: visible.y_max.to_bits(),
         versions: plot.collect_reactive_versions(),
+        hidden_series: state.hidden_series.iter().copied().collect(),
     }
 }
 
@@ -4515,7 +4674,14 @@ fn refresh_hit_result(
     plot: &Plot,
     displayed_data: &DisplayedFrameData,
     geometry: &GeometrySnapshot,
+    hidden_series: &std::collections::BTreeSet<usize>,
 ) -> Option<HitResult> {
+    if let HitResult::SeriesPoint { series_index, .. } | HitResult::HeatmapCell { series_index, .. } =
+        hit
+        && hidden_series.contains(series_index)
+    {
+        return None;
+    }
     match hit {
         HitResult::SeriesPoint {
             series_index,

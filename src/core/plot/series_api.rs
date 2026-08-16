@@ -1861,6 +1861,7 @@ pub(super) fn series_from_style(series_type: SeriesType, style: SeriesStyle) -> 
         inset_layout,
         group_id: None,
         resolved_radar_colors: None,
+        visible: true,
     }
 }
 
