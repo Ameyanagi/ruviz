@@ -1421,6 +1421,15 @@ pub fn layout_legend(
     } else {
         entry_width
     };
+    // A reserved band can squeeze the column below the natural entry width,
+    // but labels are drawn unclipped past the column edge. A single column
+    // keeps its full visible extent clickable; with several columns the hit
+    // width must stop at the column, or it would claim the neighbor's entry.
+    let entry_hit_width = if columns == 1 {
+        column_width.max(entry_width)
+    } else {
+        column_width
+    };
 
     let mut row_center_y = y + spacing.border_pad + legend.font_size / 2.0;
     let title = legend.title.is_some().then(|| LegendTitleLayout {
@@ -1468,7 +1477,7 @@ pub fn layout_legend(
         font_size: legend.font_size,
         title,
         entries,
-        entry_width: column_width,
+        entry_width: entry_hit_width,
     })
 }
 
@@ -1740,6 +1749,49 @@ mod tests {
         for entry in &layout.entries {
             assert!(entry.handle_center_y <= 60.0);
         }
+    }
+
+    /// A reserved band narrower than the natural entry width draws labels
+    /// past the column edge, so a single column's clickable width must cover
+    /// the full visible extent rather than stopping at the squeezed column.
+    #[test]
+    fn squeezed_single_column_keeps_the_visible_label_extent_clickable() {
+        let legend = Legend::new();
+        let items = vec![LegendItem::line(
+            "a rather long series label",
+            Color::BLUE,
+            LineStyle::Solid,
+            1.0,
+        )];
+
+        let free = layout_legend(
+            &items,
+            &legend,
+            (0.0, 0.0, 400.0, 300.0),
+            LegendPlacement::default(),
+            six_px_per_char,
+        )
+        .expect("free layout");
+        let squeezed = layout_legend(
+            &items,
+            &legend,
+            (0.0, 0.0, 400.0, 300.0),
+            LegendPlacement {
+                reserved: Some((10.0, 10.0, 60.0, 100.0)),
+                occupancy: None,
+            },
+            six_px_per_char,
+        )
+        .expect("squeezed layout");
+
+        assert!(
+            squeezed.width < free.entry_width,
+            "the reservation must actually squeeze the column for this test"
+        );
+        assert_eq!(
+            squeezed.entry_width, free.entry_width,
+            "a single squeezed column keeps the natural clickable width"
+        );
     }
 
     #[test]
