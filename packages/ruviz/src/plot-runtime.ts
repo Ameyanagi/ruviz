@@ -191,7 +191,10 @@ export function applySnapshotMetadata(rawPlot: RawJsPlot, snapshot: PlotSnapshot
   // from silently becoming 0, and the try/catch stops a malformed style from
   // throwing wasm-side and blanking the whole plot — one bad annotation is
   // skipped like an unknown kind.
-  for (const annotation of snapshot.annotations ?? []) {
+  // A foreign snapshot may carry a non-array here; degrade like a missing
+  // field rather than throwing before the per-entry guard can help.
+  const annotations = Array.isArray(snapshot.annotations) ? snapshot.annotations : [];
+  for (const annotation of annotations) {
     try {
       switch (annotation.kind) {
         case "vline":

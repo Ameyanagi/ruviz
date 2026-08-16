@@ -1494,8 +1494,11 @@ export class PlotBuilder {
   annotateText(x: number, y: number, text: string, style?: TextAnnotationStyle): this {
     PlotBuilder.#finiteCoordinate(x, "annotation x");
     PlotBuilder.#finiteCoordinate(y, "annotation y");
-    if (typeof text !== "string" || text === "") {
-      throw new TypeError("annotation text must be a non-empty string");
+    if (typeof text !== "string") {
+      throw new TypeError("annotation text must be a string");
+    }
+    if (text === "") {
+      throw new RangeError("annotation text must be a non-empty string");
     }
 
     this.#pushAnnotation({

@@ -1656,9 +1656,19 @@ test("annotations render, replay from snapshots, and degrade on bad entries", as
       { kind: "vline", x: null },
       { kind: "text", x: 1, y: 1 },
       { kind: "from-the-future", x: 1 },
+      // These pass the coordinate checks and fail inside the wasm style
+      // parsers, exercising the try/catch itself.
+      { kind: "vline", x: 1, style: { width: 0 } },
+      { kind: "hline", y: 1, style: { color: "not-a-color" } },
+      { kind: "text", x: 1, y: 1, text: "bad", style: { fontSize: -1 } },
       ...damaged.annotations,
     ];
     const degraded = await createPlotFromSnapshot(damaged).toPng();
+
+    // A non-array annotations container degrades like a missing field.
+    const nonArray = structuredClone(snapshot);
+    nonArray.annotations = {};
+    const nonArrayPng = await createPlotFromSnapshot(nonArray).toPng();
 
     // null style behaves like no style, as it does on every series method.
     const nullStyled = await build().vline(1.5, null).toPng();
@@ -1669,6 +1679,7 @@ test("annotations render, replay from snapshots, and degrade on bad entries", as
       annotationsChangeOutput: !bytesEqual(annotatedPng, bare),
       replayMatches: bytesEqual(replayed, annotatedPng),
       degradedMatches: bytesEqual(degraded, annotatedPng),
+      nonArrayDegrades: bytesEqual(nonArrayPng, bare),
       nullStyleMatchesUnstyled: bytesEqual(nullStyled, unstyled),
       emptyStyleOmitted: !("style" in build().vline(1.5, {}).toSnapshot().annotations[0]),
     };
@@ -1677,6 +1688,7 @@ test("annotations render, replay from snapshots, and degrade on bad entries", as
   expect(result.annotationsChangeOutput).toBe(true);
   expect(result.replayMatches).toBe(true);
   expect(result.degradedMatches).toBe(true);
+  expect(result.nonArrayDegrades).toBe(true);
   expect(result.nullStyleMatchesUnstyled).toBe(true);
   expect(result.emptyStyleOmitted).toBe(true);
 });

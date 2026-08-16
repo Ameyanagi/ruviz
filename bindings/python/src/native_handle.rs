@@ -200,11 +200,21 @@ fn parse_axis_scale(scale: &str, linthresh: Option<f64>) -> PyResult<AxisScale> 
 
 /// Validate a strictly positive finite style number, matching the Python-side
 /// validator messages so `_native` callers see identical errors.
-fn finite_positive(value: &Bound<'_, PyAny>, name: &str) -> PyResult<f64> {
+fn finite_positive_f64(value: &Bound<'_, PyAny>, name: &str) -> PyResult<f64> {
     let number: f64 = value.extract()?;
-    // Bounded to f32: every consumer casts down, and a value above f32::MAX
-    // would saturate to +infinity past this check.
-    if !number.is_finite() || number <= 0.0 || number > f64::from(f32::MAX) {
+    if !number.is_finite() || number <= 0.0 {
+        return Err(PyValueError::new_err(format!(
+            "{name} must be a finite positive number"
+        )));
+    }
+    Ok(number)
+}
+
+/// [`finite_positive_f64`] bounded to f32: for every value the callers cast
+/// down, where anything above f32::MAX would saturate to +infinity.
+fn finite_positive(value: &Bound<'_, PyAny>, name: &str) -> PyResult<f64> {
+    let number = finite_positive_f64(value, name)?;
+    if number > f64::from(f32::MAX) {
         return Err(PyValueError::new_err(format!(
             "{name} must be a finite positive number"
         )));
@@ -342,7 +352,11 @@ fn extract_style(
             }
             "bins" => parsed.bins = Some(count_at_least(&value, "bins", 1)?),
             "density" => parsed.density = Some(flag(&value, "density")?),
-            "bandwidth" => parsed.bandwidth = Some(finite_positive(&value, "bandwidth")?),
+            "bandwidth" => {
+                // Bandwidth stays f64 end to end, so it takes the unbounded
+                // validator: the f32 cap guards only values cast down.
+                parsed.bandwidth = Some(finite_positive_f64(&value, "bandwidth")?);
+            }
             "levels" => parsed.levels = Some(count_at_least(&value, "levels", 2)?),
             // Unreachable: `allowed` is a subset of `STYLE_KEYS`, checked above.
             other => {

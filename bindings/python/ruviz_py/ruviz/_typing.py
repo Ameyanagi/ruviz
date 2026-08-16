@@ -372,12 +372,18 @@ class Plot3DSnapshot(_Plot3DSnapshot, total=False):
 
 
 __all__ = [
+    "AnnotationSnapshot",
     "ArrayLike",
     "ColumnSource",
     "DataSource",
     "LabelsLike",
+    "HLineAnnotationSnapshot",
     "LegendPositionName",
     "LineStyleName",
+    "ReferenceLineStyleSnapshot",
+    "TextAnnotationSnapshot",
+    "TextAnnotationStyleSnapshot",
+    "VLineAnnotationSnapshot",
     "MarkerName",
     "MatrixLike",
     "NumericField",
