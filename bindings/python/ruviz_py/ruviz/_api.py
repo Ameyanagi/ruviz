@@ -1584,7 +1584,7 @@ class Plot:
         *,
         data: DataSource = None,
         bins: int | None = None,
-        density: bool = False,
+        density: bool | None = None,
         label: str | None = None,
         color: str | None = None,
         alpha: float | None = None,
