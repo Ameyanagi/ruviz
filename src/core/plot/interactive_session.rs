@@ -3702,6 +3702,13 @@ impl InteractivePlotSession {
             if !cached.key.same_viewport(key) {
                 return Ok(None);
             }
+            // The incremental path appends on top of the cached frame, which
+            // both bakes in the previous visibility set and would append a
+            // hidden stream's new points. With any series hidden — now or in
+            // the cached frame — take the full render instead.
+            if !key.hidden_series.is_empty() || !cached.key.hidden_series.is_empty() {
+                return Ok(None);
+            }
             (cached, state.clone())
         };
 
