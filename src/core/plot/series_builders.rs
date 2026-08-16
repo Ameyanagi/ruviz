@@ -126,8 +126,8 @@ impl SeriesGroupBuilder {
         let consume_palette_index = !uses_auto_color || !self.auto_palette_slot_consumed;
 
         self.plot = self.plot.add_line_series_grouped(
-            PlotData::Static(x_vec),
-            PlotData::Static(y_vec),
+            PlotData::Static(x_vec.into()),
+            PlotData::Static(y_vec.into()),
             &crate::plots::basic::LineConfig::default(),
             style,
             Some(self.group_id),
@@ -191,8 +191,8 @@ impl SeriesGroupBuilder {
         let consume_palette_index = !uses_auto_color || !self.auto_palette_slot_consumed;
 
         self.plot = self.plot.add_scatter_series_grouped(
-            PlotData::Static(x_vec),
-            PlotData::Static(y_vec),
+            PlotData::Static(x_vec.into()),
+            PlotData::Static(y_vec.into()),
             &crate::plots::basic::ScatterConfig::default(),
             style,
             Some(self.group_id),
@@ -251,7 +251,7 @@ impl SeriesGroupBuilder {
 
         self.plot = self.plot.add_bar_series_grouped(
             cat_vec,
-            PlotData::Static(val_vec),
+            PlotData::Static(val_vec.into()),
             &crate::plots::basic::BarConfig::default(),
             style,
             Some(self.group_id),

@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Fixed
+
+- A dashed or dotted line whose on-screen path exceeded roughly ten
+  million pixels rendered as nothing: tiny-skia refuses to produce more
+  than one million dash segments and then strokes an empty path. Such
+  lines are now stroked in phase-continuous chunks, so the pattern runs
+  unbroken across the whole series. This also corrects earlier line-chart
+  benchmark impressions — a "fast" dense dashed line was fast because it
+  was blank; the honest cost is proportional to path length.
+
+### Changed
+
+- `PlotData` merges its `Static(Vec<f64>)` and `SharedStatic(Arc<Vec<f64>>)`
+  variants into a single reference-counted `Static(Arc<Vec<f64>>)`. Code
+  using `IntoPlotData`/`into_plot_data()` (every builder API) is
+  unaffected; only direct `PlotData::Static(vec)` constructions need
+  `Arc::new`/`.into()`, and `PlotData::SharedStatic` matches become
+  `PlotData::Static`.
+
 ## [0.10.0] - 2026-08-16
 
 ### Added

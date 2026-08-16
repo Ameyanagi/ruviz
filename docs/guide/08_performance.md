@@ -239,7 +239,11 @@ figures, diffing pipelines — stay in exact mode.
   at its exact position.
 - Dashed and dotted lines are never reduced — decimation would scramble the
   dash phase — so a very dense non-solid line stays at full cost in every
-  mode. If that cost matters, decimate the data before plotting.
+  mode. That cost is proportional to the path's total length in pixels, not
+  its point count: a dense noisy series sweeping the plot height on every
+  sample can take seconds where the same data as a solid line takes
+  milliseconds. If that cost matters, decimate the data before plotting —
+  at such densities the dashes merge into a solid band anyway.
 
 ## Benchmark Template
 
