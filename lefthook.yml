@@ -8,7 +8,7 @@ pre-commit:
       run: cargo clippy --all-features -- -D warnings
     - name: clippy-python
       files: echo Cargo.toml
-      run: PYO3_PYTHON=bindings/python/.venv/bin/python cargo clippy -p ruviz-py --all-features -- -D warnings
+      run: PYO3_PYTHON="$(pwd)/bindings/python/.venv/bin/python" cargo clippy -p ruviz-py --all-features -- -D warnings
     - name: lockfiles
       # The CI failure mode pre-commit clippy cannot see: CI builds the
       # adapter workspaces with --locked, so a new ruviz dependency must land

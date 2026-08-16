@@ -2,18 +2,20 @@
 
 Get started with ruviz in less than 5 minutes!
 
-## What's New in v0.8.0
+## What's New in v0.9.0
 
-- A grouped `figure()` presentation call in the Python and web bindings: size
-  in inches, dpi, typography, margins, tick notation and a resolution cap in
-  one atomic, validated call, recorded under snapshot schema version 2.
-- `margin()`, `scientific_notation()` and `line_width_pt()` now actually reach
-  the render; default data lines are matplotlib's 1.5pt, so theme line widths
-  finally apply.
-- `max_resolution()` caps an explicit DPI instead of replacing it, and small
-  pixel budgets render instead of failing. Named themes gained panel-based
-  styling knobs, and `Theme::seaborn()` is a faithful `seaborn.set_theme()`
-  port.
+- Rendering got dramatically faster with output unchanged: the system font
+  list is disk-cached, marker compositing runs across all cores, and large
+  static data is shared instead of copied. A 1M-point scatter renders in
+  ~150ms warm; the exact same bytes as before, just sooner.
+- Opt-in `fast()` mode and `scatter(density=True)` aggregate overdrawn
+  scatters into a plot-area density grid shaped by the marker's own
+  footprint — 10M points in ~70ms, with an explicit `density=False` always
+  pinning exact rendering. Fast mode also lets a marked solid line's stroke
+  take the same reduction a bare line gets.
+- Measured against reflex-dev/xy's own scatter benchmark, with results,
+  limitations, and exact-vs-fast image pairs committed under
+  `docs/benchmarks.md` and the performance guide.
 
 See full details:
 
@@ -31,7 +33,7 @@ cd my_plot
 2. **Add ruviz to your `Cargo.toml`**:
 ```toml
 [dependencies]
-ruviz = "0.8.0"
+ruviz = "0.9.0"
 ```
 
 3. **Write your first plot** in `src/main.rs`:
@@ -70,8 +72,8 @@ an embedded interactive plot view:
 
 ```toml
 [dependencies]
-ruviz = "0.8.0"
-ruviz-gpui = "0.8.0"
+ruviz = "0.9.0"
+ruviz-gpui = "0.9.0"
 ```
 
 `ruviz-gpui` is supported on Linux, macOS, and Windows. On Windows, prefer the
@@ -99,7 +101,7 @@ If you want publication-style math in labels and titles, enable Typst text rende
 
 ```toml
 [dependencies]
-ruviz = { version = "0.8.0", features = ["typst-math"] }
+ruviz = { version = "0.9.0", features = ["typst-math"] }
 ```
 
 `.typst(true)` is only available when `typst-math` is enabled. The configured
@@ -118,7 +120,7 @@ If you want Typst to stay optional in your own crate, forward a local feature fi
 
 ```toml
 [dependencies]
-ruviz = { version = "0.8.0", default-features = false }
+ruviz = { version = "0.9.0", default-features = false }
 
 [features]
 default = []
@@ -370,7 +372,7 @@ Plot::new()
 ### With polars (requires `polars_support` feature)
 ```toml
 [dependencies]
-ruviz = { version = "0.8.0", features = ["polars_support"] }
+ruviz = { version = "0.9.0", features = ["polars_support"] }
 polars = "0.50"
 ```
 
@@ -398,7 +400,7 @@ Plot::new()
 only when you have benchmarked a path that benefits from the extra SIMD support:
 ```toml
 [dependencies]
-ruviz = { version = "0.8.0", features = ["performance"] }
+ruviz = { version = "0.9.0", features = ["performance"] }
 ```
 
 ### Large Dataset Export

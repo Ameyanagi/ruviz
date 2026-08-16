@@ -2,6 +2,72 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.9.0] - 2026-08-16
+
+### Added
+
+- `scatter(..., density=True)` (Rust `.density(true)`, wasm and Python
+  bindings included): opt-in density aggregation for large scatters. Points
+  are counted into a plot-area grid in one parallel pass, the counts are
+  spread over the series' marker footprint — exact for every marker whose
+  rows are one centered span (circle, square, diamond, both triangles,
+  plus); cross and star use their bounding disk, open markers render
+  filled — and each pixel takes the series color at the scatter-equivalent
+  alpha `1-(1-a)^covering_markers`, so the result keeps the exact render's
+  silhouette while its cost scales with pixels rather than points. The flag
+  is tri-state: unset leaves the choice to the plot, and an explicit value
+  wins in both directions. Density series report a clear unsupported error
+  from SVG export and the GPU backend.
+- `Plot::fast(true)` / Python `plot.fast()`: opt-in speed-over-fidelity
+  mode. A scatter series holding more points than the plot has visible
+  pixels renders through density aggregation, and a marked solid line's
+  stroke takes the min/max column reduction a bare solid line always gets
+  while every marker stays at its exact position. Everything below those
+  thresholds stays byte-identical with fast mode on or off, and default
+  rendering is untouched. The performance guide documents the guarantees,
+  the marker footprint table, and every limitation, alongside committed
+  exact-vs-fast comparison images.
+- `docs/benchmarks.md` and `scripts/bench_scatter_vs.py` /
+  `bench_scatter_warm.py`: the measured scatter comparison against
+  reflex-dev/xy and matplotlib on xy's own benchmark contract, with cold and
+  warm tables and reproduction commands.
+
+### Changed
+
+- First render in a process no longer pays the system font scan on macOS and
+  Windows: the discovered font file list is cached on disk (scan order
+  preserved, guarded by the mtime and size of every font file and every
+  directory under the platform font roots) and rebuilt through the same
+  fontdb loader in ~9ms instead of ~60-70ms. Any guard mismatch falls back
+  to a full scan, so a stale cache can only cost time, never resolve fonts
+  differently; `RUVIZ_FONT_CACHE=0` disables it. Linux always scans, because
+  fontconfig makes its font set configuration-driven.
+- Marker compositing is parallel: the sprite compositor splits the canvas
+  into load-balanced horizontal pixel bands under the existing `parallel`
+  feature (now enabled in the Python binding), with every pixel seeing the
+  exact serial compositing sequence — output is byte-identical and pinned by
+  a serial/parallel equality test. A 1M-point scatter drops from ~280ms to
+  ~150ms warm, 10M from ~3.3s to ~1.7s.
+- Static numeric data is shared (`PlotData::SharedStatic`) instead of being
+  cloned three times through handle rebuild, `to_plot_data`, and
+  `prepare()` — roughly 480MB less memory traffic per 10M-point render, and
+  lower peak memory.
+
+### Fixed
+
+- `size_px(900, 420)` produced a 900x419 canvas: pixel sizes stored as
+  inches hit f32 representation noise and truncated. Canvas conversion now
+  snaps within 1e-6 relative of an integer — tight enough that genuinely
+  fractional sizes, including fitted-frame DPI computations that rely on
+  truncation, are untouched.
+- The committed README, rustdoc, and gallery media were regenerated for the
+  1.5pt default line width 0.8.0 introduced, and the README's hello-plot
+  snippet now matches the figure below it.
+- The Python extension ships with `parallel` enabled; the documentation
+  covers the fork-after-render caveat this brings to Linux
+  `multiprocessing` (use the spawn start method), and that the notebook
+  widget ignores `fast` and renders exactly.
+
 ## [0.8.0] - 2026-08-15
 
 ### Added
