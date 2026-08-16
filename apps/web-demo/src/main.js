@@ -61,8 +61,9 @@ function buildMainPlotTemplate() {
     .setTitle("Session API coverage")
     .setXLabel("x")
     .setYLabel("y")
-    .addLine({ x, y })
-    .addScatter({ x: markers.x, y: markers.y });
+    .addLine({ x, y, style: { label: "wave" } })
+    .addScatter({ x: markers.x, y: markers.y, style: { label: "markers" } })
+    .setLegend("best");
 }
 
 function buildWorkerPlot() {
@@ -242,6 +243,43 @@ async function setupMainThreadDemo() {
 
   document.getElementById("main-reattach").addEventListener("click", async () => {
     await attachPlot();
+  });
+
+  // Series-aware hover readout and legend click-to-toggle (issue #162).
+  const hitStatus = document.getElementById("main-hit");
+  const canvasPoint = (event) => {
+    const rect = mainCanvas.getBoundingClientRect();
+    return {
+      x: ((event.clientX - rect.left) * mainCanvas.width) / rect.width,
+      y: ((event.clientY - rect.top) * mainCanvas.height) / rect.height,
+    };
+  };
+
+  mainCanvas.addEventListener("pointermove", (event) => {
+    if (!session.hasPlot()) {
+      return;
+    }
+    const point = canvasPoint(event);
+    const hit = session.hitAt(point.x, point.y);
+    if (hit) {
+      const label = hit.seriesLabel ?? `series ${hit.seriesIndex}`;
+      status(hitStatus, `${label}: x=${hit.dataX.toPrecision(4)}, y=${hit.dataY.toPrecision(4)}`);
+    } else {
+      status(hitStatus, "no point under cursor");
+    }
+  });
+
+  mainCanvas.addEventListener("click", (event) => {
+    if (!session.hasPlot()) {
+      return;
+    }
+    const point = canvasPoint(event);
+    const entry = session.legendEntryAt(point.x, point.y);
+    if (entry !== null) {
+      session.setSeriesVisible(entry, !session.seriesVisible(entry));
+      const label = session.seriesLabel(entry) ?? `series ${entry}`;
+      status(hitStatus, `${label} ${session.seriesVisible(entry) ? "shown" : "hidden"}`);
+    }
   });
 
   return session;

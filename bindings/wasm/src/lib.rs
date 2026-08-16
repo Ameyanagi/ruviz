@@ -54,8 +54,9 @@ mod wasm {
     use ruviz::{
         axes::AxisScale,
         core::{
-            Annotation, Image, ImageTarget, InteractivePlotSession, IntoPlot, LegendPosition, Plot,
-            PlotBuilder, PlotInputEvent, SurfaceTarget, TextStyle, ViewportPoint, ViewportRect,
+            Annotation, HitResult, Image, ImageTarget, InteractivePlotSession, IntoPlot,
+            LegendPosition, Plot, PlotBuilder, PlotInputEvent, SurfaceTarget, TextStyle,
+            ViewportPoint, ViewportRect,
         },
         data::{Observable, Signal},
         plots::{LineConfig, PlotConfig, ScatterConfig},
@@ -212,6 +213,51 @@ mod wasm {
         #[wasm_bindgen(getter)]
         pub fn gpu_canvas_fast_path_available(&self) -> bool {
             self.gpu_canvas_fast_path_available
+        }
+    }
+
+    /// The series data point under a pointer position, resolved by
+    /// [`WebCanvasSession::hit_at`] / [`OffscreenCanvasSession::hit_at`].
+    #[wasm_bindgen]
+    pub struct WebSeriesHit {
+        series_index: u32,
+        point_index: u32,
+        data_x: f64,
+        data_y: f64,
+        distance_px: f64,
+        series_label: Option<String>,
+    }
+
+    #[wasm_bindgen]
+    impl WebSeriesHit {
+        #[wasm_bindgen(getter)]
+        pub fn series_index(&self) -> u32 {
+            self.series_index
+        }
+
+        #[wasm_bindgen(getter)]
+        pub fn point_index(&self) -> u32 {
+            self.point_index
+        }
+
+        #[wasm_bindgen(getter)]
+        pub fn data_x(&self) -> f64 {
+            self.data_x
+        }
+
+        #[wasm_bindgen(getter)]
+        pub fn data_y(&self) -> f64 {
+            self.data_y
+        }
+
+        #[wasm_bindgen(getter)]
+        pub fn distance_px(&self) -> f64 {
+            self.distance_px
+        }
+
+        #[wasm_bindgen(getter)]
+        pub fn series_label(&self) -> Option<String> {
+            self.series_label.clone()
         }
     }
 
@@ -1776,6 +1822,13 @@ mod wasm {
                 plot = plot
                     .xlim(snapshot.visible_bounds.min.x, snapshot.visible_bounds.max.x)
                     .ylim(snapshot.visible_bounds.min.y, snapshot.visible_bounds.max.y);
+                // The exported document must show what the canvas shows,
+                // hidden series included.
+                for index in 0..session.series_count() {
+                    if !session.series_visible(index) {
+                        plot = plot.series_visible(index, false);
+                    }
+                }
             }
 
             let svg = plot.render_to_svg().map_err(js_err)?;
@@ -1788,6 +1841,57 @@ mod wasm {
             self.drag = None;
             self.mark_frame_dirty();
             Ok(())
+        }
+
+        /// The series data point under a backing-surface pixel, if any.
+        fn hit_at(&self, x: f64, y: f64) -> Result<Option<WebSeriesHit>, JsValue> {
+            let session = self.session()?;
+            match session.hit_test(ViewportPoint::new(x, y)) {
+                HitResult::SeriesPoint {
+                    series_index,
+                    point_index,
+                    data_position,
+                    distance_px,
+                    ..
+                } => Ok(Some(WebSeriesHit {
+                    series_index: series_index as u32,
+                    point_index: point_index as u32,
+                    data_x: data_position.x,
+                    data_y: data_position.y,
+                    distance_px,
+                    series_label: session.series_label(series_index),
+                })),
+                _ => Ok(None),
+            }
+        }
+
+        /// The series behind a legend entry at a backing-surface pixel.
+        fn legend_entry_at(&self, x: f64, y: f64) -> Result<Option<usize>, JsValue> {
+            Ok(self.session()?.legend_entry_at(ViewportPoint::new(x, y)))
+        }
+
+        fn series_count(&self) -> Result<usize, JsValue> {
+            Ok(self.session()?.series_count())
+        }
+
+        fn series_label(&self, series_index: usize) -> Result<Option<String>, JsValue> {
+            Ok(self.session()?.series_label(series_index))
+        }
+
+        fn series_visible(&self, series_index: usize) -> Result<bool, JsValue> {
+            Ok(self.session()?.series_visible(series_index))
+        }
+
+        fn set_series_visible(
+            &mut self,
+            series_index: usize,
+            visible: bool,
+        ) -> Result<bool, JsValue> {
+            let accepted = self.session()?.set_series_visible(series_index, visible);
+            if accepted {
+                self.mark_frame_dirty();
+            }
+            Ok(accepted)
         }
 
         /// Maps a backing-surface pixel to displayed data coordinates.
@@ -2988,6 +3092,48 @@ mod wasm {
             Ok(self.browser.data_at(x, y)?.0)
         }
 
+        /// The series data point under a backing-surface pixel, or `null`.
+        pub fn hit_at(&self, x: f64, y: f64) -> Result<Option<WebSeriesHit>, JsValue> {
+            self.browser.hit_at(x, y)
+        }
+
+        /// The index of the series behind a legend entry at a
+        /// backing-surface pixel, or `-1` when no entry is there.
+        pub fn legend_entry_at(&self, x: f64, y: f64) -> Result<i32, JsValue> {
+            Ok(self
+                .browser
+                .legend_entry_at(x, y)?
+                .map_or(-1, |index| index as i32))
+        }
+
+        pub fn series_count(&self) -> Result<u32, JsValue> {
+            Ok(self.browser.series_count()? as u32)
+        }
+
+        pub fn series_label(&self, series_index: u32) -> Result<Option<String>, JsValue> {
+            self.browser.series_label(series_index as usize)
+        }
+
+        pub fn series_visible(&self, series_index: u32) -> Result<bool, JsValue> {
+            self.browser.series_visible(series_index as usize)
+        }
+
+        /// Show or hide a series and re-render. Returns `false` when the
+        /// index is out of range. A grouped series toggles with its group.
+        pub fn set_series_visible(
+            &mut self,
+            series_index: u32,
+            visible: bool,
+        ) -> Result<bool, JsValue> {
+            let accepted = self
+                .browser
+                .set_series_visible(series_index as usize, visible)?;
+            if accepted {
+                self.render()?;
+            }
+            Ok(accepted)
+        }
+
         pub fn render(&mut self) -> Result<(), JsValue> {
             let image = self.browser.render_frame()?;
             self.surface.draw_image(&image)
@@ -3087,6 +3233,48 @@ mod wasm {
         pub fn reset_view(&mut self) -> Result<(), JsValue> {
             self.browser.reset_view()?;
             self.render()
+        }
+
+        /// The series data point under a backing-surface pixel, or `null`.
+        pub fn hit_at(&self, x: f64, y: f64) -> Result<Option<WebSeriesHit>, JsValue> {
+            self.browser.hit_at(x, y)
+        }
+
+        /// The index of the series behind a legend entry at a
+        /// backing-surface pixel, or `-1` when no entry is there.
+        pub fn legend_entry_at(&self, x: f64, y: f64) -> Result<i32, JsValue> {
+            Ok(self
+                .browser
+                .legend_entry_at(x, y)?
+                .map_or(-1, |index| index as i32))
+        }
+
+        pub fn series_count(&self) -> Result<u32, JsValue> {
+            Ok(self.browser.series_count()? as u32)
+        }
+
+        pub fn series_label(&self, series_index: u32) -> Result<Option<String>, JsValue> {
+            self.browser.series_label(series_index as usize)
+        }
+
+        pub fn series_visible(&self, series_index: u32) -> Result<bool, JsValue> {
+            self.browser.series_visible(series_index as usize)
+        }
+
+        /// Show or hide a series and re-render. Returns `false` when the
+        /// index is out of range. A grouped series toggles with its group.
+        pub fn set_series_visible(
+            &mut self,
+            series_index: u32,
+            visible: bool,
+        ) -> Result<bool, JsValue> {
+            let accepted = self
+                .browser
+                .set_series_visible(series_index as usize, visible)?;
+            if accepted {
+                self.render()?;
+            }
+            Ok(accepted)
         }
 
         pub fn render(&mut self) -> Result<(), JsValue> {

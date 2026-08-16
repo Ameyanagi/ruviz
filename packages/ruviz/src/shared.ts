@@ -117,6 +117,20 @@ export interface RuntimeCapabilities {
   gpuCanvasFastPathAvailable: boolean;
 }
 
+/**
+ * The series data point under a pointer position, resolved by
+ * `CanvasSession.hitAt` / `WorkerSession.hitAt`. Coordinates are data-space;
+ * `distancePx` is the pointer's distance to the point on screen.
+ */
+export interface SeriesHit {
+  seriesIndex: number;
+  seriesLabel: string | null;
+  pointIndex: number;
+  dataX: number;
+  dataY: number;
+  distancePx: number;
+}
+
 export interface CanvasSessionOptions {
   backendPreference?: BackendPreference;
   autoResize?: boolean;

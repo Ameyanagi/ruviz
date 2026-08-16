@@ -212,6 +212,21 @@ impl Plot {
         InteractivePlotSession::new(self.prepare())
     }
 
+    /// Show or hide a series by index, in the order series were added.
+    ///
+    /// A hidden series keeps its palette slot and a dimmed legend entry, is
+    /// skipped by rendering and hit testing, and does not affect axis
+    /// bounds. Out-of-range indices are ignored. For toggling inside a live
+    /// view, use
+    /// [`InteractivePlotSession::set_series_visible`](crate::core::InteractivePlotSession::set_series_visible)
+    /// instead, which re-renders without rebuilding the plot.
+    pub fn series_visible(mut self, series_index: usize, visible: bool) -> Self {
+        if let Some(series) = self.series_mgr.series.get_mut(series_index) {
+            series.visible = visible;
+        }
+        self
+    }
+
     /// Create a new Plot with a preset style
     ///
     /// # Example

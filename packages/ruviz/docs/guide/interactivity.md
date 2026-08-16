@@ -39,6 +39,43 @@ When input wiring is disabled, call `resize()`, `pointerDown()`,
 `pointerMove()`, `pointerUp()`, `pointerLeave()`, and `wheel()` directly with
 canvas pixel coordinates.
 
+## Hit Queries and Series Visibility
+
+The session surfaces what it already knows about the plot, so an app can
+build its own hover readouts and clickable legends:
+
+- `hitAt(x, y)` resolves the series data point near a canvas pixel to
+  `{ seriesIndex, seriesLabel, pointIndex, dataX, dataY, distancePx }`, or
+  `null` when nothing is close enough. Point-bearing series (line, scatter,
+  error bars) answer; use it to render a DOM tooltip with full control over
+  formatting.
+- `legendEntryAt(x, y)` resolves a canvas pixel to the index of the series
+  behind a legend entry, or `null`.
+- `setSeriesVisible(index, visible)` shows or hides a series and re-renders.
+  The hidden series keeps its colors and a dimmed legend entry, axis bounds
+  hold still, and hit tests skip it; restoring reproduces the previous frame
+  exactly. A series added inside a group toggles with its whole group, and
+  the call reports `false` for an out-of-range index.
+- `seriesCount()`, `seriesLabel(index)`, and `seriesVisible(index)` describe
+  the attached plot.
+
+On a `CanvasSession` these are synchronous; on a `WorkerSession` they return
+promises because the answer comes from the worker. A typical legend toggle:
+
+```ts
+canvas.addEventListener("click", (event) => {
+  const { x, y } = canvasPixel(event); // scale client coords by canvas.width / rect.width
+  const entry = session.legendEntryAt(x, y);
+  if (entry !== null) {
+    session.setSeriesVisible(entry, !session.seriesVisible(entry));
+  }
+});
+```
+
+The built-in hover tooltip also improves on its own: it now leads with the
+hovered series' label and formats values adaptively (scientific notation
+outside `1e-3`–`1e5`), which log-scale plots need.
+
 ## Reactive Data
 
 Use `createObservable(...)` for mutable numeric series and
