@@ -314,6 +314,25 @@ impl SkiaRenderer {
 
         // Apply line style (dash lengths scale with DPI for physical consistency)
         if let Some(dash_pattern) = self.scaled_dash_pattern(style) {
+            // tiny-skia refuses to dash a contour that would produce more
+            // than one million dash segments and then strokes NOTHING, so a
+            // long enough patterned polyline silently disappears. Stroke
+            // those in phase-continuous chunks instead; anything below the
+            // guard keeps this single-path stroke.
+            let total_len: f32 = points
+                .windows(2)
+                .map(|pair| (pair[1].0 - pair[0].0).hypot(pair[1].1 - pair[0].1))
+                .sum();
+            if let Some(chunk_len) = Self::dash_chunk_length(&dash_pattern, total_len) {
+                return self.stroke_dashed_polyline_chunked(
+                    points,
+                    &paint,
+                    &stroke,
+                    dash_pattern,
+                    chunk_len,
+                    mask,
+                );
+            }
             stroke.dash = StrokeDash::new(dash_pattern, 0.0);
         }
 
@@ -329,6 +348,83 @@ impl SkiaRenderer {
         ))?;
 
         self.stroke_path_masked(&path, &paint, &stroke, Transform::identity(), mask)?;
+
+        Ok(())
+    }
+
+    /// Decide whether a dashed polyline must be stroked in chunks.
+    ///
+    /// Returns the maximum path length one stroke may carry, or `None` when
+    /// the whole polyline fits under the dash-count guard and can be stroked
+    /// in one piece exactly as before. The guard stays a factor below
+    /// tiny-skia's one-million-dash refusal so contour-length rounding can
+    /// never push a chunk over it.
+    fn dash_chunk_length(dash_pattern: &[f32], total_len: f32) -> Option<f32> {
+        const MAX_DASHES_PER_STROKE: f32 = 250_000.0;
+
+        let period: f32 = dash_pattern.iter().sum();
+        let pairs = (dash_pattern.len() / 2) as f32;
+        if period <= 0.0 || pairs <= 0.0 {
+            return None;
+        }
+        let chunk_len = MAX_DASHES_PER_STROKE * period / pairs;
+        (total_len.is_finite() && total_len > chunk_len).then_some(chunk_len)
+    }
+
+    /// Stroke a dashed polyline as consecutive sub-paths, each short enough
+    /// for tiny-skia's dasher, carrying the dash phase across the cuts so the
+    /// pattern runs unbroken. A segment longer than one chunk is cut by
+    /// interpolation. Only reachable for paths the single stroke would drop.
+    fn stroke_dashed_polyline_chunked(
+        &mut self,
+        points: &[(f32, f32)],
+        paint: &Paint,
+        stroke: &Stroke,
+        dash_pattern: Vec<f32>,
+        chunk_len: f32,
+        mask: Option<&Mask>,
+    ) -> Result<()> {
+        let period: f32 = dash_pattern.iter().sum();
+        let mut phase = 0.0f32;
+        let mut cursor = points[0];
+        let mut next_index = 1usize;
+
+        while next_index < points.len() {
+            let mut chunk = vec![cursor];
+            let mut remaining = chunk_len;
+            while next_index < points.len() && remaining > 0.0 {
+                let target = points[next_index];
+                let seg_len = (target.0 - cursor.0).hypot(target.1 - cursor.1);
+                if seg_len <= remaining {
+                    chunk.push(target);
+                    cursor = target;
+                    next_index += 1;
+                    remaining -= seg_len;
+                } else {
+                    let t = remaining / seg_len;
+                    cursor = (
+                        cursor.0 + (target.0 - cursor.0) * t,
+                        cursor.1 + (target.1 - cursor.1) * t,
+                    );
+                    chunk.push(cursor);
+                    remaining = 0.0;
+                }
+            }
+
+            if chunk.len() >= 2 {
+                let mut path = PathBuilder::new();
+                path.move_to(chunk[0].0, chunk[0].1);
+                for &(x, y) in &chunk[1..] {
+                    path.line_to(x, y);
+                }
+                if let Some(path) = path.finish() {
+                    let mut stroke = stroke.clone();
+                    stroke.dash = StrokeDash::new(dash_pattern.clone(), phase % period);
+                    self.stroke_path_masked(&path, paint, &stroke, Transform::identity(), mask)?;
+                }
+            }
+            phase = (phase + (chunk_len - remaining)) % period;
+        }
 
         Ok(())
     }
@@ -371,7 +467,8 @@ impl SkiaRenderer {
             ..Stroke::default()
         };
 
-        if let Some(dash_pattern) = self.scaled_dash_pattern(&style) {
+        let dash_pattern = self.scaled_dash_pattern(&style);
+        if let Some(dash_pattern) = dash_pattern.clone() {
             stroke.dash = StrokeDash::new(dash_pattern, 0.0);
         }
 
@@ -379,6 +476,28 @@ impl SkiaRenderer {
         for run in Self::finite_runs(points, |point| point.x.is_finite() && point.y.is_finite()) {
             if run.len() < 2 {
                 continue;
+            }
+
+            // Same guard as `stroke_polyline_run`: a run long enough to hit
+            // tiny-skia's dash-count refusal is stroked in phase-continuous
+            // chunks instead of silently vanishing.
+            if let Some(pattern) = &dash_pattern {
+                let total_len: f32 = run
+                    .windows(2)
+                    .map(|pair| (pair[1].x - pair[0].x).hypot(pair[1].y - pair[0].y))
+                    .sum();
+                if let Some(chunk_len) = Self::dash_chunk_length(pattern, total_len) {
+                    let run: Vec<(f32, f32)> = run.iter().map(|p| (p.x, p.y)).collect();
+                    self.stroke_dashed_polyline_chunked(
+                        &run,
+                        &paint,
+                        &stroke,
+                        pattern.clone(),
+                        chunk_len,
+                        Some(mask.as_ref()),
+                    )?;
+                    continue;
+                }
             }
 
             let mut path = PathBuilder::new();
@@ -2238,6 +2357,71 @@ mod tests {
     /// Full-canvas clip, so marker tests exercise the drawing, not the clipping.
     fn whole_canvas(width: f32, height: f32) -> (f32, f32, f32, f32) {
         (0.0, 0.0, width, height)
+    }
+
+    /// The chunking guard fires only when the path would approach tiny-skia's
+    /// one-million-dash refusal, so every path that renders today keeps the
+    /// single-stroke code path.
+    #[test]
+    fn test_dash_chunk_length_guards_only_extreme_paths() {
+        assert_eq!(SkiaRenderer::dash_chunk_length(&[5.0, 5.0], 900.0), None);
+
+        // ~4M px of path: over the 2.5M px guard for a 5-5 dash, and formerly
+        // enough for the dasher to drop the whole series.
+        let chunk = SkiaRenderer::dash_chunk_length(&[5.0, 5.0], 4_000_000.0)
+            .expect("a multi-million-pixel dashed path must be chunked");
+        assert!(chunk > 0.0 && chunk < 4_000_000.0);
+    }
+
+    /// Chunked dashed stroking must carry the dash phase across cuts: cutting
+    /// a straight dashed line mid-pattern has to leave the same dashes in the
+    /// same columns as one uncut stroke.
+    #[test]
+    fn test_chunked_dashed_stroke_preserves_dash_phase() {
+        const WIDTH: u32 = 512;
+        const HEIGHT: u32 = 48;
+        let points = [(6.0, 24.0), (300.0, 24.0), (505.0, 24.0)];
+        let color = Color::from_rgb(31, 119, 180);
+
+        let mut reference = white_canvas(WIDTH, HEIGHT, 96.0);
+        reference
+            .draw_polyline(&points, color, 2.0, LineStyle::Dashed)
+            .expect("reference dashed polyline should render");
+        let reference = reference.into_image();
+
+        let mut chunked = white_canvas(WIDTH, HEIGHT, 96.0);
+        let mut paint = Paint::default();
+        paint.set_color(color.to_tiny_skia_color());
+        paint.anti_alias = true;
+        let stroke = Stroke {
+            width: 2.0,
+            line_cap: LineCap::Round,
+            line_join: LineJoin::Round,
+            ..Stroke::default()
+        };
+        let pattern = chunked
+            .scaled_dash_pattern(&LineStyle::Dashed)
+            .expect("dashed style must have a pattern");
+        // 37px chunks cut mid-dash and mid-gap many times over the run.
+        chunked
+            .stroke_dashed_polyline_chunked(&points, &paint, &stroke, pattern, 37.0, None)
+            .expect("chunked dashed polyline should render");
+        let chunked = chunked.into_image();
+
+        let ink_columns = |image: &Image| -> Vec<bool> {
+            (0..WIDTH)
+                .map(|x| (0..HEIGHT).any(|y| pixel(image, x, y)[0] < 250))
+                .collect()
+        };
+        assert!(
+            ink_columns(&reference).iter().filter(|&&on| on).count() > 50,
+            "reference stroke must actually draw dashes"
+        );
+        assert_eq!(
+            ink_columns(&reference),
+            ink_columns(&chunked),
+            "chunk cuts must not move, add, or drop dashes"
+        );
     }
 
     #[cfg(feature = "parallel")]
