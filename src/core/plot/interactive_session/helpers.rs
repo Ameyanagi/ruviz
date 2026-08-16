@@ -790,12 +790,7 @@ pub(super) fn tooltip_from_hit(plot: &Plot, hit: &HitResult) -> TooltipState {
                 format_tooltip_value(data_position.x),
                 format_tooltip_value(data_position.y)
             );
-            let content = match plot
-                .series_mgr
-                .series
-                .get(*series_index)
-                .and_then(|series| series.label.as_deref())
-            {
+            let content = match plot.effective_series_label(*series_index) {
                 Some(label) => format!("{label}: {coordinates}"),
                 None => coordinates,
             };
@@ -805,20 +800,26 @@ pub(super) fn tooltip_from_hit(plot: &Plot, hit: &HitResult) -> TooltipState {
             }
         }
         HitResult::HeatmapCell {
+            series_index,
             screen_rect,
             row,
             col,
             value,
-            ..
-        } => TooltipState {
-            content: format!(
+        } => {
+            let cell = format!(
                 "row={}, col={}, value={}",
                 row,
                 col,
                 format_tooltip_value(*value)
-            ),
-            position_px: screen_rect.max,
-        },
+            );
+            TooltipState {
+                content: match plot.effective_series_label(*series_index) {
+                    Some(label) => format!("{label}: {cell}"),
+                    None => cell,
+                },
+                position_px: screen_rect.max,
+            }
+        }
         HitResult::None => TooltipState {
             content: String::new(),
             position_px: ViewportPoint::default(),

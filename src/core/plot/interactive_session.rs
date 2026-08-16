@@ -1654,6 +1654,18 @@ impl InteractivePlotSession {
             data_bounds: initial_data_bounds,
             base_bounds: initial_bounds,
             visible_bounds: initial_bounds,
+            // A series hidden on the plot itself starts hidden here too, so
+            // the session's visibility state is the single source of truth
+            // and `set_series_visible(index, true)` can reveal it.
+            hidden_series: prepared
+                .plot()
+                .series_mgr
+                .series
+                .iter()
+                .enumerate()
+                .filter(|(_, series)| !series.visible)
+                .map(|(index, _)| index)
+                .collect(),
             ..SessionState::default()
         };
         sync_legacy_viewport_fields(
@@ -2296,16 +2308,13 @@ impl InteractivePlotSession {
         self.inner.prepared.plot().series_mgr.series.len()
     }
 
-    /// The legend label of a series, if it has one.
+    /// The label a series presents in the legend, if any — its own, or its
+    /// group's for a series created inside `Plot::group(...)`.
     pub fn series_label(&self, series_index: usize) -> Option<String> {
         self.inner
             .prepared
             .plot()
-            .series_mgr
-            .series
-            .get(series_index)?
-            .label
-            .clone()
+            .effective_series_label(series_index)
     }
 
     /// Whether a series is currently drawn. Out-of-range indices read as
@@ -2361,11 +2370,15 @@ impl InteractivePlotSession {
                     state.hidden_series.insert(index)
                 };
             }
+            if changed {
+                // Canonical order: the mutated value stays locked while the
+                // dirty domains and epochs advance.
+                self.record_mutation(&[DirtyDomain::Data, DirtyDomain::Overlay]);
+            }
             changed
         };
 
         if changed {
-            self.record_mutation(&[DirtyDomain::Data, DirtyDomain::Overlay]);
             self.inner.change_hub.notify();
         }
         true
@@ -3131,10 +3144,8 @@ impl InteractivePlotSession {
             .prepared_frame_shell_with_style(state.size_px, state.scale_factor, &frame.style)
             .xlim(geometry.x_bounds.0, geometry.x_bounds.1)
             .ylim(geometry.y_bounds.0, geometry.y_bounds.1);
-        for &index in &state.hidden_series {
-            if let Some(series) = plot.series_mgr.series.get_mut(index) {
-                series.visible = false;
-            }
+        for (index, series) in plot.series_mgr.series.iter_mut().enumerate() {
+            series.visible = !state.hidden_series.contains(&index);
         }
         if self.prefer_gpu() {
             #[cfg(feature = "gpu")]

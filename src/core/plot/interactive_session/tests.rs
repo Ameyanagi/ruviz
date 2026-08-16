@@ -5398,3 +5398,117 @@ fn test_set_series_visible_toggles_a_group_together() {
         "restoring one grouped series must restore its whole group"
     );
 }
+
+#[test]
+fn test_statically_hidden_series_is_session_visible_state() {
+    let plot: Plot = Plot::new()
+        .line(&[0.0, 1.0, 2.0], &[0.0, 1.0, 2.0])
+        .label("shown")
+        .line(&[0.0, 1.0, 2.0], &[2.0, 1.0, 0.0])
+        .label("startup-hidden")
+        .into();
+    let plot = plot.series_visible(1, false);
+    let session = plot.prepare_interactive();
+
+    assert!(
+        !session.series_visible(1),
+        "a statically hidden series must report hidden"
+    );
+    let hidden_frame = session
+        .render_to_surface(render_target())
+        .expect("frame with static-hidden series should render");
+
+    // The statically hidden series must not answer hit tests.
+    let geometry = session
+        .geometry_snapshot()
+        .expect("geometry should be available");
+    let (hit_x, hit_y) = map_data_to_pixels(
+        0.0,
+        2.0,
+        geometry.x_bounds.0,
+        geometry.x_bounds.1,
+        geometry.y_bounds.0,
+        geometry.y_bounds.1,
+        geometry.plot_area,
+    );
+    let position = ViewportPoint::new(hit_x as f64, hit_y as f64);
+    assert!(matches!(session.hit_test(position), HitResult::None));
+
+    // And the session can reveal it.
+    assert!(session.set_series_visible(1, true));
+    let revealed = session
+        .render_to_surface(render_target())
+        .expect("revealed frame should render");
+    assert_ne!(
+        hidden_frame.image.pixels, revealed.image.pixels,
+        "revealing a statically hidden series must change the frame"
+    );
+    match session.hit_test(position) {
+        HitResult::SeriesPoint { series_index, .. } => assert_eq!(series_index, 1),
+        other => panic!("expected a hit on the revealed series, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_series_label_and_tooltip_fall_back_to_the_group_label() {
+    let plot: Plot = Plot::new()
+        .group(|group| {
+            group
+                .group_label("sensors")
+                .line(&[0.0, 1.0, 2.0], &[0.0, 1.0, 2.0])
+                .line(&[0.0, 1.0, 2.0], &[2.0, 1.0, 0.0])
+        })
+        .into();
+    let session = plot.prepare_interactive();
+    session
+        .render_to_surface(render_target())
+        .expect("grouped frame should render");
+
+    assert_eq!(session.series_label(0).as_deref(), Some("sensors"));
+    assert_eq!(session.series_label(1).as_deref(), Some("sensors"));
+
+    let geometry = session
+        .geometry_snapshot()
+        .expect("geometry should be available");
+    let (hover_x, hover_y) = map_data_to_pixels(
+        1.0,
+        1.0,
+        geometry.x_bounds.0,
+        geometry.x_bounds.1,
+        geometry.y_bounds.0,
+        geometry.y_bounds.1,
+        geometry.plot_area,
+    );
+    session.apply_input(PlotInputEvent::Hover {
+        position_px: ViewportPoint::new(hover_x as f64, hover_y as f64),
+    });
+    let tooltip = session
+        .inner
+        .state
+        .lock()
+        .expect("InteractivePlotSession state lock poisoned")
+        .tooltip
+        .clone()
+        .expect("hover should produce a tooltip");
+    assert_eq!(tooltip.content, "sensors: x=1.000, y=1.000");
+}
+
+#[test]
+fn test_heatmap_cell_tooltip_carries_the_series_label() {
+    let plot: Plot = Plot::new()
+        .line(&[0.0, 1.0], &[0.0, 1.0])
+        .label("field")
+        .into();
+    let hit = HitResult::HeatmapCell {
+        series_index: 0,
+        row: 2,
+        col: 3,
+        value: 4.2e-5,
+        screen_rect: ViewportRect::from_points(
+            ViewportPoint::new(0.0, 0.0),
+            ViewportPoint::new(1.0, 1.0),
+        ),
+    };
+    let tooltip = tooltip_from_hit(&plot, &hit);
+    assert_eq!(tooltip.content, "field: row=2, col=3, value=4.200e-5");
+}

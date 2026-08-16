@@ -313,6 +313,20 @@ impl Plot {
         );
     }
 
+    /// The label a series presents in the legend: its own, or — for a series
+    /// created inside `Plot::group(...)` without one — its group's label.
+    pub(crate) fn effective_series_label(&self, series_index: usize) -> Option<String> {
+        let series = self.series_mgr.series.get(series_index)?;
+        if let Some(label) = &series.label {
+            return Some(label.clone());
+        }
+        let group_id = series.group_id?;
+        self.series_groups
+            .iter()
+            .find(|group| group.id == group_id)
+            .and_then(|group| group.label.clone())
+    }
+
     pub(super) fn collect_legend_items(&self) -> Vec<LegendItem> {
         let mut legend_items = Vec::new();
         let mut seen_group_ids = HashSet::new();
