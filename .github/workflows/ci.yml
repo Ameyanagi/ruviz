@@ -227,13 +227,13 @@ jobs:
           restore-keys: ${{ matrix.platform.cache_key }}-cargo-native-gui-tests-
 
       - name: Test adapter default behavior
-        run: cargo test --manifest-path adapters/gui/Cargo.toml --workspace --lib --locked
+        run: cargo test --manifest-path adapters/gui/Cargo.toml --workspace --lib --locked -- --test-threads=1
 
       - name: Test adapter 3D behavior
-        run: cargo test --manifest-path adapters/gui/Cargo.toml --workspace --lib --features 3d --locked
+        run: cargo test --manifest-path adapters/gui/Cargo.toml --workspace --lib --features 3d --locked -- --test-threads=1
 
       - name: Test all adapter feature behavior
-        run: cargo test --manifest-path adapters/gui/Cargo.toml --workspace --lib --all-features --locked
+        run: cargo test --manifest-path adapters/gui/Cargo.toml --workspace --lib --all-features --locked -- --test-threads=1
 
       - name: Test adapter documentation
         run: |
