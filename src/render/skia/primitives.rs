@@ -402,11 +402,23 @@ impl SkiaRenderer {
                     remaining -= seg_len;
                 } else {
                     let t = remaining / seg_len;
-                    cursor = (
+                    let cut = (
                         cursor.0 + (target.0 - cursor.0) * t,
                         cursor.1 + (target.1 - cursor.1) * t,
                     );
-                    chunk.push(cursor);
+                    if cut == cursor {
+                        // At coordinates so large that one f32 step exceeds
+                        // the chunk length, the cut rounds back onto the
+                        // cursor and could loop forever. Take the whole
+                        // segment instead; a segment that big blows the
+                        // dasher's budget for this one chunk at worst.
+                        chunk.push(target);
+                        cursor = target;
+                        next_index += 1;
+                    } else {
+                        cursor = cut;
+                        chunk.push(cursor);
+                    }
                     remaining = 0.0;
                 }
             }
@@ -2371,6 +2383,26 @@ mod tests {
         let chunk = SkiaRenderer::dash_chunk_length(&[5.0, 5.0], 4_000_000.0)
             .expect("a multi-million-pixel dashed path must be chunked");
         assert!(chunk > 0.0 && chunk < 4_000_000.0);
+    }
+
+    /// A cut that cannot advance at extreme coordinates must not hang: the
+    /// chunker takes the whole segment when the interpolated cut rounds back
+    /// onto the cursor.
+    #[test]
+    fn test_chunked_dashed_stroke_survives_extreme_coordinates() {
+        let mut renderer = white_canvas(64, 64, 96.0);
+        let mut paint = Paint::default();
+        paint.set_color(Color::BLACK.to_tiny_skia_color());
+        let stroke = Stroke {
+            width: 1.0,
+            ..Stroke::default()
+        };
+        // One f32 step at 1e20 dwarfs the 10px chunk length, so every cut
+        // rounds back onto the cursor.
+        let points = [(1.0e20f32, 0.0f32), (2.0e20, 0.0), (3.0e20, 0.0)];
+        renderer
+            .stroke_dashed_polyline_chunked(&points, &paint, &stroke, vec![5.0, 5.0], 10.0, None)
+            .expect("extreme dashed polyline must terminate");
     }
 
     /// Chunked dashed stroking must carry the dash phase across cuts: cutting
