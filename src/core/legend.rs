@@ -1424,11 +1424,15 @@ pub fn layout_legend(
     // A reserved band can squeeze the column below the natural entry width,
     // but labels are drawn unclipped past the column edge. A single column
     // keeps its full visible extent clickable; with several columns the hit
-    // width must stop at the column, or it would claim the neighbor's entry.
+    // width may extend through the unowned gutter but must stop before the
+    // next column's handle — text overlapping the neighbor's entry is
+    // genuinely ambiguous, and the neighbor owns those pixels.
     let entry_hit_width = if columns == 1 {
         column_width.max(entry_width)
     } else {
-        column_width
+        entry_width
+            .min(column_width + spacing.column_spacing)
+            .max(column_width)
     };
 
     let mut row_center_y = y + spacing.border_pad + legend.font_size / 2.0;
@@ -1749,6 +1753,55 @@ mod tests {
         for entry in &layout.entries {
             assert!(entry.handle_center_y <= 60.0);
         }
+    }
+
+    /// A squeezed multi-column legend may claim the gutter between columns
+    /// for clicks, but never the next column's own space.
+    #[test]
+    fn squeezed_multi_column_hit_width_stops_before_the_neighbor() {
+        let legend = Legend {
+            columns: 2,
+            ..Legend::new()
+        };
+        let items: Vec<_> = (0..2)
+            .map(|index| {
+                LegendItem::line(
+                    format!("a rather long series label {index}"),
+                    Color::BLUE,
+                    LineStyle::Solid,
+                    1.0,
+                )
+            })
+            .collect();
+
+        let squeezed = layout_legend(
+            &items,
+            &legend,
+            (0.0, 0.0, 400.0, 300.0),
+            LegendPlacement {
+                reserved: Some((10.0, 10.0, 110.0, 100.0)),
+                occupancy: None,
+            },
+            six_px_per_char,
+        )
+        .expect("squeezed multi-column layout");
+
+        assert_eq!(squeezed.entries.len(), 2);
+        let first = &squeezed.entries[0];
+        let second = &squeezed.entries[1];
+        assert!(second.handle_x > first.handle_x, "two columns expected");
+        let (x, _, w, _) = squeezed.entry_hit_rect(first);
+        assert!(
+            x + w <= second.handle_x + 1e-3,
+            "the first column's hit width ({}..{}) must stop before the next handle at {}",
+            x,
+            x + w,
+            second.handle_x
+        );
+        assert!(
+            w >= squeezed.entry_width - 1e-3,
+            "hit width should use the entry width"
+        );
     }
 
     /// A reserved band narrower than the natural entry width draws labels
