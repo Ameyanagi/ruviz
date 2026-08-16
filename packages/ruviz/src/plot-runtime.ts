@@ -183,6 +183,49 @@ export function applySnapshotMetadata(rawPlot: RawJsPlot, snapshot: PlotSnapshot
   if (typeof snapshot.tightLayoutPad === "number") {
     rawPlot.tight_layout_pad(snapshot.tightLayoutPad);
   }
+
+  // Annotations replay in call order; the core keeps them on a separate layer
+  // drawn after the data series, so their position in this apply sequence
+  // only fixes their order relative to each other. Foreign snapshots degrade
+  // rather than fail: the coordinate checks stop a missing or null value
+  // from silently becoming 0, and the try/catch stops a malformed style from
+  // throwing wasm-side and blanking the whole plot — one bad annotation is
+  // skipped like an unknown kind.
+  // A foreign snapshot may carry a non-array here; degrade like a missing
+  // field rather than throwing before the per-entry guard can help.
+  const annotations = Array.isArray(snapshot.annotations) ? snapshot.annotations : [];
+  for (const annotation of annotations) {
+    try {
+      switch (annotation.kind) {
+        case "vline":
+          if (Number.isFinite(annotation.x)) {
+            rawPlot.vline(annotation.x, annotation.style);
+          }
+          break;
+        case "hline":
+          if (Number.isFinite(annotation.y)) {
+            rawPlot.hline(annotation.y, annotation.style);
+          }
+          break;
+        case "text":
+          if (
+            Number.isFinite(annotation.x) &&
+            Number.isFinite(annotation.y) &&
+            typeof annotation.text === "string" &&
+            annotation.text !== ""
+          ) {
+            rawPlot.annotate_text(annotation.x, annotation.y, annotation.text, annotation.style);
+          }
+          break;
+        default:
+          // A snapshot from a newer build may carry kinds this runtime does
+          // not know; skip them rather than failing the whole plot.
+          break;
+      }
+    } catch {
+      // malformed style value: skip this annotation
+    }
+  }
 }
 
 export function buildRawPlotFromSnapshot(snapshot: PlotSnapshot, module: RawModule): RawJsPlot {

@@ -1625,6 +1625,74 @@ test("snapshots keep unknown fields and never alias the caller's object", async 
   expect(result.afterCallerMutation).toEqual(result.preserved);
 });
 
+test("annotations render, replay from snapshots, and degrade on bad entries", async ({ page }) => {
+  await waitForDemoReady(page);
+
+  const result = await page.evaluate(async () => {
+    const { createPlot, createPlotFromSnapshot } = window.__ruvizDemo.sdk;
+
+    const build = () =>
+      createPlot()
+        .sizePx(240, 180)
+        .line({ x: [0, 1, 2, 3], y: [0, 2, 1, 3] });
+
+    const bare = await build().renderPng();
+    const annotated = build()
+      .vline(1.5, { color: "red", linestyle: "solid" })
+      .hline(2, { width: 2 })
+      .annotateText(0.5, 2.5, "peak", { fontSize: 12 });
+    const annotatedPng = await annotated.renderPng();
+    const snapshot = annotated.toSnapshot();
+
+    // Replaying the snapshot must reproduce the annotated render exactly —
+    // this is the path the notebook widget takes.
+    const replayed = await createPlotFromSnapshot(snapshot).renderPng();
+
+    // A foreign snapshot with malformed annotation entries degrades: the
+    // bad entries are skipped, the good one still renders, nothing throws.
+    const damaged = structuredClone(snapshot);
+    damaged.annotations = [
+      { kind: "vline" },
+      { kind: "vline", x: null },
+      { kind: "text", x: 1, y: 1 },
+      { kind: "from-the-future", x: 1 },
+      // These pass the coordinate checks and fail inside the wasm style
+      // parsers, exercising the try/catch itself.
+      { kind: "vline", x: 1, style: { width: 0 } },
+      { kind: "hline", y: 1, style: { color: "not-a-color" } },
+      { kind: "text", x: 1, y: 1, text: "bad", style: { fontSize: -1 } },
+      ...damaged.annotations,
+    ];
+    const degraded = await createPlotFromSnapshot(damaged).renderPng();
+
+    // A non-array annotations container degrades like a missing field.
+    const nonArray = structuredClone(snapshot);
+    nonArray.annotations = {};
+    const nonArrayPng = await createPlotFromSnapshot(nonArray).renderPng();
+
+    // null style behaves like no style, as it does on every series method.
+    const nullStyled = await build().vline(1.5, null).renderPng();
+    const unstyled = await build().vline(1.5).renderPng();
+
+    const bytesEqual = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
+    return {
+      annotationsChangeOutput: !bytesEqual(annotatedPng, bare),
+      replayMatches: bytesEqual(replayed, annotatedPng),
+      degradedMatches: bytesEqual(degraded, annotatedPng),
+      nonArrayDegrades: bytesEqual(nonArrayPng, bare),
+      nullStyleMatchesUnstyled: bytesEqual(nullStyled, unstyled),
+      emptyStyleOmitted: !("style" in build().vline(1.5, {}).toSnapshot().annotations[0]),
+    };
+  });
+
+  expect(result.annotationsChangeOutput).toBe(true);
+  expect(result.replayMatches).toBe(true);
+  expect(result.degradedMatches).toBe(true);
+  expect(result.nonArrayDegrades).toBe(true);
+  expect(result.nullStyleMatchesUnstyled).toBe(true);
+  expect(result.emptyStyleOmitted).toBe(true);
+});
+
 test("dpi scales the pixels exported from sizePx", async ({ page }) => {
   await waitForDemoReady(page);
 
