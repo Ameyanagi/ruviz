@@ -1636,17 +1636,17 @@ test("annotations render, replay from snapshots, and degrade on bad entries", as
         .sizePx(240, 180)
         .line({ x: [0, 1, 2, 3], y: [0, 2, 1, 3] });
 
-    const bare = await build().toPng();
+    const bare = await build().renderPng();
     const annotated = build()
       .vline(1.5, { color: "red", linestyle: "solid" })
       .hline(2, { width: 2 })
       .annotateText(0.5, 2.5, "peak", { fontSize: 12 });
-    const annotatedPng = await annotated.toPng();
+    const annotatedPng = await annotated.renderPng();
     const snapshot = annotated.toSnapshot();
 
     // Replaying the snapshot must reproduce the annotated render exactly —
     // this is the path the notebook widget takes.
-    const replayed = await createPlotFromSnapshot(snapshot).toPng();
+    const replayed = await createPlotFromSnapshot(snapshot).renderPng();
 
     // A foreign snapshot with malformed annotation entries degrades: the
     // bad entries are skipped, the good one still renders, nothing throws.
@@ -1663,16 +1663,16 @@ test("annotations render, replay from snapshots, and degrade on bad entries", as
       { kind: "text", x: 1, y: 1, text: "bad", style: { fontSize: -1 } },
       ...damaged.annotations,
     ];
-    const degraded = await createPlotFromSnapshot(damaged).toPng();
+    const degraded = await createPlotFromSnapshot(damaged).renderPng();
 
     // A non-array annotations container degrades like a missing field.
     const nonArray = structuredClone(snapshot);
     nonArray.annotations = {};
-    const nonArrayPng = await createPlotFromSnapshot(nonArray).toPng();
+    const nonArrayPng = await createPlotFromSnapshot(nonArray).renderPng();
 
     // null style behaves like no style, as it does on every series method.
-    const nullStyled = await build().vline(1.5, null).toPng();
-    const unstyled = await build().vline(1.5).toPng();
+    const nullStyled = await build().vline(1.5, null).renderPng();
+    const unstyled = await build().vline(1.5).renderPng();
 
     const bytesEqual = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
     return {
