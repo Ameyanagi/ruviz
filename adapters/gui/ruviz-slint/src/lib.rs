@@ -2857,13 +2857,20 @@ mod tests {
     /// Do not change the waiting primitive to "fix" the flake without a
     /// reproduction and a control run: swapping `yield_now` for a 1ms sleep
     /// was tried and made these tests fail 11 runs out of 12 under load.
+    ///
+    /// The deadline is 60s because 10s was measured too tight for shared CI
+    /// runners: with the suites already serialized, a 4-core Linux runner
+    /// still timed out at 9.2M polls — the waiter had CPU the whole time and
+    /// the render work was genuinely in flight, just slow next to noisy
+    /// neighbors. A passing wait exits the moment the condition holds, so
+    /// headroom costs nothing except on a real hang, which still fails.
     fn wait_for(condition: impl Fn() -> bool) {
         let start = Instant::now();
         let mut polls: u64 = 0;
         while !condition() {
             let elapsed = start.elapsed();
             assert!(
-                elapsed < Duration::from_secs(10),
+                elapsed < Duration::from_secs(60),
                 "timed out waiting for render worker after {polls} polls in {elapsed:?} \
                  (available_parallelism: {:?})",
                 std::thread::available_parallelism(),
