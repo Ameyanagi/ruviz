@@ -2,17 +2,22 @@
 
 Get started with ruviz in less than 5 minutes!
 
-## What's New in v0.10.0
+## What's New in v0.11.0
 
-- Annotations in every binding: `vline`, `hline`, and text annotations with
-  optional styling, recorded in snapshots (schema v3) so they survive
-  cloning, worker transfer, and notebook widget replay — with foreign or
-  malformed snapshot entries degrading gracefully instead of failing the
-  plot.
-- The un-styled reference line is the same 1pt dashed gray everywhere,
-  defined once in the core; partial styles inherit exactly those defaults.
-- CI's long-standing GUI render-worker flake (issue #152) was root-caused
-  to runner oversubscription and fixed.
+- Series-aware interaction: the hover tooltip leads with the series' legend
+  label and formats values adaptively (scientific notation outside the
+  readable range), and web sessions expose `hitAt(x, y)` so an app can
+  render its own tooltip from `{seriesIndex, seriesLabel, dataX, dataY}`.
+- Clickable legends: `legendEntryAt(x, y)` resolves a legend entry to its
+  series, and `setSeriesVisible(index, visible)` toggles a series without
+  rebuilding the plot — dimmed legend entry, stable axis bounds, groups
+  toggling together, and byte-identical restore. Rust plots get
+  `Plot::series_visible(index, visible)`.
+- Very long dashed and dotted lines render correctly: paths past
+  tiny-skia's million-dash refusal are now stroked in phase-continuous
+  chunks instead of silently disappearing.
+- `PlotData` merges its two static variants into one reference-counted
+  `Static(Arc<Vec<f64>>)`; builder-level code is unaffected.
 
 See full details:
 
@@ -30,7 +35,7 @@ cd my_plot
 2. **Add ruviz to your `Cargo.toml`**:
 ```toml
 [dependencies]
-ruviz = "0.10.0"
+ruviz = "0.11.0"
 ```
 
 3. **Write your first plot** in `src/main.rs`:
@@ -69,8 +74,8 @@ an embedded interactive plot view:
 
 ```toml
 [dependencies]
-ruviz = "0.10.0"
-ruviz-gpui = "0.10.0"
+ruviz = "0.11.0"
+ruviz-gpui = "0.11.0"
 ```
 
 `ruviz-gpui` is supported on Linux, macOS, and Windows. On Windows, prefer the
@@ -98,7 +103,7 @@ If you want publication-style math in labels and titles, enable Typst text rende
 
 ```toml
 [dependencies]
-ruviz = { version = "0.10.0", features = ["typst-math"] }
+ruviz = { version = "0.11.0", features = ["typst-math"] }
 ```
 
 `.typst(true)` is only available when `typst-math` is enabled. The configured
@@ -117,7 +122,7 @@ If you want Typst to stay optional in your own crate, forward a local feature fi
 
 ```toml
 [dependencies]
-ruviz = { version = "0.10.0", default-features = false }
+ruviz = { version = "0.11.0", default-features = false }
 
 [features]
 default = []
@@ -369,7 +374,7 @@ Plot::new()
 ### With polars (requires `polars_support` feature)
 ```toml
 [dependencies]
-ruviz = { version = "0.10.0", features = ["polars_support"] }
+ruviz = { version = "0.11.0", features = ["polars_support"] }
 polars = "0.50"
 ```
 
@@ -397,7 +402,7 @@ Plot::new()
 only when you have benchmarked a path that benefits from the extra SIMD support:
 ```toml
 [dependencies]
-ruviz = { version = "0.10.0", features = ["performance"] }
+ruviz = { version = "0.11.0", features = ["performance"] }
 ```
 
 ### Large Dataset Export
