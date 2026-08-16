@@ -415,8 +415,8 @@ fn assert_large_plot_png_and_save(name: &str, plot: &Plot) {
 fn test_plot_series_static_source_helpers_materialize_values() {
     let mut series = PlotSeries {
         series_type: SeriesType::Line {
-            x_data: PlotData::Static(vec![0.0, 1.0]),
-            y_data: PlotData::Static(vec![1.0, 2.0]),
+            x_data: PlotData::Static(vec![0.0, 1.0].into()),
+            y_data: PlotData::Static(vec![1.0, 2.0].into()),
         },
         streaming_source: None,
         label: None,
@@ -1009,7 +1009,7 @@ fn test_snapshot_validation_isolated_from_later_reactive_mutation() {
     let x = crate::data::Observable::new(vec![0.0, 1.0]);
     let plot = Plot::new().add_line_series(
         PlotData::Reactive(x.clone()),
-        PlotData::Static(vec![1.0, 2.0]),
+        PlotData::Static(vec![1.0, 2.0].into()),
         &crate::plots::basic::LineConfig::default(),
         crate::core::plot::builder::SeriesStyle::default(),
     );

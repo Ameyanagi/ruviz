@@ -163,8 +163,8 @@ fn test_plot_input_variants() {
     }
 
     let xy_source = PlotInput::XYSource(
-        PlotData::Static(vec![1.0, 2.0]),
-        PlotData::Static(vec![3.0, 4.0]),
+        PlotData::Static(vec![1.0, 2.0].into()),
+        PlotData::Static(vec![3.0, 4.0].into()),
     );
     match xy_source {
         PlotInput::XYSource(x, y) => {
@@ -189,7 +189,7 @@ fn test_plot_input_variants() {
 
     let cat_source = PlotInput::CategoricalSource {
         categories: vec!["A".to_string(), "B".to_string()],
-        values: PlotData::Static(vec![10.0, 20.0]),
+        values: PlotData::Static(vec![10.0, 20.0].into()),
     };
     match cat_source {
         PlotInput::CategoricalSource { categories, values } => {

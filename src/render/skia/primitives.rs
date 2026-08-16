@@ -314,6 +314,25 @@ impl SkiaRenderer {
 
         // Apply line style (dash lengths scale with DPI for physical consistency)
         if let Some(dash_pattern) = self.scaled_dash_pattern(style) {
+            // tiny-skia refuses to dash a contour that would produce more
+            // than one million dash segments and then strokes NOTHING, so a
+            // long enough patterned polyline silently disappears. Stroke
+            // those in phase-continuous chunks instead; anything below the
+            // guard keeps this single-path stroke.
+            let total_len: f32 = points
+                .windows(2)
+                .map(|pair| (pair[1].0 - pair[0].0).hypot(pair[1].1 - pair[0].1))
+                .sum();
+            if let Some(chunk_len) = Self::dash_chunk_length(&dash_pattern, total_len) {
+                return self.stroke_dashed_polyline_chunked(
+                    points,
+                    &paint,
+                    &stroke,
+                    dash_pattern,
+                    chunk_len,
+                    mask,
+                );
+            }
             stroke.dash = StrokeDash::new(dash_pattern, 0.0);
         }
 
@@ -329,6 +348,95 @@ impl SkiaRenderer {
         ))?;
 
         self.stroke_path_masked(&path, &paint, &stroke, Transform::identity(), mask)?;
+
+        Ok(())
+    }
+
+    /// Decide whether a dashed polyline must be stroked in chunks.
+    ///
+    /// Returns the maximum path length one stroke may carry, or `None` when
+    /// the whole polyline fits under the dash-count guard and can be stroked
+    /// in one piece exactly as before. The guard stays a factor below
+    /// tiny-skia's one-million-dash refusal so contour-length rounding can
+    /// never push a chunk over it.
+    fn dash_chunk_length(dash_pattern: &[f32], total_len: f32) -> Option<f32> {
+        const MAX_DASHES_PER_STROKE: f32 = 250_000.0;
+
+        let period: f32 = dash_pattern.iter().sum();
+        let pairs = (dash_pattern.len() / 2) as f32;
+        if period <= 0.0 || pairs <= 0.0 {
+            return None;
+        }
+        let chunk_len = MAX_DASHES_PER_STROKE * period / pairs;
+        (total_len.is_finite() && total_len > chunk_len).then_some(chunk_len)
+    }
+
+    /// Stroke a dashed polyline as consecutive sub-paths, each short enough
+    /// for tiny-skia's dasher, carrying the dash phase across the cuts so the
+    /// pattern runs unbroken. A segment longer than one chunk is cut by
+    /// interpolation. Only reachable for paths the single stroke would drop.
+    fn stroke_dashed_polyline_chunked(
+        &mut self,
+        points: &[(f32, f32)],
+        paint: &Paint,
+        stroke: &Stroke,
+        dash_pattern: Vec<f32>,
+        chunk_len: f32,
+        mask: Option<&Mask>,
+    ) -> Result<()> {
+        let period: f32 = dash_pattern.iter().sum();
+        let mut phase = 0.0f32;
+        let mut cursor = points[0];
+        let mut next_index = 1usize;
+
+        while next_index < points.len() {
+            let mut chunk = vec![cursor];
+            let mut remaining = chunk_len;
+            while next_index < points.len() && remaining > 0.0 {
+                let target = points[next_index];
+                let seg_len = (target.0 - cursor.0).hypot(target.1 - cursor.1);
+                if seg_len <= remaining {
+                    chunk.push(target);
+                    cursor = target;
+                    next_index += 1;
+                    remaining -= seg_len;
+                } else {
+                    let t = remaining / seg_len;
+                    let cut = (
+                        cursor.0 + (target.0 - cursor.0) * t,
+                        cursor.1 + (target.1 - cursor.1) * t,
+                    );
+                    if cut == cursor {
+                        // At coordinates so large that one f32 step exceeds
+                        // the chunk length, the cut rounds back onto the
+                        // cursor and could loop forever. Take the whole
+                        // segment instead; a segment that big blows the
+                        // dasher's budget for this one chunk at worst.
+                        chunk.push(target);
+                        cursor = target;
+                        next_index += 1;
+                    } else {
+                        cursor = cut;
+                        chunk.push(cursor);
+                    }
+                    remaining = 0.0;
+                }
+            }
+
+            if chunk.len() >= 2 {
+                let mut path = PathBuilder::new();
+                path.move_to(chunk[0].0, chunk[0].1);
+                for &(x, y) in &chunk[1..] {
+                    path.line_to(x, y);
+                }
+                if let Some(path) = path.finish() {
+                    let mut stroke = stroke.clone();
+                    stroke.dash = StrokeDash::new(dash_pattern.clone(), phase % period);
+                    self.stroke_path_masked(&path, paint, &stroke, Transform::identity(), mask)?;
+                }
+            }
+            phase = (phase + (chunk_len - remaining)) % period;
+        }
 
         Ok(())
     }
@@ -371,7 +479,8 @@ impl SkiaRenderer {
             ..Stroke::default()
         };
 
-        if let Some(dash_pattern) = self.scaled_dash_pattern(&style) {
+        let dash_pattern = self.scaled_dash_pattern(&style);
+        if let Some(dash_pattern) = dash_pattern.clone() {
             stroke.dash = StrokeDash::new(dash_pattern, 0.0);
         }
 
@@ -379,6 +488,28 @@ impl SkiaRenderer {
         for run in Self::finite_runs(points, |point| point.x.is_finite() && point.y.is_finite()) {
             if run.len() < 2 {
                 continue;
+            }
+
+            // Same guard as `stroke_polyline_run`: a run long enough to hit
+            // tiny-skia's dash-count refusal is stroked in phase-continuous
+            // chunks instead of silently vanishing.
+            if let Some(pattern) = &dash_pattern {
+                let total_len: f32 = run
+                    .windows(2)
+                    .map(|pair| (pair[1].x - pair[0].x).hypot(pair[1].y - pair[0].y))
+                    .sum();
+                if let Some(chunk_len) = Self::dash_chunk_length(pattern, total_len) {
+                    let run: Vec<(f32, f32)> = run.iter().map(|p| (p.x, p.y)).collect();
+                    self.stroke_dashed_polyline_chunked(
+                        &run,
+                        &paint,
+                        &stroke,
+                        pattern.clone(),
+                        chunk_len,
+                        Some(mask.as_ref()),
+                    )?;
+                    continue;
+                }
             }
 
             let mut path = PathBuilder::new();
@@ -1607,8 +1738,12 @@ impl SkiaRenderer {
             .min(canvas_height as usize)
     }
 
-    /// The feature-off path deliberately stays as the original point-ordered
-    /// compositor. It is also the byte-exact oracle for the parallel test.
+    /// The feature-off path keeps the original point-ordered traversal and is
+    /// the ordering oracle for the parallel test: it shares the band blitters
+    /// with the parallel path (called with one full-canvas band), so the
+    /// equality test exercises band decomposition and submission order rather
+    /// than the pixel loops themselves — those are covered by the golden
+    /// image suite.
     fn draw_markers_with_sprite_compositor_serial(
         &mut self,
         points: &[Point2f],
@@ -1625,6 +1760,8 @@ impl SkiaRenderer {
         let clip_top = clip_rect.1.floor() as i32 - 1;
         let clip_right = (clip_rect.0 + clip_rect.2).ceil() as i32 + 1;
         let clip_bottom = (clip_rect.1 + clip_rect.3).ceil() as i32 + 1;
+        let canvas_width = self.width as usize;
+        let canvas_height = self.height as usize;
 
         self.note_marker_sprite_compositor();
 
@@ -1660,23 +1797,30 @@ impl SkiaRenderer {
                 dst_x,
                 dst_y,
                 clip_rect,
-                0,
-                0,
-                self.width as i32,
-                self.height as i32,
+                canvas_width as i32,
+                canvas_height as i32,
             ) {
                 self.note_marker_scanline_blit();
-                self.blit_marker_sprite_scanlines_unmasked(&sprite, dst_x, dst_y);
-            } else {
-                self.blit_marker_sprite_region(
+                Self::blit_marker_sprite_scanlines_unmasked_in_band(
+                    self.pixmap.data_mut(),
+                    canvas_width,
+                    0,
+                    canvas_height,
                     &sprite,
                     dst_x,
                     dst_y,
-                    Some(mask.as_ref()),
+                );
+            } else {
+                Self::blit_marker_sprite_masked_in_band(
+                    self.pixmap.data_mut(),
+                    canvas_width,
+                    canvas_height,
                     0,
-                    0,
-                    self.width as i32,
-                    self.height as i32,
+                    canvas_height,
+                    &sprite,
+                    dst_x,
+                    dst_y,
+                    mask.data(),
                 );
             }
         }
@@ -1809,8 +1953,6 @@ impl SkiaRenderer {
                         dst_x,
                         dst_y,
                         clip_rect,
-                        0,
-                        0,
                         canvas_width_i32,
                         canvas_height_i32,
                     ) {
@@ -1862,85 +2004,13 @@ impl SkiaRenderer {
         (base, phase as u8)
     }
 
-    fn blit_marker_sprite_region(
-        &mut self,
-        sprite: &MarkerSprite,
-        dst_x: i32,
-        dst_y: i32,
-        mask: Option<&Mask>,
-        region_left: i32,
-        region_top: i32,
-        region_right: i32,
-        region_bottom: i32,
-    ) {
-        let src_width = sprite.width as i32;
-        let src_height = sprite.height as i32;
-
-        let copy_left = dst_x.max(region_left).max(0);
-        let copy_top = dst_y.max(region_top).max(0);
-        let copy_right = (dst_x + src_width).min(region_right).min(self.width as i32);
-        let copy_bottom = (dst_y + src_height)
-            .min(region_bottom)
-            .min(self.height as i32);
-
-        if copy_left >= copy_right || copy_top >= copy_bottom {
-            return;
-        }
-
-        let src_offset_x = (copy_left - dst_x) as usize;
-        let src_offset_y = (copy_top - dst_y) as usize;
-        let copy_width = (copy_right - copy_left) as usize;
-        let copy_height = (copy_bottom - copy_top) as usize;
-
-        let sprite_stride = sprite.width as usize * 4;
-        let canvas_stride = self.width as usize * 4;
-        let mask_stride = self.width as usize;
-        let mask_data = mask.map(Mask::data);
-        let dst_data = self.pixmap.data_mut();
-
-        for row in 0..copy_height {
-            let src_row = (src_offset_y + row) * sprite_stride + src_offset_x * 4;
-            let dst_row = (copy_top as usize + row) * canvas_stride + copy_left as usize * 4;
-            let mask_row = (copy_top as usize + row) * mask_stride + copy_left as usize;
-
-            for col in 0..copy_width {
-                let src_idx = src_row + col * 4;
-                let src_a = sprite.pixels[src_idx + 3];
-                if src_a == 0 {
-                    continue;
-                }
-
-                let dst_idx = dst_row + col * 4;
-                if let Some(mask_data) = mask_data {
-                    let mask_alpha = mask_data[mask_row + col];
-                    if mask_alpha == 0 {
-                        continue;
-                    }
-
-                    Self::blend_premultiplied_rgba(
-                        &mut dst_data[dst_idx..dst_idx + 4],
-                        &sprite.pixels[src_idx..src_idx + 4],
-                        mask_alpha,
-                    );
-                } else {
-                    Self::blend_premultiplied_rgba_unmasked(
-                        &mut dst_data[dst_idx..dst_idx + 4],
-                        &sprite.pixels[src_idx..src_idx + 4],
-                    );
-                }
-            }
-        }
-    }
-
     fn can_use_unmasked_marker_scanline_blit(
         sprite: &MarkerSprite,
         dst_x: i32,
         dst_y: i32,
         clip_rect: (f32, f32, f32, f32),
-        region_left: i32,
-        region_top: i32,
-        region_right: i32,
-        region_bottom: i32,
+        canvas_width: i32,
+        canvas_height: i32,
     ) -> bool {
         if sprite.scanlines.is_none() {
             return false;
@@ -1955,71 +2025,15 @@ impl SkiaRenderer {
             && dst_y >= clip_top
             && dst_x + sprite.width as i32 <= clip_right
             && dst_y + sprite.height as i32 <= clip_bottom
-            && dst_x >= region_left
-            && dst_y >= region_top
-            && dst_x + sprite.width as i32 <= region_right
-            && dst_y + sprite.height as i32 <= region_bottom
+            && dst_x >= 0
+            && dst_y >= 0
+            && dst_x + sprite.width as i32 <= canvas_width
+            && dst_y + sprite.height as i32 <= canvas_height
     }
 
-    fn blit_marker_sprite_scanlines_unmasked(
-        &mut self,
-        sprite: &MarkerSprite,
-        dst_x: i32,
-        dst_y: i32,
-    ) {
-        let Some(scanlines) = sprite.scanlines.as_ref() else {
-            return;
-        };
-
-        let sprite_stride = sprite.width as usize * 4;
-        let canvas_stride = self.width as usize * 4;
-        let dst_data = self.pixmap.data_mut();
-
-        for (row_index, scanline) in scanlines.iter().enumerate() {
-            if scanline.end_x <= scanline.start_x {
-                continue;
-            }
-
-            let row_y = dst_y as usize + row_index;
-            let src_row = row_index * sprite_stride;
-            let dst_row = row_y * canvas_stride;
-
-            let start = scanline.start_x as usize;
-            let end = scanline.end_x as usize;
-            let opaque_start = scanline.opaque_start_x as usize;
-            let opaque_end = scanline.opaque_end_x as usize;
-
-            let left_partial_end = opaque_start.max(start).min(end);
-            for col in start..left_partial_end {
-                let src_idx = src_row + col * 4;
-                let dst_idx = dst_row + (dst_x as usize + col) * 4;
-                Self::blend_premultiplied_rgba_unmasked(
-                    &mut dst_data[dst_idx..dst_idx + 4],
-                    &sprite.pixels[src_idx..src_idx + 4],
-                );
-            }
-
-            if opaque_end > opaque_start {
-                let src_start = src_row + opaque_start * 4;
-                let src_end = src_row + opaque_end * 4;
-                let dst_start = dst_row + (dst_x as usize + opaque_start) * 4;
-                let dst_end = dst_row + (dst_x as usize + opaque_end) * 4;
-                dst_data[dst_start..dst_end].copy_from_slice(&sprite.pixels[src_start..src_end]);
-            }
-
-            let right_partial_start = opaque_end.max(start).min(end);
-            for col in right_partial_start..end {
-                let src_idx = src_row + col * 4;
-                let dst_idx = dst_row + (dst_x as usize + col) * 4;
-                Self::blend_premultiplied_rgba_unmasked(
-                    &mut dst_data[dst_idx..dst_idx + 4],
-                    &sprite.pixels[src_idx..src_idx + 4],
-                );
-            }
-        }
-    }
-
-    #[cfg(feature = "parallel")]
+    /// Blit a sprite through the clip mask into one horizontal band of the
+    /// canvas. The serial compositor calls this with a single full-canvas
+    /// band; the parallel compositor with each Rayon band slice.
     #[allow(clippy::too_many_arguments)]
     fn blit_marker_sprite_masked_in_band(
         band_pixels: &mut [u8],
@@ -2079,7 +2093,10 @@ impl SkiaRenderer {
         }
     }
 
-    #[cfg(feature = "parallel")]
+    /// Blit a fully-visible sprite via its scanline runs into one horizontal
+    /// band of the canvas, skipping the mask. Callers must have passed
+    /// [`Self::can_use_unmasked_marker_scanline_blit`], which guarantees a
+    /// non-negative `dst_x`/`dst_y` and a sprite inside the canvas.
     #[allow(clippy::too_many_arguments)]
     fn blit_marker_sprite_scanlines_unmasked_in_band(
         band_pixels: &mut [u8],
@@ -2352,6 +2369,91 @@ mod tests {
     /// Full-canvas clip, so marker tests exercise the drawing, not the clipping.
     fn whole_canvas(width: f32, height: f32) -> (f32, f32, f32, f32) {
         (0.0, 0.0, width, height)
+    }
+
+    /// The chunking guard fires only when the path would approach tiny-skia's
+    /// one-million-dash refusal, so every path that renders today keeps the
+    /// single-stroke code path.
+    #[test]
+    fn test_dash_chunk_length_guards_only_extreme_paths() {
+        assert_eq!(SkiaRenderer::dash_chunk_length(&[5.0, 5.0], 900.0), None);
+
+        // ~4M px of path: over the 2.5M px guard for a 5-5 dash, and formerly
+        // enough for the dasher to drop the whole series.
+        let chunk = SkiaRenderer::dash_chunk_length(&[5.0, 5.0], 4_000_000.0)
+            .expect("a multi-million-pixel dashed path must be chunked");
+        assert!(chunk > 0.0 && chunk < 4_000_000.0);
+    }
+
+    /// A cut that cannot advance at extreme coordinates must not hang: the
+    /// chunker takes the whole segment when the interpolated cut rounds back
+    /// onto the cursor.
+    #[test]
+    fn test_chunked_dashed_stroke_survives_extreme_coordinates() {
+        let mut renderer = white_canvas(64, 64, 96.0);
+        let mut paint = Paint::default();
+        paint.set_color(Color::BLACK.to_tiny_skia_color());
+        let stroke = Stroke {
+            width: 1.0,
+            ..Stroke::default()
+        };
+        // One f32 step at 1e20 dwarfs the 10px chunk length, so every cut
+        // rounds back onto the cursor.
+        let points = [(1.0e20f32, 0.0f32), (2.0e20, 0.0), (3.0e20, 0.0)];
+        renderer
+            .stroke_dashed_polyline_chunked(&points, &paint, &stroke, vec![5.0, 5.0], 10.0, None)
+            .expect("extreme dashed polyline must terminate");
+    }
+
+    /// Chunked dashed stroking must carry the dash phase across cuts: cutting
+    /// a straight dashed line mid-pattern has to leave the same dashes in the
+    /// same columns as one uncut stroke.
+    #[test]
+    fn test_chunked_dashed_stroke_preserves_dash_phase() {
+        const WIDTH: u32 = 512;
+        const HEIGHT: u32 = 48;
+        let points = [(6.0, 24.0), (300.0, 24.0), (505.0, 24.0)];
+        let color = Color::from_rgb(31, 119, 180);
+
+        let mut reference = white_canvas(WIDTH, HEIGHT, 96.0);
+        reference
+            .draw_polyline(&points, color, 2.0, LineStyle::Dashed)
+            .expect("reference dashed polyline should render");
+        let reference = reference.into_image();
+
+        let mut chunked = white_canvas(WIDTH, HEIGHT, 96.0);
+        let mut paint = Paint::default();
+        paint.set_color(color.to_tiny_skia_color());
+        paint.anti_alias = true;
+        let stroke = Stroke {
+            width: 2.0,
+            line_cap: LineCap::Round,
+            line_join: LineJoin::Round,
+            ..Stroke::default()
+        };
+        let pattern = chunked
+            .scaled_dash_pattern(&LineStyle::Dashed)
+            .expect("dashed style must have a pattern");
+        // 37px chunks cut mid-dash and mid-gap many times over the run.
+        chunked
+            .stroke_dashed_polyline_chunked(&points, &paint, &stroke, pattern, 37.0, None)
+            .expect("chunked dashed polyline should render");
+        let chunked = chunked.into_image();
+
+        let ink_columns = |image: &Image| -> Vec<bool> {
+            (0..WIDTH)
+                .map(|x| (0..HEIGHT).any(|y| pixel(image, x, y)[0] < 250))
+                .collect()
+        };
+        assert!(
+            ink_columns(&reference).iter().filter(|&&on| on).count() > 50,
+            "reference stroke must actually draw dashes"
+        );
+        assert_eq!(
+            ink_columns(&reference),
+            ink_columns(&chunked),
+            "chunk cuts must not move, add, or drop dashes"
+        );
     }
 
     #[cfg(feature = "parallel")]

@@ -863,10 +863,10 @@ impl Plot {
         PlotBuilder::new(
             self,
             PlotInput::ErrorBars {
-                x: PlotData::Static(x),
-                y: PlotData::Static(y),
+                x: PlotData::Static(x.into()),
+                y: PlotData::Static(y.into()),
                 x_errors: None,
-                y_errors: Some(PlotData::Static(y_errors)),
+                y_errors: Some(PlotData::Static(y_errors.into())),
             },
             ErrorBarConfig::default(),
         )
@@ -934,10 +934,10 @@ impl Plot {
         PlotBuilder::new(
             self,
             PlotInput::ErrorBars {
-                x: PlotData::Static(x),
-                y: PlotData::Static(y),
-                x_errors: Some(PlotData::Static(x_errors)),
-                y_errors: Some(PlotData::Static(y_errors)),
+                x: PlotData::Static(x.into()),
+                y: PlotData::Static(y.into()),
+                x_errors: Some(PlotData::Static(x_errors.into())),
+                y_errors: Some(PlotData::Static(y_errors.into())),
             },
             ErrorBarConfig::default(),
         )
@@ -1890,12 +1890,12 @@ impl PlotBuilder<HistogramConfig> {
                         None
                     }
                 };
-                (PlotData::Static(values), prepared)
+                (PlotData::Static(values.into()), prepared)
             }
             // Source-backed values are only known at render time, so they are
             // binned then rather than here.
             PlotInput::SingleSource(source) => (source, None),
-            _ => (PlotData::Static(Vec::new()), None),
+            _ => (PlotData::Static(Vec::new().into()), None),
         };
 
         plot.push_builder_series(series_from_style(
@@ -1920,9 +1920,9 @@ impl PlotBuilder<BoxPlotConfig> {
         } = self;
 
         let data = match input {
-            PlotInput::Single(values) => PlotData::Static(values),
+            PlotInput::Single(values) => PlotData::Static(values.into()),
             PlotInput::SingleSource(source) => source,
-            _ => PlotData::Static(Vec::new()),
+            _ => PlotData::Static(Vec::new().into()),
         };
 
         // Through `add_box_plot_series`, the same door violin and boxen use, so
@@ -1999,13 +1999,13 @@ impl PlotBuilder<ErrorBarConfig> {
                 y_errors,
             } => (x, y, x_errors, y_errors),
             _ => (
-                PlotData::Static(Vec::new()),
-                PlotData::Static(Vec::new()),
+                PlotData::Static(Vec::new().into()),
+                PlotData::Static(Vec::new().into()),
                 None,
                 None,
             ),
         };
-        let y_errors = y_errors.unwrap_or_else(|| PlotData::Static(Vec::new()));
+        let y_errors = y_errors.unwrap_or_else(|| PlotData::Static(Vec::new().into()));
 
         // Whether X error data was supplied is what distinguishes the two error
         // bar series types; `with_xerr()` on the builder attaches X errors to a

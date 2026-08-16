@@ -476,12 +476,18 @@ impl PlotInput {
 /// keeps `line_streaming` and `line` on exactly one code path.
 fn resolve_xy_input(input: &PlotInput, style: &mut SeriesStyle) -> (PlotData, PlotData) {
     match input {
-        PlotInput::XY(x, y) => (PlotData::Static(x.clone()), PlotData::Static(y.clone())),
+        PlotInput::XY(x, y) => (
+            PlotData::Static(x.clone().into()),
+            PlotData::Static(y.clone().into()),
+        ),
         PlotInput::XYSource(x, y) => (x.clone(), y.clone()),
         PlotInput::Single(y) => {
             // Generate x values as indices
             let x: Vec<f64> = (0..y.len()).map(|i| i as f64).collect();
-            (PlotData::Static(x), PlotData::Static(y.clone()))
+            (
+                PlotData::Static(x.into()),
+                PlotData::Static(y.clone().into()),
+            )
         }
         PlotInput::Streaming(stream) => {
             style.streaming_source = Some(stream.clone());
@@ -490,7 +496,10 @@ fn resolve_xy_input(input: &PlotInput, style: &mut SeriesStyle) -> (PlotData, Pl
                 PlotData::Streaming(stream.y().clone()),
             )
         }
-        _ => (PlotData::Static(vec![]), PlotData::Static(vec![])),
+        _ => (
+            PlotData::Static(vec![].into()),
+            PlotData::Static(vec![].into()),
+        ),
     }
 }
 
@@ -2888,7 +2897,7 @@ impl PlotBuilder<crate::plots::basic::BarConfig> {
     fn finalize(self) -> super::Plot {
         let (categories, values) = match &self.input {
             PlotInput::Categorical { categories, values } => {
-                (categories.clone(), PlotData::Static(values.clone()))
+                (categories.clone(), PlotData::Static(values.clone().into()))
             }
             PlotInput::CategoricalSource { categories, values } => {
                 (categories.clone(), values.clone())
@@ -2896,9 +2905,9 @@ impl PlotBuilder<crate::plots::basic::BarConfig> {
             PlotInput::Single(y) => {
                 // Generate category labels as indices
                 let cats: Vec<String> = (0..y.len()).map(|i| i.to_string()).collect();
-                (cats, PlotData::Static(y.clone()))
+                (cats, PlotData::Static(y.clone().into()))
             }
-            _ => (vec![], PlotData::Static(vec![])),
+            _ => (vec![], PlotData::Static(vec![].into())),
         };
 
         self.plot
