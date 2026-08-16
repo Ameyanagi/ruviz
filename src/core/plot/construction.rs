@@ -24,7 +24,7 @@ fn resolve_plot_data<'a>(
     }
 
     let values = match source {
-        PlotData::Static(_) | PlotData::SharedStatic(_) => {
+        PlotData::Static(_) => {
             unreachable!("static data returned before cache lookup")
         }
         PlotData::Temporal(signal) => signal.at(time),
@@ -1424,12 +1424,12 @@ impl Plot {
                     };
                     series.series_type = match &series.series_type {
                         SeriesType::Line { .. } => SeriesType::Line {
-                            x_data: PlotData::Static(snapshot.x().to_vec()),
-                            y_data: PlotData::Static(snapshot.y().to_vec()),
+                            x_data: PlotData::Static(snapshot.x().to_vec().into()),
+                            y_data: PlotData::Static(snapshot.y().to_vec().into()),
                         },
                         SeriesType::Scatter { .. } => SeriesType::Scatter {
-                            x_data: PlotData::Static(snapshot.x().to_vec()),
-                            y_data: PlotData::Static(snapshot.y().to_vec()),
+                            x_data: PlotData::Static(snapshot.x().to_vec().into()),
+                            y_data: PlotData::Static(snapshot.y().to_vec().into()),
                         },
                         _ => unreachable!("live paired source is only used by line/scatter"),
                     };

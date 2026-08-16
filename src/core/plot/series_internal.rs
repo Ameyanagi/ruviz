@@ -36,8 +36,8 @@ impl Plot {
 
         let series = series_from_style(
             SeriesType::Line {
-                x_data: PlotData::Static(x_vec),
-                y_data: PlotData::Static(y_vec),
+                x_data: PlotData::Static(x_vec.into()),
+                y_data: PlotData::Static(y_vec.into()),
             },
             SeriesStyle::default(),
         );
@@ -3609,7 +3609,7 @@ mod category_axis_tests {
 
     fn boxplot_series(plot: Plot, category: &str) -> Plot {
         plot.add_box_plot_series(
-            PlotData::Static(samples()),
+            PlotData::Static(samples().into()),
             BoxPlotConfig::new().category(category),
             crate::core::plot::builder::SeriesStyle::default(),
         )
@@ -3647,7 +3647,7 @@ mod category_axis_tests {
         // series lands beside them rather than on top of the first bar.
         let bars = Plot::new().add_bar_series(
             vec!["a".to_string(), "b".to_string()],
-            PlotData::Static(vec![1.0, 2.0]),
+            PlotData::Static(vec![1.0, 2.0].into()),
             &crate::plots::basic::BarConfig::default(),
             crate::core::plot::builder::SeriesStyle::default(),
         );
@@ -3667,7 +3667,7 @@ mod category_axis_tests {
         // 0..1 axis reading "0, 0.2, ... 1.0" and meaning nothing. It now owns
         // slot 0 with an empty label, so the axis has nothing to write.
         let plot = Plot::new().add_box_plot_series(
-            PlotData::Static(samples()),
+            PlotData::Static(samples().into()),
             BoxPlotConfig::new(),
             crate::core::plot::builder::SeriesStyle::default(),
         );
@@ -3742,7 +3742,7 @@ mod category_axis_tests {
     #[test]
     fn an_explicit_x_position_overrides_the_automatic_slot() {
         let plot = Plot::new().add_box_plot_series(
-            PlotData::Static(samples()),
+            PlotData::Static(samples().into()),
             BoxPlotConfig::new().category("only").x_position(3.0),
             crate::core::plot::builder::SeriesStyle::default(),
         );

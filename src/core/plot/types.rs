@@ -1358,12 +1358,12 @@ impl SeriesType {
     pub fn resolve(&self, time: f64) -> SeriesType {
         match self {
             SeriesType::Line { x_data, y_data } => SeriesType::Line {
-                x_data: PlotData::Static(x_data.resolve(time)),
-                y_data: PlotData::Static(y_data.resolve(time)),
+                x_data: PlotData::Static(x_data.resolve(time).into()),
+                y_data: PlotData::Static(y_data.resolve(time).into()),
             },
             SeriesType::Scatter { x_data, y_data } => SeriesType::Scatter {
-                x_data: PlotData::Static(x_data.resolve(time)),
-                y_data: PlotData::Static(y_data.resolve(time)),
+                x_data: PlotData::Static(x_data.resolve(time).into()),
+                y_data: PlotData::Static(y_data.resolve(time).into()),
             },
             SeriesType::Bar {
                 categories,
@@ -1371,7 +1371,7 @@ impl SeriesType {
                 config,
             } => SeriesType::Bar {
                 categories: categories.clone(),
-                values: PlotData::Static(values.resolve(time)),
+                values: PlotData::Static(values.resolve(time).into()),
                 config: config.clone(),
             },
             SeriesType::ErrorBars {
@@ -1379,9 +1379,9 @@ impl SeriesType {
                 y_data,
                 y_errors,
             } => SeriesType::ErrorBars {
-                x_data: PlotData::Static(x_data.resolve(time)),
-                y_data: PlotData::Static(y_data.resolve(time)),
-                y_errors: PlotData::Static(y_errors.resolve(time)),
+                x_data: PlotData::Static(x_data.resolve(time).into()),
+                y_data: PlotData::Static(y_data.resolve(time).into()),
+                y_errors: PlotData::Static(y_errors.resolve(time).into()),
             },
             SeriesType::ErrorBarsXY {
                 x_data,
@@ -1389,10 +1389,10 @@ impl SeriesType {
                 x_errors,
                 y_errors,
             } => SeriesType::ErrorBarsXY {
-                x_data: PlotData::Static(x_data.resolve(time)),
-                y_data: PlotData::Static(y_data.resolve(time)),
-                x_errors: PlotData::Static(x_errors.resolve(time)),
-                y_errors: PlotData::Static(y_errors.resolve(time)),
+                x_data: PlotData::Static(x_data.resolve(time).into()),
+                y_data: PlotData::Static(y_data.resolve(time).into()),
+                x_errors: PlotData::Static(x_errors.resolve(time).into()),
+                y_errors: PlotData::Static(y_errors.resolve(time).into()),
             },
             SeriesType::Histogram {
                 data,
@@ -1404,13 +1404,13 @@ impl SeriesType {
                     crate::plots::histogram::calculate_histogram(&resolved_data, config).ok()
                 });
                 SeriesType::Histogram {
-                    data: PlotData::Static(resolved_data),
+                    data: PlotData::Static(resolved_data.into()),
                     config: config.clone(),
                     prepared,
                 }
             }
             SeriesType::BoxPlot { data, config } => SeriesType::BoxPlot {
-                data: PlotData::Static(data.resolve(time)),
+                data: PlotData::Static(data.resolve(time).into()),
                 config: config.clone(),
             },
             // Other types don't use PlotData - clone as-is
@@ -1824,8 +1824,8 @@ mod reactive_style_tests {
     fn bare_series() -> PlotSeries {
         PlotSeries {
             series_type: SeriesType::Line {
-                x_data: PlotData::Static(vec![0.0, 1.0]),
-                y_data: PlotData::Static(vec![0.0, 1.0]),
+                x_data: PlotData::Static(vec![0.0, 1.0].into()),
+                y_data: PlotData::Static(vec![0.0, 1.0].into()),
             },
             streaming_source: None,
             label: None,

@@ -822,10 +822,10 @@ mod tests {
         else {
             panic!("prepared shared-static series should remain a line");
         };
-        let super::super::PlotData::SharedStatic(prepared_x) = x_data else {
+        let super::super::PlotData::Static(prepared_x) = x_data else {
             panic!("prepared x data should stay shared");
         };
-        let super::super::PlotData::SharedStatic(prepared_y) = y_data else {
+        let super::super::PlotData::Static(prepared_y) = y_data else {
             panic!("prepared y data should stay shared");
         };
         assert!(Arc::ptr_eq(&x, prepared_x));

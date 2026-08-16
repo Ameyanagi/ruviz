@@ -1607,8 +1607,12 @@ impl SkiaRenderer {
             .min(canvas_height as usize)
     }
 
-    /// The feature-off path deliberately stays as the original point-ordered
-    /// compositor. It is also the byte-exact oracle for the parallel test.
+    /// The feature-off path keeps the original point-ordered traversal and is
+    /// the ordering oracle for the parallel test: it shares the band blitters
+    /// with the parallel path (called with one full-canvas band), so the
+    /// equality test exercises band decomposition and submission order rather
+    /// than the pixel loops themselves — those are covered by the golden
+    /// image suite.
     fn draw_markers_with_sprite_compositor_serial(
         &mut self,
         points: &[Point2f],
@@ -1625,6 +1629,8 @@ impl SkiaRenderer {
         let clip_top = clip_rect.1.floor() as i32 - 1;
         let clip_right = (clip_rect.0 + clip_rect.2).ceil() as i32 + 1;
         let clip_bottom = (clip_rect.1 + clip_rect.3).ceil() as i32 + 1;
+        let canvas_width = self.width as usize;
+        let canvas_height = self.height as usize;
 
         self.note_marker_sprite_compositor();
 
@@ -1660,23 +1666,30 @@ impl SkiaRenderer {
                 dst_x,
                 dst_y,
                 clip_rect,
-                0,
-                0,
-                self.width as i32,
-                self.height as i32,
+                canvas_width as i32,
+                canvas_height as i32,
             ) {
                 self.note_marker_scanline_blit();
-                self.blit_marker_sprite_scanlines_unmasked(&sprite, dst_x, dst_y);
-            } else {
-                self.blit_marker_sprite_region(
+                Self::blit_marker_sprite_scanlines_unmasked_in_band(
+                    self.pixmap.data_mut(),
+                    canvas_width,
+                    0,
+                    canvas_height,
                     &sprite,
                     dst_x,
                     dst_y,
-                    Some(mask.as_ref()),
+                );
+            } else {
+                Self::blit_marker_sprite_masked_in_band(
+                    self.pixmap.data_mut(),
+                    canvas_width,
+                    canvas_height,
                     0,
-                    0,
-                    self.width as i32,
-                    self.height as i32,
+                    canvas_height,
+                    &sprite,
+                    dst_x,
+                    dst_y,
+                    mask.data(),
                 );
             }
         }
@@ -1809,8 +1822,6 @@ impl SkiaRenderer {
                         dst_x,
                         dst_y,
                         clip_rect,
-                        0,
-                        0,
                         canvas_width_i32,
                         canvas_height_i32,
                     ) {
@@ -1862,85 +1873,13 @@ impl SkiaRenderer {
         (base, phase as u8)
     }
 
-    fn blit_marker_sprite_region(
-        &mut self,
-        sprite: &MarkerSprite,
-        dst_x: i32,
-        dst_y: i32,
-        mask: Option<&Mask>,
-        region_left: i32,
-        region_top: i32,
-        region_right: i32,
-        region_bottom: i32,
-    ) {
-        let src_width = sprite.width as i32;
-        let src_height = sprite.height as i32;
-
-        let copy_left = dst_x.max(region_left).max(0);
-        let copy_top = dst_y.max(region_top).max(0);
-        let copy_right = (dst_x + src_width).min(region_right).min(self.width as i32);
-        let copy_bottom = (dst_y + src_height)
-            .min(region_bottom)
-            .min(self.height as i32);
-
-        if copy_left >= copy_right || copy_top >= copy_bottom {
-            return;
-        }
-
-        let src_offset_x = (copy_left - dst_x) as usize;
-        let src_offset_y = (copy_top - dst_y) as usize;
-        let copy_width = (copy_right - copy_left) as usize;
-        let copy_height = (copy_bottom - copy_top) as usize;
-
-        let sprite_stride = sprite.width as usize * 4;
-        let canvas_stride = self.width as usize * 4;
-        let mask_stride = self.width as usize;
-        let mask_data = mask.map(Mask::data);
-        let dst_data = self.pixmap.data_mut();
-
-        for row in 0..copy_height {
-            let src_row = (src_offset_y + row) * sprite_stride + src_offset_x * 4;
-            let dst_row = (copy_top as usize + row) * canvas_stride + copy_left as usize * 4;
-            let mask_row = (copy_top as usize + row) * mask_stride + copy_left as usize;
-
-            for col in 0..copy_width {
-                let src_idx = src_row + col * 4;
-                let src_a = sprite.pixels[src_idx + 3];
-                if src_a == 0 {
-                    continue;
-                }
-
-                let dst_idx = dst_row + col * 4;
-                if let Some(mask_data) = mask_data {
-                    let mask_alpha = mask_data[mask_row + col];
-                    if mask_alpha == 0 {
-                        continue;
-                    }
-
-                    Self::blend_premultiplied_rgba(
-                        &mut dst_data[dst_idx..dst_idx + 4],
-                        &sprite.pixels[src_idx..src_idx + 4],
-                        mask_alpha,
-                    );
-                } else {
-                    Self::blend_premultiplied_rgba_unmasked(
-                        &mut dst_data[dst_idx..dst_idx + 4],
-                        &sprite.pixels[src_idx..src_idx + 4],
-                    );
-                }
-            }
-        }
-    }
-
     fn can_use_unmasked_marker_scanline_blit(
         sprite: &MarkerSprite,
         dst_x: i32,
         dst_y: i32,
         clip_rect: (f32, f32, f32, f32),
-        region_left: i32,
-        region_top: i32,
-        region_right: i32,
-        region_bottom: i32,
+        canvas_width: i32,
+        canvas_height: i32,
     ) -> bool {
         if sprite.scanlines.is_none() {
             return false;
@@ -1955,71 +1894,15 @@ impl SkiaRenderer {
             && dst_y >= clip_top
             && dst_x + sprite.width as i32 <= clip_right
             && dst_y + sprite.height as i32 <= clip_bottom
-            && dst_x >= region_left
-            && dst_y >= region_top
-            && dst_x + sprite.width as i32 <= region_right
-            && dst_y + sprite.height as i32 <= region_bottom
+            && dst_x >= 0
+            && dst_y >= 0
+            && dst_x + sprite.width as i32 <= canvas_width
+            && dst_y + sprite.height as i32 <= canvas_height
     }
 
-    fn blit_marker_sprite_scanlines_unmasked(
-        &mut self,
-        sprite: &MarkerSprite,
-        dst_x: i32,
-        dst_y: i32,
-    ) {
-        let Some(scanlines) = sprite.scanlines.as_ref() else {
-            return;
-        };
-
-        let sprite_stride = sprite.width as usize * 4;
-        let canvas_stride = self.width as usize * 4;
-        let dst_data = self.pixmap.data_mut();
-
-        for (row_index, scanline) in scanlines.iter().enumerate() {
-            if scanline.end_x <= scanline.start_x {
-                continue;
-            }
-
-            let row_y = dst_y as usize + row_index;
-            let src_row = row_index * sprite_stride;
-            let dst_row = row_y * canvas_stride;
-
-            let start = scanline.start_x as usize;
-            let end = scanline.end_x as usize;
-            let opaque_start = scanline.opaque_start_x as usize;
-            let opaque_end = scanline.opaque_end_x as usize;
-
-            let left_partial_end = opaque_start.max(start).min(end);
-            for col in start..left_partial_end {
-                let src_idx = src_row + col * 4;
-                let dst_idx = dst_row + (dst_x as usize + col) * 4;
-                Self::blend_premultiplied_rgba_unmasked(
-                    &mut dst_data[dst_idx..dst_idx + 4],
-                    &sprite.pixels[src_idx..src_idx + 4],
-                );
-            }
-
-            if opaque_end > opaque_start {
-                let src_start = src_row + opaque_start * 4;
-                let src_end = src_row + opaque_end * 4;
-                let dst_start = dst_row + (dst_x as usize + opaque_start) * 4;
-                let dst_end = dst_row + (dst_x as usize + opaque_end) * 4;
-                dst_data[dst_start..dst_end].copy_from_slice(&sprite.pixels[src_start..src_end]);
-            }
-
-            let right_partial_start = opaque_end.max(start).min(end);
-            for col in right_partial_start..end {
-                let src_idx = src_row + col * 4;
-                let dst_idx = dst_row + (dst_x as usize + col) * 4;
-                Self::blend_premultiplied_rgba_unmasked(
-                    &mut dst_data[dst_idx..dst_idx + 4],
-                    &sprite.pixels[src_idx..src_idx + 4],
-                );
-            }
-        }
-    }
-
-    #[cfg(feature = "parallel")]
+    /// Blit a sprite through the clip mask into one horizontal band of the
+    /// canvas. The serial compositor calls this with a single full-canvas
+    /// band; the parallel compositor with each Rayon band slice.
     #[allow(clippy::too_many_arguments)]
     fn blit_marker_sprite_masked_in_band(
         band_pixels: &mut [u8],
@@ -2079,7 +1962,10 @@ impl SkiaRenderer {
         }
     }
 
-    #[cfg(feature = "parallel")]
+    /// Blit a fully-visible sprite via its scanline runs into one horizontal
+    /// band of the canvas, skipping the mask. Callers must have passed
+    /// [`Self::can_use_unmasked_marker_scanline_blit`], which guarantees a
+    /// non-negative `dst_x`/`dst_y` and a sprite inside the canvas.
     #[allow(clippy::too_many_arguments)]
     fn blit_marker_sprite_scanlines_unmasked_in_band(
         band_pixels: &mut [u8],
