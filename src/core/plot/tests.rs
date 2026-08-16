@@ -429,6 +429,7 @@ fn test_plot_series_static_source_helpers_materialize_values() {
         inset_layout: None,
         group_id: None,
         resolved_radar_colors: None,
+        visible: true,
     };
 
     series.props.color.set(Color::RED.into());

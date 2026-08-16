@@ -48,10 +48,10 @@ pub(crate) use layout::{LayoutMeasurements, ResolvedLayout};
 #[allow(deprecated)]
 pub use legend::LegendFrame; // Deprecated alias for backward compatibility
 pub use legend::{
-    LEGEND_OCCUPANCY_RESOLUTION, Legend, LegendAnchor, LegendEntryLayout, LegendItem,
-    LegendItemType, LegendLayout, LegendOccupancy, LegendPlacement, LegendPosition, LegendSpacing,
-    LegendSpacingPixels, LegendStyle, LegendTitleLayout, estimated_label_width, find_best_position,
-    layout_legend, measure_legend_size,
+    DIMMED_LEGEND_ALPHA, LEGEND_OCCUPANCY_RESOLUTION, Legend, LegendAnchor, LegendEntryLayout,
+    LegendHitRegion, LegendItem, LegendItemType, LegendLayout, LegendOccupancy, LegendPlacement,
+    LegendPosition, LegendSpacing, LegendSpacingPixels, LegendStyle, LegendTitleLayout,
+    estimated_label_width, find_best_position, layout_legend, measure_legend_size,
 };
 pub use plot::{
     AlphaMode, AnnotationId, BackendFallbackReason, BackendOperation, BackendResolution,

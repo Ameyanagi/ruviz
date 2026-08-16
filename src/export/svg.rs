@@ -2361,13 +2361,25 @@ impl SvgRenderer {
 
         for entry in &layout.entries {
             let item = &items[entry.item_index];
+            let faded;
+            let (item, text_color) = if item.dimmed {
+                faded = item.faded(crate::core::legend::DIMMED_LEGEND_ALPHA);
+                (
+                    &faded,
+                    legend
+                        .text_color
+                        .scale_alpha(crate::core::legend::DIMMED_LEGEND_ALPHA),
+                )
+            } else {
+                (item, legend.text_color)
+            };
             self.draw_legend_handle(item, entry.handle_x, entry.handle_center_y, &layout.spacing);
             self.draw_text(
                 &item.label,
                 entry.label_x,
                 entry.label_top_y,
                 layout.font_size,
-                legend.text_color,
+                text_color,
             )?;
         }
 

@@ -694,6 +694,10 @@ pub(crate) struct PlotSeries {
     pub(super) group_id: Option<usize>,
     /// Frame-resolved colors for multi-series radar payloads.
     pub(super) resolved_radar_colors: Option<Arc<[Color]>>,
+    /// Whether the series is drawn. A hidden series keeps its index, its
+    /// palette slot, and a dimmed legend entry; it is skipped by rendering
+    /// and hit testing and does not affect axis bounds.
+    pub(crate) visible: bool,
 }
 
 impl PlotSeries {
@@ -819,6 +823,8 @@ impl PlotSeries {
             color,
             item_type,
             has_error_bars,
+            series_indices: Vec::new(),
+            dimmed: !self.visible,
         })
     }
 
@@ -859,6 +865,8 @@ impl PlotSeries {
                                 edge_color: Some(edge_color),
                             },
                             has_error_bars: false,
+                            series_indices: Vec::new(),
+                            dimmed: !self.visible,
                         }
                     })
                     .collect()
@@ -918,6 +926,7 @@ impl PlotSeries {
             inset_layout: self.inset_layout,
             group_id: self.group_id,
             resolved_radar_colors: self.resolved_radar_colors.clone(),
+            visible: self.visible,
         }
     }
 
@@ -1838,6 +1847,7 @@ mod reactive_style_tests {
             inset_layout: None,
             group_id: None,
             resolved_radar_colors: None,
+            visible: true,
         }
     }
 

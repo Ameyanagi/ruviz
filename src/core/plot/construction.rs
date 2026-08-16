@@ -212,6 +212,21 @@ impl Plot {
         InteractivePlotSession::new(self.prepare())
     }
 
+    /// Show or hide a series by index, in the order series were added.
+    ///
+    /// A hidden series keeps its palette slot and a dimmed legend entry, is
+    /// skipped by rendering and hit testing, and does not affect axis
+    /// bounds. Out-of-range indices are ignored. For toggling inside a live
+    /// view, use
+    /// [`InteractivePlotSession::set_series_visible`](crate::core::InteractivePlotSession::set_series_visible)
+    /// instead, which re-renders without rebuilding the plot.
+    pub fn series_visible(mut self, series_index: usize, visible: bool) -> Self {
+        if let Some(series) = self.series_mgr.series.get_mut(series_index) {
+            series.visible = visible;
+        }
+        self
+    }
+
     /// Create a new Plot with a preset style
     ///
     /// # Example
@@ -298,6 +313,20 @@ impl Plot {
         );
     }
 
+    /// The label a series presents in the legend: its own, or — for a series
+    /// created inside `Plot::group(...)` without one — its group's label.
+    pub(crate) fn effective_series_label(&self, series_index: usize) -> Option<String> {
+        let series = self.series_mgr.series.get(series_index)?;
+        if let Some(label) = &series.label {
+            return Some(label.clone());
+        }
+        let group_id = series.group_id?;
+        self.series_groups
+            .iter()
+            .find(|group| group.id == group_id)
+            .and_then(|group| group.label.clone())
+    }
+
     pub(super) fn collect_legend_items(&self) -> Vec<LegendItem> {
         let mut legend_items = Vec::new();
         let mut seen_group_ids = HashSet::new();
@@ -325,17 +354,37 @@ impl Plot {
                 };
 
                 let default_color = self.display.theme.get_color(palette_slot);
-                if let Some(item) = series.to_legend_item_with_label(
+                if let Some(mut item) = series.to_legend_item_with_label(
                     label.to_string(),
                     default_color,
                     &self.display.theme,
                 ) {
+                    // The entry stands for the whole group, so it carries
+                    // every member and dims only when the group is hidden.
+                    let members: Vec<usize> = self
+                        .series_mgr
+                        .series
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, s)| s.group_id == Some(group_id))
+                        .map(|(i, _)| i)
+                        .collect();
+                    item.dimmed = members.iter().all(|&i| !self.series_mgr.series[i].visible);
+                    item.series_indices = members;
                     legend_items.push(item);
                 }
                 continue;
             }
 
-            legend_items.extend(series.to_legend_items(palette_slot, &self.display.theme));
+            legend_items.extend(
+                series
+                    .to_legend_items(palette_slot, &self.display.theme)
+                    .into_iter()
+                    .map(|mut item| {
+                        item.series_indices = vec![idx];
+                        item
+                    }),
+            );
         }
 
         // Labelled fills (confidence bands and friends) are annotations, not series,

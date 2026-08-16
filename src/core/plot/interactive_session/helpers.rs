@@ -766,26 +766,60 @@ pub(super) fn draw_tooltip_overlay(pixels: &mut [u8], size_px: (u32, u32), toolt
     }
 }
 
-pub(super) fn tooltip_from_hit(hit: &HitResult) -> TooltipState {
+/// Format one data coordinate for the tooltip: three decimals in the range
+/// where they are readable, scientific notation outside it. A soft-X-ray
+/// value of 4.2e-5 must never display as `0.000`.
+pub(super) fn format_tooltip_value(value: f64) -> String {
+    if value != 0.0 && (value.abs() >= 1e5 || value.abs() < 1e-3) {
+        format!("{value:.3e}")
+    } else {
+        format!("{value:.3}")
+    }
+}
+
+pub(super) fn tooltip_from_hit(plot: &Plot, hit: &HitResult) -> TooltipState {
     match hit {
         HitResult::SeriesPoint {
+            series_index,
             screen_position,
             data_position,
             ..
-        } => TooltipState {
-            content: format!("x={:.3}, y={:.3}", data_position.x, data_position.y),
-            position_px: *screen_position,
-        },
+        } => {
+            let coordinates = format!(
+                "x={}, y={}",
+                format_tooltip_value(data_position.x),
+                format_tooltip_value(data_position.y)
+            );
+            let content = match plot.effective_series_label(*series_index) {
+                Some(label) => format!("{label}: {coordinates}"),
+                None => coordinates,
+            };
+            TooltipState {
+                content,
+                position_px: *screen_position,
+            }
+        }
         HitResult::HeatmapCell {
+            series_index,
             screen_rect,
             row,
             col,
             value,
-            ..
-        } => TooltipState {
-            content: format!("row={}, col={}, value={:.3}", row, col, value),
-            position_px: screen_rect.max,
-        },
+        } => {
+            let cell = format!(
+                "row={}, col={}, value={}",
+                row,
+                col,
+                format_tooltip_value(*value)
+            );
+            TooltipState {
+                content: match plot.effective_series_label(*series_index) {
+                    Some(label) => format!("{label}: {cell}"),
+                    None => cell,
+                },
+                position_px: screen_rect.max,
+            }
+        }
         HitResult::None => TooltipState {
             content: String::new(),
             position_px: ViewportPoint::default(),

@@ -57,6 +57,7 @@ import {
   type RadarSeriesSnapshot,
   type RuntimeCapabilities,
   type ScatterSeriesStyle,
+  type SeriesHit,
   type SeriesStyleSnapshot,
   type SessionMode,
   type SineSignalOptions,
@@ -129,6 +130,7 @@ export type {
   RadarSeriesSnapshot,
   RuntimeCapabilities,
   ScatterSeriesStyle,
+  SeriesHit,
   SeriesStyleSnapshot,
   SessionMode,
   SineSignalOptions,
@@ -2122,6 +2124,57 @@ export class CanvasSession {
     });
   }
 
+  /** The series data point under a canvas pixel, or `null`. */
+  hitAt(x: number, y: number): SeriesHit | null {
+    return this.#withAttachedPlotResult(() => {
+      const raw = this.#rawSession.hit_at(x, y);
+      if (raw === null || raw === undefined) {
+        return null;
+      }
+      const hit: SeriesHit = {
+        seriesIndex: raw.series_index,
+        seriesLabel: raw.series_label ?? null,
+        pointIndex: raw.point_index,
+        dataX: raw.data_x,
+        dataY: raw.data_y,
+        distancePx: raw.distance_px,
+      };
+      raw.free();
+      return hit;
+    });
+  }
+
+  /** The index of the series behind a legend entry at a canvas pixel, or `null`. */
+  legendEntryAt(x: number, y: number): number | null {
+    const index = this.#withAttachedPlotResult(() => this.#rawSession.legend_entry_at(x, y));
+    return index === null || index < 0 ? null : index;
+  }
+
+  seriesCount(): number {
+    return this.#withAttachedPlotResult(() => this.#rawSession.series_count()) ?? 0;
+  }
+
+  seriesLabel(seriesIndex: number): string | null {
+    return this.#withAttachedPlotResult(() => this.#rawSession.series_label(seriesIndex) ?? null);
+  }
+
+  seriesVisible(seriesIndex: number): boolean {
+    return this.#withAttachedPlotResult(() => this.#rawSession.series_visible(seriesIndex)) ?? true;
+  }
+
+  /**
+   * Show or hide a series and re-render; the legend entry stays, dimmed.
+   * A grouped series toggles with its group. Returns `false` when the index
+   * is out of range or no plot is attached.
+   */
+  setSeriesVisible(seriesIndex: number, visible: boolean): boolean {
+    return (
+      this.#withAttachedPlotResult(() =>
+        this.#rawSession.set_series_visible(seriesIndex, visible),
+      ) ?? false
+    );
+  }
+
   async exportPng(): Promise<Uint8Array> {
     const result = this.#withAttachedPlotResult(() => this.#rawSession.export_png());
     if (result === null) {
@@ -2381,6 +2434,95 @@ export class WorkerSession {
     }
 
     this.#post("wheel", { deltaY, x, y });
+  }
+
+  /**
+   * The series data point under a canvas pixel, or `null`. Asynchronous
+   * because a worker session answers from the worker; the main-thread
+   * fallback resolves immediately.
+   */
+  async hitAt(x: number, y: number): Promise<SeriesHit | null> {
+    if (this.#fallbackSession) {
+      return this.#fallbackSession.hitAt(x, y);
+    }
+
+    if (!this.#canDispatchPlotCommand()) {
+      return null;
+    }
+
+    const payload = await this.#request("hitAt", { x, y });
+    return payload as SeriesHit | null;
+  }
+
+  /** The index of the series behind a legend entry at a canvas pixel, or `null`. */
+  async legendEntryAt(x: number, y: number): Promise<number | null> {
+    if (this.#fallbackSession) {
+      return this.#fallbackSession.legendEntryAt(x, y);
+    }
+
+    if (!this.#canDispatchPlotCommand()) {
+      return null;
+    }
+
+    const payload = await this.#request("legendEntryAt", { x, y });
+    return payload as number | null;
+  }
+
+  async seriesCount(): Promise<number> {
+    if (this.#fallbackSession) {
+      return this.#fallbackSession.seriesCount();
+    }
+
+    if (!this.#canDispatchPlotCommand()) {
+      return 0;
+    }
+
+    const payload = await this.#request("seriesCount");
+    return payload as number;
+  }
+
+  async seriesLabel(seriesIndex: number): Promise<string | null> {
+    if (this.#fallbackSession) {
+      return this.#fallbackSession.seriesLabel(seriesIndex);
+    }
+
+    if (!this.#canDispatchPlotCommand()) {
+      return null;
+    }
+
+    const payload = await this.#request("seriesLabel", { seriesIndex });
+    return payload as string | null;
+  }
+
+  async seriesVisible(seriesIndex: number): Promise<boolean> {
+    if (this.#fallbackSession) {
+      return this.#fallbackSession.seriesVisible(seriesIndex);
+    }
+
+    if (!this.#canDispatchPlotCommand()) {
+      return true;
+    }
+
+    const payload = await this.#request("seriesVisible", { seriesIndex });
+    return payload as boolean;
+  }
+
+  /**
+   * Show or hide a series and re-render; the legend entry stays, dimmed.
+   * A grouped series toggles with its group. Resolves `false` when the
+   * index is out of range or no plot is attached.
+   */
+  async setSeriesVisible(seriesIndex: number, visible: boolean): Promise<boolean> {
+    if (this.#fallbackSession) {
+      return this.#fallbackSession.setSeriesVisible(seriesIndex, visible);
+    }
+
+    if (!this.#canDispatchPlotCommand()) {
+      return false;
+    }
+
+    const payload = await this.#request("setSeriesVisible", { seriesIndex, visible });
+    return payload as boolean;
   }
 
   async exportPng(): Promise<Uint8Array> {

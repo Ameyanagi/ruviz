@@ -214,6 +214,12 @@ pub struct LegendItem {
     pub item_type: LegendItemType,
     /// Whether this series has Y error bars (shown as vertical error bar in legend)
     pub has_error_bars: bool,
+    /// Indices of the plot series this entry stands for: one for a plain
+    /// series, several for a grouped entry, none for annotation entries.
+    pub series_indices: Vec<usize>,
+    /// Draw the entry faded — the series it stands for is hidden, but the
+    /// entry stays clickable so the user can bring the series back.
+    pub dimmed: bool,
 }
 
 /// How the legend item should be visually represented
@@ -268,6 +274,8 @@ impl LegendItem {
             color,
             item_type: LegendItemType::Line { style, width },
             has_error_bars: false,
+            series_indices: Vec::new(),
+            dimmed: false,
         }
     }
 
@@ -292,6 +300,8 @@ impl LegendItem {
             color,
             item_type: LegendItemType::Scatter { marker, size, edge },
             has_error_bars: false,
+            series_indices: Vec::new(),
+            dimmed: false,
         }
     }
 
@@ -339,6 +349,8 @@ impl LegendItem {
                 marker_edge,
             },
             has_error_bars: false,
+            series_indices: Vec::new(),
+            dimmed: false,
         }
     }
 
@@ -361,6 +373,8 @@ impl LegendItem {
             color,
             item_type: LegendItemType::Bar { edge },
             has_error_bars: false,
+            series_indices: Vec::new(),
+            dimmed: false,
         }
     }
 
@@ -383,6 +397,8 @@ impl LegendItem {
             color,
             item_type: LegendItemType::Histogram { edge },
             has_error_bars: false,
+            series_indices: Vec::new(),
+            dimmed: false,
         }
     }
 
@@ -393,6 +409,8 @@ impl LegendItem {
             color,
             item_type: LegendItemType::Area { edge_color },
             has_error_bars: false,
+            series_indices: Vec::new(),
+            dimmed: false,
         }
     }
 
@@ -403,6 +421,8 @@ impl LegendItem {
             color,
             item_type: LegendItemType::ErrorBar,
             has_error_bars: true, // Error bar type always has error bars
+            series_indices: Vec::new(),
+            dimmed: false,
         }
     }
 
@@ -414,10 +434,52 @@ impl LegendItem {
             color,
             item_type: LegendItemType::Bar { edge: None },
             has_error_bars: false,
+            series_indices: Vec::new(),
+            dimmed: false,
         }
     }
 
     /// Set whether this legend item should show error bars
+    /// A copy with every color's alpha scaled, used to draw the entry of a
+    /// hidden series faded while keeping its shape recognizable.
+    pub fn faded(&self, factor: f32) -> Self {
+        let fade_edge = |edge: Option<(Color, f32)>| edge.map(|(c, w)| (c.scale_alpha(factor), w));
+        let mut item = self.clone();
+        item.color = item.color.scale_alpha(factor);
+        item.item_type = match item.item_type {
+            LegendItemType::Line { style, width } => LegendItemType::Line { style, width },
+            LegendItemType::Scatter { marker, size, edge } => LegendItemType::Scatter {
+                marker,
+                size,
+                edge: fade_edge(edge),
+            },
+            LegendItemType::LineMarker {
+                line_style,
+                line_width,
+                marker,
+                marker_size,
+                marker_edge,
+            } => LegendItemType::LineMarker {
+                line_style,
+                line_width,
+                marker,
+                marker_size,
+                marker_edge: fade_edge(marker_edge),
+            },
+            LegendItemType::Bar { edge } => LegendItemType::Bar {
+                edge: fade_edge(edge),
+            },
+            LegendItemType::Area { edge_color } => LegendItemType::Area {
+                edge_color: edge_color.map(|c| c.scale_alpha(factor)),
+            },
+            LegendItemType::Histogram { edge } => LegendItemType::Histogram {
+                edge: fade_edge(edge),
+            },
+            LegendItemType::ErrorBar => LegendItemType::ErrorBar,
+        };
+        item
+    }
+
     pub fn with_error_bars(mut self, has_error_bars: bool) -> Self {
         self.has_error_bars = has_error_bars;
         self
@@ -1141,12 +1203,40 @@ pub struct LegendLayout {
     pub title: Option<LegendTitleLayout>,
     /// One entry per item that fits inside the frame, in draw order.
     pub entries: Vec<LegendEntryLayout>,
+    /// Horizontal room one entry occupies (handle through label), used to
+    /// derive per-entry hit rectangles.
+    pub entry_width: f32,
+}
+
+/// Alpha factor both backends draw a dimmed (hidden-series) legend entry at.
+pub const DIMMED_LEGEND_ALPHA: f32 = 0.35;
+
+/// Clickable screen region of one legend entry, kept by the interactive
+/// session so pointer positions can be resolved back to series.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LegendHitRegion {
+    /// `(x, y, width, height)` in the same device pixels as the render target.
+    pub rect: (f32, f32, f32, f32),
+    /// The plot series this entry stands for; empty for annotation entries.
+    pub series_indices: Vec<usize>,
 }
 
 impl LegendLayout {
     /// Frame size as `(width, height)`.
     pub fn size(&self) -> (f32, f32) {
         (self.width, self.height)
+    }
+
+    /// Clickable rectangle of one entry: the full row band from the handle's
+    /// left edge through the entry's column width.
+    pub fn entry_hit_rect(&self, entry: &LegendEntryLayout) -> (f32, f32, f32, f32) {
+        let row_pitch = self.font_size + self.spacing.label_spacing;
+        (
+            entry.handle_x,
+            entry.handle_center_y - row_pitch / 2.0,
+            self.entry_width,
+            row_pitch,
+        )
     }
 
     /// Frame bounds as `(left, top, right, bottom)`.
@@ -1331,6 +1421,19 @@ pub fn layout_legend(
     } else {
         entry_width
     };
+    // A reserved band can squeeze the column below the natural entry width,
+    // but labels are drawn unclipped past the column edge. A single column
+    // keeps its full visible extent clickable; with several columns the hit
+    // width may extend through the unowned gutter but must stop before the
+    // next column's handle — text overlapping the neighbor's entry is
+    // genuinely ambiguous, and the neighbor owns those pixels.
+    let entry_hit_width = if columns == 1 {
+        column_width.max(entry_width)
+    } else {
+        entry_width
+            .min(column_width + spacing.column_spacing)
+            .max(column_width)
+    };
 
     let mut row_center_y = y + spacing.border_pad + legend.font_size / 2.0;
     let title = legend.title.is_some().then(|| LegendTitleLayout {
@@ -1378,6 +1481,7 @@ pub fn layout_legend(
         font_size: legend.font_size,
         title,
         entries,
+        entry_width: entry_hit_width,
     })
 }
 
@@ -1649,6 +1753,98 @@ mod tests {
         for entry in &layout.entries {
             assert!(entry.handle_center_y <= 60.0);
         }
+    }
+
+    /// A squeezed multi-column legend may claim the gutter between columns
+    /// for clicks, but never the next column's own space.
+    #[test]
+    fn squeezed_multi_column_hit_width_stops_before_the_neighbor() {
+        let legend = Legend {
+            columns: 2,
+            ..Legend::new()
+        };
+        let items: Vec<_> = (0..2)
+            .map(|index| {
+                LegendItem::line(
+                    format!("a rather long series label {index}"),
+                    Color::BLUE,
+                    LineStyle::Solid,
+                    1.0,
+                )
+            })
+            .collect();
+
+        let squeezed = layout_legend(
+            &items,
+            &legend,
+            (0.0, 0.0, 400.0, 300.0),
+            LegendPlacement {
+                reserved: Some((10.0, 10.0, 110.0, 100.0)),
+                occupancy: None,
+            },
+            six_px_per_char,
+        )
+        .expect("squeezed multi-column layout");
+
+        assert_eq!(squeezed.entries.len(), 2);
+        let first = &squeezed.entries[0];
+        let second = &squeezed.entries[1];
+        assert!(second.handle_x > first.handle_x, "two columns expected");
+        let (x, _, w, _) = squeezed.entry_hit_rect(first);
+        assert!(
+            x + w <= second.handle_x + 1e-3,
+            "the first column's hit width ({}..{}) must stop before the next handle at {}",
+            x,
+            x + w,
+            second.handle_x
+        );
+        assert!(
+            w >= squeezed.entry_width - 1e-3,
+            "hit width should use the entry width"
+        );
+    }
+
+    /// A reserved band narrower than the natural entry width draws labels
+    /// past the column edge, so a single column's clickable width must cover
+    /// the full visible extent rather than stopping at the squeezed column.
+    #[test]
+    fn squeezed_single_column_keeps_the_visible_label_extent_clickable() {
+        let legend = Legend::new();
+        let items = vec![LegendItem::line(
+            "a rather long series label",
+            Color::BLUE,
+            LineStyle::Solid,
+            1.0,
+        )];
+
+        let free = layout_legend(
+            &items,
+            &legend,
+            (0.0, 0.0, 400.0, 300.0),
+            LegendPlacement::default(),
+            six_px_per_char,
+        )
+        .expect("free layout");
+        let squeezed = layout_legend(
+            &items,
+            &legend,
+            (0.0, 0.0, 400.0, 300.0),
+            LegendPlacement {
+                reserved: Some((10.0, 10.0, 60.0, 100.0)),
+                occupancy: None,
+            },
+            six_px_per_char,
+        )
+        .expect("squeezed layout");
+
+        assert!(
+            squeezed.width < free.entry_width,
+            "the reservation must actually squeeze the column for this test"
+        );
+        assert_eq!(
+            squeezed.entry_width, free.entry_width,
+            "a single squeezed column keeps the natural clickable width"
+        );
     }
 
     #[test]

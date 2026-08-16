@@ -164,6 +164,58 @@ self.onmessage = async (event: MessageEvent<WorkerEnvelope>) => {
         currentSession.wheel(wheel.deltaY, wheel.x, wheel.y);
         return;
       }
+      case "hitAt": {
+        const point = payload as { x: number; y: number };
+        const raw = getSession().hit_at(point.x, point.y);
+        if (raw === null || raw === undefined) {
+          postResponse("hitAt", requestId, null);
+          return;
+        }
+        const hit = {
+          seriesIndex: raw.series_index,
+          seriesLabel: raw.series_label ?? null,
+          pointIndex: raw.point_index,
+          dataX: raw.data_x,
+          dataY: raw.data_y,
+          distancePx: raw.distance_px,
+        };
+        raw.free();
+        postResponse("hitAt", requestId, hit);
+        return;
+      }
+      case "legendEntryAt": {
+        const point = payload as { x: number; y: number };
+        const index = getSession().legend_entry_at(point.x, point.y);
+        postResponse("legendEntryAt", requestId, index < 0 ? null : index);
+        return;
+      }
+      case "seriesCount": {
+        postResponse("seriesCount", requestId, getSession().series_count());
+        return;
+      }
+      case "seriesLabel": {
+        const query = payload as { seriesIndex: number };
+        postResponse(
+          "seriesLabel",
+          requestId,
+          getSession().series_label(query.seriesIndex) ?? null,
+        );
+        return;
+      }
+      case "seriesVisible": {
+        const query = payload as { seriesIndex: number };
+        postResponse("seriesVisible", requestId, getSession().series_visible(query.seriesIndex));
+        return;
+      }
+      case "setSeriesVisible": {
+        const change = payload as { seriesIndex: number; visible: boolean };
+        postResponse(
+          "setSeriesVisible",
+          requestId,
+          getSession().set_series_visible(change.seriesIndex, change.visible),
+        );
+        return;
+      }
       case "exportPng": {
         postResponse("exportPng", requestId, getSession().export_png());
         return;

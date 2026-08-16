@@ -3315,6 +3315,9 @@ impl Plot {
         for (idx, (series, resolved)) in
             self.series_mgr.series.iter().zip(&frame.series).enumerate()
         {
+            if !series.visible {
+                continue;
+            }
             let default_color = series
                 .props
                 .color

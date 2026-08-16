@@ -4,6 +4,36 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Series-aware interaction queries and per-series visibility (#162). The
+  interactive session now answers what it already knows: `hit_at(x, y)`
+  (web sessions; `hit_test` + `series_label` in core) resolves a pointer
+  position to `{seriesIndex, seriesLabel, pointIndex, dataX, dataY,
+  distancePx}` for embedder-rendered tooltips, `legend_entry_at(x, y)`
+  resolves a legend entry to its series, and `set_series_visible(index,
+  visible)` toggles a series without rebuilding the plot — rendering and
+  hit testing skip it, its legend entry stays dimmed, axis bounds hold
+  still, grouped series toggle together, and restoring reproduces the
+  previous frame byte-for-byte. Rust adds `Plot::series_visible(index,
+  visible)` for static plots, and the session exposes
+  `series_count`/`series_label`/`series_visible`. The TypeScript SDK
+  mirrors everything on `CanvasSession` (sync) and `WorkerSession`
+  (async), typed as `SeriesHit`.
+
+### Changed
+
+- The built-in hover tooltip leads with the hovered series' legend label
+  and formats coordinates adaptively — three decimals in the readable
+  range, scientific notation outside `1e-3`–`1e5` — so overlaid curves are
+  distinguishable and log-scale values never display as `0.000`.
+- `PlotData` merges its `Static(Vec<f64>)` and `SharedStatic(Arc<Vec<f64>>)`
+  variants into a single reference-counted `Static(Arc<Vec<f64>>)`. Code
+  using `IntoPlotData`/`into_plot_data()` (every builder API) is
+  unaffected; only direct `PlotData::Static(vec)` constructions need
+  `Arc::new`/`.into()`, and `PlotData::SharedStatic` matches become
+  `PlotData::Static`.
+
 ### Fixed
 
 - A dashed or dotted line whose on-screen path exceeded roughly ten
@@ -13,15 +43,6 @@ All notable changes to this project will be documented in this file.
   unbroken across the whole series. This also corrects earlier line-chart
   benchmark impressions — a "fast" dense dashed line was fast because it
   was blank; the honest cost is proportional to path length.
-
-### Changed
-
-- `PlotData` merges its `Static(Vec<f64>)` and `SharedStatic(Arc<Vec<f64>>)`
-  variants into a single reference-counted `Static(Arc<Vec<f64>>)`. Code
-  using `IntoPlotData`/`into_plot_data()` (every builder API) is
-  unaffected; only direct `PlotData::Static(vec)` constructions need
-  `Arc::new`/`.into()`, and `PlotData::SharedStatic` matches become
-  `PlotData::Static`.
 
 ## [0.10.0] - 2026-08-16
 

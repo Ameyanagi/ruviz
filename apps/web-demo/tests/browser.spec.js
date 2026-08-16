@@ -1804,3 +1804,143 @@ test("the builder rejects unusable style and axis names at the call", async ({ p
     "plot dpi must be an integer between 72 and 4294967295",
   ]);
 });
+
+test("series hit queries, legend clicks, and visibility toggling work", async ({ page }) => {
+  await waitForDemoReady(page);
+
+  const result = await page.evaluate(async () => {
+    const session = window.__ruvizDemo.mainSession;
+    const canvas = document.getElementById("main-canvas");
+
+    const scan = (probe) => {
+      for (let gy = 0.04; gy < 1; gy += 0.04) {
+        for (let gx = 0.04; gx < 1; gx += 0.04) {
+          const found = probe(canvas.width * gx, canvas.height * gy);
+          if (found !== null) {
+            return found;
+          }
+        }
+      }
+      return null;
+    };
+
+    const hit = scan((x, y) => session.hitAt(x, y));
+    const entry = scan((x, y) => session.legendEntryAt(x, y));
+
+    const bytesEqual = (left, right) =>
+      left.length === right.length && left.every((value, index) => value === right[index]);
+    const baseline = await session.exportPng();
+
+    let hiddenState = null;
+    let hiddenChanged = false;
+    let restored = false;
+    if (entry !== null) {
+      session.setSeriesVisible(entry, false);
+      hiddenState = session.seriesVisible(entry);
+      hiddenChanged = !bytesEqual(await session.exportPng(), baseline);
+      session.setSeriesVisible(entry, true);
+      restored = bytesEqual(await session.exportPng(), baseline);
+    }
+
+    return {
+      hit,
+      entry,
+      hiddenState,
+      hiddenChanged,
+      restored,
+      count: session.seriesCount(),
+      labels: [session.seriesLabel(0), session.seriesLabel(1)],
+      outOfRange: session.setSeriesVisible(99, false),
+    };
+  });
+
+  expect(result.count).toBe(2);
+  expect(result.labels).toEqual(["wave", "markers"]);
+  expect(result.hit).not.toBeNull();
+  expect(["wave", "markers"]).toContain(result.hit.seriesLabel);
+  expect(Number.isFinite(result.hit.dataX)).toBeTruthy();
+  expect(Number.isFinite(result.hit.dataY)).toBeTruthy();
+  expect(result.hit.distancePx).toBeGreaterThanOrEqual(0);
+  expect(result.entry).not.toBeNull();
+  expect(result.hiddenState).toBe(false);
+  expect(result.hiddenChanged).toBeTruthy();
+  expect(result.restored).toBeTruthy();
+  expect(result.outOfRange).toBe(false);
+});
+
+test("the hover readout and legend click UI reflect session hits", async ({ page }) => {
+  await waitForDemoReady(page);
+
+  const probe = await page.evaluate(() => {
+    const session = window.__ruvizDemo.mainSession;
+    const canvas = document.getElementById("main-canvas");
+    const rect = canvas.getBoundingClientRect();
+    const toClient = (x, y) => ({
+      x: rect.left + (x * rect.width) / canvas.width,
+      y: rect.top + (y * rect.height) / canvas.height,
+    });
+
+    let hitPoint = null;
+    let legendPoint = null;
+    for (let gy = 0.04; gy < 1 && (!hitPoint || !legendPoint); gy += 0.04) {
+      for (let gx = 0.04; gx < 1 && (!hitPoint || !legendPoint); gx += 0.04) {
+        const x = canvas.width * gx;
+        const y = canvas.height * gy;
+        if (!hitPoint && session.hitAt(x, y)) {
+          hitPoint = toClient(x, y);
+        }
+        if (!legendPoint && session.legendEntryAt(x, y) !== null) {
+          legendPoint = toClient(x, y);
+        }
+      }
+    }
+    return { hitPoint, legendPoint };
+  });
+
+  expect(probe.hitPoint).not.toBeNull();
+  expect(probe.legendPoint).not.toBeNull();
+
+  await page.mouse.move(probe.hitPoint.x, probe.hitPoint.y);
+  await expect(page.locator("#main-hit")).toContainText(/wave|markers/);
+
+  await page.mouse.click(probe.legendPoint.x, probe.legendPoint.y);
+  await expect(page.locator("#main-hit")).toContainText("hidden");
+  await page.mouse.click(probe.legendPoint.x, probe.legendPoint.y);
+  await expect(page.locator("#main-hit")).toContainText("shown");
+});
+
+test("worker sessions answer hit and visibility queries asynchronously", async ({ page }) => {
+  await waitForDemoReady(page);
+
+  const result = await page.evaluate(async () => {
+    const session = window.__ruvizDemo.workerSession;
+    const canvas = document.getElementById("worker-canvas");
+
+    const count = await session.seriesCount();
+    let hit = null;
+    for (let gy = 0.05; gy < 1 && !hit; gy += 0.05) {
+      for (let gx = 0.05; gx < 1 && !hit; gx += 0.05) {
+        hit = await session.hitAt(canvas.width * gx, canvas.height * gy);
+      }
+    }
+
+    const bytesEqual = (left, right) =>
+      left.length === right.length && left.every((value, index) => value === right[index]);
+    const baseline = await session.exportPng();
+    const accepted = await session.setSeriesVisible(0, false);
+    const hiddenVisible = await session.seriesVisible(0);
+    const hiddenChanged = !bytesEqual(await session.exportPng(), baseline);
+    await session.setSeriesVisible(0, true);
+    const restored = bytesEqual(await session.exportPng(), baseline);
+
+    return { mode: session.mode, count, hit, accepted, hiddenVisible, hiddenChanged, restored };
+  });
+
+  expect(result.count).toBe(2);
+  expect(result.hit).not.toBeNull();
+  expect(Number.isFinite(result.hit.dataX)).toBeTruthy();
+  expect(result.accepted).toBe(true);
+  expect(result.hiddenVisible).toBe(false);
+  expect(result.hiddenChanged).toBeTruthy();
+  expect(result.restored).toBeTruthy();
+});
