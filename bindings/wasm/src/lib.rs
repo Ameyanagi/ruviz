@@ -516,11 +516,12 @@ mod wasm {
     /// Parse a reference-line style object into `(color, width, line_style)`.
     ///
     /// `None` (no style at all) lets the caller use the core's un-styled
-    /// constructor. A present object fills unset fields with the core
-    /// defaults — 1pt dashed `gray(128)` — so a partial style like
-    /// `{color: "red"}` keeps the default dash and width. Unknown keys are
-    /// skipped like `SeriesStyle::from_js` skips them, so a snapshot written
-    /// by a newer build still renders.
+    /// constructor. A present object fills unset fields from
+    /// `Annotation::reference_line_defaults()`, so a partial style like
+    /// `{color: "red"}` keeps exactly the default dash and width. Unknown
+    /// keys are skipped — unlike `SeriesStyle::from_js`, which rejects known
+    /// but unallowed keys — because this parser also replays foreign
+    /// snapshots that may carry newer style fields.
     fn parse_reference_line_style(
         style: Option<Object>,
         kind: &str,
@@ -529,9 +530,8 @@ mod wasm {
             return Ok(None);
         };
 
-        let mut color = Color::from_rgb(128, 128, 128);
-        let mut width = 1.0_f32;
-        let mut line_style = LineStyle::Dashed;
+        let (mut color, mut width, mut line_style) =
+            ruviz::core::Annotation::reference_line_defaults();
 
         for entry in Object::entries(&style).iter() {
             let entry = Array::from(&entry);
@@ -598,7 +598,9 @@ mod wasm {
 
     fn finite_positive(value: &JsValue, name: &str) -> Result<f64, JsValue> {
         let number = style_number(value, name)?;
-        if !number.is_finite() || number <= 0.0 {
+        // Bounded to f32: every consumer casts down, and a value above
+        // f32::MAX would saturate to +infinity past this check.
+        if !number.is_finite() || number <= 0.0 || number > f64::from(f32::MAX) {
             return Err(JsValue::from_str(&format!(
                 "{name} must be a finite positive number"
             )));

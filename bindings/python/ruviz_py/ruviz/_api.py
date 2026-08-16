@@ -418,9 +418,6 @@ def _annotation_coordinate(value: Any, name: str) -> float:
     return number
 
 
-_ANNOTATION_LINESTYLE = _style_text("linestyle", _LINESTYLE_ALIASES)
-
-
 def _reference_line_style(
     kind: str,
     color: Any,
@@ -437,7 +434,9 @@ def _reference_line_style(
     if width is not None:
         style["width"] = _finite_positive(width, f"{kind} width")
     if linestyle is not None:
-        style["linestyle"] = _ANNOTATION_LINESTYLE(linestyle)
+        # The same normalizer the series table uses, so aliases and error
+        # wording can never diverge between series and annotations.
+        style["linestyle"] = _STYLE_OPTIONS["linestyle"](linestyle)
     return style or None
 
 
@@ -1409,7 +1408,9 @@ class Plot:
         Labels a reference line, marks a peak. The default is 10pt black, so
         pass ``color`` when the plot uses a dark theme.
         """
-        if not isinstance(text, str) or not text:
+        if not isinstance(text, str):
+            raise TypeError("annotation text must be a string")
+        if not text:
             raise ValueError("annotation text must be a non-empty string")
         style: dict[str, Any] = {}
         if color is not None:
@@ -1423,7 +1424,13 @@ class Plot:
             style or None,
         )
         self._push_annotation(
-            {"kind": "text", "x": float(x), "y": float(y), "text": text, **_style_entry(style or None)}
+            {
+                "kind": "text",
+                "x": float(x),
+                "y": float(y),
+                "text": text,
+                **_style_entry(style or None),
+            }
         )
         return self
 

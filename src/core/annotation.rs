@@ -585,13 +585,22 @@ impl Annotation {
         }
     }
 
+    /// The style of an un-styled reference line as `(color, width, line
+    /// style)`: 1pt dashed gray. The bindings fill partial styles from this
+    /// single source, so a `{color: "red"}` style keeps exactly the dash and
+    /// width an un-styled line gets.
+    pub fn reference_line_defaults() -> (Color, f32, LineStyle) {
+        (Color::from_rgb(128, 128, 128), 1.0, LineStyle::Dashed)
+    }
+
     /// Create a horizontal reference line
     pub fn hline(y: f64) -> Self {
+        let (color, width, style) = Self::reference_line_defaults();
         Annotation::HLine {
             y,
-            style: LineStyle::Dashed,
-            color: Color::from_rgb(128, 128, 128),
-            width: 1.0,
+            style,
+            color,
+            width,
         }
     }
 
@@ -607,11 +616,12 @@ impl Annotation {
 
     /// Create a vertical reference line
     pub fn vline(x: f64) -> Self {
+        let (color, width, style) = Self::reference_line_defaults();
         Annotation::VLine {
             x,
-            style: LineStyle::Dashed,
-            color: Color::from_rgb(128, 128, 128),
-            width: 1.0,
+            style,
+            color,
+            width,
         }
     }
 

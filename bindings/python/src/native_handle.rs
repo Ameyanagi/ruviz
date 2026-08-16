@@ -202,7 +202,9 @@ fn parse_axis_scale(scale: &str, linthresh: Option<f64>) -> PyResult<AxisScale> 
 /// validator messages so `_native` callers see identical errors.
 fn finite_positive(value: &Bound<'_, PyAny>, name: &str) -> PyResult<f64> {
     let number: f64 = value.extract()?;
-    if !number.is_finite() || number <= 0.0 {
+    // Bounded to f32: every consumer casts down, and a value above f32::MAX
+    // would saturate to +infinity past this check.
+    if !number.is_finite() || number <= 0.0 || number > f64::from(f32::MAX) {
         return Err(PyValueError::new_err(format!(
             "{name} must be a finite positive number"
         )));
@@ -680,9 +682,7 @@ fn extract_reference_line_style(
         return Ok(None);
     };
 
-    let mut color = Color::from_rgb(128, 128, 128);
-    let mut width = 1.0_f32;
-    let mut line_style = LineStyle::Dashed;
+    let (mut color, mut width, mut line_style) = Annotation::reference_line_defaults();
 
     for (key, value) in style.iter() {
         let key: String = key.extract()?;

@@ -1498,23 +1498,13 @@ export class PlotBuilder {
       throw new TypeError("annotation text must be a non-empty string");
     }
 
-    let validated: { style: TextAnnotationStyle } | undefined;
-    if (style !== undefined) {
-      const { color, fontSize, ...unknown } = style;
-      const unknownKeys = Object.keys(unknown);
-      if (unknownKeys.length > 0) {
-        throw new TypeError(`unknown annotation style option(s): ${unknownKeys.join(", ")}`);
-      }
-      if (color !== undefined) {
-        validateColor(color);
-      }
-      if (fontSize !== undefined) {
-        assertFinitePositive(fontSize, "annotation fontSize");
-      }
-      validated = { style: { ...style } };
-    }
-
-    this.#pushAnnotation({ kind: "text", x, y, text, ...validated });
+    this.#pushAnnotation({
+      kind: "text",
+      x,
+      y,
+      text,
+      ...PlotBuilder.#textAnnotationStyle(style),
+    });
     return this;
   }
 
@@ -1529,12 +1519,26 @@ export class PlotBuilder {
     }
   }
 
+  /**
+   * A spreadable `{style}` holding only the defined entries, or nothing when
+   * every entry was undefined — so an empty style never reaches the
+   * snapshot, matching the Python binding's output exactly.
+   */
+  static #definedStyle<T extends object>(style: T): { style: T } | undefined {
+    const cleaned = Object.fromEntries(
+      Object.entries(style).filter(([, value]) => value !== undefined),
+    ) as T;
+    return Object.keys(cleaned).length > 0 ? { style: cleaned } : undefined;
+  }
+
   /** Validate a reference-line style, returning a spreadable `{style}` or nothing. */
   static #referenceLineStyle(
     style: ReferenceLineStyle | undefined,
     kind: string,
   ): { style: ReferenceLineStyle } | undefined {
-    if (style === undefined) {
+    // `== null` also accepts null from untyped callers, like every other
+    // style parameter in this package.
+    if (style == null) {
       return undefined;
     }
 
@@ -1552,7 +1556,29 @@ export class PlotBuilder {
     if (linestyle !== undefined) {
       validateName(LINE_STYLE_NAMES, "linestyle", linestyle);
     }
-    return { style: { ...style } };
+    return PlotBuilder.#definedStyle({ color, width, linestyle });
+  }
+
+  /** Validate a text-annotation style, returning a spreadable `{style}` or nothing. */
+  static #textAnnotationStyle(
+    style: TextAnnotationStyle | undefined,
+  ): { style: TextAnnotationStyle } | undefined {
+    if (style == null) {
+      return undefined;
+    }
+
+    const { color, fontSize, ...unknown } = style;
+    const unknownKeys = Object.keys(unknown);
+    if (unknownKeys.length > 0) {
+      throw new TypeError(`unknown annotation style option(s): ${unknownKeys.join(", ")}`);
+    }
+    if (color !== undefined) {
+      validateColor(color);
+    }
+    if (fontSize !== undefined) {
+      assertFinitePositive(fontSize, "annotation fontSize");
+    }
+    return PlotBuilder.#definedStyle({ color, fontSize });
   }
 
   line(input: LineSeriesInput): this {
