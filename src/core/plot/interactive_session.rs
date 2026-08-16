@@ -2295,12 +2295,7 @@ impl InteractivePlotSession {
     }
 
     fn hidden_series_snapshot(&self) -> std::collections::BTreeSet<usize> {
-        self.inner
-            .state
-            .lock()
-            .expect("InteractivePlotSession state lock poisoned")
-            .hidden_series
-            .clone()
+        lock_recover(&self.inner.state).hidden_series.clone()
     }
 
     /// Number of series in the plot, in the order they were added.
@@ -2320,11 +2315,7 @@ impl InteractivePlotSession {
     /// Whether a series is currently drawn. Out-of-range indices read as
     /// visible, matching a plot that never toggled anything.
     pub fn series_visible(&self, series_index: usize) -> bool {
-        !self
-            .inner
-            .state
-            .lock()
-            .expect("InteractivePlotSession state lock poisoned")
+        !lock_recover(&self.inner.state)
             .hidden_series
             .contains(&series_index)
     }
@@ -2357,11 +2348,7 @@ impl InteractivePlotSession {
         };
 
         let changed = {
-            let mut state = self
-                .inner
-                .state
-                .lock()
-                .expect("InteractivePlotSession state lock poisoned");
+            let mut state = lock_recover(&self.inner.state);
             let mut changed = false;
             for index in members {
                 changed |= if visible {
@@ -2391,11 +2378,7 @@ impl InteractivePlotSession {
     /// Entries for annotations (which represent no series) and positions
     /// outside every entry return `None`.
     pub fn legend_entry_at(&self, position_px: ViewportPoint) -> Option<usize> {
-        let regions = self
-            .inner
-            .state
-            .lock()
-            .expect("InteractivePlotSession state lock poisoned")
+        let regions = lock_recover(&self.inner.state)
             .base_cache
             .as_ref()
             .map(|cache| Arc::clone(&cache.legend_hit_regions))?;
