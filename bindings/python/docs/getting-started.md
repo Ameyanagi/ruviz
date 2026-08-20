@@ -152,7 +152,7 @@ Which keywords a series takes follows what the renderer honors for that kind:
 | `scatter` | `label`, `color`, `alpha`, `marker`, `marker_size` |
 | `bar` | `label`, `color`, `alpha`, `orientation` (`"vertical"` or `"horizontal"`) |
 | `histogram` | `label`, `color`, `alpha`, `bins`, `density` |
-| `boxplot` | `label`, `color`, `alpha`, `width`, `linestyle` |
+| `boxplot` | `label`, `color`, `alpha`, `width`, `linestyle`, `orientation` (`"vertical"` or `"horizontal"`) |
 | `kde` | `label`, `color`, `alpha`, `width`, `bandwidth` |
 | `ecdf`, `violin`, `polar_line`, `error_bars`, `error_bars_xy` | `label`, `color`, `alpha`, `width` |
 | `contour` | `alpha`, `width`, `levels` |

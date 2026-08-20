@@ -170,6 +170,14 @@ export function applySnapshotMetadata(rawPlot: RawJsPlot, snapshot: PlotSnapshot
     rawPlot.ylim(snapshot.yLim[0], snapshot.yLim[1]);
   }
 
+  if (snapshot.invertX) {
+    rawPlot.invert_x(true);
+  }
+
+  if (snapshot.invertY) {
+    rawPlot.invert_y(true);
+  }
+
   if (snapshot.xScale) {
     rawPlot.xscale(snapshot.xScale[0], snapshot.xScale[1]);
   }

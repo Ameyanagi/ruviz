@@ -139,7 +139,8 @@ The fluent builder currently supports:
 - `line({ x, y })` and `scatter({ x, y })`
 - `bar({ categories, values, style: { orientation: "horizontal" } })` (orientation is optional;
   `"vertical"` is the default)
-- `histogram(values)` and `boxplot(values)`
+- `histogram(values)` and `boxplot(values)` (box plots accept the same
+  optional `style.orientation` bars do)
 - `heatmap(rows)` where `rows` is a rectangular `number[][]`
 - `errorBars({ x, y, yErrors })`
 - `errorBarsXY({ x, y, xErrors, yErrors })`

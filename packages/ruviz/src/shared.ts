@@ -110,7 +110,8 @@ export type LineSeriesStyle = StrokedSeriesStyle &
   Pick<SeriesStyleSnapshot, "linestyle" | "marker" | "markerSize">;
 export type ScatterSeriesStyle = CommonSeriesStyle &
   Pick<SeriesStyleSnapshot, "marker" | "markerSize" | "density">;
-export type BoxplotSeriesStyle = StrokedSeriesStyle & Pick<SeriesStyleSnapshot, "linestyle">;
+export type BoxplotSeriesStyle = StrokedSeriesStyle &
+  Pick<SeriesStyleSnapshot, "linestyle" | "orientation">;
 export type HistogramSeriesStyle = CommonSeriesStyle &
   Pick<SeriesStyleSnapshot, "bins" | "density">;
 export type KdeSeriesStyle = StrokedSeriesStyle & Pick<SeriesStyleSnapshot, "bandwidth">;
@@ -400,6 +401,9 @@ export interface PlotSnapshot {
   grid?: boolean;
   xLim?: [number, number];
   yLim?: [number, number];
+  /** Present (and true) only when the axis was flipped high-to-low. */
+  invertX?: boolean;
+  invertY?: boolean;
   xScale?: AxisScaleSnapshot;
   yScale?: AxisScaleSnapshot;
   /** Plot-level annotations — reference lines and text labels — in call order. */
