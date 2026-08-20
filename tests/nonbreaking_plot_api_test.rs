@@ -245,6 +245,109 @@ fn high_level_boxen_api_emits_svg_geometry() {
     );
 }
 
+/// `.boxplot(&d).horizontal()` had no spelling at all: bar, violin and boxen
+/// each carried `.horizontal()`, and a box plot could only be turned through
+/// `BoxPlotConfig::orientation`, which nothing downstream read. Setting it
+/// produced a vertical box.
+#[test]
+fn high_level_boxplot_api_turns_a_quarter_turn() {
+    let data: Vec<f64> = (0..128)
+        .map(|i| (i as f64 * 0.2).sin() + i as f64 / 64.0)
+        .collect();
+
+    let vertical = Plot::new()
+        .boxplot(&data)
+        .color(BOX_STROKE)
+        .category("sample")
+        .render_to_svg()
+        .expect("vertical box plot SVG should render");
+    let horizontal = Plot::new()
+        .boxplot(&data)
+        .horizontal()
+        .color(BOX_STROKE)
+        .category("sample")
+        .render_to_svg()
+        .expect("horizontal box plot SVG should render");
+
+    assert_ne!(
+        vertical, horizontal,
+        "a horizontal box plot must not render identically to a vertical one"
+    );
+
+    // A box plot draws five straight lines: the median and two whisker caps
+    // run across the category axis, the two whiskers along the value axis.
+    // Turning the plot swaps which screen axis each of those holds constant.
+    assert_eq!(
+        box_stroke_axes(&vertical),
+        (2, 3),
+        "a vertical box plot must hold x on its whiskers and y on its median \
+         and caps: {vertical}"
+    );
+    assert_eq!(
+        box_stroke_axes(&horizontal),
+        (3, 2),
+        "a horizontal box plot must hold x on its median and caps and y on \
+         its whiskers: {horizontal}"
+    );
+
+    // And the category label follows the categories into the left gutter.
+    assert!(
+        horizontal.contains("sample"),
+        "a horizontal box plot must still label its category: {horizontal}"
+    );
+}
+
+/// A colour no theme picks, so the box's own strokes can be told from the
+/// grid and the spines.
+const BOX_STROKE: Color = Color {
+    r: 220,
+    g: 20,
+    b: 60,
+    a: 255,
+};
+
+/// How many of the box's strokes hold x constant, and how many hold y.
+fn box_stroke_axes(svg: &str) -> (usize, usize) {
+    let stroke = format!(
+        "stroke=\"rgb({},{},{})\"",
+        BOX_STROKE.r, BOX_STROKE.g, BOX_STROKE.b
+    );
+    let mut vertical_strokes = 0;
+    let mut horizontal_strokes = 0;
+    for line in svg.lines() {
+        let line = line.trim_start();
+        if !line.starts_with("<line") || !line.contains(&stroke) {
+            continue;
+        }
+        let coordinate = |name: &str| -> f32 {
+            let start = line.find(&format!("{name}=\"")).expect("coordinate") + name.len() + 2;
+            line[start..]
+                .split('"')
+                .next()
+                .expect("coordinate value")
+                .parse()
+                .expect("numeric coordinate")
+        };
+        if coordinate("x1") == coordinate("x2") {
+            vertical_strokes += 1;
+        } else if coordinate("y1") == coordinate("y2") {
+            horizontal_strokes += 1;
+        }
+    }
+    (vertical_strokes, horizontal_strokes)
+}
+
+#[test]
+fn high_level_boxplot_api_reports_empty_data_when_horizontal() {
+    let empty: Vec<f64> = vec![];
+    let err = Plot::new()
+        .boxplot(&empty)
+        .horizontal()
+        .render()
+        .unwrap_err();
+    assert!(matches!(err, ruviz::core::PlottingError::EmptyDataSet));
+}
+
 #[test]
 fn high_level_boxen_api_reports_empty_data() {
     let empty_data: Vec<f64> = vec![];

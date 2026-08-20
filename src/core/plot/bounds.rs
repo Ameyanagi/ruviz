@@ -369,11 +369,22 @@ impl BoundsAccumulator {
             return Err(PlottingError::EmptyDataSet);
         }
         // One box occupies the one-unit-wide category slot it was assigned, the
-        // same slot geometry a bar chart uses.
+        // same slot geometry a bar chart uses — on whichever axis its
+        // orientation puts the categories.
         let (lo, hi) = crate::plots::boxplot::category_slot_span(config.x_center());
-        self.include_x_span(lo, hi);
-        for &value in data {
-            self.include_y(value);
+        match config.orientation {
+            crate::plots::boxplot::BoxOrientation::Vertical => {
+                self.include_x_span(lo, hi);
+                for &value in data {
+                    self.include_y(value);
+                }
+            }
+            crate::plots::boxplot::BoxOrientation::Horizontal => {
+                self.include_y_span(lo, hi);
+                for &value in data {
+                    self.include_x(value);
+                }
+            }
         }
         Ok(())
     }

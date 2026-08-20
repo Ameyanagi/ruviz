@@ -29,6 +29,17 @@
 use crate::core::units::pt_to_px;
 use crate::render::{Color, Theme};
 
+/// How far a filled patch's edge is darkened from its fill when neither the
+/// series nor the theme names an edge colour.
+///
+/// Matches matplotlib/seaborn. Lives here rather than inline so the two places
+/// that resolve a patch edge — [`StyleResolver::patch_edge`] for the renderer
+/// path and [`ComputedStyle::patch_edge`] for the primitives path — cannot
+/// drift to different shades of the same bar.
+///
+/// [`ComputedStyle::patch_edge`]: crate::plots::traits::ComputedStyle::patch_edge
+pub const PATCH_EDGE_DARKEN: f32 = 0.3;
+
 /// Central utility for resolving styling values with theme fallbacks
 ///
 /// All methods are `#[inline]` for performance - overhead is negligible (<1μs per call).
@@ -100,7 +111,7 @@ impl<'a> StyleResolver<'a> {
     /// The resolved edge color
     #[inline]
     pub fn edge_color(&self, fill: Color, explicit: Option<Color>) -> Color {
-        explicit.unwrap_or_else(|| fill.darken(0.3))
+        explicit.unwrap_or_else(|| fill.darken(PATCH_EDGE_DARKEN))
     }
 
     /// Resolve a filled patch's edge into the `(colour, width_in_points)` pair

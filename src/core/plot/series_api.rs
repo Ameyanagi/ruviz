@@ -1910,6 +1910,25 @@ impl PlotBuilder<HistogramConfig> {
 }
 
 impl PlotBuilder<BoxPlotConfig> {
+    /// Lay the categories along the y axis instead of the x axis.
+    ///
+    /// The same spelling violin, boxen and bar charts use — a box plot was the
+    /// one categorical plot type without it, and setting
+    /// [`BoxPlotConfig::orientation`] by hand went nowhere because nothing
+    /// downstream read it.
+    pub fn horizontal(mut self) -> Self {
+        self.config = std::mem::take(&mut self.config)
+            .orientation(crate::plots::boxplot::BoxOrientation::Horizontal);
+        self
+    }
+
+    /// Lay the categories along the x axis (the default).
+    pub fn vertical(mut self) -> Self {
+        self.config = std::mem::take(&mut self.config)
+            .orientation(crate::plots::boxplot::BoxOrientation::Vertical);
+        self
+    }
+
     /// Add the configured box plot series to the plot.
     pub(super) fn finalize(self) -> Plot {
         let PlotBuilder {

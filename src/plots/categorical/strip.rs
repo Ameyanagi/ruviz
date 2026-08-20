@@ -409,7 +409,7 @@ impl PlotRender for StripData {
         &self,
         renderer: &mut SkiaRenderer,
         area: &PlotArea,
-        _theme: &Theme,
+        theme: &Theme,
         color: Color,
         alpha: f32,
         _line_width: Option<f32>,
@@ -419,6 +419,7 @@ impl PlotRender for StripData {
             color,
             alpha,
             line_width: None,
+            patch_edge_color: theme.patch_edge_color,
         };
         draw_primitives(renderer, &self.primitives(area, &style))
     }

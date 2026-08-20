@@ -163,6 +163,27 @@ Plot::new()
     .save("boxplot.png")?;
 ```
 
+Add `.horizontal()` to lay the categories along the y axis instead — the same
+spelling bar, violin and boxen plots use. Name each box with `.category(..)` and
+several of them stack up the axis in the order they were added:
+
+```rust
+use ruviz::prelude::*;
+
+let north = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 35.0];
+let south = vec![2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 12.0];
+
+Plot::new()
+    .boxplot(&north)
+    .horizontal()
+    .category("North")
+    .boxplot(&south)
+    .horizontal()
+    .category("South")
+    .xlabel("Measurement")
+    .save("boxplot_horizontal.png")?;
+```
+
 ---
 
 ## Distribution Plots

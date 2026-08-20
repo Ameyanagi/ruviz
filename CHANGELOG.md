@@ -11,12 +11,40 @@ All notable changes to this project will be documented in this file.
   Python accepts `bar(..., orientation="horizontal")`; snapshots, notebook
   replay, Wasm, and the TypeScript SDK preserve the same setting. Horizontal
   bars use numeric x values and categorical y labels in raster and SVG output.
+- `Plot::boxplot(..)` accepts `.horizontal()` and `.vertical()`, the same
+  spelling bar, violin and boxen plots already used. Categories move to the y
+  axis, the value axis keeps its scale, and several named boxes stack up the
+  axis the way vertical ones spread across it.
+
+### Changed
+
+- Grouped and stacked bars are drawn with an edge, like every other filled
+  patch: both configurations now default to `edge_width: 0.8`, and an
+  `edge_color` of `None` derives the edge from the fill through the same rule
+  `StyleResolver::patch_edge` applies to a plain bar, rather than meaning "no
+  edge". Adjacent stacked segments are separated as a result. Pass
+  `.edge_width(0.0)` for the previous flat look.
+- `ComputedStyle` carries the theme's `patch_edge_color`, so a filled patch
+  drawn through `ComputedSeries::primitives` follows the theme's edge rule
+  instead of only the renderer path doing so. Code constructing a
+  `ComputedStyle` literally needs the new field; `ComputedStyle::opaque(..)`
+  and the new `.with_patch_edge_color(..)` cover it otherwise.
 
 ### Fixed
 
+- `BoxPlotConfig::orientation` is honoured end to end. It was read when the
+  input was validated and ignored when the box was drawn — the projection put
+  the quantiles on y whatever the setting said — so a box plot configured
+  horizontal came out vertical, and on a log axis it validated one axis and
+  drew against the other. The shared projection now places the quantiles on
+  the axis the orientation names, the box claims its slot on the other one,
+  and bounds and axis-scale support follow.
 - PNG output from `save()` and `render_png_bytes()` now stores the effective
   configured DPI in a standard `pHYs` chunk, so print and page-layout software
   recovers the intended physical figure size.
+- SVG export no longer writes an empty `<text>` element for an unnamed category
+  slot. A lone box plot or violin holds its place on the axis without a label,
+  which is what the raster backend already drew.
 
 ## [0.11.0] - 2026-08-16
 

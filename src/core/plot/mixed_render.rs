@@ -744,6 +744,7 @@ impl Plot {
                     color: series.props.color.value_or(default_color),
                     alpha: series.props.alpha.value_or(1.0),
                     line_width: series.props.line_width.cloned(),
+                    patch_edge_color: self.display.theme.patch_edge_color,
                 };
                 let primitives = data.primitives(&area, &style);
                 crate::plots::traits::draw_primitives_svg(svg, &primitives);
@@ -1173,24 +1174,20 @@ impl Plot {
         // path used to re-derive these five quantiles linearly, so
         // `.boxplot(&d).yscale(Log)` drew the box somewhere the ticks did not
         // agree with.
+        let value_scale = match config.orientation {
+            crate::plots::boxplot::BoxOrientation::Vertical => &self.layout.y_scale,
+            crate::plots::boxplot::BoxOrientation::Horizontal => &self.layout.x_scale,
+        };
         let px = super::series_internal::BoxPlotPixels::new(
             &box_data,
+            config.orientation,
             plot_area,
             x_min,
             x_max,
             y_min,
             y_max,
-            &self.layout.y_scale,
+            value_scale,
         );
-        let x_center = px.x_center;
-        let q1 = px.q1_y;
-        let median = px.median_y;
-        let q3 = px.q3_y;
-        let lower_whisker = px.lower_whisker_y;
-        let upper_whisker = px.upper_whisker_y;
-        let left = px.box_left;
-        let right = px.box_right;
-        let cap_width = px.cap_half_width;
         let edge_color = box_data.edge_color.unwrap_or(color);
         let whisker_width = box_data
             .whisker_width
@@ -1201,71 +1198,43 @@ impl Plot {
             .map(|w| self.render_scale().points_to_pixels(w))
             .unwrap_or(line_width * 1.5);
 
+        let (body_x, body_y, body_width, body_height) = px.body_rect();
         svg.draw_rectangle_styled(
-            left,
-            q1.min(q3),
-            right - left,
-            (q1 - q3).abs(),
+            body_x,
+            body_y,
+            body_width,
+            body_height,
             Some(color.with_alpha(box_data.fill_alpha)),
             Some((edge_color, box_data.edge_width)),
         );
-        svg.draw_line(
-            left,
-            median,
-            right,
-            median,
-            edge_color,
-            median_width,
-            line_style.clone(),
-        );
-        svg.draw_line(
-            x_center,
-            q1,
-            x_center,
-            lower_whisker,
-            edge_color,
-            whisker_width,
-            line_style.clone(),
-        );
-        svg.draw_line(
-            x_center,
-            q3,
-            x_center,
-            upper_whisker,
-            edge_color,
-            whisker_width,
-            line_style.clone(),
-        );
-        svg.draw_line(
-            x_center - cap_width,
-            lower_whisker,
-            x_center + cap_width,
-            lower_whisker,
-            edge_color,
-            whisker_width,
-            line_style.clone(),
-        );
-        svg.draw_line(
-            x_center - cap_width,
-            upper_whisker,
-            x_center + cap_width,
-            upper_whisker,
-            edge_color,
-            whisker_width,
-            line_style,
-        );
+        for (segment, width) in [
+            (px.median_line(), median_width),
+            (px.lower_whisker_line(), whisker_width),
+            (px.upper_whisker_line(), whisker_width),
+            (px.lower_cap_line(), whisker_width),
+            (px.upper_cap_line(), whisker_width),
+        ] {
+            let (x0, y0) = segment.from;
+            let (x1, y1) = segment.to;
+            svg.draw_line(x0, y0, x1, y1, edge_color, width, line_style.clone());
+        }
         if box_data.show_outliers {
             let outlier_size = self.render_scale().points_to_pixels(box_data.flier_size);
             for &outlier in &box_data.outliers {
-                svg.draw_marker(
-                    x_center,
-                    super::series_internal::box_plot_value_y(
+                let (outlier_x, outlier_y) =
+                    px.outlier_point(super::series_internal::box_plot_value_px(
                         outlier,
+                        config.orientation,
                         plot_area,
+                        x_min,
+                        x_max,
                         y_min,
                         y_max,
-                        &self.layout.y_scale,
-                    ),
+                        value_scale,
+                    ));
+                svg.draw_marker(
+                    outlier_x,
+                    outlier_y,
                     outlier_size,
                     MarkerStyle::Circle,
                     color,

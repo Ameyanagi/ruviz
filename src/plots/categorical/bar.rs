@@ -48,9 +48,12 @@ pub struct StackedBarConfig {
     pub alpha: f32,
     /// Labels for each series
     pub labels: Vec<String>,
-    /// Edge color for bars
+    /// Explicit edge colour, or `None` to derive one from the fill through the
+    /// shared filled-patch rule ([`StyleResolver::patch_edge`]).
+    ///
+    /// [`StyleResolver::patch_edge`]: crate::core::style_utils::StyleResolver::patch_edge
     pub edge_color: Option<Color>,
-    /// Edge width
+    /// Edge width in **points**; `0.0` means no edge at all.
     pub edge_width: f32,
     /// Orientation
     pub orientation: BarOrientation,
@@ -69,9 +72,12 @@ pub struct GroupedBarConfig {
     pub alpha: f32,
     /// Labels for each series
     pub labels: Vec<String>,
-    /// Edge color for bars
+    /// Explicit edge colour, or `None` to derive one from the fill through the
+    /// shared filled-patch rule ([`StyleResolver::patch_edge`]).
+    ///
+    /// [`StyleResolver::patch_edge`]: crate::core::style_utils::StyleResolver::patch_edge
     pub edge_color: Option<Color>,
-    /// Edge width
+    /// Edge width in **points**; `0.0` means no edge at all.
     pub edge_width: f32,
     /// Orientation
     pub orientation: BarOrientation,
@@ -85,7 +91,7 @@ impl Default for StackedBarConfig {
             alpha: 1.0,
             labels: vec![],
             edge_color: None,
-            edge_width: 0.0,
+            edge_width: 0.8,
             orientation: BarOrientation::Vertical,
         }
     }
@@ -149,7 +155,7 @@ impl Default for GroupedBarConfig {
             alpha: 1.0,
             labels: vec![],
             edge_color: None,
-            edge_width: 0.0,
+            edge_width: 0.8,
             orientation: BarOrientation::Vertical,
         }
     }
@@ -200,6 +206,12 @@ impl GroupedBarConfig {
     /// Set horizontal orientation
     pub fn horizontal(mut self) -> Self {
         self.orientation = BarOrientation::Horizontal;
+        self
+    }
+
+    /// Set vertical orientation
+    pub fn vertical(mut self) -> Self {
+        self.orientation = BarOrientation::Vertical;
         self
     }
 }
@@ -895,13 +907,13 @@ impl ComputedSeries for BarSeriesData {
     fn primitives(&self, area: &PlotArea, style: &ComputedStyle) -> Vec<PlotPrimitive> {
         let fill = style.tinted(style.color.with_alpha(self.alpha));
         // The edge is authored in points like every other stroke in the crate,
-        // and an edge colour is explicit or absent — the same rule hexbin
-        // follows for a filled patch reached through `PlotPrimitive`.
-        let edge_width_px = style.scale.points_to_pixels(self.edge_width.max(0.0));
-        let edge = self
-            .edge_color
-            .filter(|_| self.edge_width > 0.0)
-            .map(|color| (style.tinted(color), edge_width_px));
+        // and an absent edge colour is derived from the fill rather than
+        // meaning "no edge" — grouped and stacked bars used to read it the
+        // second way, which is why they drew flat next to a plain bar chart in
+        // the same theme.
+        let edge = style
+            .patch_edge(fill, self.edge_color, self.edge_width.max(0.0))
+            .map(|(color, width_px)| (style.tinted(color), width_px));
 
         self.bars
             .iter()
@@ -942,7 +954,7 @@ impl PlotRender for BarSeriesData {
         &self,
         renderer: &mut SkiaRenderer,
         area: &PlotArea,
-        _theme: &Theme,
+        theme: &Theme,
         color: Color,
         alpha: f32,
         _line_width: Option<f32>,
@@ -952,6 +964,7 @@ impl PlotRender for BarSeriesData {
             color,
             alpha,
             line_width: None,
+            patch_edge_color: theme.patch_edge_color,
         };
         draw_primitives(renderer, &self.primitives(area, &style))
     }
@@ -1249,8 +1262,7 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_column_draws_one_filled_rectangle_per_bar() {
+    fn only_column_primitives(style: &ComputedStyle) -> Vec<PlotPrimitive> {
         let values = vec![vec![1.0, 2.0, 3.0]];
         let split = grouped_bar_series(
             &categories3(),
@@ -1261,20 +1273,63 @@ mod tests {
         let data = &split[0].1;
         let ((x_min, x_max), (y_min, y_max)) = data.data_bounds();
         let area = PlotArea::new(0.0, 0.0, 200.0, 100.0, x_min, x_max, y_min, y_max);
-        let style = ComputedStyle::opaque(
+        data.primitives(&area, style)
+    }
+
+    fn probe_style() -> ComputedStyle {
+        ComputedStyle::opaque(
             crate::core::units::RenderScale::new(96.0),
             Color::from_rgb(10, 20, 30),
-        );
+        )
+    }
 
-        let primitives = data.primitives(&area, &style);
+    #[test]
+    fn a_column_draws_one_filled_rectangle_per_bar() {
+        let primitives = only_column_primitives(&probe_style());
         assert_eq!(primitives.len(), 3);
         assert!(primitives.iter().all(|p| matches!(
             p,
             PlotPrimitive::Polygon {
                 points,
                 fill: Some(_),
-                edge: None,
+                edge: Some(_),
             } if points.len() == 4
         )));
+    }
+
+    /// Grouped and stacked bars used to default to `edge_width: 0.0` and to
+    /// read an absent `edge_color` as "no edge", so they drew flat beside a
+    /// plain bar chart in the same theme — most visibly in a stacked bar, where
+    /// nothing separated one segment from the next.
+    #[test]
+    fn a_grouped_bar_edge_follows_the_same_rule_a_plain_bar_edge_does() {
+        assert_eq!(GroupedBarConfig::default().edge_width, 0.8);
+        assert_eq!(StackedBarConfig::default().edge_width, 0.8);
+
+        let fill = Color::from_rgb(10, 20, 30);
+        let derived = probe_style();
+        let PlotPrimitive::Polygon {
+            edge: Some((derived_color, derived_width)),
+            ..
+        } = only_column_primitives(&derived)[0]
+        else {
+            panic!("a grouped bar must carry an edge");
+        };
+        // No explicit colour and no theme override: darkened from the fill,
+        // exactly as `BarConfig::resolved_edge` would.
+        assert_eq!(derived_color, fill.darken(0.3));
+        assert!((derived_width - derived.scale.points_to_pixels(0.8)).abs() < 1e-4);
+
+        // A theme that names a patch edge colour wins over the derivation, the
+        // other half of the rule `StyleResolver::patch_edge` states.
+        let themed = probe_style().with_patch_edge_color(Some(Color::WHITE));
+        let PlotPrimitive::Polygon {
+            edge: Some((themed_color, _)),
+            ..
+        } = only_column_primitives(&themed)[0]
+        else {
+            panic!("a grouped bar must carry an edge");
+        };
+        assert_eq!(themed_color, Color::WHITE);
     }
 }
