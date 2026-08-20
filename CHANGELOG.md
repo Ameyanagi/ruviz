@@ -15,6 +15,9 @@ All notable changes to this project will be documented in this file.
   spelling bar, violin and boxen plots already used. Categories move to the y
   axis, the value axis keeps its scale, and several named boxes stack up the
   axis the way vertical ones spread across it.
+- Every categorical builder now spells both directions: strip, swarm, grouped
+  and stacked bar builders gain the `.vertical()` their `.horizontal()` was
+  missing, so switching back is written the same way everywhere.
 
 ### Changed
 

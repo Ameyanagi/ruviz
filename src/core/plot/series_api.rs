@@ -2124,6 +2124,12 @@ impl PlotBuilder<crate::plots::categorical::StripConfig> {
         self
     }
 
+    /// Lay the categories along the x axis (the default).
+    pub fn vertical(mut self) -> Self {
+        self.config = std::mem::take(&mut self.config).vertical();
+        self
+    }
+
     /// Seed for the jitter, so a figure redraws identically.
     pub fn seed(mut self, seed: u64) -> Self {
         self.config = std::mem::take(&mut self.config).seed(seed);
@@ -2166,6 +2172,12 @@ impl PlotBuilder<crate::plots::categorical::SwarmConfig> {
     /// Lay the categories along the y axis instead of the x axis.
     pub fn horizontal(mut self) -> Self {
         self.config = std::mem::take(&mut self.config).horizontal();
+        self
+    }
+
+    /// Lay the categories along the x axis (the default).
+    pub fn vertical(mut self) -> Self {
+        self.config = std::mem::take(&mut self.config).vertical();
         self
     }
 
@@ -2336,25 +2348,29 @@ impl PlotBuilder<crate::plots::categorical::GroupedBarConfig> {
         self
     }
 
-    /// Outline colour for every bar. Bars have no outline unless one is set.
+    /// Outline colour for every bar, overriding the default derived from the
+    /// fill through the shared filled-patch rule.
     pub fn edge_color(mut self, color: Color) -> Self {
         self.config = std::mem::take(&mut self.config).edge_color(color);
         self
     }
 
-    /// Outline width in points (default `0.0`, i.e. no outline).
+    /// Outline width in points (default `0.8`); `0.0` removes the outline.
     pub fn edge_width(mut self, width: f32) -> Self {
         self.config.edge_width = width.max(0.0);
         self
     }
 
-    /// Lay the categories along the y axis, so the bars run left to right.
-    ///
-    /// The shared category axis is the x axis, so a horizontal chart's
-    /// categories are not labelled yet — the same gap a horizontal strip plot
-    /// has.
+    /// Lay the categories along the y axis, so the bars run left to right
+    /// and the category names label the y axis.
     pub fn horizontal(mut self) -> Self {
         self.config = std::mem::take(&mut self.config).horizontal();
+        self
+    }
+
+    /// Lay the categories along the x axis (the default).
+    pub fn vertical(mut self) -> Self {
+        self.config = std::mem::take(&mut self.config).vertical();
         self
     }
 
@@ -2390,25 +2406,29 @@ impl PlotBuilder<crate::plots::categorical::StackedBarConfig> {
         self
     }
 
-    /// Outline colour for every bar. Bars have no outline unless one is set.
+    /// Outline colour for every bar, overriding the default derived from the
+    /// fill through the shared filled-patch rule.
     pub fn edge_color(mut self, color: Color) -> Self {
         self.config = std::mem::take(&mut self.config).edge_color(color);
         self
     }
 
-    /// Outline width in points (default `0.0`, i.e. no outline).
+    /// Outline width in points (default `0.8`); `0.0` removes the outline.
     pub fn edge_width(mut self, width: f32) -> Self {
         self.config.edge_width = width.max(0.0);
         self
     }
 
-    /// Lay the categories along the y axis, so the bars run left to right.
-    ///
-    /// The shared category axis is the x axis, so a horizontal chart's
-    /// categories are not labelled yet — the same gap a horizontal strip plot
-    /// has.
+    /// Lay the categories along the y axis, so the bars run left to right
+    /// and the category names label the y axis.
     pub fn horizontal(mut self) -> Self {
         self.config = std::mem::take(&mut self.config).horizontal();
+        self
+    }
+
+    /// Lay the categories along the x axis (the default).
+    pub fn vertical(mut self) -> Self {
+        self.config = std::mem::take(&mut self.config).vertical();
         self
     }
 

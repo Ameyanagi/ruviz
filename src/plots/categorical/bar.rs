@@ -910,10 +910,14 @@ impl ComputedSeries for BarSeriesData {
         // and an absent edge colour is derived from the fill rather than
         // meaning "no edge" — grouped and stacked bars used to read it the
         // second way, which is why they drew flat next to a plain bar chart in
-        // the same theme.
-        let edge = style
-            .patch_edge(fill, self.edge_color, self.edge_width.max(0.0))
-            .map(|(color, width_px)| (style.tinted(color), width_px));
+        // the same theme. An explicit colour is tinted *before* resolution and
+        // a derived one inherits `fill`'s already-tinted alpha, so neither
+        // path multiplies the series alpha in twice.
+        let edge = style.patch_edge(
+            fill,
+            self.edge_color.map(|color| style.tinted(color)),
+            self.edge_width.max(0.0),
+        );
 
         self.bars
             .iter()
@@ -1331,5 +1335,28 @@ mod tests {
             panic!("a grouped bar must carry an edge");
         };
         assert_eq!(themed_color, Color::WHITE);
+    }
+
+    /// A translucent series' derived edge is exactly as translucent as its
+    /// fill. The first cut of the edge rule tinted the derivation twice —
+    /// invisible at the default `alpha: 1.0`, wrong everywhere else.
+    #[test]
+    fn a_translucent_bar_edge_is_as_translucent_as_its_fill() {
+        let mut style = probe_style();
+        style.alpha = 0.5;
+        let PlotPrimitive::Polygon {
+            fill: Some(fill),
+            edge: Some((edge_color, _)),
+            ..
+        } = only_column_primitives(&style)[0]
+        else {
+            panic!("a grouped bar must carry a fill and an edge");
+        };
+        assert_eq!(
+            edge_color.a, fill.a,
+            "edge alpha {} must match fill alpha {}",
+            edge_color.a, fill.a
+        );
+        assert_eq!(edge_color.a, 127, "half of an opaque fill");
     }
 }

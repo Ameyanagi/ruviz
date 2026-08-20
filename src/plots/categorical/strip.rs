@@ -95,6 +95,12 @@ impl StripConfig {
         self
     }
 
+    /// Set vertical orientation (the default)
+    pub fn vertical(mut self) -> Self {
+        self.orientation = StripOrientation::Vertical;
+        self
+    }
+
     /// Enable dodging for groups
     pub fn dodge(mut self, dodge: bool) -> Self {
         self.dodge = dodge;

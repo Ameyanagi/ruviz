@@ -2758,7 +2758,10 @@ impl BoxPlotPixels {
             category_center: slot(box_data.x_center),
             category_lo,
             category_hi,
-            cap_half_width: (category_hi - category_lo) * 0.5 * box_data.cap_width,
+            // `.abs()` because the category axis can run either way in pixels:
+            // y counts downwards, so a horizontal box's `category_hi` lands
+            // *above* (smaller than) its `category_lo`.
+            cap_half_width: (category_hi - category_lo).abs() * 0.5 * box_data.cap_width,
             q1: value(box_data.q1),
             median: value(box_data.median),
             q3: value(box_data.q3),

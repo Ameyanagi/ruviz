@@ -90,6 +90,12 @@ impl SwarmConfig {
         self
     }
 
+    /// Set vertical orientation (the default)
+    pub fn vertical(mut self) -> Self {
+        self.orientation = SwarmOrientation::Vertical;
+        self
+    }
+
     /// Set maximum spread width
     pub fn width(mut self, width: f64) -> Self {
         self.width = width.clamp(0.1, 1.0);
