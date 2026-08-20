@@ -889,6 +889,42 @@ def test_invalid_bar_orientation_is_rejected_at_the_call() -> None:
         ruviz.plot().bar(["a"], [1.0], orientation="diagonal")  # type: ignore[arg-type]
 
 
+def test_invalid_boxplot_orientation_is_rejected_at_the_call() -> None:
+    with pytest.raises(ValueError, match="unsupported orientation"):
+        ruviz.plot().boxplot([1.0, 2.0, 3.0], orientation="diagonal")  # type: ignore[arg-type]
+
+
+def test_invert_y_changes_the_render_and_round_trips_through_snapshots() -> None:
+    def ranked(plot: ruviz.Plot) -> ruviz.Plot:
+        return plot.size_px(320, 200).bar(["first", "second"], [3.0, 1.0], orientation="horizontal")
+
+    natural = ranked(ruviz.plot()).render_png()
+    inverted_plot = ranked(ruviz.plot()).invert_y()
+    inverted = inverted_plot.render_png()
+    assert natural.startswith(PNG_HEADER) and inverted.startswith(PNG_HEADER)
+    assert natural != inverted
+
+    snapshot = inverted_plot.to_snapshot()
+    assert snapshot["invertY"] is True
+    assert "invertX" not in snapshot
+    assert ruviz.Plot._replay_snapshot(snapshot).to_snapshot() == snapshot
+    assert ruviz.Plot._replay_snapshot(snapshot).render_png() == inverted
+
+
+def test_invert_x_changes_the_render_and_round_trips_through_snapshots() -> None:
+    def curve(plot: ruviz.Plot) -> ruviz.Plot:
+        return plot.size_px(320, 200).line([0.0, 1.0, 2.0], [1.0, 3.0, 2.0])
+
+    natural = curve(ruviz.plot()).render_png()
+    inverted_plot = curve(ruviz.plot()).invert_x()
+    inverted = inverted_plot.render_png()
+    assert natural != inverted
+
+    snapshot = inverted_plot.to_snapshot()
+    assert snapshot["invertX"] is True
+    assert ruviz.Plot._replay_snapshot(snapshot).to_snapshot() == snapshot
+
+
 def test_unsupported_style_keyword_is_rejected_per_kind() -> None:
     with pytest.raises(TypeError, match="unexpected keyword argument 'linestyle'"):
         ruviz.plot().bar(["a"], [1.0], linestyle="dashed")

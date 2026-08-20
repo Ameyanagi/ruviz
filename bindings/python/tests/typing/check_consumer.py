@@ -174,6 +174,9 @@ def helpers_stay_generic(
         ruviz.plot()
         .line(values, values, data=data, linestyle=style)
         .bar(["a"], [1.0], orientation=orientation)
+        .boxplot([1.0, 2.0], orientation=orientation)
+        .invert_x()
+        .invert_y()
     )
 
 
@@ -203,6 +206,7 @@ def rejected_calls() -> None:
     chart.histogram([0.0], bins="many")  # pyright: ignore[reportArgumentType]
     chart.histogram([0.0], density="yes")  # pyright: ignore[reportArgumentType]
     chart.bar(["a"], [1.0], orientation="diagonal")  # pyright: ignore[reportArgumentType]
+    chart.boxplot([1.0], orientation="diagonal")  # pyright: ignore[reportArgumentType]
     chart.radar(["a"], [{"name": "x"}])  # pyright: ignore[reportArgumentType]
     chart.size_px(800)  # pyright: ignore[reportCallIssue]
     chart.line([0.0])  # pyright: ignore[reportCallIssue]
