@@ -2016,6 +2016,18 @@ impl Plot {
         (y_min, y_max) =
             crate::axes::scale::expand_degenerate_range(y_min, y_max, &self.layout.y_scale);
 
+        // The inversion flags flip whatever range resolved above — data-driven
+        // or manual — so `invert_y()` composes with auto-scaled bounds where
+        // descending manual limits require knowing the extent. Last step on
+        // purpose: every consumer, raster, SVG and hit-testing alike, reaches
+        // its bounds through here and sees the same flipped range.
+        if self.layout.invert_x {
+            (x_min, x_max) = (x_max, x_min);
+        }
+        if self.layout.invert_y {
+            (y_min, y_max) = (y_max, y_min);
+        }
+
         (x_min, x_max, y_min, y_max)
     }
 

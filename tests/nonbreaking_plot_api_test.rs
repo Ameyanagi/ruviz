@@ -374,6 +374,46 @@ fn high_level_boxplot_show_mean_draws_a_marker() {
     );
 }
 
+/// `invert_y()` flips the resolved range, so a horizontal bar chart lists its
+/// first category at the top — without hand-computing the descending `ylim`
+/// that was previously the only spelling.
+#[test]
+fn invert_y_puts_the_first_category_on_top() {
+    let cats = ["First", "Second", "Third"];
+    let vals = [3.0, 1.0, 2.0];
+
+    let label_y = |svg: &str, name: &str| -> f32 {
+        svg.lines()
+            .find(|line| line.contains(&format!(">{name}<")))
+            .and_then(|line| {
+                let start = line.find("y=\"")? + 3;
+                line[start..].split('"').next()?.parse().ok()
+            })
+            .unwrap_or_else(|| panic!("no <text> for {name}: {svg}"))
+    };
+
+    let natural = Plot::new()
+        .bar(&cats, &vals)
+        .horizontal()
+        .render_to_svg()
+        .expect("horizontal bars should render");
+    assert!(
+        label_y(&natural, "First") > label_y(&natural, "Third"),
+        "without inversion the first category sits at the bottom"
+    );
+
+    let inverted = Plot::new()
+        .bar(&cats, &vals)
+        .horizontal()
+        .invert_y()
+        .render_to_svg()
+        .expect("inverted horizontal bars should render");
+    assert!(
+        label_y(&inverted, "First") < label_y(&inverted, "Third"),
+        "invert_y() must put the first category on top: {inverted}"
+    );
+}
+
 #[test]
 fn high_level_boxplot_api_reports_empty_data_when_horizontal() {
     let empty: Vec<f64> = vec![];

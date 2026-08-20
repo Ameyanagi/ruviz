@@ -627,6 +627,46 @@ impl Plot {
         self
     }
 
+    /// Flip the x axis, so it runs from high on the left to low on the right.
+    ///
+    /// Applies after the axis range resolves, so it composes with auto-scaled
+    /// bounds — no need to know the data's extent, which is what descending
+    /// [`xlim`](Self::xlim) limits require.
+    ///
+    /// ```rust,no_run
+    /// use ruviz::prelude::*;
+    ///
+    /// Plot::new()
+    ///     .line(&[1.0, 2.0, 3.0], &[2.0, 4.0, 3.0])
+    ///     .invert_x()
+    ///     .save("inverted.png")?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn invert_x(mut self) -> Self {
+        self.layout.invert_x = true;
+        self
+    }
+
+    /// Flip the y axis, so it runs from high at the bottom to low at the top.
+    ///
+    /// On a horizontal categorical chart this puts the *first* category at the
+    /// top, so the categories read in the order they were given:
+    ///
+    /// ```rust,no_run
+    /// use ruviz::prelude::*;
+    ///
+    /// Plot::new()
+    ///     .bar(&["First", "Second", "Third"], &[3.0, 1.0, 2.0])
+    ///     .horizontal()
+    ///     .invert_y()
+    ///     .save("ranked.png")?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn invert_y(mut self) -> Self {
+        self.layout.invert_y = true;
+        self
+    }
+
     /// Set X-axis scale type
     ///
     /// # Example

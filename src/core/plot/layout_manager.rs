@@ -49,6 +49,10 @@ pub struct LayoutManager {
     pub(crate) x_scale: AxisScale,
     /// Y-axis scale (linear, log, symlog)
     pub(crate) y_scale: AxisScale,
+    /// Flip the x axis after bounds resolve, so it runs high-to-low.
+    pub(crate) invert_x: bool,
+    /// Flip the y axis after bounds resolve, so it runs high-to-low.
+    pub(crate) invert_y: bool,
 }
 
 impl Default for LayoutManager {
@@ -67,6 +71,8 @@ impl LayoutManager {
             scientific_notation: None,
             x_limits: None,
             y_limits: None,
+            invert_x: false,
+            invert_y: false,
             x_scale: AxisScale::Linear,
             y_scale: AxisScale::Linear,
         }

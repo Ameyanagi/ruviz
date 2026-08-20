@@ -118,6 +118,25 @@ Plot::new()
 Vertical bars put categories on x and values on y; horizontal bars swap those
 axes in bounds, ticks, labels, scale validation, and both PNG and SVG output.
 
+The y axis runs upward, so the first category lands at the *bottom*. For a
+ranked chart that reads top-down in the order you gave, flip the axis with
+`.invert_y()`:
+
+```rust
+use ruviz::prelude::*;
+
+Plot::new()
+    .bar(&["Gold", "Silver", "Bronze"], &[42.0, 31.0, 18.0])
+    .horizontal()
+    .invert_y()
+    .title("Leaderboard")
+    .save("ranked_bar.png")?;
+```
+
+`.invert_x()` and `.invert_y()` work on any plot — they flip whatever range the
+axis resolves to, so unlike descending `.xlim(..)`/`.ylim(..)` limits they
+compose with auto-scaled bounds.
+
 ### Histograms
 
 **Use for**: Distribution analysis, frequency analysis

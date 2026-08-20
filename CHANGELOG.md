@@ -15,6 +15,11 @@ All notable changes to this project will be documented in this file.
   spelling bar, violin and boxen plots already used. Categories move to the y
   axis, the value axis keeps its scale, and several named boxes stack up the
   axis the way vertical ones spread across it.
+- `Plot::invert_x()` / `Plot::invert_y()` flip an axis after its range
+  resolves, so they compose with auto-scaled bounds — descending
+  `xlim`/`ylim` limits, the previous spelling, required knowing the data's
+  extent. On a horizontal categorical chart, `.invert_y()` puts the first
+  category at the top so ranked bars read in the order they were given.
 - Every categorical builder now spells both directions: strip, swarm, grouped
   and stacked bar builders gain the `.vertical()` their `.horizontal()` was
   missing, so switching back is written the same way everywhere.
