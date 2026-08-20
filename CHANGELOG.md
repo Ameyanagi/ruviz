@@ -64,7 +64,9 @@ All notable changes to this project will be documented in this file.
   and bounds and axis-scale support follow.
 - PNG output from `save()` and `render_png_bytes()` now stores the effective
   configured DPI in a standard `pHYs` chunk, so print and page-layout software
-  recovers the intended physical figure size.
+  recovers the intended physical figure size. Interactive-session exports —
+  the web canvas session and the 3D sessions — stamp the same chunk, so a
+  session export and a direct export of the same figure stay byte-identical.
 - SVG export no longer writes an empty `<text>` element for an unnamed category
   slot. A lone box plot or violin holds its place on the axis without a label,
   which is what the raster backend already drew.

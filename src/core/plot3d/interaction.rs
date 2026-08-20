@@ -860,6 +860,17 @@ impl InteractivePlot3DSession {
         self.replace_inner(replacement)
     }
 
+    /// Render one retained frame as PNG bytes.
+    ///
+    /// Stamps the frame's figure DPI into the `pHYs` chunk — the same stamp
+    /// the non-interactive 3D `render_png_bytes` writes for the same figure,
+    /// so a session export and a direct export cannot differ by a metadata
+    /// chunk. The figure DPI already tracks the session's scale factor (see
+    /// `resize`), so a scaled render stamps its denser resolution.
+    pub fn render_png_bytes(&self) -> Result<Vec<u8>> {
+        self.render()?.encode_png_with_dpi(self.frame.figure.dpi)
+    }
+
     /// Render one retained interactive-quality CPU frame.
     pub fn render(&self) -> Result<Image> {
         let layout = Axis3Layout::resolve(&self.frame)?;
@@ -1178,7 +1189,7 @@ impl GpuSurfaceSession3D {
     }
 
     pub fn render_png_bytes(&self) -> Result<Vec<u8>> {
-        self.session.render()?.encode_png()
+        self.session.render_png_bytes()
     }
 }
 

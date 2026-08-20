@@ -184,6 +184,15 @@ impl PreparedPlot {
             .map(|(image, _)| image)
     }
 
+    /// The DPI a PNG export of this plot stamps into its `pHYs` chunk.
+    ///
+    /// One accessor so the interactive session's export path and the direct
+    /// [`render_png_bytes`](Self::render_png_bytes) path cannot stamp the same
+    /// figure with different physical sizes.
+    pub(crate) fn dpi(&self) -> f32 {
+        self.plot.render_scale().dpi()
+    }
+
     /// Render PNG bytes for the plot's configured output size through the
     /// prepared runtime. Reuses the cached image when the prepared frame key
     /// has not changed.

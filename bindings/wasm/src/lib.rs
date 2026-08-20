@@ -1813,6 +1813,11 @@ mod wasm {
                 return Ok(cached.clone());
             }
 
+            // The same pHYs stamp `render_png_bytes` writes, scaled by the
+            // device scale factor: denser pixels, same physical figure size.
+            // Without it, a session export and a direct export of the same
+            // figure differ by one metadata chunk.
+            let export_dpi = self.session()?.export_dpi() * self.scale_factor;
             let png = self
                 .session()?
                 .render_to_image(ImageTarget {
@@ -1822,7 +1827,7 @@ mod wasm {
                 })
                 .map_err(js_err)?
                 .image
-                .encode_png()
+                .encode_png_with_dpi(export_dpi)
                 .map_err(js_err)?;
             self.export_png_cache = Some((self.frame_version, png.clone()));
             Ok(png)
@@ -2466,10 +2471,11 @@ mod wasm {
         }
 
         pub fn export_png(&mut self) -> Result<Vec<u8>, JsValue> {
+            // Through the session's own export so the pHYs DPI stamp cannot
+            // diverge from the direct 3D `render_png_bytes` path.
             self.browser
                 .session_mut()?
-                .render()
-                .and_then(|image| image.encode_png())
+                .render_png_bytes()
                 .map_err(js_err)
         }
 
@@ -2568,10 +2574,11 @@ mod wasm {
         }
 
         pub fn export_png(&mut self) -> Result<Vec<u8>, JsValue> {
+            // Through the session's own export so the pHYs DPI stamp cannot
+            // diverge from the direct 3D `render_png_bytes` path.
             self.browser
                 .session_mut()?
-                .render()
-                .and_then(|image| image.encode_png())
+                .render_png_bytes()
                 .map_err(js_err)
         }
 

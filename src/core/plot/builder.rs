@@ -991,13 +991,13 @@ where
         self
     }
 
-    /// Flip the x axis; see [`Plot::invert_x`].
+    /// Flip the x axis; see [`Plot::invert_x`](crate::core::Plot::invert_x).
     pub fn invert_x(mut self) -> Self {
         self.plot = self.plot.invert_x();
         self
     }
 
-    /// Flip the y axis; see [`Plot::invert_y`].
+    /// Flip the y axis; see [`Plot::invert_y`](crate::core::Plot::invert_y).
     pub fn invert_y(mut self) -> Self {
         self.plot = self.plot.invert_y();
         self

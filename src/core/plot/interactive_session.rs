@@ -810,6 +810,19 @@ pub struct InteractivePlotSession {
     inner: Arc<InteractivePlotSessionInner>,
 }
 
+impl InteractivePlotSession {
+    /// The DPI a scale-1 PNG export of this session stamps into its `pHYs`
+    /// chunk — the same value [`Plot::render_png_bytes`] stamps, so a session
+    /// export and a direct export of the same figure are byte-identical.
+    /// An embedder rendering at a device scale factor multiplies it in: the
+    /// figure covers the same physical size with denser pixels.
+    ///
+    /// [`Plot::render_png_bytes`]: crate::core::Plot::render_png_bytes
+    pub fn export_dpi(&self) -> f32 {
+        self.inner.prepared.dpi()
+    }
+}
+
 #[derive(Debug)]
 struct InteractivePlotSessionInner {
     session_token: Option<u64>,
