@@ -351,7 +351,16 @@ pub fn compute_grouped_bars(
         for (cat_idx, &value) in series_values.iter().enumerate().take(categories) {
             // Calculate bar position within group
             let group_start = cat_idx as f64 - group_width / 2.0;
-            let bar_offset = series_idx as f64 * bar_spacing;
+            // A group reads in legend order. Vertical, that is left to right,
+            // so the first series takes the lowest offset; horizontal, the eye
+            // reads top to bottom while y grows upward, so the first series
+            // takes the *highest* offset — otherwise every group lists its
+            // bars in the reverse of the legend beside them.
+            let slot_in_group = match config.orientation {
+                BarOrientation::Vertical => series_idx,
+                BarOrientation::Horizontal => num_series - 1 - series_idx,
+            };
+            let bar_offset = slot_in_group as f64 * bar_spacing;
 
             match config.orientation {
                 BarOrientation::Vertical => {
@@ -1335,6 +1344,49 @@ mod tests {
             panic!("a grouped bar must carry an edge");
         };
         assert_eq!(themed_color, Color::WHITE);
+    }
+
+    /// A horizontal group reads top-to-bottom in legend order: the first
+    /// series is the topmost bar (largest y), not the bottom one. Vertical
+    /// groups keep reading left-to-right. Without the flip, every horizontal
+    /// group listed its bars in the reverse of the legend beside them.
+    #[test]
+    fn a_horizontal_group_reads_top_to_bottom_in_legend_order() {
+        let values = vec![vec![10.0], vec![20.0], vec![30.0]];
+
+        let vertical = compute_grouped_bars(&values, 1, &GroupedBarConfig::default());
+        let x_of = |series| {
+            vertical
+                .iter()
+                .find(|bar| bar.series == series)
+                .expect("bar per series")
+                .x
+        };
+        assert!(
+            x_of(0) < x_of(1) && x_of(1) < x_of(2),
+            "vertical: legend order runs left to right"
+        );
+
+        let horizontal =
+            compute_grouped_bars(&values, 1, &GroupedBarConfig::default().horizontal());
+        let y_of = |series| {
+            horizontal
+                .iter()
+                .find(|bar| bar.series == series)
+                .expect("bar per series")
+                .y
+        };
+        assert!(
+            y_of(0) > y_of(1) && y_of(1) > y_of(2),
+            "horizontal: legend order runs top to bottom"
+        );
+
+        // The flip moves bars between slots; it must not change the slots.
+        let mut v_xs: Vec<f64> = vertical.iter().map(|bar| bar.x).collect();
+        let mut h_ys: Vec<f64> = horizontal.iter().map(|bar| bar.y).collect();
+        v_xs.sort_by(f64::total_cmp);
+        h_ys.sort_by(f64::total_cmp);
+        assert_eq!(v_xs, h_ys);
     }
 
     /// A translucent series' derived edge is exactly as translucent as its

@@ -33,6 +33,13 @@ All notable changes to this project will be documented in this file.
   `ComputedStyle` literally needs the new field; `ComputedStyle::opaque(..)`
   and the new `.with_patch_edge_color(..)` cover it otherwise.
 
+- A horizontal grouped bar chart lays each group out in legend order: the
+  first series is the topmost bar of its group, so the group reads
+  top-to-bottom the way the legend beside it does. Vertical groups are
+  unchanged. (Previously the offsets simply grew upward, so every horizontal
+  group listed its bars in the reverse of the legend — the same quirk
+  matplotlib's `barh` has and seaborn corrects.)
+
 ### Fixed
 
 - `.show_mean(true)` on a box plot draws its mean again. The diamond marker
