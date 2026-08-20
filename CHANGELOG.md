@@ -33,6 +33,9 @@ All notable changes to this project will be documented in this file.
   `ComputedStyle` literally needs the new field; `ComputedStyle::opaque(..)`
   and the new `.with_patch_edge_color(..)` cover it otherwise.
 
+- Grouped and stacked bar legend swatches are stroked with the edge their
+  bars actually carry, through the new `ComputedSeries::patch_edge_spec`
+  hook — a flat key for an outlined bar misdescribed the picture.
 - A horizontal grouped bar chart lays each group out in legend order: the
   first series is the topmost bar of its group, so the group reads
   top-to-bottom the way the legend beside it does. Vertical groups are

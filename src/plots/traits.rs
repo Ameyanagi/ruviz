@@ -863,6 +863,17 @@ pub trait ComputedSeries: PlotRender + std::fmt::Debug + Send + Sync {
         LegendKey::Line
     }
 
+    /// The edge a [`LegendKey::Patch`] swatch should be stroked with, as
+    /// `(explicit_colour, width_in_points)` — the same pair the series hands
+    /// to the filled-patch rule when it draws itself.
+    ///
+    /// A swatch that shows a flat fill for an outlined bar tells the reader
+    /// the same small lie a line-for-markers key does. `None`, the default,
+    /// keeps the swatch flat for patches genuinely drawn without an edge.
+    fn patch_edge_spec(&self) -> Option<(Option<Color>, f32)> {
+        None
+    }
+
     /// The colour scale this series wants explained, if it has one.
     ///
     /// A plot type that maps values to colours is unreadable without it — the

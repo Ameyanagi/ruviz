@@ -902,6 +902,12 @@ impl ComputedSeries for BarSeriesData {
         true
     }
 
+    /// The same `(colour, width)` pair `primitives` strokes its bars with, so
+    /// the legend swatch carries the outline the bars actually have.
+    fn patch_edge_spec(&self) -> Option<(Option<Color>, f32)> {
+        (self.edge_width > 0.0).then_some((self.edge_color, self.edge_width))
+    }
+
     /// The category axis carries ordinal slots, so it has no quantitative
     /// spacing to take a logarithm of; the value axis is projected and scales
     /// freely. Same answer, same wording, as `SeriesType::Bar`.

@@ -2268,6 +2268,32 @@ fn test_bar_legend_key_is_flat_when_the_bars_are_flat() {
     );
 }
 
+/// Grouped and stacked bars route through `LegendKey::Patch`, which used to
+/// hard-code a flat swatch — so when their bars regained an edge, their keys
+/// stayed flat and misdescribed the picture.
+#[test]
+fn test_grouped_bar_legend_keys_carry_the_edge_their_bars_are_drawn_with() {
+    let categories = ["A", "B"];
+    let one = [1.0, 2.0];
+    let two = [3.0, 4.0];
+    let plot = Plot::new()
+        .grouped_bar(&categories, &[("one", &one[..]), ("two", &two[..])])
+        .end_series();
+
+    let items = plot.collect_legend_items();
+    assert_eq!(items.len(), 2, "one key per named column");
+    for item in items {
+        let LegendItemType::Bar { edge } = item.item_type else {
+            panic!("a grouped bar column must produce a bar legend key");
+        };
+        let (edge_color, edge_width) =
+            edge.expect("grouped bars carry a default edge, so the key must too");
+        // Same resolution the primitives use: the column's fill darkened 30%.
+        assert_eq!(edge_color, item.color.darken(0.3));
+        assert!((edge_width - 0.8).abs() < f32::EPSILON);
+    }
+}
+
 #[test]
 fn test_histogram_legend_key_carries_the_bin_edge() {
     let data = vec![0.1, 0.4, 0.6, 0.9, 1.2, 1.5, 1.9, 2.4];

@@ -803,7 +803,15 @@ impl PlotSeries {
                     size: marker_size,
                     edge: marker_edge,
                 },
-                crate::plots::traits::LegendKey::Patch => LegendItemType::Bar { edge: None },
+                // The swatch is stroked with the edge the series' own patches
+                // carry, resolved through the one filled-patch rule — a flat
+                // key for an outlined bar misdescribes the picture.
+                crate::plots::traits::LegendKey::Patch => LegendItemType::Bar {
+                    edge: data.patch_edge_spec().and_then(|(explicit, width)| {
+                        crate::core::style_utils::StyleResolver::new(theme)
+                            .patch_edge(color, explicit, width)
+                    }),
+                },
                 crate::plots::traits::LegendKey::None => return None,
             },
             // These patches are drawn flat today, so their keys are flat too.
