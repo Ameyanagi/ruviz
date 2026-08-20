@@ -104,6 +104,7 @@ polars = { version = "0.50", optional = true }
 
 # Image I/O
 image = { version = "0.25", default-features = false, features = ["png"] }
+png = "0.18"
 base64 = { version = "0.22", optional = true }
 
 # PDF export (SVG → PDF pipeline)

@@ -79,3 +79,9 @@ def test_widget_snapshot_traitlet_syncs_observable_updates() -> None:
     assert pushed["schemaVersion"] == _SNAPSHOT_SCHEMA_VERSION
     assert pushed["series"][0]["y"]["values"] == [4.0, 5.0, 6.0]
     assert pushed["series"][0]["style"]["color"] == "#ff0000"
+
+
+def test_widget_snapshot_preserves_horizontal_bar_orientation() -> None:
+    widget = ruviz.plot().bar(["a", "b"], [1.0, 2.0], orientation="horizontal").widget()
+
+    assert widget.snapshot["series"][0]["style"]["orientation"] == "horizontal"

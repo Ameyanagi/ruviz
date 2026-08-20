@@ -158,6 +158,11 @@ impl BarConfig {
         Self::default().orientation(BarOrientation::Horizontal)
     }
 
+    /// Create a vertical bar configuration.
+    pub fn vertical() -> Self {
+        Self::default().orientation(BarOrientation::Vertical)
+    }
+
     /// Resolve the bar edge against `theme` and the resolved fill colour.
     ///
     /// Returns `(colour, width_in_points)`, or `None` when the edge is disabled

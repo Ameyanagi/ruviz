@@ -30,6 +30,7 @@ from ._typing import (
     LineStyleName,
     MarkerName,
     MatrixLike,
+    OrientationName,
     Plot3DSnapshot,
     PlotSnapshot,
     RadarSeriesDict,
@@ -324,6 +325,19 @@ def _style_text(name: str, aliases: Mapping[str, str] | None = None) -> Callable
     return normalize
 
 
+def _style_choice(name: str, choices: frozenset[str]) -> Callable[[Any], str]:
+    normalize = _style_text(name)
+
+    def checked(value: Any) -> str:
+        result = normalize(value)
+        if result not in choices:
+            accepted = ", ".join(sorted(choices))
+            raise ValueError(f"unsupported {name} {result!r}; expected one of: {accepted}")
+        return result
+
+    return checked
+
+
 def _style_label(value: Any) -> str:
     if not isinstance(value, str):
         raise TypeError("label must be a string")
@@ -472,6 +486,7 @@ _STYLE_OPTIONS: dict[str, Callable[[Any], Any]] = {
     "density": _style_flag("density"),
     "bandwidth": _style_positive("bandwidth"),
     "levels": _style_count("levels", 2),
+    "orientation": _style_choice("orientation", frozenset({"vertical", "horizontal"})),
 }
 
 #: Snapshot style key -> Python keyword, for the keys whose spellings differ.
@@ -514,7 +529,11 @@ _SERIES_KINDS: dict[str, _SeriesKind] = {
         frozenset({"x", "y"}),
         style=_COMMON_STYLE | {"marker", "markerSize", "density"},
     ),
-    "bar": _SeriesKind(("categories", "values"), frozenset({"values"}), style=_COMMON_STYLE),
+    "bar": _SeriesKind(
+        ("categories", "values"),
+        frozenset({"values"}),
+        style=_COMMON_STYLE | {"orientation"},
+    ),
     "histogram": _SeriesKind(
         ("data",),
         frozenset({"data"}),
@@ -1691,18 +1710,28 @@ class Plot:
         label: str | None = None,
         color: str | None = None,
         alpha: float | None = None,
+        orientation: OrientationName = "vertical",
     ) -> "Plot":
-        """Add a categorical bar series."""
+        """Add a categorical bar series, vertically or horizontally."""
         categories = _to_string_list(_column_values(data, x), "bar categories")
         values, native_values, observable = self._build_native_numeric_source(
             _column_values(data, y), "bar values"
         )
         if len(categories) != len(values["values"]):
             raise ValueError("bar categories and values must have the same length")
+        normalized_orientation = _STYLE_OPTIONS["orientation"](orientation)
         series = _styled_series(
             "bar",
             {"categories": categories, "values": values},
-            {"label": label, "color": color, "alpha": alpha},
+            {
+                "label": label,
+                "color": color,
+                "alpha": alpha,
+                # Keep default snapshots byte-compatible with earlier releases.
+                "orientation": (
+                    normalized_orientation if normalized_orientation != "vertical" else None
+                ),
+            },
         )
         self._apply_native_series(
             self._native_plot, series, native_sources={"values": native_values}

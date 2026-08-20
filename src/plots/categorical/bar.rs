@@ -860,12 +860,13 @@ impl ComputedSeries for BarSeriesData {
     /// group and a lone bar cannot be positioned by one rule and labelled by
     /// another.
     fn category_slots(&self) -> Vec<(String, f64)> {
+        category_slots(&self.categories, self.categories.len())
+    }
+
+    fn category_orientation(&self) -> crate::core::Orientation {
         match self.orientation {
-            BarOrientation::Vertical => category_slots(&self.categories, self.categories.len()),
-            // The shared category axis is the x axis; horizontal bars put their
-            // categories on y, which that machinery cannot label yet — the same
-            // gap a horizontal strip plot has.
-            BarOrientation::Horizontal => Vec::new(),
+            BarOrientation::Vertical => crate::core::Orientation::Vertical,
+            BarOrientation::Horizontal => crate::core::Orientation::Horizontal,
         }
     }
 

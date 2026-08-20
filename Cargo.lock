@@ -5383,6 +5383,7 @@ dependencies = [
  "ndarray 0.17.2",
  "palette",
  "plotters",
+ "png 0.18.0",
  "polars",
  "pollster",
  "proptest",

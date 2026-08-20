@@ -337,13 +337,13 @@ impl ComputedSeries for StripData {
     /// bars and box plots use, so the names the caller passed get printed under
     /// the columns instead of raw numbers.
     fn category_slots(&self) -> Vec<(String, f64)> {
+        crate::plots::boxplot::category_slots(&self.category_names, self.num_categories)
+    }
+
+    fn category_orientation(&self) -> crate::core::Orientation {
         match self.config.orientation {
-            StripOrientation::Vertical => {
-                crate::plots::boxplot::category_slots(&self.category_names, self.num_categories)
-            }
-            // The shared category axis is the x axis; a horizontal strip puts
-            // its categories on y, which that machinery cannot place yet.
-            StripOrientation::Horizontal => Vec::new(),
+            StripOrientation::Vertical => crate::core::Orientation::Vertical,
+            StripOrientation::Horizontal => crate::core::Orientation::Horizontal,
         }
     }
 

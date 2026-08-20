@@ -348,6 +348,88 @@ impl ViolinData {
         self.kde.density.iter().copied().fold(0.0, f64::max)
     }
 
+    fn draw_inner_summary(
+        &self,
+        renderer: &mut SkiaRenderer,
+        area: &PlotArea,
+        center: f64,
+        half_width: f64,
+    ) -> Result<()> {
+        let config = &self.config;
+        let (q1, median, q3) = self.quartiles;
+        let render_scale = renderer.render_scale();
+        let min_box_size_px = render_scale.points_to_pixels(4.0);
+        let inner_line_width_px = render_scale.points_to_pixels(1.0);
+        let median_marker_size_px = render_scale.points_to_pixels(4.0);
+
+        if config.show_box {
+            let box_half_width = half_width * 0.025;
+            let ((x1, y1), (x2, y2), min_width, min_height) = match config.orientation {
+                Orientation::Vertical => (
+                    area.data_to_screen(center - box_half_width, q1),
+                    area.data_to_screen(center + box_half_width, q3),
+                    min_box_size_px,
+                    0.0,
+                ),
+                Orientation::Horizontal => (
+                    area.data_to_screen(q1, center - box_half_width),
+                    area.data_to_screen(q3, center + box_half_width),
+                    0.0,
+                    min_box_size_px,
+                ),
+            };
+            renderer.draw_rectangle(
+                x1.min(x2),
+                y1.min(y2),
+                (x2 - x1).abs().max(min_width),
+                (y2 - y1).abs().max(min_height),
+                config.inner_color,
+                true,
+            )?;
+        }
+
+        if config.show_quartiles {
+            let line_half = half_width * 0.12;
+            for quartile in [q1, q3] {
+                let ((x1, y1), (x2, y2)) = match config.orientation {
+                    Orientation::Vertical => (
+                        area.data_to_screen(center - line_half, quartile),
+                        area.data_to_screen(center + line_half, quartile),
+                    ),
+                    Orientation::Horizontal => (
+                        area.data_to_screen(quartile, center - line_half),
+                        area.data_to_screen(quartile, center + line_half),
+                    ),
+                };
+                renderer.draw_line(
+                    x1,
+                    y1,
+                    x2,
+                    y2,
+                    config.inner_color,
+                    inner_line_width_px,
+                    LineStyle::Solid,
+                )?;
+            }
+        }
+
+        if config.show_median {
+            let (mx, my) = match config.orientation {
+                Orientation::Vertical => area.data_to_screen(center, median),
+                Orientation::Horizontal => area.data_to_screen(median, center),
+            };
+            renderer.draw_marker(
+                mx,
+                my,
+                median_marker_size_px,
+                crate::render::MarkerStyle::Circle,
+                Color::from_rgb(255, 255, 255),
+            )?;
+        }
+
+        Ok(())
+    }
+
     /// Draw the individual observations on the violin's centre line.
     ///
     /// This backs [`ViolinConfig::points`] (seaborn's `inner="point"`). Points
@@ -557,9 +639,6 @@ impl PlotRender for ViolinData {
         let half_width = config.width / 2.0;
         let render_scale = renderer.render_scale();
         let line_width_px = render_scale.points_to_pixels(config.line_width);
-        let min_box_width_px = render_scale.points_to_pixels(4.0);
-        let inner_line_width_px = render_scale.points_to_pixels(1.0);
-        let median_marker_size_px = render_scale.points_to_pixels(4.0);
 
         // The violin straddles the centre of its own category slot.
         let center = config.x_center();
@@ -600,70 +679,8 @@ impl PlotRender for ViolinData {
             )?;
         }
 
-        // Draw inner elements (points, box, quartiles, median)
-        let (q1, median, q3) = self.quartiles;
-
         self.draw_points(renderer, area, center, line_color, 1.0)?;
-
-        if config.show_box {
-            // Draw thin box for IQR (seaborn-style: ~5% of half-width)
-            let box_half_width = half_width * 0.025;
-            let (x1, y1) = area.data_to_screen(center - box_half_width, q1);
-            let (x2, y2) = area.data_to_screen(center + box_half_width, q3);
-            // Use abs() for dimensions and min() for origin to handle y-axis inversion
-            let box_x = x1.min(x2);
-            let box_y = y1.min(y2);
-            let box_width = (x2 - x1).abs().max(min_box_width_px);
-            let box_height = (y2 - y1).abs();
-            renderer.draw_rectangle(
-                box_x,
-                box_y,
-                box_width,
-                box_height,
-                config.inner_color,
-                true,
-            )?;
-        }
-
-        if config.show_quartiles {
-            // Draw quartile lines
-            let line_half = half_width * 0.12;
-            let (q1_x1, q1_y) = area.data_to_screen(center - line_half, q1);
-            let (q1_x2, _) = area.data_to_screen(center + line_half, q1);
-            renderer.draw_line(
-                q1_x1,
-                q1_y,
-                q1_x2,
-                q1_y,
-                config.inner_color,
-                inner_line_width_px,
-                LineStyle::Solid,
-            )?;
-
-            let (q3_x1, q3_y) = area.data_to_screen(center - line_half, q3);
-            let (q3_x2, _) = area.data_to_screen(center + line_half, q3);
-            renderer.draw_line(
-                q3_x1,
-                q3_y,
-                q3_x2,
-                q3_y,
-                config.inner_color,
-                inner_line_width_px,
-                LineStyle::Solid,
-            )?;
-        }
-
-        if config.show_median {
-            // Draw median dot or line
-            let (mx, my) = area.data_to_screen(center, median);
-            renderer.draw_marker(
-                mx,
-                my,
-                median_marker_size_px,
-                crate::render::MarkerStyle::Circle,
-                Color::from_rgb(255, 255, 255),
-            )?;
-        }
+        self.draw_inner_summary(renderer, area, center, half_width)?;
 
         Ok(())
     }
@@ -685,9 +702,6 @@ impl PlotRender for ViolinData {
         let resolver = StyleResolver::new(theme);
         let half_width = config.width / 2.0;
         let render_scale = renderer.render_scale();
-        let min_box_width_px = render_scale.points_to_pixels(4.0);
-        let inner_line_width_px = render_scale.points_to_pixels(1.0);
-        let median_marker_size_px = render_scale.points_to_pixels(4.0);
 
         // The violin straddles the centre of its own category slot.
         let center = config.x_center();
@@ -737,71 +751,9 @@ impl PlotRender for ViolinData {
             )?;
         }
 
-        // Draw inner elements (points, box, quartiles, median)
-        let (q1, median, q3) = self.quartiles;
-
         // `line_color` already carries the series alpha, so do not apply it twice.
         self.draw_points(renderer, area, center, line_color, 1.0)?;
-
-        if config.show_box {
-            // Draw thin box for IQR (seaborn-style: ~5% of half-width)
-            let box_half_width = half_width * 0.025;
-            let (x1, y1) = area.data_to_screen(center - box_half_width, q1);
-            let (x2, y2) = area.data_to_screen(center + box_half_width, q3);
-            // Use abs() for dimensions and min() for origin to handle y-axis inversion
-            let box_x = x1.min(x2);
-            let box_y = y1.min(y2);
-            let box_width = (x2 - x1).abs().max(min_box_width_px);
-            let box_height = (y2 - y1).abs();
-            renderer.draw_rectangle(
-                box_x,
-                box_y,
-                box_width,
-                box_height,
-                config.inner_color,
-                true,
-            )?;
-        }
-
-        if config.show_quartiles {
-            // Draw quartile lines
-            let line_half = half_width * 0.12;
-            let (q1_x1, q1_y) = area.data_to_screen(center - line_half, q1);
-            let (q1_x2, _) = area.data_to_screen(center + line_half, q1);
-            renderer.draw_line(
-                q1_x1,
-                q1_y,
-                q1_x2,
-                q1_y,
-                config.inner_color,
-                inner_line_width_px,
-                LineStyle::Solid,
-            )?;
-
-            let (q3_x1, q3_y) = area.data_to_screen(center - line_half, q3);
-            let (q3_x2, _) = area.data_to_screen(center + line_half, q3);
-            renderer.draw_line(
-                q3_x1,
-                q3_y,
-                q3_x2,
-                q3_y,
-                config.inner_color,
-                inner_line_width_px,
-                LineStyle::Solid,
-            )?;
-        }
-
-        if config.show_median {
-            // Draw median dot or line
-            let (mx, my) = area.data_to_screen(center, median);
-            renderer.draw_marker(
-                mx,
-                my,
-                median_marker_size_px,
-                crate::render::MarkerStyle::Circle,
-                Color::from_rgb(255, 255, 255),
-            )?;
-        }
+        self.draw_inner_summary(renderer, area, center, half_width)?;
 
         Ok(())
     }
@@ -970,8 +922,8 @@ mod tests {
         let data: Vec<f64> = (0..60).map(|i| i as f64 / 6.0).collect();
         let violin = ViolinData::from_values(&data, &config).unwrap();
         let mut renderer = SkiaRenderer::new(200, 200, Theme::default())?;
-        let ((_, _), (y_min, y_max)) = violin.data_bounds();
-        let area = PlotArea::new(0.0, 0.0, 200.0, 200.0, 0.0, 1.0, y_min, y_max);
+        let ((x_min, x_max), (y_min, y_max)) = violin.data_bounds();
+        let area = PlotArea::new(0.0, 0.0, 200.0, 200.0, x_min, x_max, y_min, y_max);
         violin.render(
             &mut renderer,
             &area,
@@ -997,6 +949,24 @@ mod tests {
         let default = render_violin(ViolinConfig::new()).unwrap();
         let explicit_off = render_violin(ViolinConfig::new().points(false)).unwrap();
         assert_eq!(default.pixels, explicit_off.pixels);
+    }
+
+    #[test]
+    fn test_horizontal_violin_draws_its_inner_summary() {
+        let without = render_violin(
+            ViolinConfig::new()
+                .horizontal()
+                .box_plot(false)
+                .quartiles(false)
+                .median(false),
+        )
+        .unwrap();
+        let with = render_violin(ViolinConfig::new().horizontal()).unwrap();
+
+        assert_ne!(
+            without.pixels, with.pixels,
+            "horizontal box, quartiles, and median were projected off-canvas"
+        );
     }
 
     #[test]

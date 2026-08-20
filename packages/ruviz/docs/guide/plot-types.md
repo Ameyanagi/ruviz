@@ -33,7 +33,9 @@ and contour data must provide exactly `x.length * y.length` `z` values.
 Every series takes an optional `style`, typed to the options its plot family
 supports: `label`, `color` (hex or named), `alpha`, `width`, `linestyle`,
 `marker`, `markerSize`, plus `bins` and `density` for histograms, `bandwidth`
-for KDE, and `levels` for contours. Heatmap, pie, and radar take no style.
+for KDE, `levels` for contours, and `orientation: "vertical" | "horizontal"`
+for bars. Horizontal bars put numeric values on x and category labels on y.
+Heatmap, pie, and radar take no style.
 `density: true` normalizes histogram bars to a probability density so a KDE
 overlay shares their scale instead of collapsing to zero.
 

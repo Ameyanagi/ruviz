@@ -75,10 +75,13 @@ fn resolve_series_for_frame<'a>(
             y: resolve_plot_data(y_data, time, cache, acknowledgements),
         },
         SeriesType::Bar {
-            categories, values, ..
+            categories,
+            values,
+            config,
         } => ResolvedSeries::Bar {
             categories,
             values: resolve_plot_data(values, time, cache, acknowledgements),
+            config,
         },
         SeriesType::ErrorBars {
             x_data,

@@ -11,10 +11,6 @@ use crate::{
     core::plot::{AlphaMode, Image},
     core::{PlottingError, Result},
 };
-use image::{
-    ColorType, ImageEncoder,
-    codecs::png::{CompressionType, FilterType, PngEncoder},
-};
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
@@ -60,21 +56,61 @@ fn validate_rgba_image(image: &Image) -> Result<()> {
     Ok(())
 }
 
-/// Encode an in-memory RGBA image as PNG bytes.
-pub fn encode_rgba_png(image: &Image) -> Result<Vec<u8>> {
+fn pixels_per_meter(dpi: f32) -> Result<u32> {
+    let pixels_per_meter = f64::from(dpi) / 0.0254;
+    if !pixels_per_meter.is_finite()
+        || pixels_per_meter <= 0.0
+        || pixels_per_meter.round() > f64::from(u32::MAX)
+    {
+        return Err(PlottingError::InvalidInput(format!(
+            "PNG DPI must be finite, positive, and encodable as pixels per metre (dpi={dpi})"
+        )));
+    }
+    Ok(pixels_per_meter.round() as u32)
+}
+
+fn write_rgba_png<W: Write>(writer: W, image: &Image, dpi: Option<f32>) -> Result<()> {
     validate_rgba_image(image)?;
     let pixels = image.pixels_in_alpha_mode(AlphaMode::Straight);
 
-    let mut bytes = Vec::new();
-    PngEncoder::new_with_quality(&mut bytes, CompressionType::Fast, FilterType::Adaptive)
-        .write_image(
-            pixels.as_ref(),
-            image.width,
-            image.height,
-            ColorType::Rgba8.into(),
-        )
+    let mut encoder = png::Encoder::new(writer, image.width, image.height);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    encoder.set_compression(png::Compression::Fast);
+    encoder.set_filter(png::Filter::Adaptive);
+    if let Some(dpi) = dpi {
+        let pixels_per_meter = pixels_per_meter(dpi)?;
+        encoder.set_pixel_dims(Some(png::PixelDimensions {
+            xppu: pixels_per_meter,
+            yppu: pixels_per_meter,
+            unit: png::Unit::Meter,
+        }));
+    }
+
+    let mut png_writer = encoder
+        .write_header()
+        .map_err(|err| PlottingError::RenderError(format!("failed to encode PNG: {err}")))?;
+    png_writer
+        .write_image_data(pixels.as_ref())
+        .map_err(|err| PlottingError::RenderError(format!("failed to encode PNG: {err}")))?;
+    png_writer
+        .finish()
         .map_err(|err| PlottingError::RenderError(format!("failed to encode PNG: {err}")))?;
 
+    Ok(())
+}
+
+/// Encode an in-memory RGBA image as PNG bytes.
+pub fn encode_rgba_png(image: &Image) -> Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    write_rgba_png(&mut bytes, image, None)?;
+    Ok(bytes)
+}
+
+/// Encode an in-memory RGBA image as PNG bytes with physical pixel density.
+pub fn encode_rgba_png_with_dpi(image: &Image, dpi: f32) -> Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    write_rgba_png(&mut bytes, image, Some(dpi))?;
     Ok(bytes)
 }
 
@@ -270,23 +306,7 @@ pub(crate) fn write_bytes_atomic<P: AsRef<Path>>(path: P, bytes: &[u8]) -> Resul
 
 /// Atomically writes an RGBA image as a PNG file.
 pub fn write_rgba_png_atomic<P: AsRef<Path>>(path: P, image: &Image) -> Result<()> {
-    validate_rgba_image(image)?;
-    let pixels = image.pixels_in_alpha_mode(AlphaMode::Straight);
-
-    write_with_atomic_writer(path, |writer| {
-        // Explicit settings keep encoder output stable across `image` crate
-        // updates. `CompressionType::Fast` trades a bit of file size for lower
-        // encode latency, while `FilterType::Adaptive` retains the normal
-        // per-scanline filtering step.
-        PngEncoder::new_with_quality(writer, CompressionType::Fast, FilterType::Adaptive)
-            .write_image(
-                pixels.as_ref(),
-                image.width,
-                image.height,
-                ColorType::Rgba8.into(),
-            )
-            .map_err(|err| PlottingError::RenderError(format!("failed to encode PNG: {err}")))
-    })
+    write_with_atomic_writer(path, |writer| write_rgba_png(writer, image, None))
 }
 
 pub(crate) fn write_with_atomic_writer<P, F>(path: P, writer: F) -> Result<()>
@@ -331,6 +351,30 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn png_pixel_dimensions(bytes: &[u8]) -> Option<png::PixelDimensions> {
+        let decoder = png::Decoder::new(std::io::Cursor::new(bytes));
+        let reader = decoder.read_info().expect("PNG should decode");
+        reader.info().pixel_dims
+    }
+
+    #[test]
+    fn dpi_aware_png_encodes_physical_pixel_dimensions() {
+        let image = Image::new(2, 1, vec![255; 8]);
+        let png = encode_rgba_png_with_dpi(&image, 300.0).expect("300 DPI PNG");
+        let dimensions = png_pixel_dimensions(&png).expect("pHYs metadata");
+
+        assert_eq!(dimensions.xppu, 11_811);
+        assert_eq!(dimensions.yppu, 11_811);
+        assert_eq!(dimensions.unit, png::Unit::Meter);
+    }
+
+    #[test]
+    fn generic_image_png_keeps_density_unspecified() {
+        let image = Image::new(2, 1, vec![255; 8]);
+        let png = encode_rgba_png(&image).expect("generic PNG");
+        assert!(png_pixel_dimensions(&png).is_none());
+    }
 
     #[cfg(unix)]
     #[test]

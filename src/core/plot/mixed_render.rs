@@ -678,12 +678,13 @@ impl Plot {
                         super::series_internal::bar_pixel_rect(
                             i,
                             value,
-                            config.width,
+                            config,
                             plot_area,
                             x_min,
                             x_max,
                             y_min,
                             y_max,
+                            &self.layout.x_scale,
                             &self.layout.y_scale,
                         );
 
@@ -1972,13 +1973,14 @@ impl Plot {
         let (x_min, x_max) = if self.layout.x_limits.is_some() {
             (x_min, x_max)
         } else {
+            let sticky_zero = sticky.x_zero_baseline;
             padded_axis_range(
                 x_min,
                 x_max,
                 config.x_margin,
                 &self.layout.x_scale,
-                true,
-                true,
+                !(sticky_zero && x_min == 0.0),
+                !(sticky_zero && x_max == 0.0),
             )
         };
 

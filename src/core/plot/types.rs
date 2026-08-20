@@ -1557,6 +1557,7 @@ pub(crate) enum ResolvedSeries<'a> {
     Bar {
         categories: &'a [String],
         values: ResolvedData<'a>,
+        config: &'a crate::plots::basic::BarConfig,
     },
     ErrorBars {
         x: ResolvedData<'a>,
@@ -1641,10 +1642,13 @@ impl SeriesType {
                 y: ResolvedData::from_cow(y_data.resolve_cow(time)),
             },
             SeriesType::Bar {
-                categories, values, ..
+                categories,
+                values,
+                config,
             } => ResolvedSeries::Bar {
                 categories,
                 values: ResolvedData::from_cow(values.resolve_cow(time)),
+                config,
             },
             SeriesType::ErrorBars {
                 x_data,

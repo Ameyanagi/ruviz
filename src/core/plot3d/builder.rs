@@ -632,12 +632,18 @@ macro_rules! impl_common_builder {
             /// Render PNG bytes through direct offscreen wgpu.
             #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
             pub fn render_gpu_png_bytes(self) -> Result<Vec<u8>> {
-                self.render_gpu()?.encode_png()
+                let plot = self.finalize();
+                let dpi = plot.figure.dpi;
+                plot.render_gpu_image()
+                    .and_then(|(image, _)| image.encode_png_with_dpi(dpi))
             }
 
             /// Render PNG bytes.
             pub fn render_png_bytes(self) -> Result<Vec<u8>> {
-                self.render()?.encode_png()
+                let plot = self.finalize();
+                let dpi = plot.figure.dpi;
+                plot.render_image()
+                    .and_then(|(image, _)| image.encode_png_with_dpi(dpi))
             }
 
             /// Save the plot, selecting an exporter from the path extension.

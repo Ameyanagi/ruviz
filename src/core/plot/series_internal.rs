@@ -135,9 +135,12 @@ impl Plot {
         mut config: crate::plots::boxplot::BoxPlotConfig,
         style: crate::core::plot::builder::SeriesStyle,
     ) -> Self {
-        let slot = config
-            .x_position
-            .unwrap_or_else(|| self.next_category_slot(config.category.as_deref()));
+        let slot = config.x_position.unwrap_or_else(|| {
+            self.next_category_slot(
+                config.category.as_deref(),
+                crate::core::Orientation::Vertical,
+            )
+        });
         config.x_position = Some(slot);
 
         self.push_builder_series(series_from_style(
@@ -152,10 +155,17 @@ impl Plot {
         mut violin_data: crate::plots::ViolinData,
         style: crate::core::plot::builder::SeriesStyle,
     ) -> Self {
-        let slot = violin_data
-            .config
-            .x_position
-            .unwrap_or_else(|| self.next_category_slot(violin_data.config.category.as_deref()));
+        let orientation = match violin_data.config.orientation {
+            crate::plots::distribution::violin::Orientation::Vertical => {
+                crate::core::Orientation::Vertical
+            }
+            crate::plots::distribution::violin::Orientation::Horizontal => {
+                crate::core::Orientation::Horizontal
+            }
+        };
+        let slot = violin_data.config.x_position.unwrap_or_else(|| {
+            self.next_category_slot(violin_data.config.category.as_deref(), orientation)
+        });
         violin_data.config.x_position = Some(slot);
 
         self.push_builder_series(series_from_style(
@@ -178,10 +188,17 @@ impl Plot {
         if let Some(marker_size) = style.props.marker_size.cloned() {
             boxen_data.config.outlier_size = marker_size.max(0.0);
         }
-        let slot = boxen_data
-            .config
-            .x_position
-            .unwrap_or_else(|| self.next_category_slot(boxen_data.config.category.as_deref()));
+        let orientation = match boxen_data.config.orient {
+            crate::plots::distribution::boxen::BoxenOrientation::Vertical => {
+                crate::core::Orientation::Vertical
+            }
+            crate::plots::distribution::boxen::BoxenOrientation::Horizontal => {
+                crate::core::Orientation::Horizontal
+            }
+        };
+        let slot = boxen_data.config.x_position.unwrap_or_else(|| {
+            self.next_category_slot(boxen_data.config.category.as_deref(), orientation)
+        });
         boxen_data.config.x_position = Some(slot);
 
         self.push_builder_series(series_from_style(
@@ -860,12 +877,13 @@ impl Plot {
                     let (bx, by, bw, bh) = bar_pixel_rect(
                         i,
                         value,
-                        config.width,
+                        config,
                         plot_area,
                         x_min,
                         x_max,
                         y_min,
                         y_max,
+                        &self.layout.x_scale,
                         &self.layout.y_scale,
                     );
                     renderer.draw_rectangle_styled_clipped(
@@ -1786,7 +1804,9 @@ impl Plot {
                     PlottingError::validate_data(x)?;
                     PlottingError::validate_data(y)?;
                 }
-                ResolvedSeries::Bar { categories, values } => {
+                ResolvedSeries::Bar {
+                    categories, values, ..
+                } => {
                     if categories.len() != values.len() {
                         return Err(PlottingError::DataLengthMismatch {
                             x_len: categories.len(),
@@ -1950,7 +1970,13 @@ impl Plot {
         match series {
             SeriesType::Line { .. } => ("line", SCALED, SCALED),
             SeriesType::Scatter { .. } => ("scatter", SCALED, SCALED),
-            SeriesType::Bar { .. } => ("bar", ORDINAL, SCALED),
+            SeriesType::Bar { config, .. } => {
+                let (x, y) = across_and_along(matches!(
+                    config.orientation,
+                    crate::plots::basic::BarOrientation::Vertical
+                ));
+                ("bar", x, y)
+            }
             SeriesType::ErrorBars { .. } => ("errorbar", SCALED, SCALED),
             SeriesType::ErrorBarsXY { .. } => ("errorbar", SCALED, SCALED),
             SeriesType::Histogram { .. } => ("histogram", SCALED, SCALED),
@@ -2256,56 +2282,130 @@ pub(super) fn value_axis_baseline_y(
     .fill_baseline_y()
 }
 
-/// Pixel rectangle `(x, y, width, height)` for one bar of a categorical series.
+/// Pixel rectangle `(x, y, width, height)` for one categorical bar.
 ///
-/// Categories sit one data unit apart, so a bar's width is `width_fraction` of a
-/// unit measured through the same x mapping that places the bar centres, and its
-/// body spans from the value to the zero baseline.
-///
-/// The value axis is projected through `y_scale`, so a bar chart on a log y axis
-/// is drawn where its log-labelled ticks say it is. The category axis is always
-/// linear: category positions are ordinals, and
-/// `Plot::series_axis_scale_support` refuses a non-linear scale on it rather
-/// than inventing a spacing for it.
-///
-/// The baseline is `0.0` mapped through the same projection, so on a log axis —
-/// where zero has no position — the bar bottoms out at the axis floor, matching
-/// the parallel backend and matplotlib.
+/// The category axis is ordinal and always linear. The value axis follows its
+/// configured scale, and the rectangle runs from `config.bottom` to `value`.
+/// If a logarithmic value axis cannot place the baseline (zero by default), the
+/// rectangle reaches the value-axis floor, matching histogram and area fills.
 ///
 /// Both the raster backend and the SVG backend call this, so the same bar chart
 /// cannot land in a different place depending on the output format.
 pub(super) fn bar_pixel_rect(
     index: usize,
     value: f64,
-    width_fraction: f32,
+    config: &crate::plots::basic::BarConfig,
     plot_area: tiny_skia::Rect,
     x_min: f64,
     x_max: f64,
     y_min: f64,
     y_max: f64,
+    x_scale: &crate::axes::AxisScale,
     y_scale: &crate::axes::AxisScale,
 ) -> (f32, f32, f32, f32) {
-    let data_range = (x_max - x_min) as f32;
-    let bar_width = width_fraction * (plot_area.width() / data_range);
-    let x = index as f64;
-    let (px, py) = crate::render::skia::map_data_to_pixels_scaled(
-        x,
-        value,
-        x_min,
-        x_max,
-        y_min,
-        y_max,
-        plot_area,
-        &crate::axes::AxisScale::Linear,
-        y_scale,
-    );
-    let py_zero = value_axis_baseline_y(plot_area, y_min, y_max, y_scale);
-    (
-        px - bar_width / 2.0,
-        py.min(py_zero),
-        bar_width,
-        (py - py_zero).abs(),
-    )
+    let width = f64::from(config.width);
+    let category_start = if config.align_left {
+        index as f64
+    } else {
+        index as f64 - width / 2.0
+    };
+    let category_end = category_start + width;
+    let linear = crate::axes::AxisScale::Linear;
+
+    match config.orientation {
+        crate::plots::basic::BarOrientation::Vertical => {
+            let (left, value_y) = crate::render::skia::map_data_to_pixels_scaled(
+                category_start,
+                value,
+                x_min,
+                x_max,
+                y_min,
+                y_max,
+                plot_area,
+                &linear,
+                y_scale,
+            );
+            let (right, _) = crate::render::skia::map_data_to_pixels_scaled(
+                category_end,
+                value,
+                x_min,
+                x_max,
+                y_min,
+                y_max,
+                plot_area,
+                &linear,
+                y_scale,
+            );
+            let baseline_y = if y_scale.is_valid_value(config.bottom) {
+                crate::render::skia::map_data_to_pixels_scaled(
+                    category_start,
+                    config.bottom,
+                    x_min,
+                    x_max,
+                    y_min,
+                    y_max,
+                    plot_area,
+                    &linear,
+                    y_scale,
+                )
+                .1
+            } else {
+                plot_area.bottom()
+            };
+            (
+                left.min(right),
+                value_y.min(baseline_y),
+                (right - left).abs(),
+                (value_y - baseline_y).abs(),
+            )
+        }
+        crate::plots::basic::BarOrientation::Horizontal => {
+            let (value_x, first_y) = crate::render::skia::map_data_to_pixels_scaled(
+                value,
+                category_start,
+                x_min,
+                x_max,
+                y_min,
+                y_max,
+                plot_area,
+                x_scale,
+                &linear,
+            );
+            let (_, second_y) = crate::render::skia::map_data_to_pixels_scaled(
+                value,
+                category_end,
+                x_min,
+                x_max,
+                y_min,
+                y_max,
+                plot_area,
+                x_scale,
+                &linear,
+            );
+            let baseline_x = if x_scale.is_valid_value(config.bottom) {
+                crate::render::skia::map_data_to_pixels_scaled(
+                    config.bottom,
+                    category_start,
+                    x_min,
+                    x_max,
+                    y_min,
+                    y_max,
+                    plot_area,
+                    x_scale,
+                    &linear,
+                )
+                .0
+            } else {
+                plot_area.left()
+            };
+            (
+                value_x.min(baseline_x),
+                first_y.min(second_y),
+                (value_x - baseline_x).abs(),
+                (second_y - first_y).abs(),
+            )
+        }
+    }
 }
 
 /// Pixel rectangle `(x, y, width, height)` for one histogram bin.
@@ -2458,6 +2558,31 @@ pub(crate) fn series_category_slots(series: &SeriesType) -> Vec<(String, f64)> {
     }
 }
 
+fn series_category_orientation(series: &SeriesType) -> crate::core::Orientation {
+    match series {
+        SeriesType::Bar { config, .. } => match config.orientation {
+            crate::plots::basic::BarOrientation::Vertical => crate::core::Orientation::Vertical,
+            crate::plots::basic::BarOrientation::Horizontal => crate::core::Orientation::Horizontal,
+        },
+        SeriesType::Violin { data } => match data.config.orientation {
+            crate::plots::distribution::Orientation::Vertical => crate::core::Orientation::Vertical,
+            crate::plots::distribution::Orientation::Horizontal => {
+                crate::core::Orientation::Horizontal
+            }
+        },
+        SeriesType::Boxen { data } => match data.config.orient {
+            crate::plots::distribution::BoxenOrientation::Vertical => {
+                crate::core::Orientation::Vertical
+            }
+            crate::plots::distribution::BoxenOrientation::Horizontal => {
+                crate::core::Orientation::Horizontal
+            }
+        },
+        SeriesType::Computed { data } => data.category_orientation(),
+        _ => crate::core::Orientation::Vertical,
+    }
+}
+
 /// How close two slot centres have to be to count as the same slot.
 ///
 /// Slots are whole numbers unless a caller pinned one with `x_position`, so
@@ -2487,8 +2612,20 @@ impl CategoryAxis {
     /// split violin pair, say) label it once, and the first non-empty name
     /// wins.
     pub(crate) fn harvest(series: &[PlotSeries]) -> Option<Self> {
+        Self::harvest_for(series, crate::core::Orientation::Vertical)
+    }
+
+    /// Collect category slots carried on the y axis by horizontal series.
+    pub(crate) fn harvest_y(series: &[PlotSeries]) -> Option<Self> {
+        Self::harvest_for(series, crate::core::Orientation::Horizontal)
+    }
+
+    fn harvest_for(series: &[PlotSeries], orientation: crate::core::Orientation) -> Option<Self> {
         let mut slots: Vec<(String, f64)> = Vec::new();
         for entry in series {
+            if series_category_orientation(&entry.series_type) != orientation {
+                continue;
+            }
             for (label, position) in series_category_slots(&entry.series_type) {
                 let existing = slots
                     .iter()
@@ -2526,10 +2663,21 @@ impl Plot {
     ///
     /// Reusing a category name reuses its slot — that is what makes two series
     /// "the same category" — and anything else claims the next slot to the
-    /// right of everything already placed, so several box plots, violins or
-    /// boxen plots lay out side by side without the caller counting anything.
-    pub(crate) fn next_category_slot(&self, category: Option<&str>) -> f64 {
-        let Some(axis) = CategoryAxis::harvest(&self.series_mgr.series) else {
+    /// end of everything already placed on that axis, so several box plots,
+    /// violins or boxen plots lay out side by side without the caller counting
+    /// anything.
+    pub(crate) fn next_category_slot(
+        &self,
+        category: Option<&str>,
+        orientation: crate::core::Orientation,
+    ) -> f64 {
+        let axis = match orientation {
+            crate::core::Orientation::Vertical => CategoryAxis::harvest(&self.series_mgr.series),
+            crate::core::Orientation::Horizontal => {
+                CategoryAxis::harvest_y(&self.series_mgr.series)
+            }
+        };
+        let Some(axis) = axis else {
             return 0.0;
         };
 
@@ -2888,6 +3036,49 @@ mod bar_edge_tests {
             .count()
     }
 
+    fn fill_bbox_in_region(
+        image: &Image,
+        x_range: std::ops::Range<usize>,
+        y_range: std::ops::Range<usize>,
+    ) -> Option<(usize, usize)> {
+        let width = image.width as usize;
+        let mut bounds = (usize::MAX, 0, usize::MAX, 0);
+        let mut found = false;
+        for y in y_range {
+            for x in x_range.clone() {
+                let index = (y * width + x) * 4;
+                let pixel = &image.pixels[index..index + 4];
+                if pixel == [FILL.r, FILL.g, FILL.b, FILL.a] {
+                    bounds.0 = bounds.0.min(x);
+                    bounds.1 = bounds.1.max(x);
+                    bounds.2 = bounds.2.min(y);
+                    bounds.3 = bounds.3.max(y);
+                    found = true;
+                }
+            }
+        }
+        found.then(|| (bounds.1 - bounds.0 + 1, bounds.3 - bounds.2 + 1))
+    }
+
+    fn svg_bar_sizes(svg: &str) -> Vec<(f32, f32)> {
+        fn attribute(line: &str, name: &str) -> f32 {
+            let prefix = format!(r#"{name}=""#);
+            let value = line
+                .split(&prefix)
+                .nth(1)
+                .and_then(|rest| rest.split('"').next())
+                .unwrap_or_else(|| panic!("missing {name} in {line}"));
+            value
+                .parse()
+                .expect("rectangle attribute should be numeric")
+        }
+
+        svg.lines()
+            .filter(|line| line.contains("<rect") && line.contains("fill=\"rgb(31,119,180)\""))
+            .map(|line| (attribute(line, "width"), attribute(line, "height")))
+            .collect()
+    }
+
     fn bar_plot(dpi: u32) -> PlotBuilder<crate::plots::basic::BarConfig> {
         let values = vec![1.0, 2.0];
         Plot::new()
@@ -2911,6 +3102,69 @@ mod bar_edge_tests {
             edge_pixels(&image) > 0,
             "an explicitly configured bar edge colour must reach the canvas"
         );
+    }
+
+    #[test]
+    fn test_vertical_and_horizontal_geometry_reaches_raster_and_svg() {
+        let build = || {
+            Plot::new()
+                .size_px(300, 240)
+                .ticks(false)
+                .grid(false)
+                .bar(&["north", "central", "south"], &[10.0, 10.0, 10.0])
+                .color(FILL)
+        };
+
+        let vertical = build().render().expect("vertical raster bar render");
+        let horizontal = build()
+            .horizontal()
+            .render()
+            .expect("horizontal raster bar render");
+        assert_ne!(vertical.pixels, horizontal.pixels);
+
+        let vertical_size = fill_bbox_in_region(
+            &vertical,
+            0..vertical.width as usize / 3,
+            0..vertical.height as usize,
+        )
+        .expect("first vertical bar fill");
+        let horizontal_size = fill_bbox_in_region(
+            &horizontal,
+            0..horizontal.width as usize,
+            0..horizontal.height as usize / 3,
+        )
+        .expect("top horizontal bar fill");
+        assert!(vertical_size.1 > vertical_size.0, "{vertical_size:?}");
+        assert!(horizontal_size.0 > horizontal_size.1, "{horizontal_size:?}");
+
+        let vertical_svg = build().render_to_svg().expect("vertical SVG bar render");
+        let horizontal_svg = build()
+            .horizontal()
+            .render_to_svg()
+            .expect("horizontal SVG bar render");
+        let vertical_sizes = svg_bar_sizes(&vertical_svg);
+        let horizontal_sizes = svg_bar_sizes(&horizontal_svg);
+        assert_eq!(vertical_sizes.len(), 3);
+        assert_eq!(horizontal_sizes.len(), 3);
+        assert!(vertical_sizes.iter().all(|&(width, height)| height > width));
+        assert!(
+            horizontal_sizes
+                .iter()
+                .all(|&(width, height)| width > height)
+        );
+
+        let labelled_svg = Plot::new()
+            .size_px(300, 240)
+            .bar(&["north", "central", "south"], &[1.0, 2.0, 3.0])
+            .horizontal()
+            .render_to_svg()
+            .expect("horizontal SVG labels");
+        for category in ["north", "central", "south"] {
+            assert!(
+                labelled_svg.contains(category),
+                "missing category {category}"
+            );
+        }
     }
 
     #[test]
@@ -2985,26 +3239,30 @@ mod bar_edge_tests {
     #[test]
     fn test_bar_width_fraction_reaches_the_geometry() {
         // `.bar_width(..)` used to be inert: both render paths hardcoded 0.8.
+        let narrow_config = crate::plots::basic::BarConfig::default().width(0.4);
+        let wide_config = crate::plots::basic::BarConfig::default().width(0.8);
         let narrow = bar_pixel_rect(
             0,
             1.0,
-            0.4,
+            &narrow_config,
             tiny_skia::Rect::from_xywh(0.0, 0.0, 200.0, 100.0).expect("valid plot area"),
             -0.5,
             1.5,
             0.0,
             1.0,
             &crate::axes::AxisScale::Linear,
+            &crate::axes::AxisScale::Linear,
         );
         let wide = bar_pixel_rect(
             0,
             1.0,
-            0.8,
+            &wide_config,
             tiny_skia::Rect::from_xywh(0.0, 0.0, 200.0, 100.0).expect("valid plot area"),
             -0.5,
             1.5,
             0.0,
             1.0,
+            &crate::axes::AxisScale::Linear,
             &crate::axes::AxisScale::Linear,
         );
 
@@ -3018,6 +3276,30 @@ mod bar_edge_tests {
             (narrow.0 + narrow.2 / 2.0 - (wide.0 + wide.2 / 2.0)).abs() < 1e-3,
             "the bar centre must not move when only the width changes"
         );
+    }
+
+    #[test]
+    fn test_horizontal_bar_uses_width_and_custom_baseline_on_the_correct_axes() {
+        let config = crate::plots::basic::BarConfig::horizontal()
+            .width(0.4)
+            .bottom(5.0);
+        let rect = bar_pixel_rect(
+            0,
+            15.0,
+            &config,
+            tiny_skia::Rect::from_xywh(0.0, 0.0, 200.0, 100.0).expect("valid plot area"),
+            0.0,
+            20.0,
+            -0.5,
+            1.5,
+            &crate::axes::AxisScale::Linear,
+            &crate::axes::AxisScale::Linear,
+        );
+
+        assert!((rect.0 - 50.0).abs() < 1e-3, "baseline x: {}", rect.0);
+        assert!((rect.2 - 100.0).abs() < 1e-3, "value width: {}", rect.2);
+        assert!((rect.1 - 65.0).abs() < 1e-3, "category y: {}", rect.1);
+        assert!((rect.3 - 20.0).abs() < 1e-3, "bar thickness: {}", rect.3);
     }
 
     #[test]
@@ -3075,26 +3357,29 @@ mod axis_scale_geometry_tests {
         // The bug: bars were projected linearly while the ticks beside them
         // were projected in log space, so the bar top read off the wrong tick.
         let plot_area = area();
+        let config = crate::plots::basic::BarConfig::default();
         let log = bar_pixel_rect(
             0,
             10.0,
-            0.8,
+            &config,
             plot_area,
             -0.5,
             1.5,
             1.0,
             1000.0,
+            &AxisScale::Linear,
             &AxisScale::Log,
         );
         let linear = bar_pixel_rect(
             0,
             10.0,
-            0.8,
+            &config,
             plot_area,
             -0.5,
             1.5,
             1.0,
             1000.0,
+            &AxisScale::Linear,
             &AxisScale::Linear,
         );
 
@@ -3405,6 +3690,28 @@ mod axis_scale_geometry_tests {
     }
 
     #[test]
+    fn test_horizontal_bar_moves_scale_support_to_the_x_value_axis() {
+        Plot::new()
+            .size_px(240, 180)
+            .bar(&["a", "b"], &[1.0, 10.0])
+            .horizontal()
+            .xscale(AxisScale::Log)
+            .render()
+            .expect("a horizontal bar chart accepts a logarithmic value axis");
+
+        let error = Plot::new()
+            .bar(&["a", "b"], &[1.0, 10.0])
+            .horizontal()
+            .yscale(AxisScale::Log)
+            .render()
+            .expect_err("a logarithmic horizontal category axis must be rejected");
+        let message = error.to_string();
+        assert!(message.contains("bar"), "{message}");
+        assert!(message.contains("y axis"), "{message}");
+        assert!(message.contains("yscale"), "{message}");
+    }
+
+    #[test]
     fn test_heatmap_cells_follow_a_logarithmic_axis() {
         // A heatmap draws through `PlotArea`, which projects through the
         // figure's axis scales. The boundary between two rows must therefore sit
@@ -3662,6 +3969,20 @@ mod category_axis_tests {
     }
 
     #[test]
+    fn horizontal_bars_harvest_the_category_labels_for_the_y_axis() {
+        let plot = Plot::new()
+            .bar(&["north", "south"], &[1.0, 2.0])
+            .horizontal()
+            .into_plot();
+
+        assert!(CategoryAxis::harvest(&plot.series_mgr.series).is_none());
+        let axis = CategoryAxis::harvest_y(&plot.series_mgr.series)
+            .expect("horizontal bars should produce a categorical y axis");
+        assert_eq!(axis.labels, vec!["north".to_string(), "south".to_string()]);
+        assert_eq!(axis.positions, vec![0.0, 1.0]);
+    }
+
+    #[test]
     fn an_uncategorised_box_still_holds_a_slot() {
         // `.boxplot(&d)` with no category used to fall through to a numeric
         // 0..1 axis reading "0, 0.2, ... 1.0" and meaning nothing. It now owns
@@ -3765,6 +4086,23 @@ mod category_axis_tests {
         plot.add_boxen_series(data, crate::core::plot::builder::SeriesStyle::default())
     }
 
+    fn horizontal_violin_series(plot: Plot, category: &str) -> Plot {
+        let config = crate::plots::ViolinConfig::new()
+            .category(category)
+            .horizontal();
+        let data =
+            crate::plots::ViolinData::from_values(&samples(), &config).expect("violin statistics");
+        plot.add_violin_series(data, crate::core::plot::builder::SeriesStyle::default())
+    }
+
+    fn horizontal_boxen_series(plot: Plot, category: &str) -> Plot {
+        let config = crate::plots::BoxenConfig::new()
+            .category(category)
+            .horizontal();
+        let data = crate::plots::compute_boxen(&samples(), &config);
+        plot.add_boxen_series(data, crate::core::plot::builder::SeriesStyle::default())
+    }
+
     #[test]
     fn every_distribution_type_lands_on_the_same_axis() {
         // Box plot, violin and boxen all sit in unit slots on one axis; a
@@ -3780,6 +4118,28 @@ mod category_axis_tests {
             vec!["box".to_string(), "violin".to_string(), "boxen".to_string()]
         );
         assert_eq!(axis.positions, vec![0.0, 1.0, 2.0]);
+    }
+
+    #[test]
+    fn horizontal_distributions_claim_consecutive_y_axis_slots() {
+        let plot =
+            horizontal_boxen_series(horizontal_violin_series(Plot::new(), "violin"), "boxen");
+
+        assert!(CategoryAxis::harvest(&plot.series_mgr.series).is_none());
+        let axis = CategoryAxis::harvest_y(&plot.series_mgr.series)
+            .expect("horizontal distributions should produce a categorical y axis");
+        assert_eq!(axis.labels, vec!["violin".to_string(), "boxen".to_string()]);
+        assert_eq!(axis.positions, vec![0.0, 1.0]);
+    }
+
+    #[test]
+    fn vertical_and_horizontal_distributions_allocate_slots_independently() {
+        let plot = horizontal_boxen_series(violin_series(Plot::new(), "vertical"), "horizontal");
+
+        let x_axis = CategoryAxis::harvest(&plot.series_mgr.series).expect("categorical x axis");
+        let y_axis = CategoryAxis::harvest_y(&plot.series_mgr.series).expect("categorical y axis");
+        assert_eq!(x_axis.positions, vec![0.0]);
+        assert_eq!(y_axis.positions, vec![0.0]);
     }
 
     #[test]

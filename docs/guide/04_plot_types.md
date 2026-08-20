@@ -103,6 +103,21 @@ Plot::new()
     .save("bar.png")?;
 ```
 
+Use `.horizontal()` when the category names read better on the y axis:
+
+```rust
+use ruviz::prelude::*;
+
+Plot::new()
+    .bar(&["Documentation", "Rendering", "Bindings"], &[42.0, 31.0, 18.0])
+    .horizontal()
+    .title("Open tasks")
+    .save("horizontal_bar.png")?;
+```
+
+Vertical bars put categories on x and values on y; horizontal bars swap those
+axes in bounds, ticks, labels, scale validation, and both PNG and SVG output.
+
 ### Histograms
 
 **Use for**: Distribution analysis, frequency analysis
@@ -311,9 +326,9 @@ Plot::new()
 
 **Use for**: Long category labels, ranked data
 
-`.horizontal()` is available on both bar builders. Note that the shared category
-axis is the x axis, so a horizontal chart's categories are not yet labelled —
-the same gap `strip` and `swarm` have in their horizontal orientation.
+`.horizontal()` is available on regular, grouped, and stacked bar builders.
+Horizontal charts place their category labels on the y axis and numeric values
+on x.
 
 ```rust
 use ruviz::prelude::*;
@@ -321,7 +336,7 @@ use ruviz::prelude::*;
 let last: Vec<f64> = vec![10.0, 20.0, 30.0];
 
 Plot::new()
-    .grouped_bar(&["Q1", "Q2", "Q3"], &[("2023", &last)])
+    .bar(&["Q1", "Q2", "Q3"], &last)
     .horizontal()
     .save("horizontal_bar.png")?;
 ```

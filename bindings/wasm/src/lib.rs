@@ -59,7 +59,7 @@ mod wasm {
             ViewportPoint, ViewportRect,
         },
         data::{Observable, Signal},
-        plots::{LineConfig, PlotConfig, ScatterConfig},
+        plots::{BarOrientation, LineConfig, PlotConfig, ScatterConfig},
         render::{Color, FontFamily, LineStyle, MarkerStyle, register_font_bytes},
     };
     #[cfg(feature = "3d")]
@@ -437,6 +437,7 @@ mod wasm {
         density: Option<bool>,
         bandwidth: Option<f64>,
         levels: Option<usize>,
+        orientation: Option<BarOrientation>,
     }
 
     const MARKER_STYLES: [(&str, MarkerStyle); 12] = [
@@ -682,7 +683,7 @@ mod wasm {
     }
 
     /// Every style key any plot kind understands, in snapshot spelling.
-    const STYLE_KEYS: [&str; 11] = [
+    const STYLE_KEYS: [&str; 12] = [
         "label",
         "color",
         "alpha",
@@ -694,12 +695,13 @@ mod wasm {
         "density",
         "bandwidth",
         "levels",
+        "orientation",
     ];
 
     /// The style keys each plot kind's core builder honors, mirroring the Python
     /// binding's per-kind sets so both surfaces reject the same combinations.
     mod style_keys {
-        pub(super) const COMMON: &[&str] = &["label", "color", "alpha"];
+        pub(super) const BAR: &[&str] = &["label", "color", "alpha", "orientation"];
         pub(super) const STROKED: &[&str] = &["label", "color", "alpha", "width"];
         pub(super) const LINE: &[&str] = &[
             "label",
@@ -809,6 +811,19 @@ mod wasm {
                         parsed.bandwidth = Some(finite_positive_f64(&value, "bandwidth")?);
                     }
                     "levels" => parsed.levels = Some(count_at_least(&value, "levels", 2)?),
+                    "orientation" => {
+                        parsed.orientation = Some(
+                            match style_string(&value, "orientation")?.as_str() {
+                                "vertical" => BarOrientation::Vertical,
+                                "horizontal" => BarOrientation::Horizontal,
+                                other => {
+                                    return Err(JsValue::from_str(&format!(
+                                        "unsupported orientation '{other}'; expected one of: horizontal, vertical"
+                                    )));
+                                }
+                            },
+                        );
+                    }
                     // Unreachable: `allowed` is a subset of `STYLE_KEYS`, checked above.
                     _ => {}
                 }
@@ -992,9 +1007,13 @@ mod wasm {
                 ));
             }
 
-            let style = SeriesStyle::from_js(style, "bar", style_keys::COMMON)?;
+            let style = SeriesStyle::from_js(style, "bar", style_keys::BAR)?;
             self.replace_with_series(|plot| {
-                styled(plot.bar(&categories, &values), &style).into_plot()
+                let mut builder = plot.bar(&categories, &values);
+                if let Some(orientation) = style.orientation {
+                    builder = builder.orientation(orientation);
+                }
+                styled(builder, &style).into_plot()
             });
             Ok(())
         }
@@ -1011,10 +1030,14 @@ mod wasm {
                 ));
             }
 
-            let style = SeriesStyle::from_js(style, "bar", style_keys::COMMON)?;
+            let style = SeriesStyle::from_js(style, "bar", style_keys::BAR)?;
             let value_source = values.inner.clone();
             self.replace_with_series(|plot| {
-                styled(plot.bar_source(&categories, value_source), &style).into_plot()
+                let mut builder = plot.bar_source(&categories, value_source);
+                if let Some(orientation) = style.orientation {
+                    builder = builder.orientation(orientation);
+                }
+                styled(builder, &style).into_plot()
             });
             Ok(())
         }

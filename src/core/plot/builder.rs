@@ -2884,6 +2884,18 @@ impl PlotBuilder<crate::plots::basic::BarConfig> {
         self
     }
 
+    /// Draw bars horizontally, with values on x and categories on y.
+    pub fn horizontal(mut self) -> Self {
+        self.config.orientation = crate::plots::basic::BarOrientation::Horizontal;
+        self
+    }
+
+    /// Draw bars vertically, with categories on x and values on y.
+    pub fn vertical(mut self) -> Self {
+        self.config.orientation = crate::plots::basic::BarOrientation::Vertical;
+        self
+    }
+
     /// Set base value for bars
     ///
     /// # Arguments

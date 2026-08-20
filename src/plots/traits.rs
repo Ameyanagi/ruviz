@@ -801,6 +801,14 @@ pub trait ComputedSeries: PlotRender + std::fmt::Debug + Send + Sync {
         Vec::new()
     }
 
+    /// Which axis carries [`Self::category_slots`].
+    ///
+    /// Vertical plots place categories on x; horizontal plots place them on y.
+    /// The default preserves the ordinary categorical-x behavior.
+    fn category_orientation(&self) -> crate::core::Orientation {
+        crate::core::Orientation::Vertical
+    }
+
     /// The shape this plot type's legend swatch should take.
     ///
     /// A key that shows a line for a cloud of markers is worse than no key: it

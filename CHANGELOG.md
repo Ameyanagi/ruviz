@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- Regular bar charts now support vertical and horizontal orientation end to
+  end. Rust adds `.horizontal()` / `.vertical()` convenience methods, while
+  Python accepts `bar(..., orientation="horizontal")`; snapshots, notebook
+  replay, Wasm, and the TypeScript SDK preserve the same setting. Horizontal
+  bars use numeric x values and categorical y labels in raster and SVG output.
+
+### Fixed
+
+- PNG output from `save()` and `render_png_bytes()` now stores the effective
+  configured DPI in a standard `pHYs` chunk, so print and page-layout software
+  recovers the intended physical figure size.
+
 ## [0.11.0] - 2026-08-16
 
 ### Added
