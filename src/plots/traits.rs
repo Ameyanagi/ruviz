@@ -614,18 +614,62 @@ pub struct ComputedStyle {
     pub alpha: f32,
     /// Series line width in **points**, or `None` to use the plot type's own.
     pub line_width: Option<f32>,
+    /// The theme's [`Theme::patch_edge_color`] override, carried here because a
+    /// [`ComputedSeries::primitives`] call has no theme to reach for.
+    ///
+    /// Resolve it with [`Self::patch_edge`] rather than reading it directly, so
+    /// a filled patch drawn through `primitives` follows the same edge rule as
+    /// one drawn through [`PlotRender::render`].
+    ///
+    /// [`Theme::patch_edge_color`]: crate::render::Theme::patch_edge_color
+    pub patch_edge_color: Option<Color>,
 }
 
 impl ComputedStyle {
     /// The style a bare [`PlotRender::render`] call implies: full opacity and
     /// the plot type's own line width.
+    ///
+    /// A `PlotRender::render` implementation is handed the theme, so pair this
+    /// with [`Self::with_patch_edge_color`] when the plot type fills patches.
     pub fn opaque(scale: RenderScale, color: Color) -> Self {
         Self {
             scale,
             color,
             alpha: 1.0,
             line_width: None,
+            patch_edge_color: None,
         }
+    }
+
+    /// `self` carrying the theme's filled-patch edge override.
+    pub fn with_patch_edge_color(mut self, patch_edge_color: Option<Color>) -> Self {
+        self.patch_edge_color = patch_edge_color;
+        self
+    }
+
+    /// Resolve a filled patch's edge into the `(colour, width_in_pixels)` pair
+    /// the primitives stroke with, or `None` when there is no edge.
+    ///
+    /// The colour rule is [`StyleResolver::patch_edge`]'s, so a bar reached
+    /// through `primitives` and a bar reached through the renderer cannot
+    /// darken their edges differently: an explicit colour wins, then the
+    /// theme's override, then the fill darkened. `width_points` is the
+    /// authored width in **points** and comes back scaled to device pixels,
+    /// because that is what a [`PlotPrimitive`] carries.
+    ///
+    /// [`StyleResolver::patch_edge`]: crate::core::style_utils::StyleResolver::patch_edge
+    pub fn patch_edge(
+        &self,
+        fill: Color,
+        explicit: Option<Color>,
+        width_points: f32,
+    ) -> Option<(Color, f32)> {
+        (width_points > 0.0).then(|| {
+            let color = explicit
+                .or(self.patch_edge_color)
+                .unwrap_or_else(|| fill.darken(crate::core::style_utils::PATCH_EDGE_DARKEN));
+            (color, self.scale.points_to_pixels(width_points))
+        })
     }
 
     /// `base` with this series' alpha composed over its own.
@@ -801,6 +845,14 @@ pub trait ComputedSeries: PlotRender + std::fmt::Debug + Send + Sync {
         Vec::new()
     }
 
+    /// Which axis carries [`Self::category_slots`].
+    ///
+    /// Vertical plots place categories on x; horizontal plots place them on y.
+    /// The default preserves the ordinary categorical-x behavior.
+    fn category_orientation(&self) -> crate::core::Orientation {
+        crate::core::Orientation::Vertical
+    }
+
     /// The shape this plot type's legend swatch should take.
     ///
     /// A key that shows a line for a cloud of markers is worse than no key: it
@@ -809,6 +861,17 @@ pub trait ComputedSeries: PlotRender + std::fmt::Debug + Send + Sync {
     /// right for anything stroked.
     fn legend_key(&self) -> LegendKey {
         LegendKey::Line
+    }
+
+    /// The edge a [`LegendKey::Patch`] swatch should be stroked with, as
+    /// `(explicit_colour, width_in_points)` — the same pair the series hands
+    /// to the filled-patch rule when it draws itself.
+    ///
+    /// A swatch that shows a flat fill for an outlined bar tells the reader
+    /// the same small lie a line-for-markers key does. `None`, the default,
+    /// keeps the swatch flat for patches genuinely drawn without an edge.
+    fn patch_edge_spec(&self) -> Option<(Option<Color>, f32)> {
+        None
     }
 
     /// The colour scale this series wants explained, if it has one.

@@ -86,7 +86,7 @@ renderer honors for it:
 | --- | --- |
 | `line` | `label`, `color`, `alpha`, `width`, `linestyle`, `marker`, `marker_size` |
 | `scatter` | `label`, `color`, `alpha`, `marker`, `marker_size` |
-| `bar` | `label`, `color`, `alpha` |
+| `bar` | `label`, `color`, `alpha`, `orientation` (`"vertical"` or `"horizontal"`) |
 | `histogram` | `label`, `color`, `alpha`, `bins`, `density` |
 | `boxplot` | `label`, `color`, `alpha`, `width`, `linestyle` |
 | `kde` | `label`, `color`, `alpha`, `width`, `bandwidth` |
@@ -99,6 +99,8 @@ a `name` are labelled once you add `.legend(...)` to the plot.
 - `histogram(density=True)` normalizes the bars to a probability density, which
   is what a `kde()` overlay is drawn on; without it the KDE sits flat at zero
   against a counts axis.
+- `bar(..., orientation="horizontal")` puts numeric values on x and category
+  labels on y; vertical remains the default.
 - `color` takes a hex string (`"#2563eb"`, `"#25f"`, `"#2563eb80"`) or a named
   color such as `"red"`, `"orange"`, `"teal"`, or `"crimson"`; a typo raises
   `ValueError` with a "did you mean" suggestion.

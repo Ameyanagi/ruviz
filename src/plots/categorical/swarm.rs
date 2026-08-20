@@ -90,6 +90,12 @@ impl SwarmConfig {
         self
     }
 
+    /// Set vertical orientation (the default)
+    pub fn vertical(mut self) -> Self {
+        self.orientation = SwarmOrientation::Vertical;
+        self
+    }
+
     /// Set maximum spread width
     pub fn width(mut self, width: f64) -> Self {
         self.width = width.clamp(0.1, 1.0);
@@ -321,13 +327,13 @@ impl ComputedSeries for SwarmData {
     /// bars and box plots use, so the names the caller passed get printed under
     /// the columns instead of raw numbers.
     fn category_slots(&self) -> Vec<(String, f64)> {
+        crate::plots::boxplot::category_slots(&self.category_names, self.num_categories)
+    }
+
+    fn category_orientation(&self) -> crate::core::Orientation {
         match self.config.orientation {
-            SwarmOrientation::Vertical => {
-                crate::plots::boxplot::category_slots(&self.category_names, self.num_categories)
-            }
-            // The shared category axis is the x axis; a horizontal swarm puts
-            // its categories on y, which that machinery cannot place yet.
-            SwarmOrientation::Horizontal => Vec::new(),
+            SwarmOrientation::Vertical => crate::core::Orientation::Vertical,
+            SwarmOrientation::Horizontal => crate::core::Orientation::Horizontal,
         }
     }
 
@@ -481,7 +487,7 @@ impl PlotRender for SwarmData {
         &self,
         renderer: &mut SkiaRenderer,
         area: &PlotArea,
-        _theme: &Theme,
+        theme: &Theme,
         color: Color,
         alpha: f32,
         _line_width: Option<f32>,
@@ -491,6 +497,7 @@ impl PlotRender for SwarmData {
             color,
             alpha,
             line_width: None,
+            patch_edge_color: theme.patch_edge_color,
         };
         draw_primitives(renderer, &self.primitives(area, &style))
     }

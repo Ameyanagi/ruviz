@@ -48,9 +48,12 @@ pub struct StackedBarConfig {
     pub alpha: f32,
     /// Labels for each series
     pub labels: Vec<String>,
-    /// Edge color for bars
+    /// Explicit edge colour, or `None` to derive one from the fill through the
+    /// shared filled-patch rule ([`StyleResolver::patch_edge`]).
+    ///
+    /// [`StyleResolver::patch_edge`]: crate::core::style_utils::StyleResolver::patch_edge
     pub edge_color: Option<Color>,
-    /// Edge width
+    /// Edge width in **points**; `0.0` means no edge at all.
     pub edge_width: f32,
     /// Orientation
     pub orientation: BarOrientation,
@@ -69,9 +72,12 @@ pub struct GroupedBarConfig {
     pub alpha: f32,
     /// Labels for each series
     pub labels: Vec<String>,
-    /// Edge color for bars
+    /// Explicit edge colour, or `None` to derive one from the fill through the
+    /// shared filled-patch rule ([`StyleResolver::patch_edge`]).
+    ///
+    /// [`StyleResolver::patch_edge`]: crate::core::style_utils::StyleResolver::patch_edge
     pub edge_color: Option<Color>,
-    /// Edge width
+    /// Edge width in **points**; `0.0` means no edge at all.
     pub edge_width: f32,
     /// Orientation
     pub orientation: BarOrientation,
@@ -85,7 +91,7 @@ impl Default for StackedBarConfig {
             alpha: 1.0,
             labels: vec![],
             edge_color: None,
-            edge_width: 0.0,
+            edge_width: 0.8,
             orientation: BarOrientation::Vertical,
         }
     }
@@ -149,7 +155,7 @@ impl Default for GroupedBarConfig {
             alpha: 1.0,
             labels: vec![],
             edge_color: None,
-            edge_width: 0.0,
+            edge_width: 0.8,
             orientation: BarOrientation::Vertical,
         }
     }
@@ -200,6 +206,12 @@ impl GroupedBarConfig {
     /// Set horizontal orientation
     pub fn horizontal(mut self) -> Self {
         self.orientation = BarOrientation::Horizontal;
+        self
+    }
+
+    /// Set vertical orientation
+    pub fn vertical(mut self) -> Self {
+        self.orientation = BarOrientation::Vertical;
         self
     }
 }
@@ -339,7 +351,16 @@ pub fn compute_grouped_bars(
         for (cat_idx, &value) in series_values.iter().enumerate().take(categories) {
             // Calculate bar position within group
             let group_start = cat_idx as f64 - group_width / 2.0;
-            let bar_offset = series_idx as f64 * bar_spacing;
+            // A group reads in legend order. Vertical, that is left to right,
+            // so the first series takes the lowest offset; horizontal, the eye
+            // reads top to bottom while y grows upward, so the first series
+            // takes the *highest* offset — otherwise every group lists its
+            // bars in the reverse of the legend beside them.
+            let slot_in_group = match config.orientation {
+                BarOrientation::Vertical => series_idx,
+                BarOrientation::Horizontal => num_series - 1 - series_idx,
+            };
+            let bar_offset = slot_in_group as f64 * bar_spacing;
 
             match config.orientation {
                 BarOrientation::Vertical => {
@@ -860,12 +881,13 @@ impl ComputedSeries for BarSeriesData {
     /// group and a lone bar cannot be positioned by one rule and labelled by
     /// another.
     fn category_slots(&self) -> Vec<(String, f64)> {
+        category_slots(&self.categories, self.categories.len())
+    }
+
+    fn category_orientation(&self) -> crate::core::Orientation {
         match self.orientation {
-            BarOrientation::Vertical => category_slots(&self.categories, self.categories.len()),
-            // The shared category axis is the x axis; horizontal bars put their
-            // categories on y, which that machinery cannot label yet — the same
-            // gap a horizontal strip plot has.
-            BarOrientation::Horizontal => Vec::new(),
+            BarOrientation::Vertical => crate::core::Orientation::Vertical,
+            BarOrientation::Horizontal => crate::core::Orientation::Horizontal,
         }
     }
 
@@ -878,6 +900,12 @@ impl ComputedSeries for BarSeriesData {
     /// it, the same thing `SeriesType::Bar` pins.
     fn pins_zero_baseline(&self) -> bool {
         true
+    }
+
+    /// The same `(colour, width)` pair `primitives` strokes its bars with, so
+    /// the legend swatch carries the outline the bars actually have.
+    fn patch_edge_spec(&self) -> Option<(Option<Color>, f32)> {
+        (self.edge_width > 0.0).then_some((self.edge_color, self.edge_width))
     }
 
     /// The category axis carries ordinal slots, so it has no quantitative
@@ -894,13 +922,17 @@ impl ComputedSeries for BarSeriesData {
     fn primitives(&self, area: &PlotArea, style: &ComputedStyle) -> Vec<PlotPrimitive> {
         let fill = style.tinted(style.color.with_alpha(self.alpha));
         // The edge is authored in points like every other stroke in the crate,
-        // and an edge colour is explicit or absent — the same rule hexbin
-        // follows for a filled patch reached through `PlotPrimitive`.
-        let edge_width_px = style.scale.points_to_pixels(self.edge_width.max(0.0));
-        let edge = self
-            .edge_color
-            .filter(|_| self.edge_width > 0.0)
-            .map(|color| (style.tinted(color), edge_width_px));
+        // and an absent edge colour is derived from the fill rather than
+        // meaning "no edge" — grouped and stacked bars used to read it the
+        // second way, which is why they drew flat next to a plain bar chart in
+        // the same theme. An explicit colour is tinted *before* resolution and
+        // a derived one inherits `fill`'s already-tinted alpha, so neither
+        // path multiplies the series alpha in twice.
+        let edge = style.patch_edge(
+            fill,
+            self.edge_color.map(|color| style.tinted(color)),
+            self.edge_width.max(0.0),
+        );
 
         self.bars
             .iter()
@@ -941,7 +973,7 @@ impl PlotRender for BarSeriesData {
         &self,
         renderer: &mut SkiaRenderer,
         area: &PlotArea,
-        _theme: &Theme,
+        theme: &Theme,
         color: Color,
         alpha: f32,
         _line_width: Option<f32>,
@@ -951,6 +983,7 @@ impl PlotRender for BarSeriesData {
             color,
             alpha,
             line_width: None,
+            patch_edge_color: theme.patch_edge_color,
         };
         draw_primitives(renderer, &self.primitives(area, &style))
     }
@@ -1248,8 +1281,7 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_column_draws_one_filled_rectangle_per_bar() {
+    fn only_column_primitives(style: &ComputedStyle) -> Vec<PlotPrimitive> {
         let values = vec![vec![1.0, 2.0, 3.0]];
         let split = grouped_bar_series(
             &categories3(),
@@ -1260,20 +1292,129 @@ mod tests {
         let data = &split[0].1;
         let ((x_min, x_max), (y_min, y_max)) = data.data_bounds();
         let area = PlotArea::new(0.0, 0.0, 200.0, 100.0, x_min, x_max, y_min, y_max);
-        let style = ComputedStyle::opaque(
+        data.primitives(&area, style)
+    }
+
+    fn probe_style() -> ComputedStyle {
+        ComputedStyle::opaque(
             crate::core::units::RenderScale::new(96.0),
             Color::from_rgb(10, 20, 30),
-        );
+        )
+    }
 
-        let primitives = data.primitives(&area, &style);
+    #[test]
+    fn a_column_draws_one_filled_rectangle_per_bar() {
+        let primitives = only_column_primitives(&probe_style());
         assert_eq!(primitives.len(), 3);
         assert!(primitives.iter().all(|p| matches!(
             p,
             PlotPrimitive::Polygon {
                 points,
                 fill: Some(_),
-                edge: None,
+                edge: Some(_),
             } if points.len() == 4
         )));
+    }
+
+    /// Grouped and stacked bars used to default to `edge_width: 0.0` and to
+    /// read an absent `edge_color` as "no edge", so they drew flat beside a
+    /// plain bar chart in the same theme — most visibly in a stacked bar, where
+    /// nothing separated one segment from the next.
+    #[test]
+    fn a_grouped_bar_edge_follows_the_same_rule_a_plain_bar_edge_does() {
+        assert_eq!(GroupedBarConfig::default().edge_width, 0.8);
+        assert_eq!(StackedBarConfig::default().edge_width, 0.8);
+
+        let fill = Color::from_rgb(10, 20, 30);
+        let derived = probe_style();
+        let PlotPrimitive::Polygon {
+            edge: Some((derived_color, derived_width)),
+            ..
+        } = only_column_primitives(&derived)[0]
+        else {
+            panic!("a grouped bar must carry an edge");
+        };
+        // No explicit colour and no theme override: darkened from the fill,
+        // exactly as `BarConfig::resolved_edge` would.
+        assert_eq!(derived_color, fill.darken(0.3));
+        assert!((derived_width - derived.scale.points_to_pixels(0.8)).abs() < 1e-4);
+
+        // A theme that names a patch edge colour wins over the derivation, the
+        // other half of the rule `StyleResolver::patch_edge` states.
+        let themed = probe_style().with_patch_edge_color(Some(Color::WHITE));
+        let PlotPrimitive::Polygon {
+            edge: Some((themed_color, _)),
+            ..
+        } = only_column_primitives(&themed)[0]
+        else {
+            panic!("a grouped bar must carry an edge");
+        };
+        assert_eq!(themed_color, Color::WHITE);
+    }
+
+    /// A horizontal group reads top-to-bottom in legend order: the first
+    /// series is the topmost bar (largest y), not the bottom one. Vertical
+    /// groups keep reading left-to-right. Without the flip, every horizontal
+    /// group listed its bars in the reverse of the legend beside them.
+    #[test]
+    fn a_horizontal_group_reads_top_to_bottom_in_legend_order() {
+        let values = vec![vec![10.0], vec![20.0], vec![30.0]];
+
+        let vertical = compute_grouped_bars(&values, 1, &GroupedBarConfig::default());
+        let x_of = |series| {
+            vertical
+                .iter()
+                .find(|bar| bar.series == series)
+                .expect("bar per series")
+                .x
+        };
+        assert!(
+            x_of(0) < x_of(1) && x_of(1) < x_of(2),
+            "vertical: legend order runs left to right"
+        );
+
+        let horizontal =
+            compute_grouped_bars(&values, 1, &GroupedBarConfig::default().horizontal());
+        let y_of = |series| {
+            horizontal
+                .iter()
+                .find(|bar| bar.series == series)
+                .expect("bar per series")
+                .y
+        };
+        assert!(
+            y_of(0) > y_of(1) && y_of(1) > y_of(2),
+            "horizontal: legend order runs top to bottom"
+        );
+
+        // The flip moves bars between slots; it must not change the slots.
+        let mut v_xs: Vec<f64> = vertical.iter().map(|bar| bar.x).collect();
+        let mut h_ys: Vec<f64> = horizontal.iter().map(|bar| bar.y).collect();
+        v_xs.sort_by(f64::total_cmp);
+        h_ys.sort_by(f64::total_cmp);
+        assert_eq!(v_xs, h_ys);
+    }
+
+    /// A translucent series' derived edge is exactly as translucent as its
+    /// fill. The first cut of the edge rule tinted the derivation twice —
+    /// invisible at the default `alpha: 1.0`, wrong everywhere else.
+    #[test]
+    fn a_translucent_bar_edge_is_as_translucent_as_its_fill() {
+        let mut style = probe_style();
+        style.alpha = 0.5;
+        let PlotPrimitive::Polygon {
+            fill: Some(fill),
+            edge: Some((edge_color, _)),
+            ..
+        } = only_column_primitives(&style)[0]
+        else {
+            panic!("a grouped bar must carry a fill and an edge");
+        };
+        assert_eq!(
+            edge_color.a, fill.a,
+            "edge alpha {} must match fill alpha {}",
+            edge_color.a, fill.a
+        );
+        assert_eq!(edge_color.a, 127, "half of an opaque fill");
     }
 }

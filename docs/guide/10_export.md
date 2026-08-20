@@ -31,6 +31,11 @@ Plot::new()
 - Dimensions: 800×600 pixels
 - Format: PNG with lossless compression
 
+PNG files also store the effective output density in the standard `pHYs`
+chunk. Print and page-layout applications can therefore recover the physical
+figure size selected with `.size(...).dpi(...)`, subject only to PNG's integer
+pixels-per-metre rounding.
+
 ### Custom File Path
 
 ```rust

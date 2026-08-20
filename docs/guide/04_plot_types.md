@@ -103,6 +103,40 @@ Plot::new()
     .save("bar.png")?;
 ```
 
+Use `.horizontal()` when the category names read better on the y axis:
+
+```rust
+use ruviz::prelude::*;
+
+Plot::new()
+    .bar(&["Documentation", "Rendering", "Bindings"], &[42.0, 31.0, 18.0])
+    .horizontal()
+    .title("Open tasks")
+    .save("horizontal_bar.png")?;
+```
+
+Vertical bars put categories on x and values on y; horizontal bars swap those
+axes in bounds, ticks, labels, scale validation, and both PNG and SVG output.
+
+The y axis runs upward, so the first category lands at the *bottom*. For a
+ranked chart that reads top-down in the order you gave, flip the axis with
+`.invert_y()`:
+
+```rust
+use ruviz::prelude::*;
+
+Plot::new()
+    .bar(&["Gold", "Silver", "Bronze"], &[42.0, 31.0, 18.0])
+    .horizontal()
+    .invert_y()
+    .title("Leaderboard")
+    .save("ranked_bar.png")?;
+```
+
+`.invert_x()` and `.invert_y()` work on any plot — they flip whatever range the
+axis resolves to, so unlike descending `.xlim(..)`/`.ylim(..)` limits they
+compose with auto-scaled bounds.
+
 ### Histograms
 
 **Use for**: Distribution analysis, frequency analysis
@@ -146,6 +180,27 @@ Plot::new()
     .show_mean(true)
     .title("Box Plot")
     .save("boxplot.png")?;
+```
+
+Add `.horizontal()` to lay the categories along the y axis instead — the same
+spelling bar, violin and boxen plots use. Name each box with `.category(..)` and
+several of them stack up the axis in the order they were added:
+
+```rust
+use ruviz::prelude::*;
+
+let north = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 35.0];
+let south = vec![2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 12.0];
+
+Plot::new()
+    .boxplot(&north)
+    .horizontal()
+    .category("North")
+    .boxplot(&south)
+    .horizontal()
+    .category("South")
+    .xlabel("Measurement")
+    .save("boxplot_horizontal.png")?;
 ```
 
 ---
@@ -311,9 +366,9 @@ Plot::new()
 
 **Use for**: Long category labels, ranked data
 
-`.horizontal()` is available on both bar builders. Note that the shared category
-axis is the x axis, so a horizontal chart's categories are not yet labelled —
-the same gap `strip` and `swarm` have in their horizontal orientation.
+`.horizontal()` is available on regular, grouped, and stacked bar builders.
+Horizontal charts place their category labels on the y axis and numeric values
+on x.
 
 ```rust
 use ruviz::prelude::*;
@@ -321,7 +376,7 @@ use ruviz::prelude::*;
 let last: Vec<f64> = vec![10.0, 20.0, 30.0];
 
 Plot::new()
-    .grouped_bar(&["Q1", "Q2", "Q3"], &[("2023", &last)])
+    .bar(&["Q1", "Q2", "Q3"], &last)
     .horizontal()
     .save("horizontal_bar.png")?;
 ```

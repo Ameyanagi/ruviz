@@ -6,6 +6,8 @@
 
 mod common;
 
+use std::io::Cursor;
+
 use ruviz::prelude::*;
 
 /// Simple image comparison using mean squared error per channel
@@ -77,6 +79,30 @@ fn render_at_dpi(x: &[f64], y: &[f64], dpi: u32) -> image::RgbaImage {
     // Convert ruviz Image to image::RgbaImage
     image::RgbaImage::from_raw(image.width, image.height, image.pixels)
         .expect("Image conversion should succeed")
+}
+
+fn png_pixel_dimensions(bytes: &[u8]) -> png::PixelDimensions {
+    let decoder = png::Decoder::new(Cursor::new(bytes));
+    let reader = decoder.read_info().expect("plot PNG should decode");
+    reader
+        .info()
+        .pixel_dims
+        .expect("plot PNG should contain a pHYs chunk")
+}
+
+#[test]
+fn rendered_png_records_the_configured_physical_resolution() {
+    let png = Plot::new()
+        .size(2.0, 1.0)
+        .dpi(300)
+        .line(&[0.0, 1.0], &[0.0, 1.0])
+        .render_png_bytes()
+        .expect("plot PNG should render");
+    let dimensions = png_pixel_dimensions(&png);
+
+    assert_eq!(dimensions.xppu, 11_811);
+    assert_eq!(dimensions.yppu, 11_811);
+    assert_eq!(dimensions.unit, png::Unit::Meter);
 }
 
 #[test]
@@ -270,6 +296,13 @@ fn test_dpi_output_files() {
 
     assert!(output_100dpi.exists(), "100 DPI output should exist");
     assert!(output_200dpi.exists(), "200 DPI output should exist");
+
+    let dimensions_100 = png_pixel_dimensions(&std::fs::read(&output_100dpi).unwrap());
+    let dimensions_200 = png_pixel_dimensions(&std::fs::read(&output_200dpi).unwrap());
+    assert_eq!((dimensions_100.xppu, dimensions_100.yppu), (3_937, 3_937));
+    assert_eq!((dimensions_200.xppu, dimensions_200.yppu), (7_874, 7_874));
+    assert_eq!(dimensions_100.unit, png::Unit::Meter);
+    assert_eq!(dimensions_200.unit, png::Unit::Meter);
 
     // Verify file sizes (200 DPI should be larger)
     let size_100 = std::fs::metadata(&output_100dpi).unwrap().len();

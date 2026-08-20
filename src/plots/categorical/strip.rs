@@ -95,6 +95,12 @@ impl StripConfig {
         self
     }
 
+    /// Set vertical orientation (the default)
+    pub fn vertical(mut self) -> Self {
+        self.orientation = StripOrientation::Vertical;
+        self
+    }
+
     /// Enable dodging for groups
     pub fn dodge(mut self, dodge: bool) -> Self {
         self.dodge = dodge;
@@ -337,13 +343,13 @@ impl ComputedSeries for StripData {
     /// bars and box plots use, so the names the caller passed get printed under
     /// the columns instead of raw numbers.
     fn category_slots(&self) -> Vec<(String, f64)> {
+        crate::plots::boxplot::category_slots(&self.category_names, self.num_categories)
+    }
+
+    fn category_orientation(&self) -> crate::core::Orientation {
         match self.config.orientation {
-            StripOrientation::Vertical => {
-                crate::plots::boxplot::category_slots(&self.category_names, self.num_categories)
-            }
-            // The shared category axis is the x axis; a horizontal strip puts
-            // its categories on y, which that machinery cannot place yet.
-            StripOrientation::Horizontal => Vec::new(),
+            StripOrientation::Vertical => crate::core::Orientation::Vertical,
+            StripOrientation::Horizontal => crate::core::Orientation::Horizontal,
         }
     }
 
@@ -409,7 +415,7 @@ impl PlotRender for StripData {
         &self,
         renderer: &mut SkiaRenderer,
         area: &PlotArea,
-        _theme: &Theme,
+        theme: &Theme,
         color: Color,
         alpha: f32,
         _line_width: Option<f32>,
@@ -419,6 +425,7 @@ impl PlotRender for StripData {
             color,
             alpha,
             line_width: None,
+            patch_edge_color: theme.patch_edge_color,
         };
         draw_primitives(renderer, &self.primitives(area, &style))
     }

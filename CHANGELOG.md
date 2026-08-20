@@ -2,6 +2,73 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- Regular bar charts now support vertical and horizontal orientation end to
+  end. Rust adds `.horizontal()` / `.vertical()` convenience methods, while
+  Python accepts `bar(..., orientation="horizontal")`; snapshots, notebook
+  replay, Wasm, and the TypeScript SDK preserve the same setting. Horizontal
+  bars use numeric x values and categorical y labels in raster and SVG output.
+- `Plot::boxplot(..)` accepts `.horizontal()` and `.vertical()`, the same
+  spelling bar, violin and boxen plots already used. Categories move to the y
+  axis, the value axis keeps its scale, and several named boxes stack up the
+  axis the way vertical ones spread across it.
+- `Plot::invert_x()` / `Plot::invert_y()` flip an axis after its range
+  resolves, so they compose with auto-scaled bounds — descending
+  `xlim`/`ylim` limits, the previous spelling, required knowing the data's
+  extent. On a horizontal categorical chart, `.invert_y()` puts the first
+  category at the top so ranked bars read in the order they were given.
+- Every categorical builder now spells both directions: strip, swarm, grouped
+  and stacked bar builders gain the `.vertical()` their `.horizontal()` was
+  missing, so switching back is written the same way everywhere.
+
+### Changed
+
+- Grouped and stacked bars are drawn with an edge, like every other filled
+  patch: both configurations now default to `edge_width: 0.8`, and an
+  `edge_color` of `None` derives the edge from the fill through the same rule
+  `StyleResolver::patch_edge` applies to a plain bar, rather than meaning "no
+  edge". Adjacent stacked segments are separated as a result. Pass
+  `.edge_width(0.0)` for the previous flat look.
+- `ComputedStyle` carries the theme's `patch_edge_color`, so a filled patch
+  drawn through `ComputedSeries::primitives` follows the theme's edge rule
+  instead of only the renderer path doing so. Code constructing a
+  `ComputedStyle` literally needs the new field; `ComputedStyle::opaque(..)`
+  and the new `.with_patch_edge_color(..)` cover it otherwise.
+
+- Grouped and stacked bar legend swatches are stroked with the edge their
+  bars actually carry, through the new `ComputedSeries::patch_edge_spec`
+  hook — a flat key for an outlined bar misdescribed the picture.
+- A horizontal grouped bar chart lays each group out in legend order: the
+  first series is the topmost bar of its group, so the group reads
+  top-to-bottom the way the legend beside it does. Vertical groups are
+  unchanged. (Previously the offsets simply grew upward, so every horizontal
+  group listed its bars in the reverse of the legend — the same quirk
+  matplotlib's `barh` has and seaborn corrects.)
+
+### Fixed
+
+- `.show_mean(true)` on a box plot draws its mean again. The diamond marker
+  existed only in the legacy `PlotRender` path, so through `Plot::boxplot(..)`
+  — the path the documentation demonstrates — the setter was accepted and
+  drew nothing. Both backends now place the diamond through the shared
+  projection, in the same edge ink as the median, in either orientation.
+- `BoxPlotConfig::orientation` is honoured end to end. It was read when the
+  input was validated and ignored when the box was drawn — the projection put
+  the quantiles on y whatever the setting said — so a box plot configured
+  horizontal came out vertical, and on a log axis it validated one axis and
+  drew against the other. The shared projection now places the quantiles on
+  the axis the orientation names, the box claims its slot on the other one,
+  and bounds and axis-scale support follow.
+- PNG output from `save()` and `render_png_bytes()` now stores the effective
+  configured DPI in a standard `pHYs` chunk, so print and page-layout software
+  recovers the intended physical figure size.
+- SVG export no longer writes an empty `<text>` element for an unnamed category
+  slot. A lone box plot or violin holds its place on the axis without a label,
+  which is what the raster backend already drew.
+
 ## [0.11.0] - 2026-08-16
 
 ### Added

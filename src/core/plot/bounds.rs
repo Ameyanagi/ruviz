@@ -6,6 +6,7 @@
 //! code was the only live tenant of that file.
 
 use super::*;
+use crate::{core::Orientation, plots::BarOrientation};
 
 // ===========================================================================
 // Data bounds — one accumulator, one routine, one annotation pass
@@ -25,6 +26,8 @@ use super::*;
 /// `matches!` chains of its own.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct StickyEdges {
+    /// The `x = 0` baseline must keep touching whichever x edge it lands on.
+    pub(super) x_zero_baseline: bool,
     /// The `y = 0` baseline must keep touching whichever y edge it lands on.
     pub(super) y_zero_baseline: bool,
     /// Every edge is pinned: the series fills its axes edge to edge.
@@ -36,20 +39,31 @@ pub(super) struct StickyEdges {
 impl StickyEdges {
     /// An ordinary Cartesian series: nothing pinned, margin on all four sides.
     pub(super) const NONE: Self = Self {
+        x_zero_baseline: false,
         y_zero_baseline: false,
         all_edges: false,
         by_construction: false,
     };
 
     /// Bars and histograms: the zero baseline they are drawn from is sticky.
-    const ZERO_BASELINE: Self = Self {
+    const Y_ZERO_BASELINE: Self = Self {
+        x_zero_baseline: false,
         y_zero_baseline: true,
+        all_edges: false,
+        by_construction: false,
+    };
+
+    /// Horizontal bars pin their value-axis baseline at `x = 0`.
+    const X_ZERO_BASELINE: Self = Self {
+        x_zero_baseline: true,
+        y_zero_baseline: false,
         all_edges: false,
         by_construction: false,
     };
 
     /// Grid-sampled fields: `imshow`/`ContourSet` reach the spines exactly.
     const ALL_EDGES: Self = Self {
+        x_zero_baseline: false,
         y_zero_baseline: false,
         all_edges: true,
         by_construction: false,
@@ -60,6 +74,7 @@ impl StickyEdges {
     /// Also the identity of [`Self::union`]'s `by_construction` fold, so a plot
     /// with no series at all keeps its default axes untouched.
     pub(super) const BY_CONSTRUCTION: Self = Self {
+        x_zero_baseline: false,
         y_zero_baseline: false,
         all_edges: false,
         by_construction: true,
@@ -72,6 +87,7 @@ impl StickyEdges {
     /// self-determined" only survives if *every* series says so (`&&`).
     fn union(self, other: Self) -> Self {
         Self {
+            x_zero_baseline: self.x_zero_baseline || other.x_zero_baseline,
             y_zero_baseline: self.y_zero_baseline || other.y_zero_baseline,
             all_edges: self.all_edges || other.all_edges,
             by_construction: self.by_construction && other.by_construction,
@@ -88,7 +104,11 @@ fn sticky_edges_of(series_type: &SeriesType) -> StickyEdges {
     match series_type {
         // Bars and histograms include the zero baseline in their extent and
         // must keep sitting exactly on it.
-        SeriesType::Bar { .. } | SeriesType::Histogram { .. } => StickyEdges::ZERO_BASELINE,
+        SeriesType::Bar { config, .. } => match config.orientation {
+            BarOrientation::Vertical => StickyEdges::Y_ZERO_BASELINE,
+            BarOrientation::Horizontal => StickyEdges::X_ZERO_BASELINE,
+        },
+        SeriesType::Histogram { .. } => StickyEdges::Y_ZERO_BASELINE,
         // Grid-sampled fields fill the axes by construction: `imshow` marks all
         // four edges sticky and `ContourSet` calls `autoscale_view(tight=True)`.
         // Without this a filled contour floats inside a bare gutter.
@@ -100,7 +120,12 @@ fn sticky_edges_of(series_type: &SeriesType) -> StickyEdges {
         }
         // A computed series answers for itself — grouped and stacked bars are
         // bar-shaped and pin the baseline the same way `SeriesType::Bar` does.
-        SeriesType::Computed { data } if data.pins_zero_baseline() => StickyEdges::ZERO_BASELINE,
+        SeriesType::Computed { data } if data.pins_zero_baseline() => {
+            match data.category_orientation() {
+                Orientation::Vertical => StickyEdges::Y_ZERO_BASELINE,
+                Orientation::Horizontal => StickyEdges::X_ZERO_BASELINE,
+            }
+        }
         _ => StickyEdges::NONE,
     }
 }
@@ -278,12 +303,46 @@ impl BoundsAccumulator {
 
     /// Categorical bars, with matplotlib's half-category padding on each side
     /// so the first and last bar are fully inside the axes.
-    fn add_bars(&mut self, category_count: usize, values: &[f64]) {
-        self.include_x_span(-0.5, category_count as f64 - 0.5);
-        for &value in values {
-            if value.is_finite() {
-                // Bars run from the zero baseline to the value, so both ends count.
-                self.include_y_span(value.min(0.0), value.max(0.0));
+    fn add_bars(
+        &mut self,
+        category_count: usize,
+        values: &[f64],
+        config: &crate::plots::basic::BarConfig,
+    ) {
+        let full_slot_span: (f64, f64) = (-0.5, category_count as f64 - 0.5);
+        let actual_slot_span = if config.align_left {
+            (
+                0.0,
+                category_count.saturating_sub(1) as f64 + f64::from(config.width),
+            )
+        } else {
+            let half_width = f64::from(config.width) / 2.0;
+            (
+                -half_width,
+                category_count.saturating_sub(1) as f64 + half_width,
+            )
+        };
+        let category_span = (
+            full_slot_span.0.min(actual_slot_span.0),
+            full_slot_span.1.max(actual_slot_span.1),
+        );
+
+        match config.orientation {
+            crate::plots::basic::BarOrientation::Vertical => {
+                self.include_x_span(category_span.0, category_span.1);
+                for &value in values {
+                    if value.is_finite() {
+                        self.include_y_span(value.min(config.bottom), value.max(config.bottom));
+                    }
+                }
+            }
+            crate::plots::basic::BarOrientation::Horizontal => {
+                self.include_y_span(category_span.0, category_span.1);
+                for &value in values {
+                    if value.is_finite() {
+                        self.include_x_span(value.min(config.bottom), value.max(config.bottom));
+                    }
+                }
             }
         }
     }
@@ -310,11 +369,22 @@ impl BoundsAccumulator {
             return Err(PlottingError::EmptyDataSet);
         }
         // One box occupies the one-unit-wide category slot it was assigned, the
-        // same slot geometry a bar chart uses.
+        // same slot geometry a bar chart uses — on whichever axis its
+        // orientation puts the categories.
         let (lo, hi) = crate::plots::boxplot::category_slot_span(config.x_center());
-        self.include_x_span(lo, hi);
-        for &value in data {
-            self.include_y(value);
+        match config.orientation {
+            crate::plots::boxplot::BoxOrientation::Vertical => {
+                self.include_x_span(lo, hi);
+                for &value in data {
+                    self.include_y(value);
+                }
+            }
+            crate::plots::boxplot::BoxOrientation::Horizontal => {
+                self.include_y_span(lo, hi);
+                for &value in data {
+                    self.include_x(value);
+                }
+            }
         }
         Ok(())
     }
@@ -342,23 +412,37 @@ impl BoundsAccumulator {
                 self.include_y(0.0);
             }
             SeriesType::Violin { data } => {
-                // The violin is as tall as its KDE evaluation range, which
-                // extends past the raw data by a few bandwidths.
+                // The violin's value axis follows its KDE evaluation range,
+                // which extends past the raw data by a few bandwidths.
                 //
                 // Every grid point is offered rather than just the two ends:
                 // the grid is monotone, so on a linear axis this is exactly the
                 // pair of endpoints, but on a log axis the low end can run past
                 // the axis, and then the floor has to be the smallest grid point
                 // the axis can actually show.
-                if data.kde.x.is_empty() {
-                    self.include_y_span(data.range.0, data.range.1);
-                } else {
-                    for &value in &data.kde.x {
-                        self.include_y(value);
+                let (lo, hi) = crate::plots::boxplot::category_slot_span(data.config.x_center());
+                match data.config.orientation {
+                    crate::plots::distribution::Orientation::Vertical => {
+                        self.include_x_span(lo, hi);
+                        if data.kde.x.is_empty() {
+                            self.include_y_span(data.range.0, data.range.1);
+                        } else {
+                            for &value in &data.kde.x {
+                                self.include_y(value);
+                            }
+                        }
+                    }
+                    crate::plots::distribution::Orientation::Horizontal => {
+                        self.include_y_span(lo, hi);
+                        if data.kde.x.is_empty() {
+                            self.include_x_span(data.range.0, data.range.1);
+                        } else {
+                            for &value in &data.kde.x {
+                                self.include_x(value);
+                            }
+                        }
                     }
                 }
-                let (lo, hi) = crate::plots::boxplot::category_slot_span(data.config.x_center());
-                self.include_x_span(lo, hi);
             }
             SeriesType::Quiver { data } => {
                 for arrow in &data.arrows {
@@ -493,8 +577,10 @@ impl SeriesBoundsSource for PlotSeries {
                 );
             }
             SeriesType::Bar {
-                categories, values, ..
-            } => acc.add_bars(categories.len(), &values.resolve_cow(0.0)),
+                categories,
+                values,
+                config,
+            } => acc.add_bars(categories.len(), &values.resolve_cow(0.0), config),
             SeriesType::ErrorBars {
                 x_data,
                 y_data,
@@ -553,7 +639,11 @@ impl ResolvedSeries<'_> {
                     attached.x.map(ErrorValuesRef::from),
                     attached.y.map(ErrorValuesRef::from),
                 ),
-            ResolvedSeries::Bar { categories, values } => acc.add_bars(categories.len(), values),
+            ResolvedSeries::Bar {
+                categories,
+                values,
+                config,
+            } => acc.add_bars(categories.len(), values, config),
             ResolvedSeries::ErrorBars { x, y, y_errors } => acc.add_points_with_errors(
                 x,
                 y,
@@ -946,6 +1036,46 @@ mod bounds_tests {
     }
 
     #[test]
+    fn horizontal_bar_bounds_put_values_on_x_and_categories_on_y() {
+        let plot = Plot::new()
+            .bar(&["first", "second"], &[12.0, 8.0])
+            .horizontal()
+            .bottom(10.0)
+            .into_plot();
+
+        let bounds = plot
+            .calculate_data_bounds()
+            .expect("horizontal bars should produce data bounds");
+
+        assert_eq!(bounds, (8.0, 12.0, -0.5, 1.5));
+    }
+
+    #[test]
+    fn horizontal_violin_bounds_put_values_on_x_and_its_slot_on_y() {
+        use crate::plots::traits::PlotData as _;
+
+        let plot = Plot::new()
+            .violin(&[1.0, 2.0, 2.5, 3.0, 4.0])
+            .horizontal()
+            .x_position(1.0)
+            .into_plot();
+        let expected = match &plot.series_mgr.series[0].series_type {
+            SeriesType::Violin { data } => {
+                let ((x_min, x_max), (y_min, y_max)) = data.data_bounds();
+                (x_min, x_max, y_min, y_max)
+            }
+            other => panic!("expected a violin, got {other:?}"),
+        };
+
+        assert_eq!(
+            plot.calculate_data_bounds()
+                .expect("horizontal violin bounds"),
+            expected
+        );
+        assert_eq!((expected.2, expected.3), (0.5, 1.5));
+    }
+
+    #[test]
     fn insets_do_not_inherit_plot_level_annotations() {
         let plot = Plot::new()
             .line(&[0.0, 1.0], &[0.0, 1.0])
@@ -963,8 +1093,17 @@ mod bounds_tests {
     #[test]
     fn sticky_edges_are_declared_once_per_plot_type() {
         let bars = Plot::new().bar(&["a"], &[1.0]).into_plot().sticky_edges();
+        assert!(!bars.x_zero_baseline);
         assert!(bars.y_zero_baseline);
         assert!(!bars.all_edges);
+
+        let horizontal_bars = Plot::new()
+            .bar(&["a"], &[1.0])
+            .horizontal()
+            .into_plot()
+            .sticky_edges();
+        assert!(horizontal_bars.x_zero_baseline);
+        assert!(!horizontal_bars.y_zero_baseline);
 
         let heatmap = Plot::new().heatmap(&grid()).into_plot().sticky_edges();
         assert!(heatmap.all_edges);

@@ -343,15 +343,20 @@ impl ComputedSeries for DendrogramPlotData {
     /// One slot per leaf, so the leaf axis prints the labels the tree carries
     /// rather than repeating the slot numbers underneath them.
     fn category_slots(&self) -> Vec<(String, f64)> {
+        self.labels
+            .iter()
+            .map(|(position, label)| (label.clone(), *position))
+            .collect()
+    }
+
+    fn category_orientation(&self) -> crate::core::Orientation {
         match self.config.orientation {
-            DendrogramOrientation::Top | DendrogramOrientation::Bottom => self
-                .labels
-                .iter()
-                .map(|(position, label)| (label.clone(), *position))
-                .collect(),
-            // The shared category axis is the x axis; a sideways dendrogram puts
-            // its leaves on y, which that machinery cannot place yet.
-            DendrogramOrientation::Left | DendrogramOrientation::Right => Vec::new(),
+            DendrogramOrientation::Top | DendrogramOrientation::Bottom => {
+                crate::core::Orientation::Vertical
+            }
+            DendrogramOrientation::Left | DendrogramOrientation::Right => {
+                crate::core::Orientation::Horizontal
+            }
         }
     }
 
@@ -435,7 +440,7 @@ impl PlotRender for DendrogramPlotData {
         &self,
         renderer: &mut SkiaRenderer,
         area: &PlotArea,
-        _theme: &Theme,
+        theme: &Theme,
         color: Color,
         alpha: f32,
         line_width: Option<f32>,
@@ -445,6 +450,7 @@ impl PlotRender for DendrogramPlotData {
             color,
             alpha,
             line_width,
+            patch_edge_color: theme.patch_edge_color,
         };
         draw_primitives(renderer, &self.primitives(area, &style))
     }

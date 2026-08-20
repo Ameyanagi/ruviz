@@ -108,6 +108,11 @@ impl Image {
     pub fn encode_png(&self) -> crate::core::Result<Vec<u8>> {
         crate::export::encode_rgba_png(self)
     }
+
+    /// Encode the image as PNG bytes with physical pixel density metadata.
+    pub fn encode_png_with_dpi(&self, dpi: f32) -> crate::core::Result<Vec<u8>> {
+        crate::export::encode_rgba_png_with_dpi(self, dpi)
+    }
 }
 
 /// One rendered presentation layer, kept in whichever alpha representation its

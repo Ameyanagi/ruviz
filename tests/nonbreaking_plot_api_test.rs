@@ -245,6 +245,186 @@ fn high_level_boxen_api_emits_svg_geometry() {
     );
 }
 
+/// `.boxplot(&d).horizontal()` had no spelling at all: bar, violin and boxen
+/// each carried `.horizontal()`, and a box plot could only be turned through
+/// `BoxPlotConfig::orientation`, which nothing downstream read. Setting it
+/// produced a vertical box.
+#[test]
+fn high_level_boxplot_api_turns_a_quarter_turn() {
+    let data: Vec<f64> = (0..128)
+        .map(|i| (i as f64 * 0.2).sin() + i as f64 / 64.0)
+        .collect();
+
+    let vertical = Plot::new()
+        .boxplot(&data)
+        .color(BOX_STROKE)
+        .category("sample")
+        .render_to_svg()
+        .expect("vertical box plot SVG should render");
+    let horizontal = Plot::new()
+        .boxplot(&data)
+        .horizontal()
+        .color(BOX_STROKE)
+        .category("sample")
+        .render_to_svg()
+        .expect("horizontal box plot SVG should render");
+
+    assert_ne!(
+        vertical, horizontal,
+        "a horizontal box plot must not render identically to a vertical one"
+    );
+
+    // A box plot draws five straight lines: the median and two whisker caps
+    // run across the category axis, the two whiskers along the value axis.
+    // Turning the plot swaps which screen axis each of those holds constant.
+    assert_eq!(
+        box_stroke_axes(&vertical),
+        (2, 3),
+        "a vertical box plot must hold x on its whiskers and y on its median \
+         and caps: {vertical}"
+    );
+    assert_eq!(
+        box_stroke_axes(&horizontal),
+        (3, 2),
+        "a horizontal box plot must hold x on its median and caps and y on \
+         its whiskers: {horizontal}"
+    );
+
+    // And the category label follows the categories into the left gutter.
+    assert!(
+        horizontal.contains("sample"),
+        "a horizontal box plot must still label its category: {horizontal}"
+    );
+}
+
+/// A colour no theme picks, so the box's own strokes can be told from the
+/// grid and the spines.
+const BOX_STROKE: Color = Color {
+    r: 220,
+    g: 20,
+    b: 60,
+    a: 255,
+};
+
+/// How many of the box's strokes hold x constant, and how many hold y.
+fn box_stroke_axes(svg: &str) -> (usize, usize) {
+    let stroke = format!(
+        "stroke=\"rgb({},{},{})\"",
+        BOX_STROKE.r, BOX_STROKE.g, BOX_STROKE.b
+    );
+    let mut vertical_strokes = 0;
+    let mut horizontal_strokes = 0;
+    for line in svg.lines() {
+        let line = line.trim_start();
+        if !line.starts_with("<line") || !line.contains(&stroke) {
+            continue;
+        }
+        let coordinate = |name: &str| -> f32 {
+            let start = line.find(&format!("{name}=\"")).expect("coordinate") + name.len() + 2;
+            line[start..]
+                .split('"')
+                .next()
+                .expect("coordinate value")
+                .parse()
+                .expect("numeric coordinate")
+        };
+        if coordinate("x1") == coordinate("x2") {
+            vertical_strokes += 1;
+        } else if coordinate("y1") == coordinate("y2") {
+            horizontal_strokes += 1;
+        }
+    }
+    (vertical_strokes, horizontal_strokes)
+}
+
+/// `.show_mean(true)` reached only the legacy `PlotRender` path, so through
+/// `Plot::boxplot(..)` — the path the docs demonstrate — it drew nothing.
+#[test]
+fn high_level_boxplot_show_mean_draws_a_marker() {
+    let data: Vec<f64> = (0..64)
+        .map(|i| (i as f64 * 0.3).sin() * 2.0 + 5.0)
+        .collect();
+    let polygons = |svg: &str| svg.matches("<polygon").count();
+
+    let without = Plot::new()
+        .boxplot(&data)
+        .render_to_svg()
+        .expect("box plot without mean should render");
+    let with_mean = Plot::new()
+        .boxplot(&data)
+        .show_mean(true)
+        .render_to_svg()
+        .expect("box plot with mean should render");
+    assert_eq!(
+        polygons(&with_mean),
+        polygons(&without) + 1,
+        "show_mean(true) must add exactly one diamond: {with_mean}"
+    );
+
+    let horizontal = Plot::new()
+        .boxplot(&data)
+        .horizontal()
+        .show_mean(true)
+        .render_to_svg()
+        .expect("horizontal box plot with mean should render");
+    assert_eq!(
+        polygons(&horizontal),
+        polygons(&without) + 1,
+        "the mean diamond must survive the quarter turn: {horizontal}"
+    );
+}
+
+/// `invert_y()` flips the resolved range, so a horizontal bar chart lists its
+/// first category at the top — without hand-computing the descending `ylim`
+/// that was previously the only spelling.
+#[test]
+fn invert_y_puts_the_first_category_on_top() {
+    let cats = ["First", "Second", "Third"];
+    let vals = [3.0, 1.0, 2.0];
+
+    let label_y = |svg: &str, name: &str| -> f32 {
+        svg.lines()
+            .find(|line| line.contains(&format!(">{name}<")))
+            .and_then(|line| {
+                let start = line.find("y=\"")? + 3;
+                line[start..].split('"').next()?.parse().ok()
+            })
+            .unwrap_or_else(|| panic!("no <text> for {name}: {svg}"))
+    };
+
+    let natural = Plot::new()
+        .bar(&cats, &vals)
+        .horizontal()
+        .render_to_svg()
+        .expect("horizontal bars should render");
+    assert!(
+        label_y(&natural, "First") > label_y(&natural, "Third"),
+        "without inversion the first category sits at the bottom"
+    );
+
+    let inverted = Plot::new()
+        .bar(&cats, &vals)
+        .horizontal()
+        .invert_y()
+        .render_to_svg()
+        .expect("inverted horizontal bars should render");
+    assert!(
+        label_y(&inverted, "First") < label_y(&inverted, "Third"),
+        "invert_y() must put the first category on top: {inverted}"
+    );
+}
+
+#[test]
+fn high_level_boxplot_api_reports_empty_data_when_horizontal() {
+    let empty: Vec<f64> = vec![];
+    let err = Plot::new()
+        .boxplot(&empty)
+        .horizontal()
+        .render()
+        .unwrap_err();
+    assert!(matches!(err, ruviz::core::PlottingError::EmptyDataSet));
+}
+
 #[test]
 fn high_level_boxen_api_reports_empty_data() {
     let empty_data: Vec<f64> = vec![];

@@ -5215,6 +5215,7 @@ dependencies = [
  "log",
  "ndarray",
  "palette",
+ "png",
  "pollster",
  "rayon",
  "swash",

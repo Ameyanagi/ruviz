@@ -991,6 +991,18 @@ where
         self
     }
 
+    /// Flip the x axis; see [`Plot::invert_x`].
+    pub fn invert_x(mut self) -> Self {
+        self.plot = self.plot.invert_x();
+        self
+    }
+
+    /// Flip the y axis; see [`Plot::invert_y`].
+    pub fn invert_y(mut self) -> Self {
+        self.plot = self.plot.invert_y();
+        self
+    }
+
     /// Set Y-axis limits
     ///
     /// This method forwards to the inner Plot. Descending bounds preserve a
@@ -2881,6 +2893,18 @@ impl PlotBuilder<crate::plots::basic::BarConfig> {
     /// Set bar orientation (vertical or horizontal)
     pub fn orientation(mut self, orientation: crate::plots::basic::BarOrientation) -> Self {
         self.config.orientation = orientation;
+        self
+    }
+
+    /// Draw bars horizontally, with values on x and categories on y.
+    pub fn horizontal(mut self) -> Self {
+        self.config.orientation = crate::plots::basic::BarOrientation::Horizontal;
+        self
+    }
+
+    /// Draw bars vertically, with categories on x and values on y.
+    pub fn vertical(mut self) -> Self {
+        self.config.orientation = crate::plots::basic::BarOrientation::Vertical;
         self
     }
 

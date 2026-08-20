@@ -45,6 +45,9 @@ export const LEGEND_POSITION_NAMES = [
 
 export const AXIS_SCALE_NAMES = ["linear", "log", "symlog"] as const;
 
+/** Bar directions accepted by `style.orientation`. */
+export const BAR_ORIENTATION_NAMES = ["vertical", "horizontal"] as const;
+
 /** Built-in theme names; `seaborn` reproduces `seaborn.set_theme()`. */
 export const PLOT_THEME_NAMES = [
   "light",
@@ -66,6 +69,9 @@ export type LegendPositionName = (typeof LEGEND_POSITION_NAMES)[number];
 
 /** Axis scale accepted by `xScale`/`yScale`. */
 export type AxisScaleName = (typeof AXIS_SCALE_NAMES)[number];
+
+/** Whether bar values extend along the y axis or the x axis. */
+export type BarOrientationName = (typeof BAR_ORIENTATION_NAMES)[number];
 
 /** Serialized axis scale; the trailing threshold applies to `symlog` only. */
 export type AxisScaleSnapshot = [scale: AxisScaleName, linthresh?: number];
@@ -92,10 +98,12 @@ export interface SeriesStyleSnapshot {
   density?: boolean;
   bandwidth?: number;
   levels?: number;
+  orientation?: BarOrientationName;
 }
 
 /** Styling every series kind shares. */
 export type CommonSeriesStyle = Pick<SeriesStyleSnapshot, "label" | "color" | "alpha">;
+export type BarSeriesStyle = CommonSeriesStyle & Pick<SeriesStyleSnapshot, "orientation">;
 /** Styling for the kinds drawn with a stroked outline. */
 export type StrokedSeriesStyle = CommonSeriesStyle & Pick<SeriesStyleSnapshot, "width">;
 export type LineSeriesStyle = StrokedSeriesStyle &
@@ -203,7 +211,7 @@ export interface ScatterSeriesSnapshot {
 
 export interface BarSeriesSnapshot {
   kind: "bar";
-  style?: CommonSeriesStyle;
+  style?: BarSeriesStyle;
   categories: string[];
   values: NumericReactiveSourceSnapshot;
 }

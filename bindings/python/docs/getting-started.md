@@ -95,6 +95,11 @@ import ruviz
 ruviz.plot().line([0, 1, 2], [0.0, 0.8, 0.3])
 ruviz.plot().scatter([0, 1, 2], [0.0, 0.8, 0.3])
 ruviz.plot().bar(["CPU", "WASM", "Jupyter"], [3.8, 4.9, 4.1])
+ruviz.plot().bar(
+    ["Documentation", "Rendering", "Bindings"],
+    [42, 31, 18],
+    orientation="horizontal",
+)
 ruviz.plot().histogram([0.2, 0.4, 0.4, 0.9])
 ruviz.plot().boxplot([0.2, 0.4, 0.4, 0.9])
 ruviz.plot().heatmap([[0.1, 0.4], [0.8, 0.2]])
@@ -145,7 +150,7 @@ Which keywords a series takes follows what the renderer honors for that kind:
 | --- | --- |
 | `line` | `label`, `color`, `alpha`, `width`, `linestyle`, `marker`, `marker_size` |
 | `scatter` | `label`, `color`, `alpha`, `marker`, `marker_size` |
-| `bar` | `label`, `color`, `alpha` |
+| `bar` | `label`, `color`, `alpha`, `orientation` (`"vertical"` or `"horizontal"`) |
 | `histogram` | `label`, `color`, `alpha`, `bins`, `density` |
 | `boxplot` | `label`, `color`, `alpha`, `width`, `linestyle` |
 | `kde` | `label`, `color`, `alpha`, `width`, `bandwidth` |
@@ -214,6 +219,7 @@ time, so a mistake surfaces with the arguments still in scope.
 - plot methods append series and update presentation state
 - `save()` writes a PNG, SVG, or PDF file and returns the output `Path`
 - `render_png()` returns PNG bytes and `render_svg()` returns an SVG string
+- PNG output records the effective DPI in `pHYs` metadata for print/layout software
 - `to_snapshot()` serializes the current state for widget sync and inspection
 - `copy.deepcopy(plot)` creates an independent live copy, while `plot.clone()` stays snapshot-only
 

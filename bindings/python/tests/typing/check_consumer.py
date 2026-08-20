@@ -25,6 +25,7 @@ from ruviz import (
     DataSource,
     LineStyleName,
     ObservableSeries,
+    OrientationName,
     Plot,
     Plot3D,
     Plot3DSnapshot,
@@ -75,7 +76,7 @@ def every_series_kind_accepts_sequences_and_arrays() -> Plot:
     return (
         ruviz.plot()
         .line("x", "y", data=frame)
-        .bar(["a", "b"], np.array([1.0, 2.0]), color="red")
+        .bar(["a", "b"], np.array([1.0, 2.0]), color="red", orientation="horizontal")
         .histogram(samples, bins=12, density=True)
         .boxplot(samples, linestyle="dotted")
         .violin(samples.tolist())
@@ -165,9 +166,15 @@ def exports_and_widgets(chart: Plot) -> RuvizWidget:
     return chart.widget()
 
 
-def helpers_stay_generic(values: ArrayLike, data: DataSource, style: LineStyleName) -> Plot:
+def helpers_stay_generic(
+    values: ArrayLike, data: DataSource, style: LineStyleName, orientation: OrientationName
+) -> Plot:
     """The exported aliases are usable in downstream signatures."""
-    return ruviz.plot().line(values, values, data=data, linestyle=style)
+    return (
+        ruviz.plot()
+        .line(values, values, data=data, linestyle=style)
+        .bar(["a"], [1.0], orientation=orientation)
+    )
 
 
 def data_accepts_every_column_source() -> Plot:
@@ -195,6 +202,7 @@ def rejected_calls() -> None:
     chart.line([0.0], [1.0], data=[1, 2])  # pyright: ignore[reportArgumentType]
     chart.histogram([0.0], bins="many")  # pyright: ignore[reportArgumentType]
     chart.histogram([0.0], density="yes")  # pyright: ignore[reportArgumentType]
+    chart.bar(["a"], [1.0], orientation="diagonal")  # pyright: ignore[reportArgumentType]
     chart.radar(["a"], [{"name": "x"}])  # pyright: ignore[reportArgumentType]
     chart.size_px(800)  # pyright: ignore[reportCallIssue]
     chart.line([0.0])  # pyright: ignore[reportCallIssue]

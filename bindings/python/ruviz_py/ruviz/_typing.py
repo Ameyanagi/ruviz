@@ -153,6 +153,9 @@ LegendPositionName: TypeAlias = Literal[
 #: Axis scales accepted by :meth:`ruviz.Plot.xscale` and :meth:`ruviz.Plot.yscale`.
 ScaleName: TypeAlias = Literal["linear", "log", "symlog"]
 
+#: Bar orientations accepted by :meth:`ruviz.Plot.bar`.
+OrientationName: TypeAlias = Literal["vertical", "horizontal"]
+
 #: Snapshot ``kind`` discriminators for 2D series.
 SeriesKindName: TypeAlias = Literal[
     "line",
@@ -205,6 +208,7 @@ class StyleDict(TypedDict, total=False):
     density: bool
     bandwidth: float
     levels: int
+    orientation: OrientationName
 
 
 class _RadarSeries(TypedDict):
@@ -390,6 +394,7 @@ __all__ = [
     "NumericMatrix",
     "NumericSourceDict",
     "NumericVector",
+    "OrientationName",
     "Plot3DSnapshot",
     "PlotSnapshot",
     "RadarSeriesDict",

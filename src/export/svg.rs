@@ -1872,6 +1872,14 @@ impl SvgRenderer {
     }
 
     /// Draw axis tick labels
+    ///
+    /// A slot whose label is empty writes nothing, the same rule
+    /// [`SkiaRenderer::draw_axis_labels_at_categorical`] follows: an unnamed
+    /// category — a lone box plot or violin — still holds its place on the
+    /// axis, but it must not leave an empty `<text>` element behind where the
+    /// raster backend leaves nothing at all.
+    ///
+    /// [`SkiaRenderer::draw_axis_labels_at_categorical`]: crate::render::skia::SkiaRenderer::draw_axis_labels_at_categorical
     pub fn draw_tick_labels(
         &mut self,
         x_ticks: &[f32],
@@ -1891,7 +1899,7 @@ impl SvgRenderer {
         for (i, &x) in x_ticks.iter().enumerate() {
             if x >= plot_left
                 && x <= plot_right
-                && let Some(label) = x_labels.get(i)
+                && let Some(label) = x_labels.get(i).filter(|label| !label.is_empty())
             {
                 let label_snippet = self.generated_label(label);
                 let (text_width, _) = self.measure_text_for_layout(&label_snippet, font_size)?;
@@ -1904,7 +1912,7 @@ impl SvgRenderer {
         for (i, &y) in y_ticks.iter().enumerate() {
             if y >= plot_top
                 && y <= plot_bottom
-                && let Some(label) = y_labels.get(i)
+                && let Some(label) = y_labels.get(i).filter(|label| !label.is_empty())
             {
                 let label_snippet = self.generated_label(label);
                 let (text_width, text_height) =

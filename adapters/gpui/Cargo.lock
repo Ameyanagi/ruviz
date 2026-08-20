@@ -5132,6 +5132,7 @@ dependencies = [
  "log",
  "ndarray",
  "palette",
+ "png 0.18.1",
  "pollster 0.4.0",
  "rayon",
  "swash",

@@ -137,7 +137,8 @@ Rendering requests are coalesced to one submission per animation frame.
 The fluent builder currently supports:
 
 - `line({ x, y })` and `scatter({ x, y })`
-- `bar({ categories, values })`
+- `bar({ categories, values, style: { orientation: "horizontal" } })` (orientation is optional;
+  `"vertical"` is the default)
 - `histogram(values)` and `boxplot(values)`
 - `heatmap(rows)` where `rows` is a rectangular `number[][]`
 - `errorBars({ x, y, yErrors })`

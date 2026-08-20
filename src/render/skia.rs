@@ -1878,6 +1878,27 @@ impl SkiaRenderer {
             .collect()
     }
 
+    /// Pixel centre of every categorical y slot, in axis order.
+    pub fn categorical_y_label_centers(
+        plot_area: &LayoutRect,
+        y_positions: &[f64],
+        y_min: f64,
+        y_max: f64,
+    ) -> Vec<f32> {
+        y_positions
+            .iter()
+            .map(|&position| {
+                Self::y_label_center_scaled(
+                    plot_area,
+                    position,
+                    y_min,
+                    y_max,
+                    &crate::axes::AxisScale::Linear,
+                )
+            })
+            .collect()
+    }
+
     /// Measure an x tick label row: how much room it needs, and how far apart
     /// its labels have to be spaced to stop overlapping.
     ///
@@ -2010,6 +2031,166 @@ impl SkiaRenderer {
             self.draw_plot_border(skia_plot_area, color, render_scale.reference_scale())?;
         }
 
+        Ok(())
+    }
+
+    /// Draw numeric x tick labels and categorical y tick labels.
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_axis_labels_at_categorical_y(
+        &mut self,
+        plot_area: &LayoutRect,
+        categories: &[String],
+        y_positions: &[f64],
+        x_min: f64,
+        x_max: f64,
+        y_min: f64,
+        y_max: f64,
+        x_ticks: &[f64],
+        xtick_baseline_y: f32,
+        ytick_right_x: f32,
+        tick_size: f32,
+        color: Color,
+        dpi: f32,
+        show_tick_labels: bool,
+        draw_border: bool,
+        x_scale: &crate::axes::AxisScale,
+    ) -> Result<()> {
+        let render_scale = RenderScale::new(dpi);
+        let skia_plot_area = Rect::from_ltrb(
+            plot_area.left,
+            plot_area.top,
+            plot_area.right,
+            plot_area.bottom,
+        )
+        .ok_or(PlottingError::InvalidData {
+            message: "Invalid plot area dimensions".to_string(),
+            position: None,
+        })?;
+
+        if show_tick_labels {
+            let x_labels =
+                crate::axes::format_tick_labels_with_notation(x_ticks, x_scale, self.tick_notation);
+            for (tick_value, label_text) in x_ticks.iter().zip(x_labels.iter()) {
+                let x_pixel =
+                    Self::x_label_center_scaled(plot_area, *tick_value, x_min, x_max, x_scale);
+                let label_snippet = self.generated_label(label_text);
+                let (text_width, _) = self.measure_text(&label_snippet, tick_size)?;
+                let label_x = (x_pixel - text_width / 2.0)
+                    .max(0.0)
+                    .min(self.width() as f32 - text_width);
+                self.draw_text(&label_snippet, label_x, xtick_baseline_y, tick_size, color)?;
+            }
+
+            self.draw_categorical_y_tick_labels(
+                plot_area,
+                categories,
+                y_positions,
+                y_min,
+                y_max,
+                ytick_right_x,
+                tick_size,
+                color,
+            )?;
+        }
+
+        if draw_border {
+            self.draw_plot_border(skia_plot_area, color, render_scale.reference_scale())?;
+        }
+
+        Ok(())
+    }
+
+    /// Draw categorical tick labels on both axes.
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_axis_labels_at_categorical_xy(
+        &mut self,
+        plot_area: &LayoutRect,
+        x_categories: &[String],
+        x_positions: &[f64],
+        y_categories: &[String],
+        y_positions: &[f64],
+        x_min: f64,
+        x_max: f64,
+        y_min: f64,
+        y_max: f64,
+        xtick_baseline_y: f32,
+        ytick_right_x: f32,
+        tick_size: f32,
+        color: Color,
+        dpi: f32,
+        show_tick_labels: bool,
+        draw_border: bool,
+    ) -> Result<()> {
+        let render_scale = RenderScale::new(dpi);
+        let skia_plot_area = Rect::from_ltrb(
+            plot_area.left,
+            plot_area.top,
+            plot_area.right,
+            plot_area.bottom,
+        )
+        .ok_or(PlottingError::InvalidData {
+            message: "Invalid plot area dimensions".to_string(),
+            position: None,
+        })?;
+
+        if show_tick_labels {
+            let x_centers = Self::categorical_label_centers(plot_area, x_positions, x_min, x_max);
+            draw_x_tick_label_row(
+                self,
+                x_categories,
+                &x_centers,
+                xtick_baseline_y,
+                tick_size,
+                color,
+                self.x_tick_label_plan,
+            )?;
+            self.draw_categorical_y_tick_labels(
+                plot_area,
+                y_categories,
+                y_positions,
+                y_min,
+                y_max,
+                ytick_right_x,
+                tick_size,
+                color,
+            )?;
+        }
+
+        if draw_border {
+            self.draw_plot_border(skia_plot_area, color, render_scale.reference_scale())?;
+        }
+
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn draw_categorical_y_tick_labels(
+        &mut self,
+        plot_area: &LayoutRect,
+        categories: &[String],
+        y_positions: &[f64],
+        y_min: f64,
+        y_max: f64,
+        ytick_right_x: f32,
+        tick_size: f32,
+        color: Color,
+    ) -> Result<()> {
+        let centers = Self::categorical_y_label_centers(plot_area, y_positions, y_min, y_max);
+        for (label_text, y_pixel) in categories.iter().zip(centers) {
+            if label_text.is_empty() {
+                continue;
+            }
+            let label_snippet = self.generated_label(label_text);
+            let (text_width, text_height) = self.measure_text(&label_snippet, tick_size)?;
+            let label_x = (ytick_right_x - text_width).max(0.0);
+            self.draw_text(
+                &label_snippet,
+                label_x,
+                y_pixel - text_height / 2.0,
+                tick_size,
+                color,
+            )?;
+        }
         Ok(())
     }
 

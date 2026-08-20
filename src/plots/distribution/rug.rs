@@ -357,7 +357,7 @@ impl PlotRender for RugData {
         &self,
         renderer: &mut SkiaRenderer,
         area: &PlotArea,
-        _theme: &Theme,
+        theme: &Theme,
         color: Color,
         alpha: f32,
         line_width: Option<f32>,
@@ -367,6 +367,7 @@ impl PlotRender for RugData {
             color,
             alpha,
             line_width,
+            patch_edge_color: theme.patch_edge_color,
         };
         draw_primitives(renderer, &self.primitives(area, &style))
     }

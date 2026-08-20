@@ -101,7 +101,7 @@ Grid data differs by plot: `heatmap` takes nested rows (`&Vec<Vec<f64>>`), while
 |---|---|
 | `.line(&x, &y)` | line plot |
 | `.scatter(&x, &y)` | scatter plot |
-| `.bar(&["A", "B"], &values)` | bar chart |
+| `.bar(&["A", "B"], &values)` / `.bar(...).horizontal()` | vertical or horizontal bar chart |
 | `.histogram(&data)` | histogram |
 | `.boxplot(&data)` | box plot |
 | `.heatmap(&data_2d)` | heatmap |

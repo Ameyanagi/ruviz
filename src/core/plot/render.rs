@@ -678,12 +678,22 @@ impl Plot {
 
         // One harvest for every categorical plot type: bars, box plots,
         // violins and boxen plots all sit in the same unit-wide slots.
-        let category_axis = super::series_internal::CategoryAxis::harvest(&self.series_mgr.series);
-        let (category_labels, category_positions): (&[String], &[f64]) = match &category_axis {
+        let x_category_axis =
+            super::series_internal::CategoryAxis::harvest(&self.series_mgr.series);
+        let y_category_axis =
+            super::series_internal::CategoryAxis::harvest_y(&self.series_mgr.series);
+        let (x_category_labels, x_category_positions): (&[String], &[f64]) = match &x_category_axis
+        {
             Some(axis) => (&axis.labels, &axis.positions),
             None => (&[], &[]),
         };
-        let is_categorical = category_axis.is_some();
+        let (y_category_labels, y_category_positions): (&[String], &[f64]) = match &y_category_axis
+        {
+            Some(axis) => (&axis.labels, &axis.positions),
+            None => (&[], &[]),
+        };
+        let is_x_categorical = x_category_axis.is_some();
+        let is_y_categorical = y_category_axis.is_some();
 
         let content = self.create_plot_content_from_resolved_text(y_min, y_max, frame);
         let (layout, x_ticks, y_ticks, x_tick_label_plan) = self
@@ -696,8 +706,10 @@ impl Plot {
                 x_max,
                 y_min,
                 y_max,
-                category_labels,
-                category_positions,
+                x_category_labels,
+                x_category_positions,
+                y_category_labels,
+                y_category_positions,
             )?;
         // The row that was measured is the row that is drawn.
         renderer.set_x_tick_label_plan(x_tick_label_plan);
@@ -758,9 +770,19 @@ impl Plot {
                 |points| self.line_width_px(points),
             );
             for layer in &layers {
+                let x_pixels = if is_x_categorical {
+                    &[][..]
+                } else {
+                    layer.x_pixels.as_slice()
+                };
+                let y_pixels = if is_y_categorical {
+                    &[][..]
+                } else {
+                    layer.y_pixels.as_slice()
+                };
                 renderer.draw_grid(
-                    &layer.x_pixels,
-                    &layer.y_pixels,
+                    x_pixels,
+                    y_pixels,
                     plot_area,
                     layer.color,
                     self.layout.grid_style.line_style.clone(),
@@ -770,17 +792,44 @@ impl Plot {
         }
 
         let categorical_x_tick_pixels =
-            Self::categorical_x_tick_pixels(plot_area, x_min, x_max, category_positions);
+            Self::categorical_x_tick_pixels(plot_area, x_min, x_max, x_category_positions);
+        let categorical_y_tick_pixels = (!y_category_positions.is_empty()).then(|| {
+            SkiaRenderer::categorical_y_label_centers(
+                &layout.plot_area,
+                y_category_positions,
+                y_min,
+                y_max,
+            )
+        });
 
         let draw_ticks = draw_axes && self.layout.tick_config.enabled;
 
         let tick_size_px = pt_to_px(self.display.config.typography.tick_size(), dpi);
 
-        if draw_axes && is_categorical {
+        if draw_axes && is_x_categorical && is_y_categorical {
+            renderer.draw_axis_labels_at_categorical_xy(
+                &layout.plot_area,
+                x_category_labels,
+                x_category_positions,
+                y_category_labels,
+                y_category_positions,
+                x_min,
+                x_max,
+                y_min,
+                y_max,
+                layout.xtick_baseline_y,
+                layout.ytick_right_x,
+                tick_size_px,
+                self.display.theme.foreground,
+                dpi,
+                self.layout.tick_config.enabled,
+                false,
+            )?;
+        } else if draw_axes && is_x_categorical {
             renderer.draw_axis_labels_at_categorical(
                 &layout.plot_area,
-                category_labels,
-                category_positions,
+                x_category_labels,
+                x_category_positions,
                 x_min,
                 x_max,
                 y_min,
@@ -794,6 +843,25 @@ impl Plot {
                 self.layout.tick_config.enabled,
                 false,
                 &self.layout.y_scale,
+            )?;
+        } else if draw_axes && is_y_categorical {
+            renderer.draw_axis_labels_at_categorical_y(
+                &layout.plot_area,
+                y_category_labels,
+                y_category_positions,
+                x_min,
+                x_max,
+                y_min,
+                y_max,
+                &x_ticks,
+                layout.xtick_baseline_y,
+                layout.ytick_right_x,
+                tick_size_px,
+                self.display.theme.foreground,
+                dpi,
+                self.layout.tick_config.enabled,
+                false,
+                &self.layout.x_scale,
             )?;
         } else if draw_axes {
             renderer.draw_axis_labels_at_scaled(
@@ -886,6 +954,9 @@ impl Plot {
             let x_axis_ticks = categorical_x_tick_pixels
                 .as_deref()
                 .unwrap_or(x_tick_pixels.as_slice());
+            let y_axis_ticks = categorical_y_tick_pixels
+                .as_deref()
+                .unwrap_or(y_tick_pixels.as_slice());
             let x_axis_minor_ticks = if categorical_x_tick_pixels.is_some() {
                 &[][..]
             } else {
@@ -896,9 +967,13 @@ impl Plot {
             renderer.draw_axes_with_minor_ticks_styled(
                 plot_area,
                 x_axis_ticks,
-                &y_tick_pixels,
+                y_axis_ticks,
                 x_axis_minor_ticks,
-                &y_minor_tick_pixels,
+                if categorical_y_tick_pixels.is_some() {
+                    &[]
+                } else {
+                    &y_minor_tick_pixels
+                },
                 &self.layout.tick_config.direction,
                 &self.themed_tick_sides(self.layout.tick_config.sides),
                 &self.themed_spines(),
@@ -1333,7 +1408,8 @@ impl Plot {
 
         #[cfg(target_arch = "wasm32")]
         {
-            self.render()?.encode_png()
+            self.render()?
+                .encode_png_with_dpi(self.render_scale().dpi())
         }
     }
 
@@ -2000,11 +2076,23 @@ impl Plot {
         x_max: f64,
         y_min: f64,
         y_max: f64,
-        category_labels: &[String],
-        category_positions: &[f64],
+        x_category_labels: &[String],
+        x_category_positions: &[f64],
+        y_category_labels: &[String],
+        y_category_positions: &[f64],
     ) -> Result<(ResolvedLayout, Vec<f64>, Vec<f64>, XTickLabelPlan)> {
-        let (measurements, x_ticks, y_ticks) =
+        let (mut measurements, x_ticks, mut y_ticks) =
             self.measure_configured_ticks(renderer, content, dpi, x_min, x_max, y_min, y_max)?;
+        if !y_category_labels.is_empty() && content.show_tick_labels {
+            let tick_size_px =
+                RenderScale::new(dpi).points_to_pixels(self.display.config.typography.tick_size());
+            let category_extent =
+                Self::measure_tick_label_extent(renderer, y_category_labels, tick_size_px)?;
+            measurements
+                .get_or_insert_with(LayoutMeasurements::default)
+                .ytick = category_extent;
+            y_ticks = y_category_positions.to_vec();
+        }
         let layout =
             self.compute_layout_from_measurements(canvas_size, content, dpi, measurements.as_ref());
         let (layout, plan) = self.resolve_x_tick_label_row(
@@ -2014,8 +2102,8 @@ impl Plot {
             dpi,
             measurements.as_ref(),
             layout,
-            category_labels,
-            category_positions,
+            x_category_labels,
+            x_category_positions,
             x_min,
             x_max,
         )?;
@@ -2214,13 +2302,21 @@ impl Plot {
                         }
                     }
                 }
-                SeriesType::Bar { values, .. } => {
+                SeriesType::Bar { values, config, .. } => {
                     let values = values.resolve_cow(0.0);
                     // For bar charts, convert category indices to points
                     for (i, &value) in values.iter().enumerate() {
                         if value.is_finite() {
-                            x_values.push(i as f64);
-                            y_values.push(value);
+                            match config.orientation {
+                                crate::plots::basic::BarOrientation::Vertical => {
+                                    x_values.push(i as f64);
+                                    y_values.push(value);
+                                }
+                                crate::plots::basic::BarOrientation::Horizontal => {
+                                    x_values.push(value);
+                                    y_values.push(i as f64);
+                                }
+                            }
                         }
                     }
                 }
@@ -2537,7 +2633,9 @@ impl Plot {
         let render_plot = self.resolved_style_shell(&frame.style);
         let (renderer, diagnostics) =
             render_plot.render_renderer_with_frame_and_diagnostics(mode, &frame)?;
-        let png_bytes = renderer.encode_png_bytes()?;
+        let png_bytes = renderer
+            .into_image_demultiplied()
+            .encode_png_with_dpi(render_plot.render_scale().dpi())?;
         let backend = diagnostics.actual_backend_name();
         debug_assert_eq!(
             backend,
@@ -2984,6 +3082,22 @@ impl Plot {
         )?;
         measurement_renderer.set_text_engine_mode(self.display.text_engine);
         measurement_renderer.set_render_scale(render_scale);
+        let x_category_axis =
+            super::series_internal::CategoryAxis::harvest(&self.series_mgr.series);
+        let y_category_axis =
+            super::series_internal::CategoryAxis::harvest_y(&self.series_mgr.series);
+        let (x_category_labels, x_category_positions): (&[String], &[f64]) = match &x_category_axis
+        {
+            Some(axis) => (&axis.labels, &axis.positions),
+            None => (&[], &[]),
+        };
+        let (y_category_labels, y_category_positions): (&[String], &[f64]) = match &y_category_axis
+        {
+            Some(axis) => (&axis.labels, &axis.positions),
+            None => (&[], &[]),
+        };
+        let is_x_categorical = x_category_axis.is_some();
+        let is_y_categorical = y_category_axis.is_some();
         let x_major_measurement_layout = TickLayout::compute_with_notation(
             x_min,
             x_max,
@@ -3002,12 +3116,17 @@ impl Plot {
             self.layout.tick_config.major_ticks_y,
             self.layout.scientific_notation,
         );
+        let y_measurement_labels = if is_y_categorical {
+            y_category_labels
+        } else {
+            &y_major_measurement_layout.labels
+        };
         let measured_dimensions = self.measure_layout_text_with_ticks(
             &measurement_renderer,
             &content,
             self.display.config.figure.dpi,
             &x_major_measurement_layout.labels,
-            &y_major_measurement_layout.labels,
+            y_measurement_labels,
         )?;
         let layout = self.compute_layout_from_measurements(
             (width_px, height_px),
@@ -3015,16 +3134,6 @@ impl Plot {
             self.display.config.figure.dpi,
             measured_dimensions.as_ref(),
         );
-
-        // The same harvest the raster backend runs, so PNG and SVG cannot label
-        // the same figure differently: bars, box plots, violins and boxen plots
-        // all report the unit-wide slots they occupy.
-        let category_axis = super::series_internal::CategoryAxis::harvest(&self.series_mgr.series);
-        let (category_labels, category_positions): (&[String], &[f64]) = match &category_axis {
-            Some(axis) => (&axis.labels, &axis.positions),
-            None => (&[], &[]),
-        };
-        let is_categorical = category_axis.is_some();
 
         // ...and the same label row, measured with the same renderer, so the
         // bottom margin is reserved from the row both backends will draw.
@@ -3035,8 +3144,8 @@ impl Plot {
             self.display.config.figure.dpi,
             measured_dimensions.as_ref(),
             layout,
-            category_labels,
-            category_positions,
+            x_category_labels,
+            x_category_positions,
             x_min,
             x_max,
         )?;
@@ -3059,16 +3168,31 @@ impl Plot {
         svg.draw_rectangle(0.0, 0.0, width, height, self.display.theme.background, true);
 
         // Compute Y-axis tick layout (fix parameter order: pixel_top then pixel_bottom)
-        let y_tick_layout = TickLayout::compute_y_axis_with_notation(
-            y_min,
-            y_max,
-            plot_top,
-            plot_bottom,
-            &self.layout.y_scale,
-            self.layout.tick_config.major_ticks_y,
-            self.layout.scientific_notation,
-        );
-        let x_tick_layout = if !is_categorical {
+        let y_tick_layout = if is_y_categorical {
+            TickLayout {
+                data_positions: y_category_positions.to_vec(),
+                pixel_positions: SkiaRenderer::categorical_y_label_centers(
+                    &layout.plot_area,
+                    y_category_positions,
+                    y_min,
+                    y_max,
+                ),
+                labels: y_category_labels.to_vec(),
+                data_range: (y_min, y_max),
+                pixel_range: (plot_top, plot_bottom),
+            }
+        } else {
+            TickLayout::compute_y_axis_with_notation(
+                y_min,
+                y_max,
+                plot_top,
+                plot_bottom,
+                &self.layout.y_scale,
+                self.layout.tick_config.major_ticks_y,
+                self.layout.scientific_notation,
+            )
+        };
+        let x_tick_layout = if !is_x_categorical {
             Some(TickLayout::compute_with_notation(
                 x_min,
                 x_max,
@@ -3081,13 +3205,17 @@ impl Plot {
         } else {
             None
         };
-        let y_minor_ticks = Self::minor_tick_values_for_scale(
-            &y_tick_layout.data_positions,
-            y_min,
-            y_max,
-            &self.layout.y_scale,
-            self.layout.tick_config.minor_ticks_y,
-        );
+        let y_minor_ticks = if is_y_categorical {
+            Vec::new()
+        } else {
+            Self::minor_tick_values_for_scale(
+                &y_tick_layout.data_positions,
+                y_min,
+                y_max,
+                &self.layout.y_scale,
+                self.layout.tick_config.minor_ticks_y,
+            )
+        };
         let y_minor_tick_pixels: Vec<f32> = y_minor_ticks
             .iter()
             .map(|&tick| Self::scaled_y_pixel(tick, y_min, y_max, plot_area, &self.layout.y_scale))
@@ -3120,7 +3248,7 @@ impl Plot {
         }
         if self.layout.grid_style.draws_major() && draw_axes {
             // Bar charts only get horizontal grid lines.
-            let (x_major_pixels, x_minor_pixels): (&[f32], &[f32]) = if is_categorical {
+            let (x_major_pixels, x_minor_pixels): (&[f32], &[f32]) = if is_x_categorical {
                 (&[], &[])
             } else {
                 let x_tick_layout = x_tick_layout.as_ref().ok_or_else(|| {
@@ -3134,7 +3262,11 @@ impl Plot {
                 &self.layout.grid_style,
                 &self.layout.tick_config.grid_mode,
                 x_major_pixels,
-                &y_tick_layout.pixel_positions,
+                if is_y_categorical {
+                    &[]
+                } else {
+                    &y_tick_layout.pixel_positions
+                },
                 x_minor_pixels,
                 &y_minor_tick_pixels,
                 |points| self.line_width_px(points),
@@ -3156,7 +3288,7 @@ impl Plot {
 
         let category_x_tick_positions = SkiaRenderer::categorical_label_centers(
             &layout.plot_area,
-            category_positions,
+            x_category_positions,
             x_min,
             x_max,
         );
@@ -3181,7 +3313,7 @@ impl Plot {
                 &TickSides,
             ) = if !self.layout.tick_config.enabled {
                 (&[], &[], &[], &[], &TickSides::none())
-            } else if is_categorical {
+            } else if is_x_categorical {
                 (
                     &category_x_tick_positions,
                     &y_tick_layout.pixel_positions,
@@ -3233,7 +3365,7 @@ impl Plot {
         // Draw tick labels. The frame and its ticks follow the series; see
         // `draw_frame`.
         if draw_axes {
-            if is_categorical {
+            if is_x_categorical {
                 // Categorical axis: ticks at the slot centres, labels under them.
                 if self.layout.tick_config.enabled {
                     // Draw Y-axis tick labels
@@ -3257,7 +3389,7 @@ impl Plot {
                     // backends resolved.
                     draw_x_tick_label_row(
                         &mut svg,
-                        category_labels,
+                        x_category_labels,
                         &category_x_tick_positions,
                         layout.xtick_baseline_y,
                         tick_size_px,
@@ -3973,6 +4105,8 @@ mod categorical_tick_label_tests {
                 y_max,
                 &axis.labels,
                 &axis.positions,
+                &[],
+                &[],
             )
             .expect("categorical layout");
         (layout, plan)
@@ -4069,5 +4203,29 @@ mod categorical_tick_label_tests {
                 "{region} must survive into the SVG output"
             );
         }
+    }
+
+    #[test]
+    fn mixed_categorical_axes_draw_both_label_sets_in_raster_output() {
+        fn mixed_plot(y_categories: &[&str; 2]) -> Plot {
+            Plot::new()
+                .size_px(800, 600)
+                .bar(&["bottom", "top"], &[2.0, 3.0])
+                .bar(y_categories, &[4.0, 5.0])
+                .horizontal()
+                .into_plot()
+        }
+
+        // Swapping equally sized y-axis labels leaves all data geometry and
+        // layout unchanged. The raster pixels must still change because the
+        // categorical y labels are part of the rendered figure.
+        let first = mixed_plot(&["left", "right"])
+            .render()
+            .expect("mixed categorical plot renders");
+        let swapped = mixed_plot(&["right", "left"])
+            .render()
+            .expect("mixed categorical plot renders");
+
+        assert_ne!(first.pixels, swapped.pixels);
     }
 }

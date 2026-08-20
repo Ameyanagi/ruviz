@@ -806,6 +806,7 @@ STYLE_VALUES = {
     "density": True,
     "bandwidth": 0.9,
     "levels": 9,
+    "orientation": "horizontal",
 }
 
 STYLE_CASES = [
@@ -881,6 +882,11 @@ def test_invalid_series_style_values_are_rejected_at_the_call(
 ) -> None:
     with pytest.raises((ValueError, TypeError), match=message):
         ruviz.plot().line(STYLE_X, STYLE_Y, **style)
+
+
+def test_invalid_bar_orientation_is_rejected_at_the_call() -> None:
+    with pytest.raises(ValueError, match="unsupported orientation"):
+        ruviz.plot().bar(["a"], [1.0], orientation="diagonal")  # type: ignore[arg-type]
 
 
 def test_unsupported_style_keyword_is_rejected_per_kind() -> None:
@@ -1284,6 +1290,12 @@ def test_unbound_observable_can_resize_freely() -> None:
             ([0.0, 1.0], [0.0, 1.0], [0.0, 1.0, 2.0, 3.0]),
             {"levels": 1},
             "levels must be an integer >= 2",
+        ),
+        (
+            "bar",
+            (["a"], [1.0]),
+            {"orientation": "diagonal"},
+            "unsupported orientation",
         ),
     ],
 )
@@ -1842,6 +1854,22 @@ def _png_size(png: bytes) -> tuple[int, int]:
     return int.from_bytes(png[16:20], "big"), int.from_bytes(png[20:24], "big")
 
 
+def _png_pixel_dimensions(png: bytes) -> tuple[int, int, int] | None:
+    offset = len(PNG_HEADER)
+    while offset + 12 <= len(png):
+        length = int.from_bytes(png[offset : offset + 4], "big")
+        chunk_type = png[offset + 4 : offset + 8]
+        payload = png[offset + 8 : offset + 8 + length]
+        if chunk_type == b"pHYs":
+            return (
+                int.from_bytes(payload[0:4], "big"),
+                int.from_bytes(payload[4:8], "big"),
+                payload[8],
+            )
+        offset += 12 + length
+    return None
+
+
 def test_figure_margin_changes_the_rendered_layout() -> None:
     assert _figure_plot().figure(margin=0.3).render_svg() != _figure_plot().render_svg()
 
@@ -1859,6 +1887,12 @@ def test_figure_line_width_changes_the_rendered_lines() -> None:
 def test_max_resolution_caps_an_explicit_dpi_without_replacing_it() -> None:
     png = _figure_plot().figure(size=(3.25, 2.5), dpi=300, max_resolution=(1920, 1440)).render_png()
     assert _png_size(png) == (975, 750)
+
+
+def test_render_png_records_the_effective_dpi_in_phys_metadata() -> None:
+    png = _figure_plot().figure(size=(2.0, 1.0), dpi=300).render_png()
+
+    assert _png_pixel_dimensions(png) == (11_811, 11_811, 1)
 
 
 def test_max_resolution_reduces_an_explicit_dpi_that_overflows_it() -> None:

@@ -7,6 +7,7 @@ import type {
 } from "../generated/raw/ruviz_web_raw.js";
 import {
   AXIS_SCALE_NAMES,
+  BAR_ORIENTATION_NAMES,
   cloneSeriesSnapshot,
   clonePlotSnapshot,
   LEGEND_POSITION_NAMES,
@@ -24,6 +25,8 @@ import {
   type AxisScaleSnapshot,
   type BackendPreference,
   type BarSeriesSnapshot,
+  type BarOrientationName,
+  type BarSeriesStyle,
   type BoxplotSeriesStyle,
   type CanvasSessionOptions,
   type BoxplotSeriesSnapshot,
@@ -75,7 +78,7 @@ import {
   toRawBackendPreference,
 } from "./plot-runtime.js";
 
-export { PLOT_THEME_NAMES, SNAPSHOT_SCHEMA_VERSION } from "./shared.js";
+export { BAR_ORIENTATION_NAMES, PLOT_THEME_NAMES, SNAPSHOT_SCHEMA_VERSION } from "./shared.js";
 
 export {
   createPlot3d,
@@ -102,6 +105,8 @@ export type {
   TextAnnotationStyle,
   VLineAnnotationSnapshot,
   BarSeriesSnapshot,
+  BarOrientationName,
+  BarSeriesStyle,
   BoxplotSeriesStyle,
   CanvasSessionOptions,
   BoxplotSeriesSnapshot,
@@ -165,7 +170,7 @@ interface ScatterSeriesInput extends XYSeriesInput {
 interface BarSeriesInput {
   categories: readonly string[] | ArrayLike<string>;
   values: NumericArray | ObservableSeries;
-  style?: CommonSeriesStyle;
+  style?: BarSeriesStyle;
 }
 
 interface ErrorBarsInput {
@@ -222,7 +227,7 @@ interface ScatterSeriesDefinition {
 
 interface BarSeriesDefinition {
   kind: "bar";
-  style?: CommonSeriesStyle;
+  style?: BarSeriesStyle;
   categories: string[];
   values: NumericReactiveSourceDefinition;
 }
@@ -604,8 +609,19 @@ function normalizeSeriesStyle<T extends SeriesStyleSnapshot>(style: T | undefine
     return undefined;
   }
 
-  const { alpha, width, markerSize, bandwidth, bins, density, levels, color, marker, linestyle } =
-    style as SeriesStyleSnapshot;
+  const {
+    alpha,
+    width,
+    markerSize,
+    bandwidth,
+    bins,
+    density,
+    levels,
+    color,
+    marker,
+    linestyle,
+    orientation,
+  } = style as SeriesStyleSnapshot;
   if (alpha !== undefined && !(alpha >= 0 && alpha <= 1)) {
     throw new RangeError("alpha must be between 0.0 and 1.0");
   }
@@ -621,6 +637,9 @@ function normalizeSeriesStyle<T extends SeriesStyleSnapshot>(style: T | undefine
   }
   if (linestyle !== undefined) {
     validateName(LINE_STYLE_NAMES, "linestyle", linestyle);
+  }
+  if (orientation !== undefined) {
+    validateName(BAR_ORIENTATION_NAMES, "orientation", orientation);
   }
 
   for (const [name, value] of [

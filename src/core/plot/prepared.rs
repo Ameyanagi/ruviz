@@ -189,7 +189,8 @@ impl PreparedPlot {
     /// has not changed.
     pub fn render_png_bytes(&self) -> Result<Vec<u8>> {
         let (width, height) = self.plot.config_canvas_size();
-        self.render_frame((width, height), 1.0, 0.0)?.encode_png()
+        self.render_frame((width, height), 1.0, 0.0)?
+            .encode_png_with_dpi(self.plot.render_scale().dpi())
     }
 
     /// Render PNG bytes while bypassing the cached image, but still reusing the
@@ -197,7 +198,7 @@ impl PreparedPlot {
     pub fn render_png_bytes_uncached(&self) -> Result<Vec<u8>> {
         let (width, height) = self.plot.config_canvas_size();
         self.render_frame_uncached((width, height), 1.0, 0.0)?
-            .encode_png()
+            .encode_png_with_dpi(self.plot.render_scale().dpi())
     }
 
     #[doc(hidden)]
@@ -207,7 +208,10 @@ impl PreparedPlot {
         let (width, height) = self.plot.config_canvas_size();
         let (image, diagnostics) =
             self.render_frame_uncached_with_diagnostics((width, height), 1.0, 0.0)?;
-        Ok((image.encode_png()?, diagnostics))
+        Ok((
+            image.encode_png_with_dpi(self.plot.render_scale().dpi())?,
+            diagnostics,
+        ))
     }
 
     /// Subscribe to push-based reactive updates for the underlying plot.
