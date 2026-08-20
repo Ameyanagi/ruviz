@@ -1038,6 +1038,36 @@ impl Plot {
                         )?;
                     }
                 }
+
+                // The mean, as the diamond `BoxPlotData::render` has always
+                // drawn — `.show_mean(true)` used to reach only that legacy
+                // path, so through `Plot::boxplot(..)` it did nothing.
+                if box_data.show_mean
+                    && let Some(mean) = box_data.mean
+                {
+                    let (mean_x, mean_y) = px.outlier_point(box_plot_value_px(
+                        mean,
+                        config.orientation,
+                        plot_area,
+                        x_min,
+                        x_max,
+                        y_min,
+                        y_max,
+                        value_scale,
+                    ));
+                    if mean_x.is_finite() && mean_y.is_finite() {
+                        // In the edge ink, like the median and whiskers — a
+                        // fill-coloured diamond disappears against the box.
+                        renderer.draw_marker_clipped(
+                            mean_x,
+                            mean_y,
+                            outlier_marker_size,
+                            MarkerStyle::Diamond,
+                            edge_color,
+                            clip_rect,
+                        )?;
+                    }
+                }
             }
             (SeriesType::Heatmap { data }, ResolvedSeries::Other(_)) => {
                 let heatmap_plot_area = plot_area_from_rect(

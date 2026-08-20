@@ -337,6 +337,43 @@ fn box_stroke_axes(svg: &str) -> (usize, usize) {
     (vertical_strokes, horizontal_strokes)
 }
 
+/// `.show_mean(true)` reached only the legacy `PlotRender` path, so through
+/// `Plot::boxplot(..)` — the path the docs demonstrate — it drew nothing.
+#[test]
+fn high_level_boxplot_show_mean_draws_a_marker() {
+    let data: Vec<f64> = (0..64)
+        .map(|i| (i as f64 * 0.3).sin() * 2.0 + 5.0)
+        .collect();
+    let polygons = |svg: &str| svg.matches("<polygon").count();
+
+    let without = Plot::new()
+        .boxplot(&data)
+        .render_to_svg()
+        .expect("box plot without mean should render");
+    let with_mean = Plot::new()
+        .boxplot(&data)
+        .show_mean(true)
+        .render_to_svg()
+        .expect("box plot with mean should render");
+    assert_eq!(
+        polygons(&with_mean),
+        polygons(&without) + 1,
+        "show_mean(true) must add exactly one diamond: {with_mean}"
+    );
+
+    let horizontal = Plot::new()
+        .boxplot(&data)
+        .horizontal()
+        .show_mean(true)
+        .render_to_svg()
+        .expect("horizontal box plot with mean should render");
+    assert_eq!(
+        polygons(&horizontal),
+        polygons(&without) + 1,
+        "the mean diamond must survive the quarter turn: {horizontal}"
+    );
+}
+
 #[test]
 fn high_level_boxplot_api_reports_empty_data_when_horizontal() {
     let empty: Vec<f64> = vec![];

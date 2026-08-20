@@ -35,6 +35,11 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- `.show_mean(true)` on a box plot draws its mean again. The diamond marker
+  existed only in the legacy `PlotRender` path, so through `Plot::boxplot(..)`
+  — the path the documentation demonstrates — the setter was accepted and
+  drew nothing. Both backends now place the diamond through the shared
+  projection, in the same edge ink as the median, in either orientation.
 - `BoxPlotConfig::orientation` is honoured end to end. It was read when the
   input was validated and ignored when the box was drawn — the projection put
   the quantiles on y whatever the setting said — so a box plot configured

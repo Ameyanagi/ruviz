@@ -1241,6 +1241,28 @@ impl Plot {
                 );
             }
         }
+        // The mean diamond, mirroring the raster draw site exactly.
+        if box_data.show_mean
+            && let Some(mean) = box_data.mean
+        {
+            let (mean_x, mean_y) = px.outlier_point(super::series_internal::box_plot_value_px(
+                mean,
+                config.orientation,
+                plot_area,
+                x_min,
+                x_max,
+                y_min,
+                y_max,
+                value_scale,
+            ));
+            svg.draw_marker(
+                mean_x,
+                mean_y,
+                self.render_scale().points_to_pixels(box_data.flier_size),
+                MarkerStyle::Diamond,
+                edge_color,
+            );
+        }
         Ok(())
     }
 
