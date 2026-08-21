@@ -87,6 +87,8 @@ struct SeriesStyle {
     bandwidth: Option<f64>,
     levels: Option<usize>,
     orientation: Option<BarOrientation>,
+    show_mean: Option<bool>,
+    width_ratio: Option<f32>,
 }
 
 const MARKER_STYLES: [(&str, MarkerStyle); 12] = [
@@ -241,7 +243,7 @@ fn flag(value: &Bound<'_, PyAny>, name: &str) -> PyResult<bool> {
 }
 
 /// Every style key any plot kind understands, in snapshot spelling.
-const STYLE_KEYS: [&str; 12] = [
+const STYLE_KEYS: [&str; 14] = [
     "label",
     "color",
     "alpha",
@@ -254,6 +256,8 @@ const STYLE_KEYS: [&str; 12] = [
     "bandwidth",
     "levels",
     "orientation",
+    "showMean",
+    "widthRatio",
 ];
 
 /// The style keys each plot kind's core builder honors, mirroring the Python
@@ -280,6 +284,8 @@ mod style_keys {
         "width",
         "linestyle",
         "orientation",
+        "showMean",
+        "widthRatio",
     ];
     pub(super) const KDE: &[&str] = &["label", "color", "alpha", "width", "bandwidth"];
     pub(super) const CONTOUR: &[&str] = &["alpha", "width", "levels"];
@@ -361,6 +367,12 @@ fn extract_style(
             }
             "bins" => parsed.bins = Some(count_at_least(&value, "bins", 1)?),
             "density" => parsed.density = Some(flag(&value, "density")?),
+            "showMean" => parsed.show_mean = Some(flag(&value, "showMean")?),
+            "widthRatio" => {
+                // The builder clamps to 0..=1; the binding only insists the
+                // number is finite and positive, like every other ratio knob.
+                parsed.width_ratio = Some(finite_positive_f64(&value, "widthRatio")? as f32)
+            }
             "bandwidth" => {
                 // Bandwidth stays f64 end to end, so it takes the unbounded
                 // validator: the f32 cap guards only values cast down.
@@ -886,6 +898,12 @@ fn apply_series(
                 Some(BarOrientation::Vertical) => builder.vertical(),
                 None => builder,
             };
+            if let Some(show) = style.show_mean {
+                builder = builder.show_mean(show);
+            }
+            if let Some(ratio) = style.width_ratio {
+                builder = builder.width_ratio(ratio);
+            }
             Ok(styled(builder, style).into_plot())
         }
         NativeSeriesState::Heatmap { values, rows, cols } => {

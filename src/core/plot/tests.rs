@@ -2294,6 +2294,58 @@ fn test_grouped_bar_legend_keys_carry_the_edge_their_bars_are_drawn_with() {
     }
 }
 
+/// A violin's key was hard-coded flat under a comment claiming the patches
+/// are "drawn flat today" — but a violin body has always drawn an outline in
+/// its configured line colour, or the fill darkened through the shared rule.
+#[test]
+fn test_violin_legend_key_carries_the_outline_the_body_is_drawn_with() {
+    let data: Vec<f64> = (0..64)
+        .map(|i| (i as f64 * 0.3).sin() * 2.0 + 5.0)
+        .collect();
+    let plot = Plot::new()
+        .violin(&data)
+        .label("violin")
+        .color(Color::BLUE)
+        .end_series();
+
+    let LegendItemType::Bar { edge } = only_legend_item_type(&plot) else {
+        panic!("a violin series must produce a patch legend key");
+    };
+    let (edge_color, edge_width) = edge.expect("violin bodies are outlined, so the key must be");
+    assert_eq!(edge_color, Color::BLUE.darken(0.3));
+    assert!((edge_width - 1.0).abs() < f32::EPSILON);
+
+    // The series-level line_width override reaches the key the same way it
+    // reaches the body outline...
+    let widened = Plot::new()
+        .violin(&data)
+        .label("violin")
+        .color(Color::BLUE)
+        .line_width(3.0)
+        .end_series();
+    let LegendItemType::Bar { edge } = only_legend_item_type(&widened) else {
+        panic!("a violin series must produce a patch legend key");
+    };
+    let (_, widened_width) = edge.expect("a widened outline keeps its key");
+    assert!((widened_width - 3.0).abs() < f32::EPSILON);
+
+    // ...and a zero override lands where the body's does: series stroke
+    // overrides are floored to a 0.1pt hairline at construction, applied to
+    // the stored props both the body and this key read — so the two cannot
+    // disagree about it. (`.width(..)` on a violin is the deprecated
+    // body-width alias, not the stroke; `.line_width(..)` is the override.)
+    let hairline = Plot::new()
+        .violin(&data)
+        .label("violin")
+        .line_width(0.0)
+        .end_series();
+    let LegendItemType::Bar { edge } = only_legend_item_type(&hairline) else {
+        panic!("a violin series must produce a patch legend key");
+    };
+    let (_, hairline_width) = edge.expect("the floored hairline outlines body and key alike");
+    assert!((hairline_width - 0.1).abs() < f32::EPSILON);
+}
+
 #[test]
 fn test_histogram_legend_key_carries_the_bin_edge() {
     let data = vec![0.1, 0.4, 0.6, 0.9, 1.2, 1.5, 1.9, 2.4];

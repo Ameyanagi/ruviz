@@ -34,7 +34,7 @@ Every series takes an optional `style`, typed to the options its plot family
 supports: `label`, `color` (hex or named), `alpha`, `width`, `linestyle`,
 `marker`, `markerSize`, plus `bins` and `density` for histograms, `bandwidth`
 for KDE, `levels` for contours, and `orientation: "vertical" | "horizontal"`
-for bars and box plots. Horizontal bars put numeric values on x and category
+for bars and box plots, with `showMean` and `widthRatio` for box plots. Horizontal bars put numeric values on x and category
 labels on y; `invertY()` then puts the first category at the top, so ranked
 bars read in the order they were given.
 Heatmap, pie, and radar take no style.
