@@ -1,6 +1,6 @@
 [package]
 name = "ruviz-py"
-version = "0.11.0"
+version = "0.12.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 description = "Python bindings and notebook widget support for ruviz"
@@ -20,7 +20,7 @@ crate-type = ["cdylib"]
 numpy = "0.24"
 pollster = "0.4"
 pyo3 = { version = "0.24", features = ["abi3-py310"] }
-ruviz = { path = "../..", version = "0.11.0", default-features = false, features = ["3d", "parallel", "pdf", "svg"] }
+ruviz = { path = "../..", version = "0.12.0", default-features = false, features = ["3d", "parallel", "pdf", "svg"] }
 
 [dev-dependencies]
 image = { version = "0.25", default-features = false, features = ["png"] }

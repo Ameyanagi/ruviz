@@ -2961,7 +2961,7 @@ dependencies = [
 
 [[package]]
 name = "ruviz"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "cosmic-text",
  "ctor",
@@ -2970,6 +2970,7 @@ dependencies = [
  "log",
  "ndarray",
  "palette",
+ "png",
  "rayon",
  "swash",
  "sys-locale",
@@ -2983,7 +2984,7 @@ dependencies = [
 
 [[package]]
 name = "ruviz-slint"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "arboard",
  "rfd",
