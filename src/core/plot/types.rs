@@ -815,16 +815,26 @@ impl PlotSeries {
                 crate::plots::traits::LegendKey::None => return None,
             },
             // A violin body is outlined in its configured line colour — or the
-            // fill darkened, the shared edge rule — so its key is too.
-            SeriesType::Violin { data } => LegendItemType::Bar {
-                edge: (data.config.line_width > 0.0).then(|| {
-                    (
-                        crate::core::style_utils::StyleResolver::new(theme)
-                            .edge_color(color, data.config.line_color),
-                        data.config.line_width,
-                    )
-                }),
-            },
+            // fill darkened, the shared edge rule — so its key is too. The
+            // width mirrors the body exactly: the series-level `.width(..)`
+            // override wins over the config, and either spelling of zero
+            // removes the outline from body and key alike.
+            SeriesType::Violin { data } => {
+                let outline_width = self
+                    .props
+                    .line_width
+                    .cloned()
+                    .unwrap_or(data.config.line_width);
+                LegendItemType::Bar {
+                    edge: (outline_width > 0.0).then(|| {
+                        (
+                            crate::core::style_utils::StyleResolver::new(theme)
+                                .edge_color(color, data.config.line_color),
+                            outline_width,
+                        )
+                    }),
+                }
+            }
             // Flat keys that tell the truth: a boxen's outline is stroked in
             // the same colour as its base fill, so an edge on the swatch would
             // be invisible, and pie wedges carry no edge at all.
