@@ -333,6 +333,8 @@ class PlotSnapshot(_PlotSnapshot, total=False):
     grid: bool
     xLim: list[float]
     yLim: list[float]
+    invertX: bool
+    invertY: bool
     xScale: list[str | float]
     yScale: list[str | float]
     #: Plot-level annotations — reference lines and text labels — in call order.

@@ -300,6 +300,9 @@ interface PlotState {
   grid?: boolean;
   xLim?: [number, number];
   yLim?: [number, number];
+  /** Present (and true) only when the axis was flipped high-to-low. */
+  invertX?: boolean;
+  invertY?: boolean;
   xScale?: AxisScaleSnapshot;
   yScale?: AxisScaleSnapshot;
   /** Plot-level annotations in call order; absent until the first one is added. */
@@ -1429,6 +1432,25 @@ export class PlotBuilder {
 
   setYLim(minimum: number, maximum: number): this {
     this.#state.yLim = PlotBuilder.#limits("y", minimum, maximum);
+    this.#markDirty();
+    return this;
+  }
+
+  /** Flip the x axis after its range resolves, so it runs high-to-low. */
+  invertX(): this {
+    this.#state.invertX = true;
+    this.#markDirty();
+    return this;
+  }
+
+  /**
+   * Flip the y axis after its range resolves.
+   *
+   * On a horizontal categorical chart this puts the first category at the
+   * top, so ranked bars read in the order they were given.
+   */
+  invertY(): this {
+    this.#state.invertY = true;
     this.#markDirty();
     return this;
   }

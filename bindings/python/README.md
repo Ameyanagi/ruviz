@@ -88,7 +88,7 @@ renderer honors for it:
 | `scatter` | `label`, `color`, `alpha`, `marker`, `marker_size` |
 | `bar` | `label`, `color`, `alpha`, `orientation` (`"vertical"` or `"horizontal"`) |
 | `histogram` | `label`, `color`, `alpha`, `bins`, `density` |
-| `boxplot` | `label`, `color`, `alpha`, `width`, `linestyle` |
+| `boxplot` | `label`, `color`, `alpha`, `width`, `linestyle`, `orientation` (`"vertical"` or `"horizontal"`) |
 | `kde` | `label`, `color`, `alpha`, `width`, `bandwidth` |
 | `ecdf`, `violin`, `polar_line`, `error_bars`, `error_bars_xy` | `label`, `color`, `alpha`, `width` |
 | `contour` | `alpha`, `width`, `levels` |
@@ -100,7 +100,9 @@ a `name` are labelled once you add `.legend(...)` to the plot.
   is what a `kde()` overlay is drawn on; without it the KDE sits flat at zero
   against a counts axis.
 - `bar(..., orientation="horizontal")` puts numeric values on x and category
-  labels on y; vertical remains the default.
+  labels on y; vertical remains the default. `boxplot(...)` takes the same
+  keyword, and `invert_y()` flips the axis so ranked horizontal bars read in
+  the order they were given (`invert_x()` is its twin).
 - `color` takes a hex string (`"#2563eb"`, `"#25f"`, `"#2563eb80"`) or a named
   color such as `"red"`, `"orange"`, `"teal"`, or `"crimson"`; a typo raises
   `ValueError` with a "did you mean" suggestion.

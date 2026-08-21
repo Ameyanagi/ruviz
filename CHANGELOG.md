@@ -24,6 +24,13 @@ All notable changes to this project will be documented in this file.
   and stacked bar builders gain the `.vertical()` their `.horizontal()` was
   missing, so switching back is written the same way everywhere.
 
+- The bindings speak the new knobs. Python's `boxplot()` accepts
+  `orientation="horizontal"` like `bar()` does, `Plot.invert_x()` /
+  `invert_y()` land in Python with snapshot round-tripping, and the
+  TypeScript SDK mirrors both — `style.orientation` on `boxplot(..)` and
+  `invertX()` / `invertY()` on the builder — with the notebook widget
+  replaying all of it.
+
 ### Changed
 
 - Grouped and stacked bars are drawn with an edge, like every other filled

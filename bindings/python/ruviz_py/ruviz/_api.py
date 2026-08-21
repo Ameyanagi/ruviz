@@ -542,7 +542,7 @@ _SERIES_KINDS: dict[str, _SeriesKind] = {
     "boxplot": _SeriesKind(
         ("data",),
         frozenset({"data"}),
-        style=_LINE_STYLE | {"linestyle"},
+        style=_LINE_STYLE | {"linestyle", "orientation"},
     ),
     "heatmap": _SeriesKind(
         native_args=lambda series: [
@@ -670,6 +670,8 @@ _PLOT_SETTINGS: tuple[tuple[str, str, bool], ...] = (
     ("grid", "grid", False),
     ("xLim", "xlim", True),
     ("yLim", "ylim", True),
+    ("invertX", "invert_x", False),
+    ("invertY", "invert_y", False),
     ("xScale", "xscale", True),
     ("yScale", "yscale", True),
     ("tightLayoutPad", "tight_layout_pad", False),
@@ -1571,6 +1573,24 @@ class Plot:
         """Set finite, unequal y-axis limits; inverted bounds render a descending axis."""
         return self._set_limit("y", minimum, maximum)
 
+    def _invert_axis(self, axis: str) -> "Plot":
+        getattr(self._native_plot, f"invert_{axis}")(True)
+        self._state[f"invert{axis.upper()}"] = True
+        self._invalidate_snapshot_cache()
+        return self
+
+    def invert_x(self) -> "Plot":
+        """Flip the x axis after its range resolves, so it runs high-to-low."""
+        return self._invert_axis("x")
+
+    def invert_y(self) -> "Plot":
+        """Flip the y axis after its range resolves.
+
+        On a horizontal categorical chart this puts the first category at the
+        top, so ranked bars read in the order they were given.
+        """
+        return self._invert_axis("y")
+
     def _set_scale(self, axis: str, scale: ScaleName, linthresh: float | None) -> "Plot":
         normalized = str(scale).strip().lower()
         args: list[Any] = [normalized]
@@ -1788,11 +1808,13 @@ class Plot:
         alpha: float | None = None,
         width: float | None = None,
         linestyle: LineStyleName | None = None,
+        orientation: OrientationName = "vertical",
     ) -> "Plot":
-        """Add a boxplot from one numeric sample vector."""
+        """Add a boxplot from one numeric sample vector, vertical or horizontal."""
         series_data, native_data, observable = self._build_native_numeric_source(
             _column_values(data, x), "boxplot x"
         )
+        normalized_orientation = _STYLE_OPTIONS["orientation"](orientation)
         series = _styled_series(
             "boxplot",
             {"data": series_data},
@@ -1802,6 +1824,10 @@ class Plot:
                 "alpha": alpha,
                 "width": width,
                 "linestyle": linestyle,
+                # Keep default snapshots byte-compatible with earlier releases.
+                "orientation": (
+                    normalized_orientation if normalized_orientation != "vertical" else None
+                ),
             },
         )
         self._apply_native_series(self._native_plot, series, native_sources={"data": native_data})

@@ -715,7 +715,14 @@ mod wasm {
         pub(super) const SCATTER: &[&str] =
             &["label", "color", "alpha", "marker", "markerSize", "density"];
         pub(super) const HISTOGRAM: &[&str] = &["label", "color", "alpha", "bins", "density"];
-        pub(super) const BOXPLOT: &[&str] = &["label", "color", "alpha", "width", "linestyle"];
+        pub(super) const BOXPLOT: &[&str] = &[
+            "label",
+            "color",
+            "alpha",
+            "width",
+            "linestyle",
+            "orientation",
+        ];
         pub(super) const KDE: &[&str] = &["label", "color", "alpha", "width", "bandwidth"];
         pub(super) const CONTOUR: &[&str] = &["alpha", "width", "levels"];
     }
@@ -834,6 +841,21 @@ mod wasm {
     }
 
     /// Apply the styling every core `PlotBuilder<C>` shares.
+    /// Turn a box plot builder the way its parsed style asks.
+    ///
+    /// The style machinery parses every orientation as `BarOrientation`; a box
+    /// plot spells the same two directions through its own methods.
+    fn apply_box_orientation(
+        builder: PlotBuilder<ruviz::plots::boxplot::BoxPlotConfig>,
+        orientation: Option<BarOrientation>,
+    ) -> PlotBuilder<ruviz::plots::boxplot::BoxPlotConfig> {
+        match orientation {
+            Some(BarOrientation::Horizontal) => builder.horizontal(),
+            Some(BarOrientation::Vertical) => builder.vertical(),
+            None => builder,
+        }
+    }
+
     fn styled<C: PlotConfig>(mut builder: PlotBuilder<C>, style: &SeriesStyle) -> PlotBuilder<C> {
         if let Some(label) = &style.label {
             builder = builder.label(label.clone());
@@ -1079,7 +1101,10 @@ mod wasm {
 
         pub fn boxplot(&mut self, data: Vec<f64>, style: Option<Object>) -> Result<(), JsValue> {
             let style = SeriesStyle::from_js(style, "boxplot", style_keys::BOXPLOT)?;
-            self.replace_with_series(|plot| styled(plot.boxplot(&data), &style).into_plot());
+            self.replace_with_series(|plot| {
+                let builder = apply_box_orientation(plot.boxplot(&data), style.orientation);
+                styled(builder, &style).into_plot()
+            });
             Ok(())
         }
 
@@ -1091,7 +1116,9 @@ mod wasm {
             let style = SeriesStyle::from_js(style, "boxplot", style_keys::BOXPLOT)?;
             let data_source = data.inner.clone();
             self.replace_with_series(|plot| {
-                styled(plot.boxplot_source(data_source), &style).into_plot()
+                let builder =
+                    apply_box_orientation(plot.boxplot_source(data_source), style.orientation);
+                styled(builder, &style).into_plot()
             });
             Ok(())
         }
@@ -1557,6 +1584,22 @@ mod wasm {
         /// Sets the x-axis limits. Inverted bounds keep a descending axis.
         pub fn xlim(&mut self, min: f64, max: f64) {
             self.update_plot(|plot| plot.xlim(min, max));
+        }
+
+        /// Flip the x axis after its range resolves. Takes the snapshot's
+        /// stored boolean so replay hands the value straight through; `false`
+        /// is a no-op, because the snapshot only stores the key when set.
+        pub fn invert_x(&mut self, enabled: bool) {
+            if enabled {
+                self.update_plot(|plot| plot.invert_x());
+            }
+        }
+
+        /// Flip the y axis after its range resolves; see `invert_x`.
+        pub fn invert_y(&mut self, enabled: bool) {
+            if enabled {
+                self.update_plot(|plot| plot.invert_y());
+            }
         }
 
         /// Sets the y-axis limits. Inverted bounds keep a descending axis.

@@ -273,7 +273,14 @@ mod style_keys {
     pub(super) const SCATTER: &[&str] =
         &["label", "color", "alpha", "marker", "markerSize", "density"];
     pub(super) const HISTOGRAM: &[&str] = &["label", "color", "alpha", "bins", "density"];
-    pub(super) const BOXPLOT: &[&str] = &["label", "color", "alpha", "width", "linestyle"];
+    pub(super) const BOXPLOT: &[&str] = &[
+        "label",
+        "color",
+        "alpha",
+        "width",
+        "linestyle",
+        "orientation",
+    ];
     pub(super) const KDE: &[&str] = &["label", "color", "alpha", "width", "bandwidth"];
     pub(super) const CONTOUR: &[&str] = &["alpha", "width", "levels"];
     pub(super) const NONE: &[&str] = &[];
@@ -497,6 +504,8 @@ struct NativePlotState {
     legend: Option<LegendPosition>,
     grid: Option<bool>,
     x_limits: Option<(f64, f64)>,
+    invert_x: bool,
+    invert_y: bool,
     y_limits: Option<(f64, f64)>,
     x_scale: Option<AxisScale>,
     y_scale: Option<AxisScale>,
@@ -625,6 +634,14 @@ impl NativePlotState {
 
         if let Some((min, max)) = self.y_limits {
             plot = plot.ylim(min, max);
+        }
+
+        if self.invert_x {
+            plot = plot.invert_x();
+        }
+
+        if self.invert_y {
+            plot = plot.invert_y();
         }
 
         if let Some(scale) = &self.x_scale {
@@ -861,7 +878,14 @@ fn apply_series(
             Ok(styled(builder, style).into_plot())
         }
         NativeSeriesState::Boxplot { data } => {
-            let builder = plot.boxplot_source(data.to_plot_data());
+            let mut builder = plot.boxplot_source(data.to_plot_data());
+            // The style machinery parses every orientation as `BarOrientation`;
+            // a box plot spells the same two directions through its own methods.
+            builder = match style.orientation {
+                Some(BarOrientation::Horizontal) => builder.horizontal(),
+                Some(BarOrientation::Vertical) => builder.vertical(),
+                None => builder,
+            };
             Ok(styled(builder, style).into_plot())
         }
         NativeSeriesState::Heatmap { values, rows, cols } => {
@@ -1328,6 +1352,27 @@ impl NativePlotHandle {
     fn ylim(&mut self, min: f64, max: f64) -> PyResult<()> {
         self.state.y_limits = Some(distinct_limits("y", min, max)?);
         self.mark_dirty();
+        Ok(())
+    }
+
+    /// Flip the x axis after its range resolves. Takes the snapshot's stored
+    /// boolean so replay can hand the value straight through; `false` is a
+    /// no-op rather than an un-flip, because the snapshot only stores the key
+    /// when the axis was inverted.
+    fn invert_x(&mut self, enabled: bool) -> PyResult<()> {
+        if enabled {
+            self.state.invert_x = true;
+            self.mark_dirty();
+        }
+        Ok(())
+    }
+
+    /// Flip the y axis after its range resolves; see [`Self::invert_x`].
+    fn invert_y(&mut self, enabled: bool) -> PyResult<()> {
+        if enabled {
+            self.state.invert_y = true;
+            self.mark_dirty();
+        }
         Ok(())
     }
 
