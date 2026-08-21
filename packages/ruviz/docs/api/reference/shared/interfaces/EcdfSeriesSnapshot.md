@@ -6,7 +6,7 @@
 
 # Interface: EcdfSeriesSnapshot
 
-Defined in: [shared.ts:127](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L127)
+Defined in: [shared.ts:266](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L266)
 
 ## Properties
 
@@ -14,7 +14,7 @@ Defined in: [shared.ts:127](https://github.com/Ameyanagi/ruviz/blob/main/package
 
 > **data**: `number`[]
 
-Defined in: [shared.ts:129](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L129)
+Defined in: [shared.ts:269](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L269)
 
 ***
 
@@ -22,4 +22,12 @@ Defined in: [shared.ts:129](https://github.com/Ameyanagi/ruviz/blob/main/package
 
 > **kind**: `"ecdf"`
 
-Defined in: [shared.ts:128](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L128)
+Defined in: [shared.ts:267](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L267)
+
+***
+
+### style?
+
+> `optional` **style?**: [`StrokedSeriesStyle`](../type-aliases/StrokedSeriesStyle.md)
+
+Defined in: [shared.ts:268](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L268)

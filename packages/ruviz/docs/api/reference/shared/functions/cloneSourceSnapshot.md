@@ -8,7 +8,7 @@
 
 > **cloneSourceSnapshot**\<`T`\>(`source`): `T`
 
-Defined in: [shared.ts:223](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L223)
+Defined in: [shared.ts:625](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L625)
 
 ## Type Parameters
 

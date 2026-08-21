@@ -8,7 +8,7 @@
 
 > **normalizeSineSignalOptions**(`options`): [`NormalizedSineSignalOptions`](../interfaces/NormalizedSineSignalOptions.md)
 
-Defined in: [shared.ts:202](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L202)
+Defined in: [shared.ts:604](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L604)
 
 ## Parameters
 

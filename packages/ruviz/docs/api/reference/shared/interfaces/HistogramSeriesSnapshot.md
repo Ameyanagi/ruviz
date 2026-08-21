@@ -6,7 +6,7 @@
 
 # Interface: HistogramSeriesSnapshot
 
-Defined in: [shared.ts:90](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L90)
+Defined in: [shared.ts:224](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L224)
 
 ## Properties
 
@@ -14,7 +14,7 @@ Defined in: [shared.ts:90](https://github.com/Ameyanagi/ruviz/blob/main/packages
 
 > **data**: [`NumericReactiveSourceSnapshot`](../type-aliases/NumericReactiveSourceSnapshot.md)
 
-Defined in: [shared.ts:92](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L92)
+Defined in: [shared.ts:227](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L227)
 
 ***
 
@@ -22,4 +22,12 @@ Defined in: [shared.ts:92](https://github.com/Ameyanagi/ruviz/blob/main/packages
 
 > **kind**: `"histogram"`
 
-Defined in: [shared.ts:91](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L91)
+Defined in: [shared.ts:225](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L225)
+
+***
+
+### style?
+
+> `optional` **style?**: [`HistogramSeriesStyle`](../type-aliases/HistogramSeriesStyle.md)
+
+Defined in: [shared.ts:226](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L226)

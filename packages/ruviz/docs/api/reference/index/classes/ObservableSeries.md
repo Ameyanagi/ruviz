@@ -6,7 +6,7 @@
 
 # Class: ObservableSeries
 
-Defined in: [index.ts:662](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L662)
+Defined in: [index.ts:850](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L850)
 
 Mutable numeric data source for reactive plot updates.
 
@@ -16,7 +16,7 @@ Mutable numeric data source for reactive plot updates.
 
 > **new ObservableSeries**(`values`): `ObservableSeries`
 
-Defined in: [index.ts:666](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L666)
+Defined in: [index.ts:854](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L854)
 
 #### Parameters
 
@@ -36,7 +36,7 @@ Defined in: [index.ts:666](https://github.com/Ameyanagi/ruviz/blob/main/packages
 
 > **get** **length**(): `number`
 
-Defined in: [index.ts:671](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L671)
+Defined in: [index.ts:859](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L859)
 
 ##### Returns
 
@@ -48,7 +48,7 @@ Defined in: [index.ts:671](https://github.com/Ameyanagi/ruviz/blob/main/packages
 
 > **\_toRawObservable**(`module?`): `Promise`\<`ObservableVecF64`\>
 
-Defined in: [index.ts:701](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L701)
+Defined in: [index.ts:889](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L889)
 
 #### Parameters
 
@@ -66,7 +66,7 @@ Defined in: [index.ts:701](https://github.com/Ameyanagi/ruviz/blob/main/packages
 
 > **replace**(`values`): `void`
 
-Defined in: [index.ts:675](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L675)
+Defined in: [index.ts:863](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L863)
 
 #### Parameters
 
@@ -84,7 +84,7 @@ Defined in: [index.ts:675](https://github.com/Ameyanagi/ruviz/blob/main/packages
 
 > **setAt**(`index`, `value`): `void`
 
-Defined in: [index.ts:684](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L684)
+Defined in: [index.ts:872](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L872)
 
 #### Parameters
 
@@ -106,7 +106,7 @@ Defined in: [index.ts:684](https://github.com/Ameyanagi/ruviz/blob/main/packages
 
 > **snapshotValues**(): `number`[]
 
-Defined in: [index.ts:697](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L697)
+Defined in: [index.ts:885](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L885)
 
 #### Returns
 
@@ -118,7 +118,7 @@ Defined in: [index.ts:697](https://github.com/Ameyanagi/ruviz/blob/main/packages
 
 > **values**(): `Float64Array`
 
-Defined in: [index.ts:693](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L693)
+Defined in: [index.ts:881](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L881)
 
 #### Returns
 

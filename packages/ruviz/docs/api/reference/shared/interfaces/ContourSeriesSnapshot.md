@@ -6,7 +6,7 @@
 
 # Interface: ContourSeriesSnapshot
 
-Defined in: [shared.ts:132](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L132)
+Defined in: [shared.ts:272](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L272)
 
 ## Properties
 
@@ -14,7 +14,15 @@ Defined in: [shared.ts:132](https://github.com/Ameyanagi/ruviz/blob/main/package
 
 > **kind**: `"contour"`
 
-Defined in: [shared.ts:133](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L133)
+Defined in: [shared.ts:273](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L273)
+
+***
+
+### style?
+
+> `optional` **style?**: [`ContourSeriesStyle`](../type-aliases/ContourSeriesStyle.md)
+
+Defined in: [shared.ts:274](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L274)
 
 ***
 
@@ -22,7 +30,7 @@ Defined in: [shared.ts:133](https://github.com/Ameyanagi/ruviz/blob/main/package
 
 > **x**: `number`[]
 
-Defined in: [shared.ts:134](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L134)
+Defined in: [shared.ts:275](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L275)
 
 ***
 
@@ -30,7 +38,7 @@ Defined in: [shared.ts:134](https://github.com/Ameyanagi/ruviz/blob/main/package
 
 > **y**: `number`[]
 
-Defined in: [shared.ts:135](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L135)
+Defined in: [shared.ts:276](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L276)
 
 ***
 
@@ -38,4 +46,4 @@ Defined in: [shared.ts:135](https://github.com/Ameyanagi/ruviz/blob/main/package
 
 > **z**: `number`[]
 
-Defined in: [shared.ts:136](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L136)
+Defined in: [shared.ts:277](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L277)

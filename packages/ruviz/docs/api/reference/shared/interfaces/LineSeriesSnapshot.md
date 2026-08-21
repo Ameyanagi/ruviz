@@ -6,7 +6,7 @@
 
 # Interface: LineSeriesSnapshot
 
-Defined in: [shared.ts:72](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L72)
+Defined in: [shared.ts:203](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L203)
 
 ## Properties
 
@@ -14,7 +14,15 @@ Defined in: [shared.ts:72](https://github.com/Ameyanagi/ruviz/blob/main/packages
 
 > **kind**: `"line"`
 
-Defined in: [shared.ts:73](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L73)
+Defined in: [shared.ts:204](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L204)
+
+***
+
+### style?
+
+> `optional` **style?**: [`LineSeriesStyle`](../type-aliases/LineSeriesStyle.md)
+
+Defined in: [shared.ts:205](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L205)
 
 ***
 
@@ -22,7 +30,7 @@ Defined in: [shared.ts:73](https://github.com/Ameyanagi/ruviz/blob/main/packages
 
 > **x**: [`NumericReactiveSourceSnapshot`](../type-aliases/NumericReactiveSourceSnapshot.md)
 
-Defined in: [shared.ts:74](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L74)
+Defined in: [shared.ts:206](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L206)
 
 ***
 
@@ -30,4 +38,4 @@ Defined in: [shared.ts:74](https://github.com/Ameyanagi/ruviz/blob/main/packages
 
 > **y**: [`YSourceSnapshot`](../type-aliases/YSourceSnapshot.md)
 
-Defined in: [shared.ts:75](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L75)
+Defined in: [shared.ts:207](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L207)

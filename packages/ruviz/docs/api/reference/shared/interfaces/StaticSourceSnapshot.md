@@ -6,7 +6,7 @@
 
 # Interface: StaticSourceSnapshot
 
-Defined in: [shared.ts:53](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L53)
+Defined in: [shared.ts:184](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L184)
 
 ## Properties
 
@@ -14,7 +14,7 @@ Defined in: [shared.ts:53](https://github.com/Ameyanagi/ruviz/blob/main/packages
 
 > **kind**: `"static"`
 
-Defined in: [shared.ts:54](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L54)
+Defined in: [shared.ts:185](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L185)
 
 ***
 
@@ -22,4 +22,4 @@ Defined in: [shared.ts:54](https://github.com/Ameyanagi/ruviz/blob/main/packages
 
 > **values**: `number`[]
 
-Defined in: [shared.ts:55](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L55)
+Defined in: [shared.ts:186](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L186)

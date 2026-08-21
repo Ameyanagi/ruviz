@@ -6,7 +6,7 @@
 
 # Class: CanvasSession
 
-Defined in: [index.ts:1341](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1341)
+Defined in: [index.ts:2063](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L2063)
 
 Main-thread interactive canvas session.
 
@@ -16,7 +16,7 @@ Main-thread interactive canvas session.
 
 > **new CanvasSession**(`module`, `rawSession`, `canvas`): `CanvasSession`
 
-Defined in: [index.ts:1349](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1349)
+Defined in: [index.ts:2073](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L2073)
 
 #### Parameters
 
@@ -42,7 +42,7 @@ Defined in: [index.ts:1349](https://github.com/Ameyanagi/ruviz/blob/main/package
 
 > `readonly` **mode**: [`SessionMode`](../../shared/type-aliases/SessionMode.md) = `"main-thread"`
 
-Defined in: [index.ts:1342](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1342)
+Defined in: [index.ts:2064](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L2064)
 
 ## Methods
 
@@ -50,7 +50,7 @@ Defined in: [index.ts:1342](https://github.com/Ameyanagi/ruviz/blob/main/package
 
 > **\_pushCleanup**(`dispose`): `void`
 
-Defined in: [index.ts:1469](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1469)
+Defined in: [index.ts:2256](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L2256)
 
 #### Parameters
 
@@ -68,7 +68,7 @@ Defined in: [index.ts:1469](https://github.com/Ameyanagi/ruviz/blob/main/package
 
 > **destroy**(): `void`
 
-Defined in: [index.ts:1458](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1458)
+Defined in: [index.ts:2241](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L2241)
 
 #### Returns
 
@@ -80,7 +80,7 @@ Defined in: [index.ts:1458](https://github.com/Ameyanagi/ruviz/blob/main/package
 
 > **dispose**(): `void`
 
-Defined in: [index.ts:1462](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1462)
+Defined in: [index.ts:2247](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L2247)
 
 #### Returns
 
@@ -92,7 +92,7 @@ Defined in: [index.ts:1462](https://github.com/Ameyanagi/ruviz/blob/main/package
 
 > **exportPng**(): `Promise`\<`Uint8Array`\<`ArrayBufferLike`\>\>
 
-Defined in: [index.ts:1442](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1442)
+Defined in: [index.ts:2225](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L2225)
 
 #### Returns
 
@@ -104,7 +104,7 @@ Defined in: [index.ts:1442](https://github.com/Ameyanagi/ruviz/blob/main/package
 
 > **exportSvg**(): `Promise`\<`string`\>
 
-Defined in: [index.ts:1450](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1450)
+Defined in: [index.ts:2233](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L2233)
 
 #### Returns
 
@@ -116,7 +116,7 @@ Defined in: [index.ts:1450](https://github.com/Ameyanagi/ruviz/blob/main/package
 
 > **hasPlot**(): `boolean`
 
-Defined in: [index.ts:1356](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1356)
+Defined in: [index.ts:2082](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L2082)
 
 #### Returns
 
@@ -124,11 +124,59 @@ Defined in: [index.ts:1356](https://github.com/Ameyanagi/ruviz/blob/main/package
 
 ***
 
+### hitAt()
+
+> **hitAt**(`x`, `y`): [`SeriesHit`](../../shared/interfaces/SeriesHit.md) \| `null`
+
+Defined in: [index.ts:2175](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L2175)
+
+The series data point under a canvas pixel, or `null`.
+
+#### Parameters
+
+##### x
+
+`number`
+
+##### y
+
+`number`
+
+#### Returns
+
+[`SeriesHit`](../../shared/interfaces/SeriesHit.md) \| `null`
+
+***
+
+### legendEntryAt()
+
+> **legendEntryAt**(`x`, `y`): `number` \| `null`
+
+Defined in: [index.ts:2195](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L2195)
+
+The index of the series behind a legend entry at a canvas pixel, or `null`.
+
+#### Parameters
+
+##### x
+
+`number`
+
+##### y
+
+`number`
+
+#### Returns
+
+`number` \| `null`
+
+***
+
 ### pointerDown()
 
 > **pointerDown**(`x`, `y`, `button`): `void`
 
-Defined in: [index.ts:1412](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1412)
+Defined in: [index.ts:2144](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L2144)
 
 #### Parameters
 
@@ -154,7 +202,7 @@ Defined in: [index.ts:1412](https://github.com/Ameyanagi/ruviz/blob/main/package
 
 > **pointerLeave**(): `void`
 
-Defined in: [index.ts:1430](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1430)
+Defined in: [index.ts:2162](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L2162)
 
 #### Returns
 
@@ -166,7 +214,7 @@ Defined in: [index.ts:1430](https://github.com/Ameyanagi/ruviz/blob/main/package
 
 > **pointerMove**(`x`, `y`): `void`
 
-Defined in: [index.ts:1418](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1418)
+Defined in: [index.ts:2150](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L2150)
 
 #### Parameters
 
@@ -188,7 +236,7 @@ Defined in: [index.ts:1418](https://github.com/Ameyanagi/ruviz/blob/main/package
 
 > **pointerUp**(`x`, `y`, `button`): `void`
 
-Defined in: [index.ts:1424](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1424)
+Defined in: [index.ts:2156](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L2156)
 
 #### Parameters
 
@@ -214,7 +262,7 @@ Defined in: [index.ts:1424](https://github.com/Ameyanagi/ruviz/blob/main/package
 
 > **render**(): `void`
 
-Defined in: [index.ts:1400](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1400)
+Defined in: [index.ts:2132](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L2132)
 
 #### Returns
 
@@ -226,7 +274,7 @@ Defined in: [index.ts:1400](https://github.com/Ameyanagi/ruviz/blob/main/package
 
 > **resetView**(): `void`
 
-Defined in: [index.ts:1406](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1406)
+Defined in: [index.ts:2138](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L2138)
 
 #### Returns
 
@@ -238,7 +286,7 @@ Defined in: [index.ts:1406](https://github.com/Ameyanagi/ruviz/blob/main/package
 
 > **resize**(`width?`, `height?`, `scaleFactor?`): `void`
 
-Defined in: [index.ts:1381](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1381)
+Defined in: [index.ts:2113](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L2113)
 
 #### Parameters
 
@@ -260,11 +308,59 @@ Defined in: [index.ts:1381](https://github.com/Ameyanagi/ruviz/blob/main/package
 
 ***
 
+### seriesCount()
+
+> **seriesCount**(): `number`
+
+Defined in: [index.ts:2200](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L2200)
+
+#### Returns
+
+`number`
+
+***
+
+### seriesLabel()
+
+> **seriesLabel**(`seriesIndex`): `string` \| `null`
+
+Defined in: [index.ts:2204](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L2204)
+
+#### Parameters
+
+##### seriesIndex
+
+`number`
+
+#### Returns
+
+`string` \| `null`
+
+***
+
+### seriesVisible()
+
+> **seriesVisible**(`seriesIndex`): `boolean`
+
+Defined in: [index.ts:2208](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L2208)
+
+#### Parameters
+
+##### seriesIndex
+
+`number`
+
+#### Returns
+
+`boolean`
+
+***
+
 ### setBackendPreference()
 
 > **setBackendPreference**(`backendPreference`): `void`
 
-Defined in: [index.ts:1394](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1394)
+Defined in: [index.ts:2126](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L2126)
 
 #### Parameters
 
@@ -282,7 +378,7 @@ Defined in: [index.ts:1394](https://github.com/Ameyanagi/ruviz/blob/main/package
 
 > **setPlot**(`plot`): `Promise`\<`void`\>
 
-Defined in: [index.ts:1376](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1376)
+Defined in: [index.ts:2102](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L2102)
 
 #### Parameters
 
@@ -296,11 +392,37 @@ Defined in: [index.ts:1376](https://github.com/Ameyanagi/ruviz/blob/main/package
 
 ***
 
+### setSeriesVisible()
+
+> **setSeriesVisible**(`seriesIndex`, `visible`): `boolean`
+
+Defined in: [index.ts:2217](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L2217)
+
+Show or hide a series and re-render; the legend entry stays, dimmed.
+A grouped series toggles with its group. Returns `false` when the index
+is out of range or no plot is attached.
+
+#### Parameters
+
+##### seriesIndex
+
+`number`
+
+##### visible
+
+`boolean`
+
+#### Returns
+
+`boolean`
+
+***
+
 ### setTime()
 
 > **setTime**(`timeSeconds`): `void`
 
-Defined in: [index.ts:1390](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1390)
+Defined in: [index.ts:2122](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L2122)
 
 #### Parameters
 
@@ -318,7 +440,7 @@ Defined in: [index.ts:1390](https://github.com/Ameyanagi/ruviz/blob/main/package
 
 > **wheel**(`deltaY`, `x`, `y`): `void`
 
-Defined in: [index.ts:1436](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1436)
+Defined in: [index.ts:2168](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L2168)
 
 #### Parameters
 
