@@ -6,7 +6,7 @@
 
 # Interface: BoxplotSeriesSnapshot
 
-Defined in: [shared.ts:95](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L95)
+Defined in: [shared.ts:230](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L230)
 
 ## Properties
 
@@ -14,7 +14,7 @@ Defined in: [shared.ts:95](https://github.com/Ameyanagi/ruviz/blob/main/packages
 
 > **data**: [`NumericReactiveSourceSnapshot`](../type-aliases/NumericReactiveSourceSnapshot.md)
 
-Defined in: [shared.ts:97](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L97)
+Defined in: [shared.ts:233](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L233)
 
 ***
 
@@ -22,4 +22,12 @@ Defined in: [shared.ts:97](https://github.com/Ameyanagi/ruviz/blob/main/packages
 
 > **kind**: `"boxplot"`
 
-Defined in: [shared.ts:96](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L96)
+Defined in: [shared.ts:231](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L231)
+
+***
+
+### style?
+
+> `optional` **style?**: [`BoxplotSeriesStyle`](../type-aliases/BoxplotSeriesStyle.md)
+
+Defined in: [shared.ts:232](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L232)

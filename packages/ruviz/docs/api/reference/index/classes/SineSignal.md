@@ -6,7 +6,7 @@
 
 # Class: SineSignal
 
-Defined in: [index.ts:713](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L713)
+Defined in: [index.ts:901](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L901)
 
 Procedural sine-wave signal for temporal playback in interactive sessions.
 
@@ -16,7 +16,7 @@ Procedural sine-wave signal for temporal playback in interactive sessions.
 
 > **new SineSignal**(`options`): `SineSignal`
 
-Defined in: [index.ts:717](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L717)
+Defined in: [index.ts:905](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L905)
 
 #### Parameters
 
@@ -34,7 +34,7 @@ Defined in: [index.ts:717](https://github.com/Ameyanagi/ruviz/blob/main/packages
 
 > `readonly` **options**: [`NormalizedSineSignalOptions`](../../shared/interfaces/NormalizedSineSignalOptions.md)
 
-Defined in: [index.ts:714](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L714)
+Defined in: [index.ts:902](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L902)
 
 ## Accessors
 
@@ -44,7 +44,7 @@ Defined in: [index.ts:714](https://github.com/Ameyanagi/ruviz/blob/main/packages
 
 > **get** **length**(): `number`
 
-Defined in: [index.ts:722](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L722)
+Defined in: [index.ts:910](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L910)
 
 ##### Returns
 
@@ -56,7 +56,7 @@ Defined in: [index.ts:722](https://github.com/Ameyanagi/ruviz/blob/main/packages
 
 > **\_toRawSignal**(`module?`): `Promise`\<`SignalVecF64`\>
 
-Defined in: [index.ts:750](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L750)
+Defined in: [index.ts:938](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L938)
 
 #### Parameters
 
@@ -74,7 +74,7 @@ Defined in: [index.ts:750](https://github.com/Ameyanagi/ruviz/blob/main/packages
 
 > **valuesAt**(`timeSeconds`): `Float64Array`
 
-Defined in: [index.ts:726](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L726)
+Defined in: [index.ts:914](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L914)
 
 #### Parameters
 

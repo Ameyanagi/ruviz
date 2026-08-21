@@ -8,7 +8,7 @@
 
 > **createPlot**(): [`PlotBuilder`](../classes/PlotBuilder.md)
 
-Defined in: [index.ts:1820](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1820)
+Defined in: [index.ts:2719](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L2719)
 
 Create a new fluent plot builder.
 

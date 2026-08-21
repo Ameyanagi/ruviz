@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 
-RELEASE_DOCS_BRANCH := docs/release-0.4.0-refresh
+RELEASE_DOCS_BRANCH := docs/release-0.12.0-refresh
 PYTHON_SITE_DIR := ../../generated/python/site
 
 .PHONY: help setup-hooks assert-release-branch clean-generated release-docs release-docs-rust release-docs-python release-docs-web rust-gallery check-rust-gallery build-generated-preview build-generated-preview-rust build-generated-preview-python build-generated-preview-web generated-manifest check-doc-asset-refs check-docs check-repository check-ci-test-coverage fmt clippy clippy-gpui check-web check bench-plotting bench-plotting-smoke bench-rust-features bench-rust-features-smoke

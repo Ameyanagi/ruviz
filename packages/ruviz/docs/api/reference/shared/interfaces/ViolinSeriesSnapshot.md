@@ -6,7 +6,7 @@
 
 # Interface: ViolinSeriesSnapshot
 
-Defined in: [shared.ts:156](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L156)
+Defined in: [shared.ts:297](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L297)
 
 ## Properties
 
@@ -14,7 +14,7 @@ Defined in: [shared.ts:156](https://github.com/Ameyanagi/ruviz/blob/main/package
 
 > **data**: `number`[]
 
-Defined in: [shared.ts:158](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L158)
+Defined in: [shared.ts:300](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L300)
 
 ***
 
@@ -22,4 +22,12 @@ Defined in: [shared.ts:158](https://github.com/Ameyanagi/ruviz/blob/main/package
 
 > **kind**: `"violin"`
 
-Defined in: [shared.ts:157](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L157)
+Defined in: [shared.ts:298](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L298)
+
+***
+
+### style?
+
+> `optional` **style?**: [`StrokedSeriesStyle`](../type-aliases/StrokedSeriesStyle.md)
+
+Defined in: [shared.ts:299](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L299)

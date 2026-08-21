@@ -8,7 +8,7 @@
 
 > **clonePlotSnapshot**(`snapshot`): [`PlotSnapshot`](../interfaces/PlotSnapshot.md)
 
-Defined in: [shared.ts:321](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L321)
+Defined in: [shared.ts:643](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L643)
 
 ## Parameters
 

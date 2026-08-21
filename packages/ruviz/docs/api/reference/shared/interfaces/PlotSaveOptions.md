@@ -6,7 +6,7 @@
 
 # Interface: PlotSaveOptions
 
-Defined in: [shared.ts:27](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L27)
+Defined in: [shared.ts:158](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L158)
 
 ## Properties
 
@@ -14,7 +14,7 @@ Defined in: [shared.ts:27](https://github.com/Ameyanagi/ruviz/blob/main/packages
 
 > `optional` **fileName?**: `string`
 
-Defined in: [shared.ts:28](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L28)
+Defined in: [shared.ts:159](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L159)
 
 ***
 
@@ -22,4 +22,4 @@ Defined in: [shared.ts:28](https://github.com/Ameyanagi/ruviz/blob/main/packages
 
 > `optional` **format?**: [`PlotSaveFormat`](../type-aliases/PlotSaveFormat.md)
 
-Defined in: [shared.ts:29](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L29)
+Defined in: [shared.ts:160](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L160)

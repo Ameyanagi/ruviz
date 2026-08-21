@@ -8,4 +8,4 @@
 
 > **XSourceSnapshot** = [`NumericReactiveSourceSnapshot`](NumericReactiveSourceSnapshot.md)
 
-Defined in: [shared.ts:69](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L69)
+Defined in: [shared.ts:200](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L200)

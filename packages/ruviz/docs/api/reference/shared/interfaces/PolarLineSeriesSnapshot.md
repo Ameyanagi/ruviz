@@ -6,7 +6,7 @@
 
 # Interface: PolarLineSeriesSnapshot
 
-Defined in: [shared.ts:161](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L161)
+Defined in: [shared.ts:303](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L303)
 
 ## Properties
 
@@ -14,7 +14,7 @@ Defined in: [shared.ts:161](https://github.com/Ameyanagi/ruviz/blob/main/package
 
 > **kind**: `"polar-line"`
 
-Defined in: [shared.ts:162](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L162)
+Defined in: [shared.ts:304](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L304)
 
 ***
 
@@ -22,7 +22,15 @@ Defined in: [shared.ts:162](https://github.com/Ameyanagi/ruviz/blob/main/package
 
 > **r**: `number`[]
 
-Defined in: [shared.ts:163](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L163)
+Defined in: [shared.ts:306](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L306)
+
+***
+
+### style?
+
+> `optional` **style?**: [`StrokedSeriesStyle`](../type-aliases/StrokedSeriesStyle.md)
+
+Defined in: [shared.ts:305](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L305)
 
 ***
 
@@ -30,4 +38,4 @@ Defined in: [shared.ts:163](https://github.com/Ameyanagi/ruviz/blob/main/package
 
 > **theta**: `number`[]
 
-Defined in: [shared.ts:164](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L164)
+Defined in: [shared.ts:307](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L307)

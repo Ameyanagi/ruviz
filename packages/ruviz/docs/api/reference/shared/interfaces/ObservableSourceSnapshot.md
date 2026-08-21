@@ -6,7 +6,7 @@
 
 # Interface: ObservableSourceSnapshot
 
-Defined in: [shared.ts:58](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L58)
+Defined in: [shared.ts:189](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L189)
 
 ## Properties
 
@@ -14,7 +14,7 @@ Defined in: [shared.ts:58](https://github.com/Ameyanagi/ruviz/blob/main/packages
 
 > **kind**: `"observable"`
 
-Defined in: [shared.ts:59](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L59)
+Defined in: [shared.ts:190](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L190)
 
 ***
 
@@ -22,4 +22,4 @@ Defined in: [shared.ts:59](https://github.com/Ameyanagi/ruviz/blob/main/packages
 
 > **values**: `number`[]
 
-Defined in: [shared.ts:60](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L60)
+Defined in: [shared.ts:191](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L191)

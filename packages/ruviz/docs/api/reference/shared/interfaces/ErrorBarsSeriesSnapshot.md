@@ -6,7 +6,7 @@
 
 # Interface: ErrorBarsSeriesSnapshot
 
-Defined in: [shared.ts:107](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L107)
+Defined in: [shared.ts:243](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L243)
 
 ## Properties
 
@@ -14,7 +14,15 @@ Defined in: [shared.ts:107](https://github.com/Ameyanagi/ruviz/blob/main/package
 
 > **kind**: `"error-bars"`
 
-Defined in: [shared.ts:108](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L108)
+Defined in: [shared.ts:244](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L244)
+
+***
+
+### style?
+
+> `optional` **style?**: [`StrokedSeriesStyle`](../type-aliases/StrokedSeriesStyle.md)
+
+Defined in: [shared.ts:245](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L245)
 
 ***
 
@@ -22,7 +30,7 @@ Defined in: [shared.ts:108](https://github.com/Ameyanagi/ruviz/blob/main/package
 
 > **x**: [`NumericReactiveSourceSnapshot`](../type-aliases/NumericReactiveSourceSnapshot.md)
 
-Defined in: [shared.ts:109](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L109)
+Defined in: [shared.ts:246](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L246)
 
 ***
 
@@ -30,7 +38,7 @@ Defined in: [shared.ts:109](https://github.com/Ameyanagi/ruviz/blob/main/package
 
 > **y**: [`NumericReactiveSourceSnapshot`](../type-aliases/NumericReactiveSourceSnapshot.md)
 
-Defined in: [shared.ts:110](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L110)
+Defined in: [shared.ts:247](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L247)
 
 ***
 
@@ -38,4 +46,4 @@ Defined in: [shared.ts:110](https://github.com/Ameyanagi/ruviz/blob/main/package
 
 > **yErrors**: [`NumericReactiveSourceSnapshot`](../type-aliases/NumericReactiveSourceSnapshot.md)
 
-Defined in: [shared.ts:111](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L111)
+Defined in: [shared.ts:248](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L248)

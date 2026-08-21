@@ -6,7 +6,7 @@
 
 # Interface: RadarSeriesItemSnapshot
 
-Defined in: [shared.ts:145](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L145)
+Defined in: [shared.ts:286](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L286)
 
 ## Properties
 
@@ -14,7 +14,7 @@ Defined in: [shared.ts:145](https://github.com/Ameyanagi/ruviz/blob/main/package
 
 > `optional` **name?**: `string`
 
-Defined in: [shared.ts:146](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L146)
+Defined in: [shared.ts:287](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L287)
 
 ***
 
@@ -22,4 +22,4 @@ Defined in: [shared.ts:146](https://github.com/Ameyanagi/ruviz/blob/main/package
 
 > **values**: `number`[]
 
-Defined in: [shared.ts:147](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L147)
+Defined in: [shared.ts:288](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L288)

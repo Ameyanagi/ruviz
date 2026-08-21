@@ -6,7 +6,7 @@
 
 # Class: PlotBuilder
 
-Defined in: [index.ts:819](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L819)
+Defined in: [index.ts:1007](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1007)
 
 Fluent plot builder for static export and interactive canvas mounting.
 
@@ -16,7 +16,7 @@ Fluent plot builder for static export and interactive canvas mounting.
 
 > **new PlotBuilder**(`state?`): `PlotBuilder`
 
-Defined in: [index.ts:822](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L822)
+Defined in: [index.ts:1024](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1024)
 
 #### Parameters
 
@@ -30,11 +30,23 @@ Defined in: [index.ts:822](https://github.com/Ameyanagi/ruviz/blob/main/packages
 
 ## Methods
 
+### \_revision()
+
+> **\_revision**(): `number`
+
+Defined in: [index.ts:1953](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1953)
+
+#### Returns
+
+`number`
+
+***
+
 ### \_toRawPlot()
 
 > **\_toRawPlot**(`module?`): `Promise`\<`JsPlot`\>
 
-Defined in: [index.ts:1260](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1260)
+Defined in: [index.ts:1918](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1918)
 
 #### Parameters
 
@@ -52,13 +64,13 @@ Defined in: [index.ts:1260](https://github.com/Ameyanagi/ruviz/blob/main/package
 
 > **addLine**(`input`): `this`
 
-Defined in: [index.ts:1063](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1063)
+Defined in: [index.ts:1640](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1640)
 
 #### Parameters
 
 ##### input
 
-`XYSeriesInput`
+`LineSeriesInput`
 
 #### Returns
 
@@ -70,13 +82,47 @@ Defined in: [index.ts:1063](https://github.com/Ameyanagi/ruviz/blob/main/package
 
 > **addScatter**(`input`): `this`
 
-Defined in: [index.ts:1071](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1071)
+Defined in: [index.ts:1648](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1648)
 
 #### Parameters
 
 ##### input
 
-`XYSeriesInput`
+`ScatterSeriesInput`
+
+#### Returns
+
+`this`
+
+***
+
+### annotateText()
+
+> **annotateText**(`x`, `y`, `text`, `style?`): `this`
+
+Defined in: [index.ts:1543](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1543)
+
+Adds a text annotation at data coordinates — a reference-line label, a
+peak marker. The default is 10pt black, so pass a `color` when the plot
+uses a dark theme.
+
+#### Parameters
+
+##### x
+
+`number`
+
+##### y
+
+`number`
+
+##### text
+
+`string`
+
+##### style?
+
+[`TextAnnotationStyle`](../../shared/interfaces/TextAnnotationStyle.md)
 
 #### Returns
 
@@ -88,7 +134,7 @@ Defined in: [index.ts:1071](https://github.com/Ameyanagi/ruviz/blob/main/package
 
 > **bar**(`input`): `this`
 
-Defined in: [index.ts:1075](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1075)
+Defined in: [index.ts:1652](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1652)
 
 #### Parameters
 
@@ -104,15 +150,19 @@ Defined in: [index.ts:1075](https://github.com/Ameyanagi/ruviz/blob/main/package
 
 ### boxplot()
 
-> **boxplot**(`input`): `this`
+> **boxplot**(`input`, `style?`): `this`
 
-Defined in: [index.ts:1091](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1091)
+Defined in: [index.ts:1679](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1679)
 
 #### Parameters
 
 ##### input
 
 [`NumericArray`](../../shared/type-aliases/NumericArray.md) \| [`ObservableSeries`](ObservableSeries.md)
+
+##### style?
+
+[`BoxplotSeriesStyle`](../../shared/type-aliases/BoxplotSeriesStyle.md)
 
 #### Returns
 
@@ -124,7 +174,7 @@ Defined in: [index.ts:1091](https://github.com/Ameyanagi/ruviz/blob/main/package
 
 > **clone**(): `PlotBuilder`
 
-Defined in: [index.ts:1199](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1199)
+Defined in: [index.ts:1828](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1828)
 
 #### Returns
 
@@ -136,7 +186,7 @@ Defined in: [index.ts:1199](https://github.com/Ameyanagi/ruviz/blob/main/package
 
 > **contour**(`input`): `this`
 
-Defined in: [index.ts:1141](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1141)
+Defined in: [index.ts:1756](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1756)
 
 #### Parameters
 
@@ -150,17 +200,53 @@ Defined in: [index.ts:1141](https://github.com/Ameyanagi/ruviz/blob/main/package
 
 ***
 
+### dispose()
+
+> **dispose**(): `void`
+
+Defined in: [index.ts:1832](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1832)
+
+#### Returns
+
+`void`
+
+***
+
+### dpi()
+
+> **dpi**(`dpi`): `this`
+
+Defined in: [index.ts:1339](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1339)
+
+Sets the output DPI, scaling the pixels exported from the figure size.
+
+#### Parameters
+
+##### dpi
+
+`number`
+
+#### Returns
+
+`this`
+
+***
+
 ### ecdf()
 
-> **ecdf**(`input`): `this`
+> **ecdf**(`input`, `style?`): `this`
 
-Defined in: [index.ts:1136](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1136)
+Defined in: [index.ts:1746](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1746)
 
 #### Parameters
 
 ##### input
 
 [`NumericArray`](../../shared/type-aliases/NumericArray.md)
+
+##### style?
+
+[`StrokedSeriesStyle`](../../shared/type-aliases/StrokedSeriesStyle.md)
 
 #### Returns
 
@@ -172,7 +258,7 @@ Defined in: [index.ts:1136](https://github.com/Ameyanagi/ruviz/blob/main/package
 
 > **errorBars**(`input`): `this`
 
-Defined in: [index.ts:1103](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1103)
+Defined in: [index.ts:1693](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1693)
 
 #### Parameters
 
@@ -190,7 +276,7 @@ Defined in: [index.ts:1103](https://github.com/Ameyanagi/ruviz/blob/main/package
 
 > **errorBarsXY**(`input`): `this`
 
-Defined in: [index.ts:1114](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1114)
+Defined in: [index.ts:1711](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1711)
 
 #### Parameters
 
@@ -204,11 +290,60 @@ Defined in: [index.ts:1114](https://github.com/Ameyanagi/ruviz/blob/main/package
 
 ***
 
+### figure()
+
+> **figure**(`options`): `this`
+
+Defined in: [index.ts:1201](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1201)
+
+Applies figure-level presentation settings in one call.
+
+These are chosen as a set — a journal's column width, body point size and
+rule weight are one decision — so they are grouped rather than spread over
+individual chained setters. Omitted fields keep their current value.
+
+The call is atomic: every option is validated before any is applied, so a
+rejected value leaves the plot unchanged.
+
+```ts
+plot.figure({ size: [3.25, 2.5], dpi: 300, fontSize: 9, fontFamily: "serif" });
+```
+
+#### Parameters
+
+##### options
+
+[`FigureOptions`](../../shared/interfaces/FigureOptions.md)
+
+#### Returns
+
+`this`
+
+***
+
+### grid()
+
+> **grid**(`enabled?`): `this`
+
+Defined in: [index.ts:1415](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1415)
+
+#### Parameters
+
+##### enabled?
+
+`boolean` = `true`
+
+#### Returns
+
+`this`
+
+***
+
 ### heatmap()
 
 > **heatmap**(`input`): `this`
 
-Defined in: [index.ts:1097](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1097)
+Defined in: [index.ts:1686](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1686)
 
 #### Parameters
 
@@ -224,15 +359,76 @@ readonly [`NumericArray`](../../shared/type-aliases/NumericArray.md)[]
 
 ### histogram()
 
-> **histogram**(`input`): `this`
+> **histogram**(`input`, `style?`): `this`
 
-Defined in: [index.ts:1085](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1085)
+Defined in: [index.ts:1668](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1668)
 
 #### Parameters
 
 ##### input
 
 [`NumericArray`](../../shared/type-aliases/NumericArray.md) \| [`ObservableSeries`](ObservableSeries.md)
+
+##### style?
+
+[`HistogramSeriesStyle`](../../shared/type-aliases/HistogramSeriesStyle.md)
+
+#### Returns
+
+`this`
+
+***
+
+### hline()
+
+> **hline**(`y`, `style?`): `this`
+
+Defined in: [index.ts:1528](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1528)
+
+Adds a horizontal reference line spanning the plot width at data
+y-coordinate `y`. Without a style it renders as the core default, a 1pt
+dashed gray.
+
+#### Parameters
+
+##### y
+
+`number`
+
+##### style?
+
+[`ReferenceLineStyle`](../../shared/interfaces/ReferenceLineStyle.md)
+
+#### Returns
+
+`this`
+
+***
+
+### invertX()
+
+> **invertX**(): `this`
+
+Defined in: [index.ts:1446](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1446)
+
+Flip the x axis after its range resolves, so it runs high-to-low.
+
+#### Returns
+
+`this`
+
+***
+
+### invertY()
+
+> **invertY**(): `this`
+
+Defined in: [index.ts:1458](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1458)
+
+Flip the y axis after its range resolves.
+
+On a horizontal categorical chart this puts the first category at the
+top, so ranked bars read in the order they were given.
 
 #### Returns
 
@@ -242,15 +438,37 @@ Defined in: [index.ts:1085](https://github.com/Ameyanagi/ruviz/blob/main/package
 
 ### kde()
 
-> **kde**(`input`): `this`
+> **kde**(`input`, `style?`): `this`
 
-Defined in: [index.ts:1131](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1131)
+Defined in: [index.ts:1736](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1736)
 
 #### Parameters
 
 ##### input
 
 [`NumericArray`](../../shared/type-aliases/NumericArray.md)
+
+##### style?
+
+[`KdeSeriesStyle`](../../shared/type-aliases/KdeSeriesStyle.md)
+
+#### Returns
+
+`this`
+
+***
+
+### legend()
+
+> **legend**(`position?`): `this`
+
+Defined in: [index.ts:1404](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1404)
+
+#### Parameters
+
+##### position?
+
+`"best"` \| `"upper_right"` \| `"upper_left"` \| `"lower_left"` \| `"lower_right"` \| `"right"` \| `"center_left"` \| `"center_right"` \| `"lower_center"` \| `"upper_center"` \| `"center"` \| `"outside_right"` \| `"outside_left"` \| `"outside_upper"` \| `"outside_lower"`
 
 #### Returns
 
@@ -262,13 +480,13 @@ Defined in: [index.ts:1131](https://github.com/Ameyanagi/ruviz/blob/main/package
 
 > **line**(`input`): `this`
 
-Defined in: [index.ts:1059](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1059)
+Defined in: [index.ts:1636](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1636)
 
 #### Parameters
 
 ##### input
 
-`XYSeriesInput`
+`LineSeriesInput`
 
 #### Returns
 
@@ -280,7 +498,7 @@ Defined in: [index.ts:1059](https://github.com/Ameyanagi/ruviz/blob/main/package
 
 > **mount**(`canvas`, `options?`): `Promise`\<[`CanvasSession`](CanvasSession.md)\>
 
-Defined in: [index.ts:1243](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1243)
+Defined in: [index.ts:1901](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1901)
 
 #### Parameters
 
@@ -302,7 +520,7 @@ Defined in: [index.ts:1243](https://github.com/Ameyanagi/ruviz/blob/main/package
 
 > **mountWorker**(`canvas`, `options?`): `Promise`\<[`WorkerSession`](WorkerSession.md)\>
 
-Defined in: [index.ts:1250](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1250)
+Defined in: [index.ts:1908](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1908)
 
 #### Parameters
 
@@ -324,7 +542,7 @@ Defined in: [index.ts:1250](https://github.com/Ameyanagi/ruviz/blob/main/package
 
 > **pie**(`values`, `labelsInput?`): `this`
 
-Defined in: [index.ts:1152](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1152)
+Defined in: [index.ts:1768](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1768)
 
 #### Parameters
 
@@ -334,7 +552,7 @@ Defined in: [index.ts:1152](https://github.com/Ameyanagi/ruviz/blob/main/package
 
 ##### labelsInput?
 
-`ArrayLike`\<`string`\> \| readonly `string`[]
+readonly `string`[] \| `ArrayLike`\<`string`\>
 
 #### Returns
 
@@ -346,7 +564,7 @@ Defined in: [index.ts:1152](https://github.com/Ameyanagi/ruviz/blob/main/package
 
 > **polarLine**(`input`): `this`
 
-Defined in: [index.ts:1189](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1189)
+Defined in: [index.ts:1812](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1812)
 
 #### Parameters
 
@@ -364,7 +582,7 @@ Defined in: [index.ts:1189](https://github.com/Ameyanagi/ruviz/blob/main/package
 
 > **radar**(`input`): `this`
 
-Defined in: [index.ts:1162](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1162)
+Defined in: [index.ts:1779](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1779)
 
 #### Parameters
 
@@ -382,7 +600,7 @@ Defined in: [index.ts:1162](https://github.com/Ameyanagi/ruviz/blob/main/package
 
 > **renderPng**(): `Promise`\<`Uint8Array`\<`ArrayBufferLike`\>\>
 
-Defined in: [index.ts:1217](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1217)
+Defined in: [index.ts:1851](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1851)
 
 #### Returns
 
@@ -394,7 +612,7 @@ Defined in: [index.ts:1217](https://github.com/Ameyanagi/ruviz/blob/main/package
 
 > **renderSvg**(): `Promise`\<`string`\>
 
-Defined in: [index.ts:1223](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1223)
+Defined in: [index.ts:1869](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1869)
 
 #### Returns
 
@@ -406,7 +624,7 @@ Defined in: [index.ts:1223](https://github.com/Ameyanagi/ruviz/blob/main/package
 
 > **save**(`options?`): `Promise`\<`void`\>
 
-Defined in: [index.ts:1229](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1229)
+Defined in: [index.ts:1887](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1887)
 
 #### Parameters
 
@@ -424,13 +642,67 @@ Defined in: [index.ts:1229](https://github.com/Ameyanagi/ruviz/blob/main/package
 
 > **scatter**(`input`): `this`
 
-Defined in: [index.ts:1067](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1067)
+Defined in: [index.ts:1644](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1644)
 
 #### Parameters
 
 ##### input
 
-`XYSeriesInput`
+`ScatterSeriesInput`
+
+#### Returns
+
+`this`
+
+***
+
+### setDpi()
+
+> **setDpi**(`dpi`): `this`
+
+Defined in: [index.ts:1343](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1343)
+
+#### Parameters
+
+##### dpi
+
+`number`
+
+#### Returns
+
+`this`
+
+***
+
+### setGrid()
+
+> **setGrid**(`enabled?`): `this`
+
+Defined in: [index.ts:1419](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1419)
+
+#### Parameters
+
+##### enabled?
+
+`boolean` = `true`
+
+#### Returns
+
+`this`
+
+***
+
+### setLegend()
+
+> **setLegend**(`position?`): `this`
+
+Defined in: [index.ts:1408](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1408)
+
+#### Parameters
+
+##### position?
+
+`"best"` \| `"upper_right"` \| `"upper_left"` \| `"lower_left"` \| `"lower_right"` \| `"right"` \| `"center_left"` \| `"center_right"` \| `"lower_center"` \| `"upper_center"` \| `"center"` \| `"outside_right"` \| `"outside_left"` \| `"outside_upper"` \| `"outside_lower"`
 
 #### Returns
 
@@ -442,7 +714,7 @@ Defined in: [index.ts:1067](https://github.com/Ameyanagi/ruviz/blob/main/package
 
 > **setSizePx**(`width`, `height`): `this`
 
-Defined in: [index.ts:1009](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1009)
+Defined in: [index.ts:1181](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1181)
 
 #### Parameters
 
@@ -464,13 +736,13 @@ Defined in: [index.ts:1009](https://github.com/Ameyanagi/ruviz/blob/main/package
 
 > **setTheme**(`theme`): `this`
 
-Defined in: [index.ts:1018](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1018)
+Defined in: [index.ts:1357](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1357)
 
 #### Parameters
 
 ##### theme
 
-[`PlotTheme`](../../shared/type-aliases/PlotTheme.md)
+`"light"` \| `"dark"` \| `"seaborn"` \| `"publication"` \| `"minimal"` \| `"presentation"`
 
 #### Returns
 
@@ -482,7 +754,7 @@ Defined in: [index.ts:1018](https://github.com/Ameyanagi/ruviz/blob/main/package
 
 > **setTicks**(`enabled`): `this`
 
-Defined in: [index.ts:1027](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1027)
+Defined in: [index.ts:1368](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1368)
 
 #### Parameters
 
@@ -500,7 +772,7 @@ Defined in: [index.ts:1027](https://github.com/Ameyanagi/ruviz/blob/main/package
 
 > **setTitle**(`title`): `this`
 
-Defined in: [index.ts:1036](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1036)
+Defined in: [index.ts:1378](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1378)
 
 #### Parameters
 
@@ -518,13 +790,57 @@ Defined in: [index.ts:1036](https://github.com/Ameyanagi/ruviz/blob/main/package
 
 > **setXLabel**(`label`): `this`
 
-Defined in: [index.ts:1045](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1045)
+Defined in: [index.ts:1388](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1388)
 
 #### Parameters
 
 ##### label
 
 `string`
+
+#### Returns
+
+`this`
+
+***
+
+### setXLim()
+
+> **setXLim**(`minimum`, `maximum`): `this`
+
+Defined in: [index.ts:1429](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1429)
+
+#### Parameters
+
+##### minimum
+
+`number`
+
+##### maximum
+
+`number`
+
+#### Returns
+
+`this`
+
+***
+
+### setXScale()
+
+> **setXScale**(`scale`, `linthresh?`): `this`
+
+Defined in: [index.ts:1468](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1468)
+
+#### Parameters
+
+##### scale
+
+`"linear"` \| `"log"` \| `"symlog"`
+
+##### linthresh?
+
+`number`
 
 #### Returns
 
@@ -536,7 +852,7 @@ Defined in: [index.ts:1045](https://github.com/Ameyanagi/ruviz/blob/main/package
 
 > **setYLabel**(`label`): `this`
 
-Defined in: [index.ts:1054](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1054)
+Defined in: [index.ts:1398](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1398)
 
 #### Parameters
 
@@ -550,11 +866,55 @@ Defined in: [index.ts:1054](https://github.com/Ameyanagi/ruviz/blob/main/package
 
 ***
 
+### setYLim()
+
+> **setYLim**(`minimum`, `maximum`): `this`
+
+Defined in: [index.ts:1439](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1439)
+
+#### Parameters
+
+##### minimum
+
+`number`
+
+##### maximum
+
+`number`
+
+#### Returns
+
+`this`
+
+***
+
+### setYScale()
+
+> **setYScale**(`scale`, `linthresh?`): `this`
+
+Defined in: [index.ts:1478](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1478)
+
+#### Parameters
+
+##### scale
+
+`"linear"` \| `"log"` \| `"symlog"`
+
+##### linthresh?
+
+`number`
+
+#### Returns
+
+`this`
+
+***
+
 ### sizePx()
 
 > **sizePx**(`width`, `height`): `this`
 
-Defined in: [index.ts:1005](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1005)
+Defined in: [index.ts:1177](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1177)
 
 #### Parameters
 
@@ -576,13 +936,13 @@ Defined in: [index.ts:1005](https://github.com/Ameyanagi/ruviz/blob/main/package
 
 > **theme**(`theme`): `this`
 
-Defined in: [index.ts:1014](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1014)
+Defined in: [index.ts:1353](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1353)
 
 #### Parameters
 
 ##### theme
 
-[`PlotTheme`](../../shared/type-aliases/PlotTheme.md)
+`"light"` \| `"dark"` \| `"seaborn"` \| `"publication"` \| `"minimal"` \| `"presentation"`
 
 #### Returns
 
@@ -594,7 +954,7 @@ Defined in: [index.ts:1014](https://github.com/Ameyanagi/ruviz/blob/main/package
 
 > **ticks**(`enabled`): `this`
 
-Defined in: [index.ts:1023](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1023)
+Defined in: [index.ts:1364](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1364)
 
 #### Parameters
 
@@ -612,7 +972,7 @@ Defined in: [index.ts:1023](https://github.com/Ameyanagi/ruviz/blob/main/package
 
 > **title**(`title`): `this`
 
-Defined in: [index.ts:1032](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1032)
+Defined in: [index.ts:1374](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1374)
 
 #### Parameters
 
@@ -630,7 +990,7 @@ Defined in: [index.ts:1032](https://github.com/Ameyanagi/ruviz/blob/main/package
 
 > **toSnapshot**(): [`PlotSnapshot`](../../shared/interfaces/PlotSnapshot.md)
 
-Defined in: [index.ts:1203](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1203)
+Defined in: [index.ts:1841](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1841)
 
 #### Returns
 
@@ -640,15 +1000,45 @@ Defined in: [index.ts:1203](https://github.com/Ameyanagi/ruviz/blob/main/package
 
 ### violin()
 
-> **violin**(`input`): `this`
+> **violin**(`input`, `style?`): `this`
 
-Defined in: [index.ts:1184](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1184)
+Defined in: [index.ts:1802](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1802)
 
 #### Parameters
 
 ##### input
 
 [`NumericArray`](../../shared/type-aliases/NumericArray.md)
+
+##### style?
+
+[`StrokedSeriesStyle`](../../shared/type-aliases/StrokedSeriesStyle.md)
+
+#### Returns
+
+`this`
+
+***
+
+### vline()
+
+> **vline**(`x`, `style?`): `this`
+
+Defined in: [index.ts:1513](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1513)
+
+Adds a vertical reference line spanning the plot height at data
+x-coordinate `x` — an absorption edge, a threshold, a boundary. Without a
+style it renders as the core default, a 1pt dashed gray.
+
+#### Parameters
+
+##### x
+
+`number`
+
+##### style?
+
+[`ReferenceLineStyle`](../../shared/interfaces/ReferenceLineStyle.md)
 
 #### Returns
 
@@ -660,13 +1050,57 @@ Defined in: [index.ts:1184](https://github.com/Ameyanagi/ruviz/blob/main/package
 
 > **xlabel**(`label`): `this`
 
-Defined in: [index.ts:1041](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1041)
+Defined in: [index.ts:1384](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1384)
 
 #### Parameters
 
 ##### label
 
 `string`
+
+#### Returns
+
+`this`
+
+***
+
+### xlim()
+
+> **xlim**(`minimum`, `maximum`): `this`
+
+Defined in: [index.ts:1425](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1425)
+
+#### Parameters
+
+##### minimum
+
+`number`
+
+##### maximum
+
+`number`
+
+#### Returns
+
+`this`
+
+***
+
+### xscale()
+
+> **xscale**(`scale`, `linthresh?`): `this`
+
+Defined in: [index.ts:1464](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1464)
+
+#### Parameters
+
+##### scale
+
+`"linear"` \| `"log"` \| `"symlog"`
+
+##### linthresh?
+
+`number`
 
 #### Returns
 
@@ -678,7 +1112,7 @@ Defined in: [index.ts:1041](https://github.com/Ameyanagi/ruviz/blob/main/package
 
 > **ylabel**(`label`): `this`
 
-Defined in: [index.ts:1050](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1050)
+Defined in: [index.ts:1394](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1394)
 
 #### Parameters
 
@@ -692,11 +1126,55 @@ Defined in: [index.ts:1050](https://github.com/Ameyanagi/ruviz/blob/main/package
 
 ***
 
+### ylim()
+
+> **ylim**(`minimum`, `maximum`): `this`
+
+Defined in: [index.ts:1435](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1435)
+
+#### Parameters
+
+##### minimum
+
+`number`
+
+##### maximum
+
+`number`
+
+#### Returns
+
+`this`
+
+***
+
+### yscale()
+
+> **yscale**(`scale`, `linthresh?`): `this`
+
+Defined in: [index.ts:1474](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1474)
+
+#### Parameters
+
+##### scale
+
+`"linear"` \| `"log"` \| `"symlog"`
+
+##### linthresh?
+
+`number`
+
+#### Returns
+
+`this`
+
+***
+
 ### fromSnapshot()
 
 > `static` **fromSnapshot**(`snapshot`): `PlotBuilder`
 
-Defined in: [index.ts:836](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L836)
+Defined in: [index.ts:1037](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L1037)
 
 #### Parameters
 

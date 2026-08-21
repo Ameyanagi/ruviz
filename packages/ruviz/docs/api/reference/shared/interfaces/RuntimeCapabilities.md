@@ -6,7 +6,7 @@
 
 # Interface: RuntimeCapabilities
 
-Defined in: [shared.ts:7](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L7)
+Defined in: [shared.ts:124](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L124)
 
 ## Properties
 
@@ -14,7 +14,7 @@ Defined in: [shared.ts:7](https://github.com/Ameyanagi/ruviz/blob/main/packages/
 
 > **defaultBrowserFontRegistered**: `boolean`
 
-Defined in: [shared.ts:12](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L12)
+Defined in: [shared.ts:129](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L129)
 
 ***
 
@@ -22,7 +22,7 @@ Defined in: [shared.ts:12](https://github.com/Ameyanagi/ruviz/blob/main/packages
 
 > **gpuCanvasFastPathAvailable**: `boolean`
 
-Defined in: [shared.ts:13](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L13)
+Defined in: [shared.ts:130](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L130)
 
 ***
 
@@ -30,7 +30,7 @@ Defined in: [shared.ts:13](https://github.com/Ameyanagi/ruviz/blob/main/packages
 
 > **offscreenCanvasSupported**: `boolean`
 
-Defined in: [shared.ts:8](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L8)
+Defined in: [shared.ts:125](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L125)
 
 ***
 
@@ -38,7 +38,7 @@ Defined in: [shared.ts:8](https://github.com/Ameyanagi/ruviz/blob/main/packages/
 
 > **touchInputSupported**: `boolean`
 
-Defined in: [shared.ts:11](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L11)
+Defined in: [shared.ts:128](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L128)
 
 ***
 
@@ -46,7 +46,7 @@ Defined in: [shared.ts:11](https://github.com/Ameyanagi/ruviz/blob/main/packages
 
 > **webgpuSupported**: `boolean`
 
-Defined in: [shared.ts:10](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L10)
+Defined in: [shared.ts:127](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L127)
 
 ***
 
@@ -54,4 +54,4 @@ Defined in: [shared.ts:10](https://github.com/Ameyanagi/ruviz/blob/main/packages
 
 > **workerSupported**: `boolean`
 
-Defined in: [shared.ts:9](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L9)
+Defined in: [shared.ts:126](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/shared.ts#L126)
