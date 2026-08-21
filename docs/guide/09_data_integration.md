@@ -64,7 +64,7 @@ Plot::new()
 
 ```toml
 [dependencies]
-ruviz = { version = "0.11.0", features = ["ndarray_support"] }
+ruviz = { version = "0.12.0", features = ["ndarray_support"] }
 ndarray = "0.17"
 ```
 
@@ -183,7 +183,7 @@ Plot::new()
 
 ```toml
 [dependencies]
-ruviz = { version = "0.11.0", features = ["nalgebra_support"] }
+ruviz = { version = "0.12.0", features = ["nalgebra_support"] }
 nalgebra = "0.32"
 ```
 
@@ -231,7 +231,7 @@ synthetic absorbed-energy style example.
 
 ```toml
 [dependencies]
-ruviz = { version = "0.11.0", features = ["polars_support"] }
+ruviz = { version = "0.12.0", features = ["polars_support"] }
 polars = { version = "0.50", features = ["lazy", "rolling_window"] }
 ```
 
@@ -491,7 +491,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
 ```toml
 [dependencies]
-ruviz = "0.11.0"
+ruviz = "0.12.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 ```
