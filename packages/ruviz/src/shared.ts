@@ -99,6 +99,10 @@ export interface SeriesStyleSnapshot {
   bandwidth?: number;
   levels?: number;
   orientation?: BarOrientationName;
+  /** Box plots only: draw a diamond at the sample mean. */
+  showMean?: boolean;
+  /** Box plots only: box width as a fraction of its category slot (0..=1). */
+  widthRatio?: number;
 }
 
 /** Styling every series kind shares. */
@@ -111,7 +115,7 @@ export type LineSeriesStyle = StrokedSeriesStyle &
 export type ScatterSeriesStyle = CommonSeriesStyle &
   Pick<SeriesStyleSnapshot, "marker" | "markerSize" | "density">;
 export type BoxplotSeriesStyle = StrokedSeriesStyle &
-  Pick<SeriesStyleSnapshot, "linestyle" | "orientation">;
+  Pick<SeriesStyleSnapshot, "linestyle" | "orientation" | "showMean" | "widthRatio">;
 export type HistogramSeriesStyle = CommonSeriesStyle &
   Pick<SeriesStyleSnapshot, "bins" | "density">;
 export type KdeSeriesStyle = StrokedSeriesStyle & Pick<SeriesStyleSnapshot, "bandwidth">;

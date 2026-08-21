@@ -814,10 +814,21 @@ impl PlotSeries {
                 },
                 crate::plots::traits::LegendKey::None => return None,
             },
-            // These patches are drawn flat today, so their keys are flat too.
-            SeriesType::Violin { .. } | SeriesType::Boxen { .. } | SeriesType::Pie { .. } => {
-                LegendItemType::Bar { edge: None }
-            }
+            // A violin body is outlined in its configured line colour — or the
+            // fill darkened, the shared edge rule — so its key is too.
+            SeriesType::Violin { data } => LegendItemType::Bar {
+                edge: (data.config.line_width > 0.0).then(|| {
+                    (
+                        crate::core::style_utils::StyleResolver::new(theme)
+                            .edge_color(color, data.config.line_color),
+                        data.config.line_width,
+                    )
+                }),
+            },
+            // Flat keys that tell the truth: a boxen's outline is stroked in
+            // the same colour as its base fill, so an edge on the swatch would
+            // be invisible, and pie wedges carry no edge at all.
+            SeriesType::Boxen { .. } | SeriesType::Pie { .. } => LegendItemType::Bar { edge: None },
             SeriesType::Contour { .. } => return None,
             SeriesType::Radar { .. } => LegendItemType::Area {
                 edge_color: Some(color),

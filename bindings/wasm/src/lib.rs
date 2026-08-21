@@ -438,6 +438,8 @@ mod wasm {
         bandwidth: Option<f64>,
         levels: Option<usize>,
         orientation: Option<BarOrientation>,
+        show_mean: Option<bool>,
+        width_ratio: Option<f32>,
     }
 
     const MARKER_STYLES: [(&str, MarkerStyle); 12] = [
@@ -683,7 +685,7 @@ mod wasm {
     }
 
     /// Every style key any plot kind understands, in snapshot spelling.
-    const STYLE_KEYS: [&str; 12] = [
+    const STYLE_KEYS: [&str; 14] = [
         "label",
         "color",
         "alpha",
@@ -696,6 +698,8 @@ mod wasm {
         "bandwidth",
         "levels",
         "orientation",
+        "showMean",
+        "widthRatio",
     ];
 
     /// The style keys each plot kind's core builder honors, mirroring the Python
@@ -722,6 +726,8 @@ mod wasm {
             "width",
             "linestyle",
             "orientation",
+            "showMean",
+            "widthRatio",
         ];
         pub(super) const KDE: &[&str] = &["label", "color", "alpha", "width", "bandwidth"];
         pub(super) const CONTOUR: &[&str] = &["alpha", "width", "levels"];
@@ -811,6 +817,13 @@ mod wasm {
                     }
                     "bins" => parsed.bins = Some(count_at_least(&value, "bins", 1)?),
                     "density" => parsed.density = Some(style_flag(&value, "density")?),
+                    "showMean" => parsed.show_mean = Some(style_flag(&value, "showMean")?),
+                    "widthRatio" => {
+                        // The builder clamps to 0..=1; the binding only insists
+                        // the number is finite and positive, like every other
+                        // ratio knob.
+                        parsed.width_ratio = Some(finite_positive(&value, "widthRatio")? as f32);
+                    }
                     "bandwidth" => {
                         // Bandwidth stays f64 end to end, so it takes the
                         // unbounded validator: the f32 cap guards only the
@@ -841,19 +854,27 @@ mod wasm {
     }
 
     /// Apply the styling every core `PlotBuilder<C>` shares.
-    /// Turn a box plot builder the way its parsed style asks.
+    /// Apply the box-plot-specific style keys the shared machinery parsed.
     ///
-    /// The style machinery parses every orientation as `BarOrientation`; a box
-    /// plot spells the same two directions through its own methods.
-    fn apply_box_orientation(
+    /// Orientation arrives as `BarOrientation` — a box plot spells the same
+    /// two directions through its own methods — and `showMean`/`widthRatio`
+    /// map onto the builder setters of the same names.
+    fn apply_box_style(
         builder: PlotBuilder<ruviz::plots::boxplot::BoxPlotConfig>,
-        orientation: Option<BarOrientation>,
+        style: &SeriesStyle,
     ) -> PlotBuilder<ruviz::plots::boxplot::BoxPlotConfig> {
-        match orientation {
+        let mut builder = match style.orientation {
             Some(BarOrientation::Horizontal) => builder.horizontal(),
             Some(BarOrientation::Vertical) => builder.vertical(),
             None => builder,
+        };
+        if let Some(show) = style.show_mean {
+            builder = builder.show_mean(show);
         }
+        if let Some(ratio) = style.width_ratio {
+            builder = builder.width_ratio(ratio);
+        }
+        builder
     }
 
     fn styled<C: PlotConfig>(mut builder: PlotBuilder<C>, style: &SeriesStyle) -> PlotBuilder<C> {
@@ -1102,7 +1123,7 @@ mod wasm {
         pub fn boxplot(&mut self, data: Vec<f64>, style: Option<Object>) -> Result<(), JsValue> {
             let style = SeriesStyle::from_js(style, "boxplot", style_keys::BOXPLOT)?;
             self.replace_with_series(|plot| {
-                let builder = apply_box_orientation(plot.boxplot(&data), style.orientation);
+                let builder = apply_box_style(plot.boxplot(&data), &style);
                 styled(builder, &style).into_plot()
             });
             Ok(())
@@ -1116,8 +1137,7 @@ mod wasm {
             let style = SeriesStyle::from_js(style, "boxplot", style_keys::BOXPLOT)?;
             let data_source = data.inner.clone();
             self.replace_with_series(|plot| {
-                let builder =
-                    apply_box_orientation(plot.boxplot_source(data_source), style.orientation);
+                let builder = apply_box_style(plot.boxplot_source(data_source), &style);
                 styled(builder, &style).into_plot()
             });
             Ok(())

@@ -24,6 +24,14 @@ All notable changes to this project will be documented in this file.
   and stacked bar builders gain the `.vertical()` their `.horizontal()` was
   missing, so switching back is written the same way everywhere.
 
+- A violin's legend key carries the outline its body is drawn with —
+  the configured line colour, or the fill darkened through the shared edge
+  rule — instead of the flat swatch it showed. Boxen and pie keys stay flat
+  deliberately: a boxen outline matches its base fill and pie wedges carry
+  no edge, so a flat key already tells the truth there.
+- Python's `boxplot()` gains `show_mean=` and `width_ratio=`, and the
+  TypeScript SDK the matching `showMean`/`widthRatio` style keys, carried
+  through snapshots, replay and the notebook widget like every other style.
 - The bindings speak the new knobs. Python's `boxplot()` accepts
   `orientation="horizontal"` like `bar()` does, `Plot.invert_x()` /
   `invert_y()` land in Python with snapshot round-tripping, and the

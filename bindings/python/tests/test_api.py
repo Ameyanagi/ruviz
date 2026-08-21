@@ -807,6 +807,8 @@ STYLE_VALUES = {
     "bandwidth": 0.9,
     "levels": 9,
     "orientation": "horizontal",
+    "show_mean": True,
+    "width_ratio": 0.4,
 }
 
 STYLE_CASES = [

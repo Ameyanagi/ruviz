@@ -624,12 +624,17 @@ function normalizeSeriesStyle<T extends SeriesStyleSnapshot>(style: T | undefine
     marker,
     linestyle,
     orientation,
+    showMean,
+    widthRatio,
   } = style as SeriesStyleSnapshot;
   if (alpha !== undefined && !(alpha >= 0 && alpha <= 1)) {
     throw new RangeError("alpha must be between 0.0 and 1.0");
   }
   if (density !== undefined && typeof density !== "boolean") {
     throw new TypeError("density must be a bool");
+  }
+  if (showMean !== undefined && typeof showMean !== "boolean") {
+    throw new TypeError("showMean must be a bool");
   }
 
   if (color !== undefined) {
@@ -649,6 +654,7 @@ function normalizeSeriesStyle<T extends SeriesStyleSnapshot>(style: T | undefine
     ["width", width],
     ["markerSize", markerSize],
     ["bandwidth", bandwidth],
+    ["widthRatio", widthRatio],
   ] as const) {
     if (value !== undefined && !(Number.isFinite(value) && value > 0)) {
       throw new RangeError(`${name} must be a finite positive number`);

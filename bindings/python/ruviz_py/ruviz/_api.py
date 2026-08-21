@@ -487,10 +487,16 @@ _STYLE_OPTIONS: dict[str, Callable[[Any], Any]] = {
     "bandwidth": _style_positive("bandwidth"),
     "levels": _style_count("levels", 2),
     "orientation": _style_choice("orientation", frozenset({"vertical", "horizontal"})),
+    "showMean": _style_flag("showMean"),
+    "widthRatio": _style_positive("widthRatio"),
 }
 
 #: Snapshot style key -> Python keyword, for the keys whose spellings differ.
-_STYLE_KEYWORDS = {"markerSize": "marker_size"}
+_STYLE_KEYWORDS = {
+    "markerSize": "marker_size",
+    "showMean": "show_mean",
+    "widthRatio": "width_ratio",
+}
 
 
 @dataclass(frozen=True)
@@ -542,7 +548,7 @@ _SERIES_KINDS: dict[str, _SeriesKind] = {
     "boxplot": _SeriesKind(
         ("data",),
         frozenset({"data"}),
-        style=_LINE_STYLE | {"linestyle", "orientation"},
+        style=_LINE_STYLE | {"linestyle", "orientation", "showMean", "widthRatio"},
     ),
     "heatmap": _SeriesKind(
         native_args=lambda series: [
@@ -1809,6 +1815,8 @@ class Plot:
         width: float | None = None,
         linestyle: LineStyleName | None = None,
         orientation: OrientationName = "vertical",
+        show_mean: bool | None = None,
+        width_ratio: float | None = None,
     ) -> "Plot":
         """Add a boxplot from one numeric sample vector, vertical or horizontal."""
         series_data, native_data, observable = self._build_native_numeric_source(
@@ -1828,6 +1836,8 @@ class Plot:
                 "orientation": (
                     normalized_orientation if normalized_orientation != "vertical" else None
                 ),
+                "showMean": show_mean,
+                "widthRatio": width_ratio,
             },
         )
         self._apply_native_series(self._native_plot, series, native_sources={"data": native_data})
