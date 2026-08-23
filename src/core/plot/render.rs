@@ -2197,12 +2197,28 @@ impl Plot {
         canvas_size: (u32, u32),
         dpi: f32,
     ) -> Result<ResolvedTitleLayout> {
+        let adaptive_margins = matches!(
+            self.display.config.margins,
+            MarginConfig::Auto { .. } | MarginConfig::ContentDriven { .. }
+        );
+        let omitted_title = || ResolvedTitleLayout {
+            text: String::new(),
+            font_size_px: 0.0,
+            width: 0.0,
+            height: 0.0,
+        };
         if !max_width.is_finite() || max_width <= 0.0 {
+            if adaptive_margins {
+                return Ok(omitted_title());
+            }
             return Err(title_layout_error(format!(
                 "axes provide no horizontal room (width={max_width:.2}px)"
             )));
         }
         if !max_height.is_finite() || max_height <= 0.0 {
+            if adaptive_margins {
+                return Ok(omitted_title());
+            }
             return Err(title_layout_error(format!(
                 "configured top margin provides no vertical room (height={max_height:.2}px)"
             )));
@@ -2265,6 +2281,9 @@ impl Plot {
         let text = cap_wrapped_title(title, max_width, &mut measure)?;
         let (width, height) = renderer.measure_text_with_weight(&text, minimum_size_px, weight)?;
         if width > max_width + 0.01 || height > max_height + 0.01 {
+            if adaptive_margins {
+                return Ok(omitted_title());
+            }
             return Err(title_layout_error(format!(
                 "minimum {:.2}pt title needs {:.2}×{:.2}px but only {:.2}×{:.2}px is available",
                 minimum_size_pt, width, height, max_width, max_height

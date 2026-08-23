@@ -827,7 +827,7 @@ where
 
     /// Set the 2D plot title.
     ///
-    /// This method forwards to the inner [`Plot`], including its Unicode-aware
+    /// This method forwards to the inner [`Plot`](super::Plot), including its Unicode-aware
     /// wrapping and minimum-size fitting behavior.
     pub fn title(mut self, title: impl Into<super::PlotText>) -> Self {
         self.plot = self.plot.title(title);

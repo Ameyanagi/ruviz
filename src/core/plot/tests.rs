@@ -6599,6 +6599,30 @@ fn physically_impossible_title_returns_a_layout_error() {
 }
 
 #[test]
+fn tiny_content_driven_canvas_omits_title_instead_of_failing() {
+    let plot = Plot::new()
+        .line(&[0.0, 1.0], &[0.0, 1.0])
+        .title("responsive title")
+        .end_series()
+        .set_output_pixels(80, 48);
+
+    let layout = compute_render_layout(&plot);
+    let resolved = layout.resolved_title.as_ref().expect("resolved title");
+    assert!(resolved.text.is_empty());
+    assert_eq!((resolved.width, resolved.height), (0.0, 0.0));
+
+    let frame = plot
+        .prepare_interactive()
+        .render_to_image(ImageTarget {
+            size_px: (80, 48),
+            scale_factor: 1.0,
+            time_seconds: 0.0,
+        })
+        .expect("tiny responsive plot");
+    assert_eq!((frame.image.width, frame.image.height), (80, 48));
+}
+
+#[test]
 fn plain_svg_multiline_title_uses_weighted_measurement_and_reserves_each_line() {
     let build = |title: &str| {
         let config = PlotConfig::builder()

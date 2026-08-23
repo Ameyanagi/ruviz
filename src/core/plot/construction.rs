@@ -481,7 +481,9 @@ impl Plot {
     /// 0.25-point steps to the larger of 6 points or 70% of the configured
     /// title size, then ellipsizes the second automatic line. Fixed and
     /// proportional margins remain authoritative, so rendering returns a
-    /// layout error if even the minimum title cannot fit.
+    /// layout error if even the minimum title cannot fit. Auto and
+    /// content-driven margins omit the title on transient canvases too small
+    /// to hold readable text, allowing responsive widgets to keep rendering.
     ///
     /// # Example
     ///
