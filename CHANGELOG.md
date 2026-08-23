@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Fixed
+
+- Long 2D plot titles now wrap at Unicode line-break opportunities and shrink
+  only when two automatic lines do not fit. Authored newlines remain hard
+  breaks, the configured title size remains the preferred maximum, and PNG
+  and SVG rendering share the same resolved text layout (#175).
+- `LegendPosition::Best` now scores a bounded 64×64 screen-space mask of the
+  visible line, marker, bar, and error-bar geometry. Dense sampling no longer
+  changes the score, unlabeled visible series still reserve space, hidden
+  series do not, and PNG and SVG resolve the same inside placement (#176).
+
 ## [0.12.0] - 2026-08-22
 
 ### Added

@@ -6411,6 +6411,218 @@ fn best_legend_avoids_the_data_on_both_backends() {
 }
 
 #[test]
+fn best_legend_does_not_intersect_the_tallest_cjk_bar() {
+    let categories = ["一月", "二月", "三月", "四月", "五月", "六月"];
+    let values = vec![28.0, 45.0, 38.0, 52.0, 47.0, 63.0];
+    let plot: Plot = Plot::new()
+        .size_px(640, 480)
+        .title("月度销售数据")
+        .xlabel("月份")
+        .ylabel("销售额 (万元)")
+        .bar(&categories, &values)
+        .label("2024年")
+        .legend_best()
+        .into();
+    let frame = plot.resolve_frame(0.0).expect("resolved CJK frame");
+    let shell = plot.resolved_style_shell(&frame.style);
+    let (x_min, x_max, y_min, y_max) = shell
+        .effective_main_panel_bounds_from_resolved(&shell.series_mgr.series, &frame.series)
+        .expect("bar bounds");
+    let layout = compute_render_layout(&shell);
+    let plot_area = Plot::plot_area_from_layout(&layout).expect("plot area");
+    let occupancy = shell.legend_occupancy(
+        &shell.series_mgr.series,
+        &frame.series,
+        plot_area,
+        (x_min, x_max, y_min, y_max),
+    );
+    let mut renderer = crate::render::SkiaRenderer::with_font_family(
+        shell.display.dimensions.0,
+        shell.display.dimensions.1,
+        shell.display.theme.clone(),
+        shell.display.config.typography.family.clone(),
+    )
+    .expect("measurement renderer");
+    renderer.set_render_scale(shell.render_scale());
+    renderer.set_text_engine_mode(shell.display.text_engine);
+    let legend = renderer
+        .resolve_legend_layout(
+            &shell.collect_legend_items(),
+            &frame.style.legend,
+            (
+                plot_area.left(),
+                plot_area.top(),
+                plot_area.right(),
+                plot_area.bottom(),
+            ),
+            Some(&occupancy),
+        )
+        .expect("resolved best legend");
+
+    let config = match &shell.series_mgr.series[0].series_type {
+        SeriesType::Bar { config, .. } => config,
+        _ => panic!("expected bar series"),
+    };
+    let (bar_x, bar_y, bar_width, bar_height) = super::series_internal::bar_pixel_rect(
+        5,
+        values[5],
+        config,
+        plot_area,
+        x_min,
+        x_max,
+        y_min,
+        y_max,
+        &shell.layout.x_scale,
+        &shell.layout.y_scale,
+    );
+    let (left, top, right, bottom) = legend.bounds();
+    let overlap_width = (right.min(bar_x + bar_width) - left.max(bar_x)).max(0.0);
+    let overlap_height = (bottom.min(bar_y + bar_height) - top.max(bar_y)).max(0.0);
+
+    assert_ne!(legend.position, LegendPosition::UpperRight);
+    assert_eq!(
+        overlap_width * overlap_height,
+        0.0,
+        "the chosen legend rectangle intersects the June bar"
+    );
+    plot.render().expect("CJK raster render");
+    plot.render_to_svg().expect("CJK SVG render");
+}
+
+#[test]
+fn best_legend_avoids_marker_and_attached_error_bar_footprints() {
+    let build = |position: LegendPosition| -> Plot {
+        let plot = Plot::new()
+            .size_px(640, 480)
+            .xlim(0.0, 1.0)
+            .ylim(0.0, 1.0)
+            .scatter(&[0.82], &[0.5])
+            .marker_size(18.0)
+            .with_yerr(&[0.48])
+            .label("measurement")
+            .end_series();
+        match position {
+            LegendPosition::Best => plot.legend_best(),
+            explicit => plot.legend_position(explicit),
+        }
+    };
+
+    let best = build(LegendPosition::Best).render().expect("best raster");
+    let upper_left = build(LegendPosition::UpperLeft)
+        .render()
+        .expect("upper-left raster");
+    let upper_right = build(LegendPosition::UpperRight)
+        .render()
+        .expect("upper-right raster");
+    assert_eq!(differing_pixel_count(&best, &upper_left), 0);
+    assert!(differing_pixel_count(&best, &upper_right) > 0);
+}
+
+#[test]
+fn long_title_is_wrapped_and_kept_inside_the_axes_width() {
+    let plot = Plot::new()
+        .line(&[0.0, 1.0, 2.0, 3.0, 4.0], &[0.0, 1.0, 4.0, 9.0, 16.0])
+        .title("This is a Very Long Title That Tests Text Wrapping and Layout Behavior")
+        .xlabel("X-axis with longer label")
+        .ylabel("Y-axis with longer label")
+        .end_series()
+        .set_output_pixels(640, 480);
+
+    let layout = compute_render_layout(&plot);
+    let title = layout.resolved_title.as_ref().expect("resolved title");
+    let position = layout.title_pos.as_ref().expect("title position");
+    assert_eq!(title.line_count(), 2, "the clipped fixture should wrap");
+    assert!(title.width <= layout.plot_area.width() + 0.01);
+    assert!(position.x - title.width / 2.0 >= layout.plot_area.left - 0.01);
+    assert!(position.x + title.width / 2.0 <= layout.plot_area.right + 0.01);
+    assert!(position.y + title.height <= layout.plot_area.top + 0.01);
+
+    let svg = plot.render_to_svg().expect("wrapped SVG");
+    let title_element = svg
+        .lines()
+        .find(|line| line.contains("This is a Very Long Title"))
+        .expect("wrapped title element");
+    assert_eq!(title_element.matches("<tspan ").count(), 2);
+}
+
+#[test]
+fn unbreakable_title_reaches_the_floor_then_ellipsizes() {
+    let title = "unbreakable".repeat(40);
+    let plot = Plot::new()
+        .line(&[0.0, 1.0], &[0.0, 1.0])
+        .title(title)
+        .end_series()
+        .set_output_pixels(240, 180);
+    let layout = compute_render_layout(&plot);
+    let resolved = layout.resolved_title.as_ref().expect("resolved title");
+    let minimum_pt = plot.display.config.typography.title_size() * 0.70;
+    let minimum_px = plot.render_scale().points_to_pixels(minimum_pt.max(6.0));
+
+    assert_eq!(resolved.line_count(), 2);
+    assert!(resolved.text.ends_with('…'));
+    assert!((resolved.font_size_px - minimum_px).abs() <= 0.01);
+    assert!(resolved.width <= layout.plot_area.width() + 0.01);
+}
+
+#[test]
+fn explicit_title_breaks_are_preserved_beyond_the_automatic_cap() {
+    let plot = Plot::new()
+        .line(&[0.0, 1.0], &[0.0, 1.0])
+        .title("alpha\nbeta\ngamma")
+        .end_series()
+        .set_output_pixels(420, 320);
+    let layout = compute_render_layout(&plot);
+    let resolved = layout.resolved_title.as_ref().expect("resolved title");
+
+    assert_eq!(resolved.text, "alpha\nbeta\ngamma");
+    assert_eq!(resolved.line_count(), 3);
+    assert!(!resolved.text.contains('…'));
+}
+
+#[test]
+fn physically_impossible_title_returns_a_layout_error() {
+    let config = PlotConfig::builder()
+        .margins(MarginConfig::fixed(0.4, 0.4, 0.05, 0.4))
+        .build();
+    let error = Plot::new()
+        .plot_config(config)
+        .line(&[0.0, 1.0], &[0.0, 1.0])
+        .title("title")
+        .end_series()
+        .set_output_pixels(120, 120)
+        .render()
+        .expect_err("the fixed top margin cannot contain a readable title");
+    assert!(
+        error.to_string().contains("Cannot fit plot title"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn tiny_content_driven_canvas_omits_title_instead_of_failing() {
+    let plot = Plot::new()
+        .line(&[0.0, 1.0], &[0.0, 1.0])
+        .title("responsive title")
+        .end_series()
+        .set_output_pixels(80, 48);
+
+    let layout = compute_render_layout(&plot);
+    let resolved = layout.resolved_title.as_ref().expect("resolved title");
+    assert!(resolved.text.is_empty());
+    assert_eq!((resolved.width, resolved.height), (0.0, 0.0));
+
+    let frame = plot
+        .prepare_interactive()
+        .render_to_image(ImageTarget {
+            size_px: (80, 48),
+            scale_factor: 1.0,
+            time_seconds: 0.0,
+        })
+        .expect("tiny responsive plot");
+    assert_eq!((frame.image.width, frame.image.height), (80, 48));
+}
+
+#[test]
 fn plain_svg_multiline_title_uses_weighted_measurement_and_reserves_each_line() {
     let build = |title: &str| {
         let config = PlotConfig::builder()
@@ -6530,7 +6742,11 @@ fn test_svg_text_annotation_uses_resolved_typography_and_full_text_style() {
         .expect("annotation text should be present");
     let title_line = svg
         .lines()
-        .find(|line| line.contains(">Weighted title</text>"))
+        .find(|line| {
+            line.contains("Weighted")
+                && line.contains("title")
+                && line.contains(r#"font-weight="700""#)
+        })
         .expect("title text should be present");
     assert!(annotation_line.contains(r#"font-weight="400""#));
     assert!(title_line.contains(r#"font-weight="700""#));

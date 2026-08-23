@@ -475,6 +475,16 @@ impl Plot {
 
     /// Set the plot title
     ///
+    /// Long 2D titles wrap at Unicode line-break opportunities within the axes
+    /// width. Automatic wrapping uses at most two lines per authored paragraph;
+    /// explicit newlines remain hard breaks. When needed, the title shrinks in
+    /// 0.25-point steps to the larger of 6 points or 70% of the configured
+    /// title size, then ellipsizes the second automatic line. Fixed and
+    /// proportional margins remain authoritative, so rendering returns a
+    /// layout error if even the minimum title cannot fit. Auto and
+    /// content-driven margins omit the title on transient canvases too small
+    /// to hold readable text, allowing responsive widgets to keep rendering.
+    ///
     /// # Example
     ///
     /// ```rust,no_run

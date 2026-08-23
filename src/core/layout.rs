@@ -184,6 +184,7 @@ pub struct MeasuredDimensions {
 pub(crate) struct LayoutMeasurements {
     pub(crate) dimensions: MeasuredDimensions,
     pub(crate) legend: Option<(f32, f32)>,
+    pub(crate) resolved_title: Option<ResolvedTitleLayout>,
 }
 
 impl Deref for LayoutMeasurements {
@@ -205,6 +206,26 @@ impl DerefMut for LayoutMeasurements {
 pub(crate) struct ResolvedLayout {
     pub(crate) layout: PlotLayout,
     pub(crate) legend_rect: Option<LayoutRect>,
+    pub(crate) resolved_title: Option<ResolvedTitleLayout>,
+}
+
+/// The title text and metrics selected by the shared fitting pass.
+///
+/// Raster and vector backends consume this value instead of independently
+/// wrapping or resizing the caller's string, so a backend cannot choose a
+/// different line break or silently put the same title outside the axes.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct ResolvedTitleLayout {
+    pub(crate) text: String,
+    pub(crate) font_size_px: f32,
+    pub(crate) width: f32,
+    pub(crate) height: f32,
+}
+
+impl ResolvedTitleLayout {
+    pub(crate) fn line_count(&self) -> usize {
+        self.text.split('\n').count().max(1)
+    }
 }
 
 impl Deref for ResolvedLayout {

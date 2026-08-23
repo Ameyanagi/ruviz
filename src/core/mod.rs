@@ -44,7 +44,7 @@ pub use layout::{
     ComputedMarginsPixels, LayoutCalculator, LayoutConfig, LayoutRect, MeasuredDimensions,
     PlotContent, PlotLayout, TextPosition,
 };
-pub(crate) use layout::{LayoutMeasurements, ResolvedLayout};
+pub(crate) use layout::{LayoutMeasurements, ResolvedLayout, ResolvedTitleLayout};
 #[allow(deprecated)]
 pub use legend::LegendFrame; // Deprecated alias for backward compatibility
 pub use legend::{

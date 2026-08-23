@@ -16,7 +16,8 @@ impl Plot {
     /// Configure legend with new position system
     ///
     /// Uses the matplotlib-compatible position codes including:
-    /// - `LegendPosition::Best` - automatic position to minimize data overlap
+    /// - `LegendPosition::Best` - automatic inside position minimizing overlap
+    ///   with visible lines, markers, bars, and error bars
     /// - `LegendPosition::UpperRight`, `UpperLeft`, etc. - standard positions
     /// - `LegendPosition::OutsideRight`, etc. - outside plot positions
     ///
@@ -47,8 +48,10 @@ impl Plot {
 
     /// Enable legend with "best" automatic positioning
     ///
-    /// This is equivalent to matplotlib's `plt.legend()`. The legend will be placed
-    /// in the position that minimizes overlap with data points.
+    /// This is equivalent to matplotlib's `plt.legend()`. The legend stays
+    /// inside the axes and chooses the position with the least overlap against
+    /// a bounded screen-space mask of visible lines, markers, bars, and error
+    /// bars. Unlabeled visible series participate; hidden series do not.
     ///
     /// Note: Like matplotlib, legends are NOT shown unless you explicitly call
     /// `legend_best()` or `legend_position()`, even if series have labels.

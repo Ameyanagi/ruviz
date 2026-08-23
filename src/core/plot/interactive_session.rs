@@ -4795,7 +4795,7 @@ fn compute_plot_layout_from_frame(
         visible.y_min,
         visible.y_max,
     );
-    let measured_dimensions = layout_plot.measure_layout_text_with_ticks(
+    let mut measured_dimensions = layout_plot.measure_layout_text_with_ticks(
         &renderer,
         &content,
         dpi,
@@ -4809,6 +4809,13 @@ fn compute_plot_layout_from_frame(
             &layout_plot.layout.y_scale,
             layout_plot.layout.scientific_notation,
         ),
+    )?;
+    layout_plot.resolve_title_layout_measurements(
+        &renderer,
+        size_px,
+        &content,
+        dpi,
+        &mut measured_dimensions,
     )?;
     let layout = layout_plot.compute_layout_from_measurements(
         size_px,

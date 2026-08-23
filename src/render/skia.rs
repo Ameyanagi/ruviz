@@ -2819,6 +2819,30 @@ impl SkiaRenderer {
         })
     }
 
+    /// Resolve an unreserved legend with this renderer's selected text engine.
+    ///
+    /// The plot pipeline calls this before raster or SVG drawing and passes the
+    /// resulting rectangle to the backend, so `Best` is one shared layout
+    /// decision rather than a backend-local guess.
+    pub(crate) fn resolve_legend_layout(
+        &self,
+        items: &[LegendItem],
+        legend: &Legend,
+        plot_area: (f32, f32, f32, f32),
+        occupancy: Option<&LegendOccupancy>,
+    ) -> Result<LegendLayout> {
+        let legend = legend.scaled_for_render(self.render_scale);
+        self.legend_layout(
+            items,
+            &legend,
+            plot_area,
+            LegendPlacement {
+                reserved: None,
+                occupancy,
+            },
+        )
+    }
+
     /// The room this legend needs, measured exactly as it will be drawn.
     ///
     /// The figure-level margin reservation calls this; it shares
