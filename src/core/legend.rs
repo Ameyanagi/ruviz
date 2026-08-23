@@ -1080,6 +1080,10 @@ fn calculate_bbox_overlap(bbox1: (f32, f32, f32, f32), bbox2: (f32, f32, f32, f3
 /// precision for ordinary line widths, markers, and categorical bars.
 pub const LEGEND_OCCUPANCY_RESOLUTION: usize = 64;
 
+/// Walking a clipped segment at half-cell intervals never needs more samples
+/// than twice the mask resolution along its longest axis.
+const MAX_LEGEND_SEGMENT_STEPS: usize = LEGEND_OCCUPANCY_RESOLUTION * 2;
+
 /// Bounded map of where rendered data geometry is, used to place a `Best`
 /// legend.
 ///
@@ -1141,6 +1145,60 @@ pub(crate) struct LegendOccupancyBuilder {
     occupied_count: usize,
 }
 
+/// Clip a segment to an axis-aligned rectangle with Liang-Barsky clipping.
+///
+/// Calculations use `f64` so large, finite projected coordinates can be
+/// clipped before their distance is used to size the occupancy walk.
+fn clip_segment_to_rect(
+    x1: f32,
+    y1: f32,
+    x2: f32,
+    y2: f32,
+    rect: (f64, f64, f64, f64),
+) -> Option<(f64, f64, f64, f64)> {
+    let (left, top, right, bottom) = rect;
+    let x1 = f64::from(x1);
+    let y1 = f64::from(y1);
+    let dx = f64::from(x2) - x1;
+    let dy = f64::from(y2) - y1;
+    let mut start = 0.0_f64;
+    let mut end = 1.0_f64;
+
+    for (direction, distance) in [
+        (-dx, x1 - left),
+        (dx, right - x1),
+        (-dy, y1 - top),
+        (dy, bottom - y1),
+    ] {
+        if direction == 0.0 {
+            if distance < 0.0 {
+                return None;
+            }
+            continue;
+        }
+
+        let ratio = distance / direction;
+        if direction < 0.0 {
+            if ratio > end {
+                return None;
+            }
+            start = start.max(ratio);
+        } else {
+            if ratio < start {
+                return None;
+            }
+            end = end.min(ratio);
+        }
+    }
+
+    Some((
+        x1 + dx * start,
+        y1 + dy * start,
+        x1 + dx * end,
+        y1 + dy * end,
+    ))
+}
+
 impl LegendOccupancyBuilder {
     pub(crate) fn new(plot_area: (f32, f32, f32, f32)) -> Option<Self> {
         let (left, top, right, bottom) = plot_area;
@@ -1150,6 +1208,8 @@ impl LegendOccupancyBuilder {
             || !top.is_finite()
             || !right.is_finite()
             || !bottom.is_finite()
+            || !width.is_finite()
+            || !height.is_finite()
             || width <= 0.0
             || height <= 0.0
         {
@@ -1225,12 +1285,31 @@ impl LegendOccupancyBuilder {
             return;
         }
         let half_width = line_width.max(1.0) * 0.5;
-        let cell_span = ((x2 - x1).abs() / self.cell_width).max((y2 - y1).abs() / self.cell_height);
-        let steps = (cell_span * 2.0).ceil().max(1.0) as usize;
+        let (plot_left, plot_top, plot_right, plot_bottom) = self.plot_area;
+        let padding = f64::from(half_width);
+        let Some((x1, y1, x2, y2)) = clip_segment_to_rect(
+            x1,
+            y1,
+            x2,
+            y2,
+            (
+                f64::from(plot_left) - padding,
+                f64::from(plot_top) - padding,
+                f64::from(plot_right) + padding,
+                f64::from(plot_bottom) + padding,
+            ),
+        ) else {
+            return;
+        };
+        let cell_span = ((x2 - x1).abs() / f64::from(self.cell_width))
+            .max((y2 - y1).abs() / f64::from(self.cell_height));
+        let steps = (cell_span * 2.0)
+            .ceil()
+            .clamp(1.0, MAX_LEGEND_SEGMENT_STEPS as f64) as usize;
         for step in 0..=steps {
-            let t = step as f32 / steps as f32;
-            let x = x1 + (x2 - x1) * t;
-            let y = y1 + (y2 - y1) * t;
+            let t = step as f64 / steps as f64;
+            let x = (x1 + (x2 - x1) * t) as f32;
+            let y = (y1 + (y2 - y1) * t) as f32;
             self.mark_rect(
                 x - half_width,
                 y - half_width,
@@ -2019,6 +2098,36 @@ mod tests {
             full.boxes().len(),
             LEGEND_OCCUPANCY_RESOLUTION * LEGEND_OCCUPANCY_RESOLUTION
         );
+    }
+
+    #[test]
+    fn segment_occupancy_clips_extreme_offscreen_coordinates() {
+        let plot_area = (0.0, 0.0, 640.0, 480.0);
+        let mut crossing = LegendOccupancyBuilder::new(plot_area).expect("valid grid");
+
+        // With manual axis limits these endpoints can legitimately project far
+        // outside the canvas. Sampling their full distance would require
+        // hundreds of billions of iterations even though the mask is 64x64.
+        crossing.mark_segment(-1.0e12, 240.0, 1.0e12, 240.0, 1.0);
+        let crossing = crossing.finish();
+
+        assert!(!crossing.is_empty());
+        assert!(
+            crossing.boxes().len() <= LEGEND_OCCUPANCY_RESOLUTION * 2,
+            "a one-pixel horizontal stroke occupies at most two mask rows"
+        );
+        for x in [5.0, 320.0, 635.0] {
+            assert!(
+                crossing.boxes().iter().any(|&(left, top, right, bottom)| {
+                    x >= left && x <= right && 240.0 >= top && 240.0 <= bottom
+                }),
+                "the visible crossing must occupy the mask near x={x}"
+            );
+        }
+
+        let mut outside = LegendOccupancyBuilder::new(plot_area).expect("valid grid");
+        outside.mark_segment(-1.0e12, -1.0e12, -1.0e11, -1.0e11, 1.0);
+        assert!(outside.finish().is_empty());
     }
 
     /// `Best` used to be the default and always answer `UpperRight`, because
