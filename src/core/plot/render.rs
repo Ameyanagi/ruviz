@@ -1,51 +1,256 @@
+use super::error_bars::{AttachedErrorBarStyle, ErrorBarFrame, error_bar_pixels_for_series};
 use super::*;
-use crate::render::skia::{XTickLabelPlan, XTickRowBounds, XTickRowMetrics, draw_x_tick_label_row};
+use crate::core::legend::LegendOccupancyBuilder;
+use crate::render::skia::{
+    XTickLabelPlan, XTickRowBounds, XTickRowMetrics, draw_x_tick_label_row,
+    map_data_to_pixels_scaled,
+};
+use unicode_segmentation::UnicodeSegmentation;
 
-/// Where the data actually is, for [`LegendPosition::Best`].
-///
-/// One function, called by every backend that draws a legend, so raster and SVG
-/// cannot answer `Best` with different corners. Samples are projected through
-/// the same mapper the drawing code uses and a sample the axis scales cannot
-/// place is dropped, exactly as the drawing code drops it — a log axis must not
-/// push a legend away from a point it never drew.
-///
-/// Only the series that carry explicit `(x, y)` samples are binned. Bars,
-/// histograms and box plots contribute nothing yet, which leaves the grid empty
-/// for a bar-only figure and makes `Best` degrade to `UpperRight` — the
-/// behaviour those plots already had.
-fn legend_occupancy(
-    series: &[ResolvedSeries<'_>],
+const TITLE_MAX_AUTOMATIC_LINES: usize = 2;
+const TITLE_FONT_STEP_PT: f32 = 0.25;
+const TITLE_MIN_FONT_PT: f32 = 6.0;
+const TITLE_MIN_FONT_RATIO: f32 = 0.70;
+const TITLE_ELLIPSIS: &str = "…";
+
+#[derive(Debug)]
+struct WrappedTitle {
+    text: String,
+    paragraph_line_counts: Vec<usize>,
+}
+
+impl WrappedTitle {
+    fn automatic_lines_fit(&self) -> bool {
+        self.paragraph_line_counts
+            .iter()
+            .all(|&count| count <= TITLE_MAX_AUTOMATIC_LINES)
+    }
+}
+
+fn title_layout_error(message: impl Into<String>) -> PlottingError {
+    PlottingError::InvalidData {
+        message: format!("Cannot fit plot title: {}", message.into()),
+        position: None,
+    }
+}
+
+fn skip_title_whitespace(text: &str, start: usize) -> usize {
+    let tail = &text[start..];
+    start + (tail.len() - tail.trim_start_matches(char::is_whitespace).len())
+}
+
+fn wrap_title_paragraph(
+    paragraph: &str,
+    max_width: f32,
+    measure: &mut impl FnMut(&str) -> Result<Option<f32>>,
+) -> Result<Vec<String>> {
+    if paragraph.is_empty() {
+        return Ok(vec![String::new()]);
+    }
+
+    let mut break_indices: Vec<usize> = unicode_linebreak::linebreaks(paragraph)
+        .map(|(index, _)| index)
+        .filter(|&index| index > 0)
+        .collect();
+    if break_indices.last().copied() != Some(paragraph.len()) {
+        break_indices.push(paragraph.len());
+    }
+
+    let mut lines = Vec::new();
+    let mut start = skip_title_whitespace(paragraph, 0);
+    while start < paragraph.len() {
+        let mut best_break = None;
+        for &end in break_indices.iter().filter(|&&end| end > start) {
+            let candidate = paragraph[start..end].trim_end();
+            if candidate.is_empty() {
+                continue;
+            }
+            match measure(candidate)? {
+                Some(width) if width <= max_width => best_break = Some(end),
+                Some(_) if best_break.is_some() => break,
+                _ => {}
+            }
+        }
+
+        if let Some(end) = best_break {
+            lines.push(paragraph[start..end].trim_end().to_string());
+            start = skip_title_whitespace(paragraph, end);
+            continue;
+        }
+
+        // No Unicode line-break opportunity fits, so split the otherwise
+        // unbreakable segment only on an extended grapheme boundary.
+        let mut best_grapheme_end = None;
+        for (offset, grapheme) in paragraph[start..].grapheme_indices(true) {
+            let end = start + offset + grapheme.len();
+            let candidate = paragraph[start..end].trim_end();
+            if !candidate.is_empty() {
+                match measure(candidate)? {
+                    Some(width) if width <= max_width => best_grapheme_end = Some(end),
+                    Some(_) if best_grapheme_end.is_some() => break,
+                    _ => {}
+                }
+            }
+        }
+        let Some(end) = best_grapheme_end else {
+            return Err(title_layout_error(format!(
+                "available width {max_width:.2}px cannot contain one grapheme"
+            )));
+        };
+        lines.push(paragraph[start..end].trim_end().to_string());
+        start = skip_title_whitespace(paragraph, end);
+    }
+
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+    Ok(lines)
+}
+
+fn wrap_title_text(
+    title: &str,
+    max_width: f32,
+    measure: &mut impl FnMut(&str) -> Result<Option<f32>>,
+) -> Result<WrappedTitle> {
+    let mut output = Vec::new();
+    let mut paragraph_line_counts = Vec::new();
+    for paragraph in title.split('\n') {
+        let lines = wrap_title_paragraph(
+            paragraph.strip_suffix('\r').unwrap_or(paragraph),
+            max_width,
+            measure,
+        )?;
+        paragraph_line_counts.push(lines.len());
+        output.extend(lines);
+    }
+    Ok(WrappedTitle {
+        text: output.join("\n"),
+        paragraph_line_counts,
+    })
+}
+
+fn ellipsize_title_line(
+    line: &str,
+    max_width: f32,
+    measure: &mut impl FnMut(&str) -> Result<Option<f32>>,
+) -> Result<String> {
+    if !measure(TITLE_ELLIPSIS)?.is_some_and(|width| width <= max_width) {
+        return Err(title_layout_error(format!(
+            "available width {max_width:.2}px cannot contain the ellipsis fallback"
+        )));
+    }
+
+    let mut base = line.trim_end().to_string();
+    loop {
+        let candidate = format!("{base}{TITLE_ELLIPSIS}");
+        if measure(&candidate)?.is_some_and(|width| width <= max_width) {
+            return Ok(candidate);
+        }
+        let Some((offset, _)) = base.grapheme_indices(true).next_back() else {
+            return Ok(TITLE_ELLIPSIS.to_string());
+        };
+        base.truncate(offset);
+    }
+}
+
+fn cap_wrapped_title(
+    title: &str,
+    max_width: f32,
+    measure: &mut impl FnMut(&str) -> Result<Option<f32>>,
+) -> Result<String> {
+    let mut output = Vec::new();
+    for paragraph in title.split('\n') {
+        let lines = wrap_title_paragraph(
+            paragraph.strip_suffix('\r').unwrap_or(paragraph),
+            max_width,
+            measure,
+        )?;
+        if lines.len() <= TITLE_MAX_AUTOMATIC_LINES {
+            output.extend(lines);
+            continue;
+        }
+        output.push(lines[0].clone());
+        output.push(ellipsize_title_line(&lines[1], max_width, measure)?);
+    }
+    Ok(output.join("\n"))
+}
+
+fn mark_error_bar_occupancy(
+    occupancy: &mut LegendOccupancyBuilder,
+    x: &[f64],
+    y: &[f64],
+    y_errors: Option<ErrorValuesRef<'_>>,
+    x_errors: Option<ErrorValuesRef<'_>>,
+    frame: ErrorBarFrame<'_>,
+    style: AttachedErrorBarStyle,
+) {
+    if style.color.a == 0 {
+        return;
+    }
+    for bars in error_bar_pixels_for_series(x, y, y_errors, x_errors, frame) {
+        if let Some(whisker) = bars.vertical {
+            occupancy.mark_segment(
+                bars.x,
+                whisker.lower,
+                bars.x,
+                whisker.upper,
+                style.line_width,
+            );
+            let left = (bars.x - style.half_cap).max(frame.plot_area.left());
+            let right = (bars.x + style.half_cap).min(frame.plot_area.right());
+            for (py, draw) in [
+                (whisker.lower, whisker.lower_cap),
+                (whisker.upper, whisker.upper_cap),
+            ] {
+                if draw {
+                    occupancy.mark_segment(left, py, right, py, style.line_width);
+                }
+            }
+        }
+        if let Some(whisker) = bars.horizontal {
+            occupancy.mark_segment(
+                whisker.lower,
+                bars.y,
+                whisker.upper,
+                bars.y,
+                style.line_width,
+            );
+            let top = (bars.y - style.half_cap).max(frame.plot_area.top());
+            let bottom = (bars.y + style.half_cap).min(frame.plot_area.bottom());
+            for (px, draw) in [
+                (whisker.lower, whisker.lower_cap),
+                (whisker.upper, whisker.upper_cap),
+            ] {
+                if draw {
+                    occupancy.mark_segment(px, top, px, bottom, style.line_width);
+                }
+            }
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn mark_point_occupancy(
+    occupancy: &mut LegendOccupancyBuilder,
+    x: &[f64],
+    y: &[f64],
+    marker_size: f32,
+    marker_edge_width: f32,
     plot_area: tiny_skia::Rect,
-    (x_min, x_max, y_min, y_max): (f64, f64, f64, f64),
+    x_min: f64,
+    x_max: f64,
+    y_min: f64,
+    y_max: f64,
     x_scale: &AxisScale,
     y_scale: &AxisScale,
-) -> LegendOccupancy {
-    let points = series
-        .iter()
-        .filter_map(|series| match series {
-            ResolvedSeries::Line { x, y }
-            | ResolvedSeries::Scatter { x, y }
-            | ResolvedSeries::ErrorBars { x, y, .. }
-            | ResolvedSeries::ErrorBarsXY { x, y, .. } => Some((x, y)),
-            _ => None,
-        })
-        .flat_map(|(x, y)| {
-            x.iter().zip(y.iter()).filter_map(|(&x, &y)| {
-                try_map_data_to_pixels_scaled(
-                    x, y, x_min, x_max, y_min, y_max, plot_area, x_scale, y_scale,
-                )
-            })
-        });
-
-    LegendOccupancy::from_screen_points(
-        (
-            plot_area.left(),
-            plot_area.top(),
-            plot_area.right(),
-            plot_area.bottom(),
-        ),
-        points,
-    )
+) {
+    for (&x, &y) in x.iter().zip(y) {
+        if let Some((px, py)) = try_map_data_to_pixels_scaled(
+            x, y, x_min, x_max, y_min, y_max, plot_area, x_scale, y_scale,
+        ) {
+            occupancy.mark_marker(px, py, marker_size, marker_edge_width);
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -81,6 +286,272 @@ impl Plot {
             major_tick_width,
             minor_tick_width,
         )
+    }
+
+    /// Build the one bounded screen-space mask used by every backend to
+    /// resolve [`LegendPosition::Best`].
+    ///
+    /// Geometry comes from the same projection and shape helpers as drawing.
+    /// Only visible line, marker, bar, and error-bar ink participates; sample
+    /// density never increases a cell's weight.
+    pub(super) fn legend_occupancy(
+        &self,
+        series: &[PlotSeries],
+        resolved: &[ResolvedSeries<'_>],
+        plot_area: tiny_skia::Rect,
+        (x_min, x_max, y_min, y_max): (f64, f64, f64, f64),
+    ) -> LegendOccupancy {
+        let plot_bounds = (
+            plot_area.left(),
+            plot_area.top(),
+            plot_area.right(),
+            plot_area.bottom(),
+        );
+        let Some(mut occupancy) = LegendOccupancyBuilder::new(plot_bounds) else {
+            return LegendOccupancy::default();
+        };
+        let render_scale = self.render_scale();
+        let error_frame = ErrorBarFrame {
+            plot_area,
+            x_min,
+            x_max,
+            y_min,
+            y_max,
+            x_scale: &self.layout.x_scale,
+            y_scale: &self.layout.y_scale,
+        };
+
+        for (index, (series, resolved)) in series.iter().zip(resolved).enumerate() {
+            if !series.visible || occupancy.is_full() {
+                continue;
+            }
+            let default_color = self.display.theme.get_color(index);
+            let color = series.color_with_alpha(default_color);
+            let line_width = render_scale.points_to_pixels(
+                series
+                    .props
+                    .line_width
+                    .value_or(self.display.config.lines.data_width),
+            );
+
+            let marker_edge_width = |style: &MarkerStyle| {
+                if !style.takes_edge() {
+                    return 0.0;
+                }
+                self.resolved_marker_edge(series, color)
+                    .map(|(_, width_pt)| render_scale.points_to_pixels(width_pt))
+                    .unwrap_or(0.0)
+            };
+            match (&series.series_type, resolved) {
+                (SeriesType::Line { .. }, ResolvedSeries::Line { x, y }) => {
+                    if color.a > 0 {
+                        for run in crate::core::plot::raster_batches::representable_sample_runs(
+                            x,
+                            y,
+                            &self.layout.x_scale,
+                            &self.layout.y_scale,
+                        ) {
+                            let mut previous = None;
+                            for (&x, &y) in x[run.clone()].iter().zip(&y[run]) {
+                                let point = map_data_to_pixels_scaled(
+                                    x,
+                                    y,
+                                    x_min,
+                                    x_max,
+                                    y_min,
+                                    y_max,
+                                    plot_area,
+                                    &self.layout.x_scale,
+                                    &self.layout.y_scale,
+                                );
+                                if let Some((last_x, last_y)) = previous {
+                                    occupancy
+                                        .mark_segment(last_x, last_y, point.0, point.1, line_width);
+                                }
+                                previous = Some(point);
+                            }
+                        }
+                    }
+                    if let Some(marker_style) = series.props.marker_style.cloned() {
+                        let marker_size =
+                            render_scale.points_to_pixels(series.props.marker_size.value_or(8.0));
+                        mark_point_occupancy(
+                            &mut occupancy,
+                            x,
+                            y,
+                            marker_size,
+                            marker_edge_width(&marker_style),
+                            plot_area,
+                            x_min,
+                            x_max,
+                            y_min,
+                            y_max,
+                            &self.layout.x_scale,
+                            &self.layout.y_scale,
+                        );
+                    }
+                    if series.y_errors.is_some() || series.x_errors.is_some() {
+                        let style = AttachedErrorBarStyle::resolve(
+                            series.error_config.as_ref(),
+                            color,
+                            line_width,
+                            render_scale,
+                        );
+                        mark_error_bar_occupancy(
+                            &mut occupancy,
+                            x,
+                            y,
+                            series.y_errors.as_ref().map(ErrorValuesRef::from),
+                            series.x_errors.as_ref().map(ErrorValuesRef::from),
+                            error_frame,
+                            style,
+                        );
+                    }
+                }
+                (SeriesType::Scatter { .. }, ResolvedSeries::Scatter { x, y }) => {
+                    let marker_style = series.props.marker_style.value_or(MarkerStyle::Circle);
+                    let marker_size =
+                        render_scale.points_to_pixels(series.props.marker_size.value_or(10.0));
+                    mark_point_occupancy(
+                        &mut occupancy,
+                        x,
+                        y,
+                        marker_size,
+                        marker_edge_width(&marker_style),
+                        plot_area,
+                        x_min,
+                        x_max,
+                        y_min,
+                        y_max,
+                        &self.layout.x_scale,
+                        &self.layout.y_scale,
+                    );
+                    if series.y_errors.is_some() || series.x_errors.is_some() {
+                        let style = AttachedErrorBarStyle::resolve(
+                            series.error_config.as_ref(),
+                            color,
+                            line_width,
+                            render_scale,
+                        );
+                        mark_error_bar_occupancy(
+                            &mut occupancy,
+                            x,
+                            y,
+                            series.y_errors.as_ref().map(ErrorValuesRef::from),
+                            series.x_errors.as_ref().map(ErrorValuesRef::from),
+                            error_frame,
+                            style,
+                        );
+                    }
+                }
+                (SeriesType::Bar { config, .. }, ResolvedSeries::Bar { values, .. }) => {
+                    let edge_width = config
+                        .resolved_edge(&self.display.theme, color)
+                        .map(|(_, width_pt)| render_scale.points_to_pixels(width_pt))
+                        .unwrap_or(0.0);
+                    let half_edge = edge_width * 0.5;
+                    for (bar_index, &value) in values.iter().enumerate() {
+                        let (x, y, width, height) = super::series_internal::bar_pixel_rect(
+                            bar_index,
+                            value,
+                            config,
+                            plot_area,
+                            x_min,
+                            x_max,
+                            y_min,
+                            y_max,
+                            &self.layout.x_scale,
+                            &self.layout.y_scale,
+                        );
+                        occupancy.mark_rect(
+                            x - half_edge,
+                            y - half_edge,
+                            x + width + half_edge,
+                            y + height + half_edge,
+                        );
+                    }
+                }
+                (SeriesType::ErrorBars { .. }, ResolvedSeries::ErrorBars { x, y, y_errors }) => {
+                    let marker_style = series.props.marker_style.value_or(MarkerStyle::Circle);
+                    let marker_size =
+                        render_scale.points_to_pixels(series.props.marker_size.value_or(8.0));
+                    mark_point_occupancy(
+                        &mut occupancy,
+                        x,
+                        y,
+                        marker_size,
+                        marker_edge_width(&marker_style),
+                        plot_area,
+                        x_min,
+                        x_max,
+                        y_min,
+                        y_max,
+                        &self.layout.x_scale,
+                        &self.layout.y_scale,
+                    );
+                    let style = AttachedErrorBarStyle::resolve(
+                        series.error_config.as_ref(),
+                        color,
+                        line_width,
+                        render_scale,
+                    );
+                    mark_error_bar_occupancy(
+                        &mut occupancy,
+                        x,
+                        y,
+                        Some(effective_error_values(series.y_errors.as_ref(), y_errors)),
+                        series.x_errors.as_ref().map(ErrorValuesRef::from),
+                        error_frame,
+                        style,
+                    );
+                }
+                (
+                    SeriesType::ErrorBarsXY { .. },
+                    ResolvedSeries::ErrorBarsXY {
+                        x,
+                        y,
+                        x_errors,
+                        y_errors,
+                    },
+                ) => {
+                    let marker_style = series.props.marker_style.value_or(MarkerStyle::Circle);
+                    let marker_size =
+                        render_scale.points_to_pixels(series.props.marker_size.value_or(8.0));
+                    mark_point_occupancy(
+                        &mut occupancy,
+                        x,
+                        y,
+                        marker_size,
+                        marker_edge_width(&marker_style),
+                        plot_area,
+                        x_min,
+                        x_max,
+                        y_min,
+                        y_max,
+                        &self.layout.x_scale,
+                        &self.layout.y_scale,
+                    );
+                    let style = AttachedErrorBarStyle::resolve(
+                        series.error_config.as_ref(),
+                        color,
+                        line_width,
+                        render_scale,
+                    );
+                    mark_error_bar_occupancy(
+                        &mut occupancy,
+                        x,
+                        y,
+                        Some(effective_error_values(series.y_errors.as_ref(), y_errors)),
+                        Some(effective_error_values(series.x_errors.as_ref(), x_errors)),
+                        error_frame,
+                        style,
+                    );
+                }
+                _ => {}
+            }
+        }
+
+        occupancy.finish()
     }
 
     /// The spines the theme allows.
@@ -885,7 +1356,11 @@ impl Plot {
         }
 
         if let Some(ref pos) = layout.title_pos
-            && let Some(title) = frame.title.as_deref()
+            && let Some(title) = layout
+                .resolved_title
+                .as_ref()
+                .map(|title| title.text.as_str())
+                .or(frame.title.as_deref())
         {
             renderer.draw_title_at_with_weight(
                 pos,
@@ -1007,19 +1482,37 @@ impl Plot {
 
         let legend_items = self.collect_legend_items();
         if !legend_items.is_empty() && frame.style.legend.enabled {
-            let occupancy = legend_occupancy(
+            let occupancy = self.legend_occupancy(
+                &self.series_mgr.series,
                 &frame.series,
                 plot_area,
                 (x_min, x_max, y_min, y_max),
-                &self.layout.x_scale,
-                &self.layout.y_scale,
             );
+            let resolved_rect = match layout.legend_rect.as_ref() {
+                Some(rect) => Some(rect.bounds()),
+                None if frame.style.legend.position == LegendPosition::Best => Some(
+                    renderer
+                        .resolve_legend_layout(
+                            &legend_items,
+                            &frame.style.legend,
+                            (
+                                plot_area.left(),
+                                plot_area.top(),
+                                plot_area.right(),
+                                plot_area.bottom(),
+                            ),
+                            Some(&occupancy),
+                        )?
+                        .bounds(),
+                ),
+                None => None,
+            };
             renderer.draw_legend_full_resolved(
                 &legend_items,
                 &frame.style.legend,
                 plot_area,
                 Some(&occupancy),
-                layout.legend_rect.as_ref().map(|rect| rect.bounds()),
+                resolved_rect,
             )?;
         }
 
@@ -1679,6 +2172,139 @@ impl Plot {
         Ok(Some(measurements))
     }
 
+    fn title_height_limit(&self, canvas_size: (u32, u32), dpi: f32) -> f32 {
+        let render_scale = RenderScale::from_canvas_size(canvas_size.0, canvas_size.1, dpi);
+        let title_pad = render_scale.points_to_pixels(self.display.config.spacing.title_pad);
+        match &self.display.config.margins {
+            MarginConfig::Fixed { top, .. } => top * dpi - title_pad,
+            MarginConfig::Proportional { top, .. } => canvas_size.1 as f32 * top - title_pad,
+            MarginConfig::Auto { max, .. } => max * dpi - title_pad,
+            MarginConfig::ContentDriven { edge_buffer, .. } => {
+                canvas_size.1 as f32 * LayoutConfig::default().max_margin_fraction
+                    - render_scale.points_to_pixels(*edge_buffer)
+                    - title_pad
+            }
+        }
+        .max(0.0)
+    }
+
+    fn fit_plot_title(
+        &self,
+        renderer: &SkiaRenderer,
+        title: &str,
+        max_width: f32,
+        max_height: f32,
+        canvas_size: (u32, u32),
+        dpi: f32,
+    ) -> Result<ResolvedTitleLayout> {
+        if !max_width.is_finite() || max_width <= 0.0 {
+            return Err(title_layout_error(format!(
+                "axes provide no horizontal room (width={max_width:.2}px)"
+            )));
+        }
+        if !max_height.is_finite() || max_height <= 0.0 {
+            return Err(title_layout_error(format!(
+                "configured top margin provides no vertical room (height={max_height:.2}px)"
+            )));
+        }
+
+        let configured_size_pt = self.display.config.typography.title_size();
+        let minimum_size_pt = TITLE_MIN_FONT_PT.max(configured_size_pt * TITLE_MIN_FONT_RATIO);
+        let render_scale = RenderScale::from_canvas_size(canvas_size.0, canvas_size.1, dpi);
+        let weight = self.display.config.typography.title_weight;
+        let uses_typst = self.display.text_engine.uses_typst();
+
+        let evaluate = |size_pt: f32| -> Result<(WrappedTitle, f32, f32, f32)> {
+            let size_px = render_scale.points_to_pixels(size_pt);
+            // Validate the complete authored title first. Typst fragments at a
+            // candidate Unicode boundary can be syntactically incomplete (for
+            // example, halfway through `$ ... $` or `#emph[...]`). Such a
+            // fragment is not a usable wrap point, but it must not make valid
+            // complete markup fail layout.
+            renderer.measure_text_with_weight(title, size_px, weight)?;
+            let mut measure =
+                |text: &str| match renderer.measure_text_with_weight(text, size_px, weight) {
+                    Ok((width, _)) => Ok(Some(width)),
+                    Err(PlottingError::TypstError(_)) if uses_typst => Ok(None),
+                    Err(error) => Err(error),
+                };
+            let wrapped = wrap_title_text(title, max_width, &mut measure)?;
+            let (width, height) =
+                renderer.measure_text_with_weight(&wrapped.text, size_px, weight)?;
+            Ok((wrapped, size_px, width, height))
+        };
+
+        let mut size_pt = configured_size_pt;
+        loop {
+            let (wrapped, size_px, width, height) = evaluate(size_pt)?;
+            if wrapped.automatic_lines_fit()
+                && width <= max_width + 0.01
+                && height <= max_height + 0.01
+            {
+                return Ok(ResolvedTitleLayout {
+                    text: wrapped.text,
+                    font_size_px: size_px,
+                    width,
+                    height,
+                });
+            }
+            if size_pt <= minimum_size_pt + f32::EPSILON {
+                break;
+            }
+            size_pt = (size_pt - TITLE_FONT_STEP_PT).max(minimum_size_pt);
+        }
+
+        let minimum_size_px = render_scale.points_to_pixels(minimum_size_pt);
+        renderer.measure_text_with_weight(title, minimum_size_px, weight)?;
+        let mut measure =
+            |text: &str| match renderer.measure_text_with_weight(text, minimum_size_px, weight) {
+                Ok((width, _)) => Ok(Some(width)),
+                Err(PlottingError::TypstError(_)) if uses_typst => Ok(None),
+                Err(error) => Err(error),
+            };
+        let text = cap_wrapped_title(title, max_width, &mut measure)?;
+        let (width, height) = renderer.measure_text_with_weight(&text, minimum_size_px, weight)?;
+        if width > max_width + 0.01 || height > max_height + 0.01 {
+            return Err(title_layout_error(format!(
+                "minimum {:.2}pt title needs {:.2}×{:.2}px but only {:.2}×{:.2}px is available",
+                minimum_size_pt, width, height, max_width, max_height
+            )));
+        }
+        Ok(ResolvedTitleLayout {
+            text,
+            font_size_px: minimum_size_px,
+            width,
+            height,
+        })
+    }
+
+    pub(super) fn resolve_title_layout_measurements(
+        &self,
+        renderer: &SkiaRenderer,
+        canvas_size: (u32, u32),
+        content: &PlotContent,
+        dpi: f32,
+        measurements: &mut Option<LayoutMeasurements>,
+    ) -> Result<()> {
+        let Some(title) = content.title.as_deref() else {
+            return Ok(());
+        };
+        let provisional =
+            self.compute_layout_from_measurements(canvas_size, content, dpi, measurements.as_ref());
+        let resolved = self.fit_plot_title(
+            renderer,
+            title,
+            provisional.plot_area.width(),
+            self.title_height_limit(canvas_size, dpi),
+            canvas_size,
+            dpi,
+        )?;
+        let measurements = measurements.get_or_insert_with(LayoutMeasurements::default);
+        measurements.title = Some((resolved.width, resolved.height));
+        measurements.resolved_title = Some(resolved);
+        Ok(())
+    }
+
     pub(super) fn compute_layout_from_measurements(
         &self,
         canvas_size: (u32, u32),
@@ -1687,7 +2313,7 @@ impl Plot {
         measurements: Option<&LayoutMeasurements>,
     ) -> ResolvedLayout {
         let measured_dimensions = measurements.map(|m| &m.dimensions);
-        let layout = match &self.display.config.margins {
+        let mut layout = match &self.display.config.margins {
             MarginConfig::ContentDriven {
                 edge_buffer,
                 center_plot,
@@ -1713,10 +2339,16 @@ impl Plot {
                 measured_dimensions,
             ),
         };
+        let resolved_title = measurements.and_then(|m| m.resolved_title.clone());
+        if let (Some(position), Some(title)) = (layout.title_pos.as_mut(), resolved_title.as_ref())
+        {
+            position.size = title.font_size_px;
+        }
         self.reserve_outside_legend(
             ResolvedLayout {
                 layout,
                 legend_rect: None,
+                resolved_title,
             },
             canvas_size,
             dpi,
@@ -1934,15 +2566,22 @@ impl Plot {
         let configured_right_margin = canvas_width - plot_area_rect.right();
         let effective_right_margin =
             configured_right_margin.max(measured_right_margin.unwrap_or(0.0));
+        let configured_top_margin = plot_area_rect.top();
+        let effective_top_margin = match self.display.config.margins {
+            MarginConfig::Auto { max, .. } if content.title.is_some() => configured_top_margin
+                .max(title_height + title_pad)
+                .min(max * dpi),
+            _ => configured_top_margin,
+        };
         let margins = crate::core::layout::ComputedMarginsPixels {
             left: plot_area_rect.left(),
             right: effective_right_margin,
-            top: plot_area_rect.top(),
+            top: effective_top_margin,
             bottom: canvas_height - plot_area_rect.bottom(),
         };
         let plot_area = crate::core::layout::LayoutRect {
             left: plot_area_rect.left(),
-            top: plot_area_rect.top(),
+            top: effective_top_margin,
             right: canvas_width - effective_right_margin,
             bottom: plot_area_rect.bottom(),
         };
@@ -2048,8 +2687,15 @@ impl Plot {
         y_min: f64,
         y_max: f64,
     ) -> Result<(ResolvedLayout, Vec<f64>, Vec<f64>)> {
-        let (measurements, x_ticks, y_ticks) =
+        let (mut measurements, x_ticks, y_ticks) =
             self.measure_configured_ticks(renderer, content, dpi, x_min, x_max, y_min, y_max)?;
+        self.resolve_title_layout_measurements(
+            renderer,
+            canvas_size,
+            content,
+            dpi,
+            &mut measurements,
+        )?;
         let layout =
             self.compute_layout_from_measurements(canvas_size, content, dpi, measurements.as_ref());
 
@@ -2093,6 +2739,13 @@ impl Plot {
                 .ytick = category_extent;
             y_ticks = y_category_positions.to_vec();
         }
+        self.resolve_title_layout_measurements(
+            renderer,
+            canvas_size,
+            content,
+            dpi,
+            &mut measurements,
+        )?;
         let layout =
             self.compute_layout_from_measurements(canvas_size, content, dpi, measurements.as_ref());
         let (layout, plan) = self.resolve_x_tick_label_row(
@@ -3121,12 +3774,19 @@ impl Plot {
         } else {
             &y_major_measurement_layout.labels
         };
-        let measured_dimensions = self.measure_layout_text_with_ticks(
+        let mut measured_dimensions = self.measure_layout_text_with_ticks(
             &measurement_renderer,
             &content,
             self.display.config.figure.dpi,
             &x_major_measurement_layout.labels,
             y_measurement_labels,
+        )?;
+        self.resolve_title_layout_measurements(
+            &measurement_renderer,
+            (width_px, height_px),
+            &content,
+            self.display.config.figure.dpi,
+            &mut measured_dimensions,
         )?;
         let layout = self.compute_layout_from_measurements(
             (width_px, height_px),
@@ -3514,7 +4174,11 @@ impl Plot {
 
         // Draw title/xlabel/ylabel using layout-computed positions.
         if let Some(ref pos) = layout.title_pos
-            && let Some(title) = frame.title.as_deref()
+            && let Some(title) = layout
+                .resolved_title
+                .as_ref()
+                .map(|title| title.text.as_str())
+                .or(frame.title.as_deref())
         {
             svg.draw_text_centered_with_weight(
                 title,
@@ -3552,19 +4216,32 @@ impl Plot {
         // Draw legend if we have labeled series and legend is enabled
         if !legend_items.is_empty() && frame.style.legend.enabled {
             let plot_bounds = (plot_left, plot_top, plot_right, plot_bottom);
-            let occupancy = legend_occupancy(
+            let occupancy = self.legend_occupancy(
+                &self.series_mgr.series,
                 &frame.series,
                 plot_area,
                 (x_min, x_max, y_min, y_max),
-                &self.layout.x_scale,
-                &self.layout.y_scale,
             );
+            let resolved_rect = match layout.legend_rect.as_ref() {
+                Some(rect) => Some(rect.bounds()),
+                None if frame.style.legend.position == LegendPosition::Best => Some(
+                    measurement_renderer
+                        .resolve_legend_layout(
+                            &legend_items,
+                            &frame.style.legend,
+                            plot_bounds,
+                            Some(&occupancy),
+                        )?
+                        .bounds(),
+                ),
+                None => None,
+            };
             svg.draw_legend_full_resolved(
                 &legend_items,
                 &frame.style.legend,
                 plot_bounds,
                 Some(&occupancy),
-                layout.legend_rect.as_ref().map(|rect| rect.bounds()),
+                resolved_rect,
             )?;
         }
 

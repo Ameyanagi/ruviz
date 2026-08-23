@@ -92,6 +92,8 @@ palette = "0.7"
 cosmic-text = "0.16"  # Professional text layout, shaping, and font discovery
 swash = "0.2"  # Distinguish premultiplied color outlines from straight color bitmaps
 ttf-parser = "0.25"  # Validate registered font faces before mutating shared state
+unicode-linebreak = "0.1"
+unicode-segmentation = "1.12"
 unicode-width = "0.2"
 typst = { version = "0.13.1", optional = true }
 typst-svg = { version = "0.13.1", optional = true }

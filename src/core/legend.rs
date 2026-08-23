@@ -42,7 +42,12 @@ use crate::render::{Color, LineStyle, MarkerStyle};
 /// ![Legend positions](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/legend_positions.png)
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum LegendPosition {
-    /// Code 0: Automatic best position (minimizes data overlap)
+    /// Code 0: Automatic inside position minimizing overlap with visible data.
+    ///
+    /// Placement uses a bounded screen-space mask of rendered lines, markers,
+    /// bars, and error bars. Unlabeled visible series participate because they
+    /// still occupy the plot; hidden series do not. Equal scores preserve the
+    /// historical upper-right-first ordering.
     #[default]
     Best,
     /// Code 1: Upper right corner (default)
@@ -984,7 +989,7 @@ impl Legend {
 // Best Position Algorithm
 // ============================================================================
 
-/// Find the best legend position that minimizes overlap with data
+/// Find the best legend position that minimizes overlap with data.
 ///
 /// # Arguments
 /// * `legend_size` - (width, height) of the legend box
@@ -994,7 +999,8 @@ impl Legend {
 /// * `font_size` - Font size for spacing calculations
 ///
 /// # Returns
-/// The best position from the 9 standard inside positions
+/// The best position from the 9 standard inside positions. Candidate order is
+/// stable, so an empty mask or an exact tie resolves to upper right.
 pub fn find_best_position(
     legend_size: (f32, f32),
     plot_area: (f32, f32, f32, f32),
@@ -1069,15 +1075,21 @@ fn calculate_bbox_overlap(bbox1: (f32, f32, f32, f32), bbox2: (f32, f32, f32, f3
 // ============================================================================
 
 /// Number of cells per axis in a [`LegendOccupancy`] grid.
-pub const LEGEND_OCCUPANCY_RESOLUTION: usize = 6;
+///
+/// A 64×64 screen-space mask keeps scoring bounded while retaining enough
+/// precision for ordinary line widths, markers, and categorical bars.
+pub const LEGEND_OCCUPANCY_RESOLUTION: usize = 64;
 
-/// Coarse map of where the data actually is, used to place a `Best` legend.
+/// Bounded map of where rendered data geometry is, used to place a `Best`
+/// legend.
 ///
 /// matplotlib scores every candidate legend box against every artist's bounding
 /// box. Doing that literally for a million-point scatter is not affordable, so
-/// the caller bins the points it has *already projected to screen space* into a
+/// the caller bins geometry it has *already projected to screen space* into a
 /// fixed [`LEGEND_OCCUPANCY_RESOLUTION`]² grid and the legend is scored against
-/// the occupied cells instead. The cost is bounded by the grid, not the data.
+/// the occupied cells instead. The mask is binary, so adding more samples to
+/// the same visible curve cannot change placement. Candidate-scoring cost is
+/// bounded by the grid, not the data.
 ///
 /// An empty grid scores every candidate at zero overlap, which is exactly the
 /// behaviour of passing no data at all: `Best` falls back to `UpperRight`.
@@ -1096,46 +1108,13 @@ impl LegendOccupancy {
     where
         I: IntoIterator<Item = (f32, f32)>,
     {
-        let (left, top, right, bottom) = plot_area;
-        let width = right - left;
-        let height = bottom - top;
-        if !width.is_finite() || !height.is_finite() || width <= 0.0 || height <= 0.0 {
+        let Some(mut builder) = LegendOccupancyBuilder::new(plot_area) else {
             return Self::default();
-        }
-
-        let resolution = LEGEND_OCCUPANCY_RESOLUTION;
-        let mut occupied = vec![false; resolution * resolution];
-        let cell_width = width / resolution as f32;
-        let cell_height = height / resolution as f32;
-
+        };
         for (x, y) in points {
-            if !x.is_finite() || !y.is_finite() || x < left || x > right || y < top || y > bottom {
-                continue;
-            }
-            let column = (((x - left) / cell_width) as usize).min(resolution - 1);
-            let row = (((y - top) / cell_height) as usize).min(resolution - 1);
-            occupied[row * resolution + column] = true;
+            builder.mark_rect(x, y, x, y);
         }
-
-        let cells = occupied
-            .iter()
-            .enumerate()
-            .filter(|(_, is_occupied)| **is_occupied)
-            .map(|(index, _)| {
-                let column = index % resolution;
-                let row = index / resolution;
-                let cell_left = left + column as f32 * cell_width;
-                let cell_top = top + row as f32 * cell_height;
-                (
-                    cell_left,
-                    cell_top,
-                    cell_left + cell_width,
-                    cell_top + cell_height,
-                )
-            })
-            .collect();
-
-        Self { cells }
+        builder.finish()
     }
 
     /// The occupied cells, as `(left, top, right, bottom)` boxes.
@@ -1146,6 +1125,150 @@ impl LegendOccupancy {
     /// Whether no cell is occupied.
     pub fn is_empty(&self) -> bool {
         self.cells.is_empty()
+    }
+}
+
+/// Mutable fixed-grid collector used while rendered series geometry is walked.
+///
+/// The public value remains a compact list of occupied cell rectangles for the
+/// existing scorer; this builder guarantees that list can never exceed
+/// `LEGEND_OCCUPANCY_RESOLUTION²` entries regardless of sample count.
+pub(crate) struct LegendOccupancyBuilder {
+    plot_area: (f32, f32, f32, f32),
+    cell_width: f32,
+    cell_height: f32,
+    occupied: Vec<bool>,
+    occupied_count: usize,
+}
+
+impl LegendOccupancyBuilder {
+    pub(crate) fn new(plot_area: (f32, f32, f32, f32)) -> Option<Self> {
+        let (left, top, right, bottom) = plot_area;
+        let width = right - left;
+        let height = bottom - top;
+        if !left.is_finite()
+            || !top.is_finite()
+            || !right.is_finite()
+            || !bottom.is_finite()
+            || width <= 0.0
+            || height <= 0.0
+        {
+            return None;
+        }
+        Some(Self {
+            plot_area,
+            cell_width: width / LEGEND_OCCUPANCY_RESOLUTION as f32,
+            cell_height: height / LEGEND_OCCUPANCY_RESOLUTION as f32,
+            occupied: vec![false; LEGEND_OCCUPANCY_RESOLUTION.pow(2)],
+            occupied_count: 0,
+        })
+    }
+
+    pub(crate) fn is_full(&self) -> bool {
+        self.occupied_count == self.occupied.len()
+    }
+
+    /// Mark every grid cell touched by a screen-space rectangle.
+    pub(crate) fn mark_rect(&mut self, left: f32, top: f32, right: f32, bottom: f32) {
+        if self.is_full()
+            || !left.is_finite()
+            || !top.is_finite()
+            || !right.is_finite()
+            || !bottom.is_finite()
+        {
+            return;
+        }
+        let (plot_left, plot_top, plot_right, plot_bottom) = self.plot_area;
+        let raw_left = left.min(right);
+        let raw_right = left.max(right);
+        let raw_top = top.min(bottom);
+        let raw_bottom = top.max(bottom);
+        if raw_right < plot_left
+            || raw_left > plot_right
+            || raw_bottom < plot_top
+            || raw_top > plot_bottom
+        {
+            return;
+        }
+        let left = raw_left.clamp(plot_left, plot_right);
+        let right = raw_right.clamp(plot_left, plot_right);
+        let top = raw_top.clamp(plot_top, plot_bottom);
+        let bottom = raw_bottom.clamp(plot_top, plot_bottom);
+
+        let cell_index = |position: f32, origin: f32, cell_extent: f32| {
+            (((position - origin) / cell_extent).floor() as usize)
+                .min(LEGEND_OCCUPANCY_RESOLUTION - 1)
+        };
+        let first_column = cell_index(left, plot_left, self.cell_width);
+        let last_column = cell_index(right, plot_left, self.cell_width);
+        let first_row = cell_index(top, plot_top, self.cell_height);
+        let last_row = cell_index(bottom, plot_top, self.cell_height);
+
+        for row in first_row..=last_row {
+            for column in first_column..=last_column {
+                let index = row * LEGEND_OCCUPANCY_RESOLUTION + column;
+                if !self.occupied[index] {
+                    self.occupied[index] = true;
+                    self.occupied_count += 1;
+                }
+            }
+        }
+    }
+
+    pub(crate) fn mark_rect_xywh(&mut self, x: f32, y: f32, width: f32, height: f32) {
+        self.mark_rect(x, y, x + width, y + height);
+    }
+
+    /// Mark a stroked segment by walking it at half-cell intervals.
+    pub(crate) fn mark_segment(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, line_width: f32) {
+        if self.is_full() || ![x1, y1, x2, y2, line_width].iter().all(|v| v.is_finite()) {
+            return;
+        }
+        let half_width = line_width.max(1.0) * 0.5;
+        let cell_span = ((x2 - x1).abs() / self.cell_width).max((y2 - y1).abs() / self.cell_height);
+        let steps = (cell_span * 2.0).ceil().max(1.0) as usize;
+        for step in 0..=steps {
+            let t = step as f32 / steps as f32;
+            let x = x1 + (x2 - x1) * t;
+            let y = y1 + (y2 - y1) * t;
+            self.mark_rect(
+                x - half_width,
+                y - half_width,
+                x + half_width,
+                y + half_width,
+            );
+            if self.is_full() {
+                break;
+            }
+        }
+    }
+
+    pub(crate) fn mark_marker(&mut self, x: f32, y: f32, size: f32, edge_width: f32) {
+        let radius = size.max(0.0) * 0.5 + edge_width.max(0.0) * 0.5;
+        self.mark_rect(x - radius, y - radius, x + radius, y + radius);
+    }
+
+    pub(crate) fn finish(self) -> LegendOccupancy {
+        let (left, top, _, _) = self.plot_area;
+        let cells = self
+            .occupied
+            .iter()
+            .enumerate()
+            .filter(|(_, occupied)| **occupied)
+            .map(|(index, _)| {
+                let column = index % LEGEND_OCCUPANCY_RESOLUTION;
+                let row = index / LEGEND_OCCUPANCY_RESOLUTION;
+                let cell_left = left + column as f32 * self.cell_width;
+                let cell_top = top + row as f32 * self.cell_height;
+                (
+                    cell_left,
+                    cell_top,
+                    cell_left + self.cell_width,
+                    cell_top + self.cell_height,
+                )
+            })
+            .collect();
+        LegendOccupancy { cells }
     }
 }
 
@@ -1850,7 +1973,8 @@ mod tests {
     #[test]
     fn occupancy_grid_bins_projected_points() {
         let plot_area = (0.0, 0.0, 60.0, 60.0);
-        // All points in the top-left cell, plus junk that must be ignored.
+        // Two valid points in distinct fine-grained cells, plus junk that must
+        // be ignored.
         let grid = LegendOccupancy::from_screen_points(
             plot_area,
             [
@@ -1862,9 +1986,39 @@ mod tests {
             ],
         );
 
-        assert_eq!(grid.boxes().to_vec(), vec![(0.0, 0.0, 10.0, 10.0)]);
+        assert_eq!(grid.boxes().len(), 2);
+        for &(x, y) in &[(1.0, 1.0), (5.0, 5.0)] {
+            assert!(
+                grid.boxes()
+                    .iter()
+                    .any(|&(left, top, right, bottom)| x >= left
+                        && x <= right
+                        && y >= top
+                        && y <= bottom)
+            );
+        }
         assert!(!grid.is_empty());
         assert!(LegendOccupancy::from_screen_points((0.0, 0.0, 0.0, 0.0), [(1.0, 1.0)]).is_empty());
+    }
+
+    #[test]
+    fn occupancy_storage_is_bounded_and_sampling_density_invariant() {
+        let plot_area = (0.0, 0.0, 640.0, 480.0);
+        let sparse = LegendOccupancy::from_screen_points(plot_area, [(320.0, 240.0)]);
+        let dense = LegendOccupancy::from_screen_points(
+            plot_area,
+            std::iter::repeat_n((320.0, 240.0), 1_000_000),
+        );
+        assert_eq!(sparse, dense);
+
+        let mut builder = LegendOccupancyBuilder::new(plot_area).expect("valid grid");
+        builder.mark_rect(0.0, 0.0, 640.0, 480.0);
+        assert!(builder.is_full());
+        let full = builder.finish();
+        assert_eq!(
+            full.boxes().len(),
+            LEGEND_OCCUPANCY_RESOLUTION * LEGEND_OCCUPANCY_RESOLUTION
+        );
     }
 
     /// `Best` used to be the default and always answer `UpperRight`, because
