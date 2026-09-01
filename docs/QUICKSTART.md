@@ -2,21 +2,16 @@
 
 Get started with ruviz in less than 5 minutes!
 
-## What's New in v0.12.0
+## What's New in v0.12.1
 
-- Horizontal everything: bars, grouped and stacked bars, and box plots all
-  turn with `.horizontal()` — categories move to the y axis with real
-  labels, the value axis keeps its scale, and Python
-  (`orientation="horizontal"`), Wasm and the TypeScript SDK spell the same
-  knob. Ranked charts read top-down with the new `.invert_y()`
-  (`.invert_x()` is its twin), which composes with auto-scaled bounds.
-- Box plots draw the mean `.show_mean(true)` always promised, grouped and
-  stacked bars carry the same derived edge a plain bar has (with legend
-  swatches to match), and horizontal groups read top-to-bottom in legend
-  order.
-- PNG output stamps the configured DPI in a standard `pHYs` chunk — direct
-  and interactive-session exports byte-identically — so print software
-  recovers the intended physical figure size.
+- Interactive overlays render straight again: dynamic annotations, hover and
+  selection markers, brushes and tooltips could shear diagonally when the
+  fitted canvas came out one pixel narrower than the rendered base layer.
+  Canvas sizing now shares the renderer's arithmetic and the overlay takes
+  its size from the base layer it is composited onto.
+- Long 2D titles wrap at Unicode line-break opportunities before shrinking,
+  and `LegendPosition::Best` scores the visible geometry with a bounded
+  screen-space mask so dense sampling no longer moves the legend.
 
 See full details:
 
@@ -34,7 +29,7 @@ cd my_plot
 2. **Add ruviz to your `Cargo.toml`**:
 ```toml
 [dependencies]
-ruviz = "0.12.0"
+ruviz = "0.12.1"
 ```
 
 3. **Write your first plot** in `src/main.rs`:
@@ -73,8 +68,8 @@ an embedded interactive plot view:
 
 ```toml
 [dependencies]
-ruviz = "0.12.0"
-ruviz-gpui = "0.12.0"
+ruviz = "0.12.1"
+ruviz-gpui = "0.12.1"
 ```
 
 `ruviz-gpui` is supported on Linux, macOS, and Windows. On Windows, prefer the
@@ -102,7 +97,7 @@ If you want publication-style math in labels and titles, enable Typst text rende
 
 ```toml
 [dependencies]
-ruviz = { version = "0.12.0", features = ["typst-math"] }
+ruviz = { version = "0.12.1", features = ["typst-math"] }
 ```
 
 `.typst(true)` is only available when `typst-math` is enabled. The configured
@@ -121,7 +116,7 @@ If you want Typst to stay optional in your own crate, forward a local feature fi
 
 ```toml
 [dependencies]
-ruviz = { version = "0.12.0", default-features = false }
+ruviz = { version = "0.12.1", default-features = false }
 
 [features]
 default = []
@@ -373,7 +368,7 @@ Plot::new()
 ### With polars (requires `polars_support` feature)
 ```toml
 [dependencies]
-ruviz = { version = "0.12.0", features = ["polars_support"] }
+ruviz = { version = "0.12.1", features = ["polars_support"] }
 polars = "0.50"
 ```
 
@@ -401,7 +396,7 @@ Plot::new()
 only when you have benchmarked a path that benefits from the extra SIMD support:
 ```toml
 [dependencies]
-ruviz = { version = "0.12.0", features = ["performance"] }
+ruviz = { version = "0.12.1", features = ["performance"] }
 ```
 
 ### Large Dataset Export

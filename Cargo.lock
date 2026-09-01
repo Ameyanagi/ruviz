@@ -5361,7 +5361,7 @@ dependencies = [
 
 [[package]]
 name = "ruviz"
-version = "0.12.0"
+version = "0.12.1"
 dependencies = [
  "anyhow",
  "approx",
@@ -5421,7 +5421,7 @@ dependencies = [
 
 [[package]]
 name = "ruviz-py"
-version = "0.12.0"
+version = "0.12.1"
 dependencies = [
  "image",
  "numpy",
@@ -5432,7 +5432,7 @@ dependencies = [
 
 [[package]]
 name = "ruviz-web"
-version = "0.12.0"
+version = "0.12.1"
 dependencies = [
  "console_error_panic_hook",
  "js-sys",
