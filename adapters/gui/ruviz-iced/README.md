@@ -98,7 +98,7 @@ to enable it:
 ```toml
 [dependencies]
 iced = { version = "0.14", features = ["wgpu", "crisp"] }
-ruviz-iced = "0.12.0"
+ruviz-iced = "0.12.1"
 ```
 
 - `wgpu` — GPU presentation. Without it Iced falls back to the `tiny-skia` CPU
