@@ -6,6 +6,15 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Interactive session overlays — dynamic `add_annotation` / `update_annotation`
+  annotations, hover and selection markers, brush rectangles and tooltips — no
+  longer shear diagonally at frame sizes where the fitted base canvas came out
+  one pixel wider than the requested frame (for example a default-size figure
+  fitted into a 734×513 pt card on a 2× display). The exact-DPI search now
+  uses the same snapping arithmetic as `FigureConfig::canvas_size`, the
+  overlay raster is allocated at the base layer's actual size before the two
+  are composed, and `ruviz-gpui` refuses to blend a cached overlay of a
+  different size into a captured image.
 - Long 2D plot titles now wrap at Unicode line-break opportunities and shrink
   only when two automatic lines do not fit. Authored newlines remain hard
   breaks, the configured title size remains the preferred maximum, and PNG

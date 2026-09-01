@@ -461,6 +461,11 @@ impl RuvizPlot {
 
         if let Some(overlay) = frame.overlay_image.as_ref() {
             let overlay = render_image_to_ruviz(overlay)?;
+            if (overlay.width, overlay.height) != (image.width, image.height) {
+                // Blending row-major buffers of different widths shears the
+                // overlay; fall back to a fresh session render instead.
+                return None;
+            }
             blend_rgba_into_rgba(&overlay.pixels, &mut image.pixels);
         }
 

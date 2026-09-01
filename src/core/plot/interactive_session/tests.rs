@@ -5512,3 +5512,132 @@ fn test_heatmap_cell_tooltip_carries_the_series_label() {
     let tooltip = tooltip_from_hit(&plot, &hit);
     assert_eq!(tooltip.content, "field: row=2, col=3, value=4.200e-5");
 }
+
+/// A frame size at which the exact-DPI search used to pick a DPI whose
+/// `(figure.width * dpi) as u32` truncated to 1367 while
+/// `FigureConfig::canvas_size` snapped the same product to 1368, so the base
+/// layer rendered one column wider than the overlay raster.
+fn shear_prone_image_target() -> ImageTarget {
+    ImageTarget {
+        size_px: (1367, 1026),
+        scale_factor: 2.0,
+        time_seconds: 0.0,
+    }
+}
+
+fn sine_plot(size_px: Option<(u32, u32)>) -> Plot {
+    let x: Vec<f64> = (0..400).map(|i| i as f64 * 0.025).collect();
+    let y: Vec<f64> = x.iter().map(|v| v.sin()).collect();
+    let mut builder = Plot::new().line(&x, &y).title("shear").grid(false);
+    if let Some((width, height)) = size_px {
+        builder = builder.size_px(width, height);
+    }
+    builder.into()
+}
+
+#[test]
+fn test_prepared_frame_canvas_matches_requested_size() {
+    let figures = [sine_plot(None), sine_plot(Some((900, 420)))];
+    let mut mismatches = Vec::new();
+    for plot in &figures {
+        let frame = plot.resolve_frame(0.0).unwrap();
+        for scale in [1.0f32, 2.0] {
+            for max_width in 1..=2600u32 {
+                let width_limited = (max_width, 4000);
+                let height_limited = (max_width, ((max_width as f32 * 0.7) as u32).max(1));
+                for max_size in [width_limited, height_limited] {
+                    let fitted = plot.fitted_output_size_for_max_pixels(max_size);
+                    let canvas = plot
+                        .prepared_frame_shell_with_style(fitted, scale, &frame.style)
+                        .config_canvas_size();
+                    if canvas != fitted {
+                        mismatches.push((scale, max_size, fitted, canvas));
+                    }
+                }
+            }
+        }
+    }
+    assert!(
+        mismatches.is_empty(),
+        "{} fitted frames render at a different canvas size, e.g. {:?}",
+        mismatches.len(),
+        &mismatches[..mismatches.len().min(8)]
+    );
+}
+
+fn filled_column_range(image: &Image, row: u32) -> Option<(u32, u32)> {
+    let start = (row * image.width) as usize * 4;
+    let columns = image.pixels[start..start + image.width as usize * 4]
+        .chunks_exact(4)
+        .enumerate()
+        .filter(|(_, pixel)| pixel[3] > 0)
+        .map(|(column, _)| column as u32);
+    let mut range: Option<(u32, u32)> = None;
+    for column in columns {
+        range = Some(match range {
+            None => (column, column),
+            Some((min, max)) => (min.min(column), max.max(column)),
+        });
+    }
+    range
+}
+
+fn differing_column_range(base: &Image, composed: &Image, row: u32) -> Option<(u32, u32)> {
+    let start = (row * base.width) as usize * 4;
+    let end = start + base.width as usize * 4;
+    let mut range: Option<(u32, u32)> = None;
+    for (column, (before, after)) in base.pixels[start..end]
+        .chunks_exact(4)
+        .zip(composed.pixels[start..end].chunks_exact(4))
+        .enumerate()
+    {
+        if before != after {
+            let column = column as u32;
+            range = Some(match range {
+                None => (column, column),
+                Some((min, max)) => (min.min(column), max.max(column)),
+            });
+        }
+    }
+    range
+}
+
+#[test]
+fn test_dynamic_annotation_overlay_matches_base_size_and_stays_axis_aligned() {
+    let session = sine_plot(None).prepare_interactive();
+    session.add_annotation(Annotation::hspan(2.0, 3.0)).unwrap();
+    let target = shear_prone_image_target();
+    let frame = session.render_to_image(target).unwrap();
+
+    let base = &frame.layers.base;
+    let overlay = frame
+        .layers
+        .overlay
+        .as_ref()
+        .expect("a dynamic annotation renders an overlay layer");
+    assert_eq!((base.width, base.height), target.size_px);
+    assert_eq!((overlay.width, overlay.height), target.size_px);
+    assert_eq!((frame.image.width, frame.image.height), target.size_px);
+
+    let plot_area = session.geometry_snapshot().unwrap().plot_area;
+    let rows = (plot_area.top() as u32 + 2)..(plot_area.bottom() as u32 - 2);
+    let expected = filled_column_range(overlay, rows.start).expect("span fills the first row");
+    assert!(
+        expected.1 > expected.0 + 8,
+        "span is wider than a line: {expected:?}"
+    );
+    let expected_composed =
+        differing_column_range(base, &frame.image, rows.start).expect("span shows in composite");
+    for row in rows {
+        assert_eq!(
+            filled_column_range(overlay, row),
+            Some(expected),
+            "overlay span drifted on row {row}"
+        );
+        assert_eq!(
+            differing_column_range(base, &frame.image, row),
+            Some(expected_composed),
+            "composed span drifted on row {row}"
+        );
+    }
+}
