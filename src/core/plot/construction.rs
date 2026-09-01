@@ -1178,8 +1178,22 @@ impl Plot {
             && figure.height > 0.0
     }
 
+    /// The canvas the renderer will actually allocate for `figure` at `dpi`.
+    ///
+    /// This must be the same arithmetic as [`FigureConfig::canvas_size`],
+    /// which snaps products within representation noise of an integer
+    /// instead of truncating. A plain `(width * dpi) as u32` here disagreed
+    /// with it by one pixel for many fitted frame sizes, so the base layer
+    /// came out one column wider than the overlay raster that shares its
+    /// frame size and the composed overlay sheared diagonally.
+    ///
+    /// [`FigureConfig::canvas_size`]: crate::core::FigureConfig::canvas_size
     fn canvas_size_for_figure_dpi(figure: &crate::core::FigureConfig, dpi: f32) -> (u32, u32) {
-        ((figure.width * dpi) as u32, (figure.height * dpi) as u32)
+        crate::core::FigureConfig {
+            dpi,
+            ..figure.clone()
+        }
+        .canvas_size()
     }
 
     fn next_positive_f32(value: f32) -> f32 {

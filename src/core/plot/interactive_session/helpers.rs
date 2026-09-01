@@ -1,6 +1,11 @@
 use super::*;
 
 pub(super) fn compose_images(base: &Image, overlay: &Image) -> Image {
+    debug_assert_eq!(
+        (base.width, base.height),
+        (overlay.width, overlay.height),
+        "overlay raster must match the base layer size or the composite shears"
+    );
     let mut pixels = base
         .pixels_in_alpha_mode(crate::core::plot::AlphaMode::Straight)
         .into_owned();

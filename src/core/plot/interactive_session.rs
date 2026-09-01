@@ -2954,13 +2954,6 @@ impl InteractivePlotSession {
             };
 
             let geometry = self.ensure_geometry(&base_key, resolved_frame.as_ref())?;
-            let frame_size_px = {
-                self.inner
-                    .state
-                    .lock()
-                    .expect("InteractivePlotSession state lock poisoned")
-                    .size_px
-            };
             let base_result = self.ensure_base_image(
                 &base_key,
                 &geometry,
@@ -2968,6 +2961,14 @@ impl InteractivePlotSession {
                 epoch_before_render,
                 resolved_frame.as_ref(),
             )?;
+            // The overlay raster is allocated at the base layer's actual pixel
+            // size rather than the requested `state.size_px`. The two agree
+            // whenever the base render honours its frame size, and when they
+            // do not, sizing the overlay from the request would hand
+            // `compose_images` (and every straight-alpha compositor
+            // downstream) two buffers with different row strides, which
+            // shears the whole overlay diagonally.
+            let frame_size_px = (base_result.layer.width(), base_result.layer.height());
             self.run_render_test_hook(RenderTestPoint::AfterBasePublication);
             self.refresh_overlay_state(dirty_before_render, epoch_before_render)?;
             let overlay_result = self.ensure_overlay_image(frame_size_px, dirty_before_render)?;
