@@ -114,15 +114,55 @@ impl RuvizPlot {
         true
     }
 
-    fn pointer_base_generation_is_current(&mut self, cx: &mut Context<Self>) -> bool {
-        let is_current = self.cached_frame.as_ref().is_some_and(|frame| {
-            self.session.displayed_frame_generation() == Some(frame.base_generation)
-        });
-        if !is_current {
-            self.reset_pointer_state();
-            cx.notify();
+    pub(super) fn pointer_base_generation_is_current(&mut self, cx: &mut Context<Self>) -> bool {
+        let cached_generation = self
+            .cached_frame
+            .as_ref()
+            .map(|frame| frame.base_generation);
+        let is_current = cached_generation.is_some()
+            && self.session.displayed_frame_generation() == cached_generation;
+        if is_current {
+            return true;
         }
-        is_current
+        // The session moved past the cached frame because this view's own
+        // render pipeline is producing the next one (a pan, zoom, hover or
+        // reactive data change scheduled a render that has not been installed
+        // yet). Pointer math is delta based and the frame size is unchanged,
+        // so the drag in progress stays valid; resetting it here would cancel
+        // every pan after its first move. Only an externally moved session
+        // (nothing of ours in flight or queued) invalidates the pointer state.
+        // That only holds while the pending frame keeps the cached frame's
+        // geometry: a resize, scale or presentation change in flight would
+        // make the delta math lie, so the drag is dropped like any other
+        // stale pointer state.
+        let own_render_pending = cached_generation.is_some()
+            && self
+                .cached_frame
+                .as_ref()
+                .is_some_and(|frame| self.pending_renders_keep_frame_contract(&frame.request));
+        if own_render_pending {
+            return true;
+        }
+        self.reset_pointer_state();
+        cx.notify();
+        false
+    }
+
+    /// Whether every render in flight or queued was requested for the same
+    /// frame geometry as `request` (and at least one is pending).
+    fn pending_renders_keep_frame_contract(&self, request: &RenderRequest) -> bool {
+        let pending = [
+            self.scheduler.in_flight.as_ref(),
+            self.scheduler.queued.as_ref(),
+        ];
+        let mut any = false;
+        for scheduled in pending.into_iter().flatten() {
+            any = true;
+            if !scheduled.request.same_frame_contract(request) {
+                return false;
+            }
+        }
+        any
     }
 
     fn emit_plot_click(
@@ -906,7 +946,13 @@ impl RuvizPlot {
             self.emit_plot_click(event.position, cx)?;
         }
 
+        let pan_ended = self.pan_drag_active();
         self.reset_pointer_state();
+        if pan_ended {
+            // The final raster after a throttled pan must not wait for the
+            // next pointer move.
+            cx.notify();
+        }
         Ok(())
     }
 
