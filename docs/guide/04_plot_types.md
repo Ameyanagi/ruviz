@@ -776,7 +776,7 @@ Use `performance` only after benchmarking a path that benefits from SIMD support
 
 ```toml
 [dependencies]
-ruviz = { version = "0.12.1", features = ["simd"] }
+ruviz = { version = "0.12.2", features = ["simd"] }
 ```
 
 ### Very Large Datasets (> 100K points)

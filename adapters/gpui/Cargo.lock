@@ -5120,7 +5120,7 @@ dependencies = [
 
 [[package]]
 name = "ruviz"
-version = "0.12.1"
+version = "0.12.2"
 dependencies = [
  "base64",
  "bytemuck",
@@ -5150,7 +5150,7 @@ dependencies = [
 
 [[package]]
 name = "ruviz-gpui"
-version = "0.12.1"
+version = "0.12.2"
 dependencies = [
  "arboard",
  "core-foundation 0.10.0",
