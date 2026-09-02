@@ -115,14 +115,32 @@ impl RuvizPlot {
     }
 
     fn pointer_base_generation_is_current(&mut self, cx: &mut Context<Self>) -> bool {
-        let is_current = self.cached_frame.as_ref().is_some_and(|frame| {
-            self.session.displayed_frame_generation() == Some(frame.base_generation)
-        });
-        if !is_current {
-            self.reset_pointer_state();
-            cx.notify();
+        let cached_generation = self
+            .cached_frame
+            .as_ref()
+            .map(|frame| frame.base_generation);
+        let is_current = cached_generation.is_some()
+            && self.session.displayed_frame_generation() == cached_generation;
+        if is_current {
+            return true;
         }
-        is_current
+        // The session moved past the cached frame because this view's own
+        // render pipeline is producing the next one (a pan, zoom, hover or
+        // reactive data change scheduled a render that has not been installed
+        // yet). Pointer math is delta based and the frame size is unchanged,
+        // so the drag in progress stays valid; resetting it here would cancel
+        // every pan after its first move. Only an externally moved session
+        // (nothing of ours in flight or queued) invalidates the pointer state.
+        let own_render_pending = cached_generation.is_some()
+            && (self.in_flight_render.is_some()
+                || self.scheduler.in_flight.is_some()
+                || self.scheduler.queued.is_some());
+        if own_render_pending {
+            return true;
+        }
+        self.reset_pointer_state();
+        cx.notify();
+        false
     }
 
     fn emit_plot_click(

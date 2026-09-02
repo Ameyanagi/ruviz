@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Fixed
+
+- `ruviz-gpui`: a pan or brush drag no longer dies after its first move. The
+  pointer gate reset the drag whenever the session's displayed base
+  generation ran ahead of the cached frame — which is exactly what happens
+  while the view's own render of that pan is in flight — so continuous input
+  froze the view after one frame. A pending render of our own now keeps the
+  pointer state; only an externally moved session resets it. The render
+  scheduler also installs an in-flight frame that finishes while a newer
+  request of the same size, scale and presentation is queued, so continuous
+  input paints every rendered frame instead of only the last one (a
+  superseded or resized frame is still discarded).
+
 ## [0.12.1] - 2026-09-02
 
 ### Fixed

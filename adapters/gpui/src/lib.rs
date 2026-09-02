@@ -597,6 +597,14 @@ mod platform_impl {
     struct RenderScheduler {
         scheduler_incarnation: Arc<RenderSchedulerIncarnation>,
         latest_requested_generation: u64,
+        /// Generations below this were superseded (session invalidated or
+        /// replaced) and must never be installed, even if they finish.
+        install_floor: u64,
+        /// The most recently scheduled request; an older in-flight frame is
+        /// still installed when it matches this request's frame contract
+        /// (size, scale, presentation), so a drag shows every rendered frame
+        /// instead of only the last one.
+        latest_request: Option<RenderRequest>,
         in_flight: Option<ScheduledRender>,
         queued: Option<ScheduledRender>,
         dropped_frames: u64,
@@ -607,6 +615,8 @@ mod platform_impl {
             Self {
                 scheduler_incarnation: Arc::new(RenderSchedulerIncarnation),
                 latest_requested_generation: 0,
+                install_floor: 0,
+                latest_request: None,
                 in_flight: None,
                 queued: None,
                 dropped_frames: 0,
@@ -627,6 +637,7 @@ mod platform_impl {
 
         fn schedule(&mut self, request: RenderRequest) -> Option<ScheduledRender> {
             let generation = self.advance_generation();
+            self.latest_request = Some(request.clone());
             let scheduled = ScheduledRender {
                 scheduler_incarnation: Arc::clone(&self.scheduler_incarnation),
                 generation,
@@ -652,12 +663,22 @@ mod platform_impl {
                 return None;
             }
             self.in_flight = None;
-            Some(
-                Arc::ptr_eq(
-                    &scheduled.scheduler_incarnation,
-                    &self.scheduler_incarnation,
-                ) && scheduled.generation == self.latest_requested_generation,
-            )
+            let same_incarnation = Arc::ptr_eq(
+                &scheduled.scheduler_incarnation,
+                &self.scheduler_incarnation,
+            );
+            let not_superseded = scheduled.generation >= self.install_floor;
+            // A frame that finished while a newer request is queued is still
+            // newer than what is on screen: install it when its frame contract
+            // matches the latest request (only the session state differs), so
+            // continuous input paints every rendered frame.
+            let installable = scheduled.generation == self.latest_requested_generation
+                || self.latest_request.as_ref().is_some_and(|latest| {
+                    latest.size_px == scheduled.request.size_px
+                        && latest.scale_bits == scheduled.request.scale_bits
+                        && latest.presentation_mode == scheduled.request.presentation_mode
+                });
+            Some(same_incarnation && not_superseded && installable)
         }
 
         fn take_queued(&mut self) -> Option<ScheduledRender> {
@@ -665,7 +686,8 @@ mod platform_impl {
         }
 
         fn supersede_in_flight(&mut self) {
-            self.advance_generation();
+            let floor = self.advance_generation();
+            self.install_floor = floor;
         }
     }
 
@@ -4214,6 +4236,148 @@ mod platform_impl {
                     assert_eq!(events[0].kind, PlotPointerEventKind::Click);
                 })
             });
+        }
+
+        #[test]
+        fn test_pan_survives_own_render_in_flight_past_the_cached_generation() {
+            // A pan schedules a render; the worker publishes the next base
+            // generation before the frame is installed on the UI thread. Pointer
+            // moves in that window must keep panning instead of resetting the
+            // drag (which previously froze every pan after its first move).
+            let component_bounds =
+                Bounds::new(point(px(20.0), px(30.0)), size(px(300.0), px(300.0)));
+            let plot: Plot = Plot::new()
+                .line(&[0.0, 1.0], &[0.0, 1.0])
+                .xlim(0.0, 1.0)
+                .ylim(0.0, 1.0)
+                .into();
+            let (cx, view) = mapped_test_view(
+                plot,
+                RuvizPlotOptions::default(),
+                (300, 300),
+                1.0,
+                component_bounds,
+            );
+            let anchor_window = point(
+                component_bounds.origin.x + component_bounds.size.width * 0.5,
+                component_bounds.origin.y + component_bounds.size.height * 0.5,
+            );
+            cx.update(|app| {
+                view.update(app, |view, cx| {
+                    let anchor_px = view
+                        .local_viewport_point(anchor_window)
+                        .expect("anchor should map into the frame");
+                    view.interaction_state.active_drag = ActiveDrag::LeftPan {
+                        anchor_px,
+                        anchor_window,
+                        last_px: anchor_px,
+                        crossed_threshold: true,
+                        click_eligible: false,
+                    };
+                    let cached_generation = view
+                        .cached_frame
+                        .as_ref()
+                        .expect("mapped view has a cached frame")
+                        .base_generation;
+
+                    // Our own render is in flight and the session has already
+                    // published the next base generation.
+                    let request = view
+                        .cached_frame
+                        .as_ref()
+                        .expect("cached frame")
+                        .request
+                        .clone();
+                    let scheduled = view
+                        .scheduler
+                        .schedule(request.clone())
+                        .expect("nothing in flight yet");
+                    view.scheduler.start(scheduled.clone());
+                    view.session.apply_input(PlotInputEvent::Pan {
+                        delta_px: ViewportPoint::new(10.0, 0.0),
+                    });
+                    let frame = render_frame_from_session(view.session.clone(), request)
+                        .expect("render succeeds");
+                    assert_ne!(
+                        view.session.displayed_frame_generation(),
+                        Some(cached_generation),
+                        "the session must have moved past the cached frame"
+                    );
+                    assert!(
+                        !view.session.dirty_domains().data,
+                        "the render must have cleared the pan's data dirtiness"
+                    );
+
+                    view.handle_mouse_move(
+                        &MouseMoveEvent {
+                            position: point(anchor_window.x + px(40.0), anchor_window.y),
+                            pressed_button: Some(MouseButton::Left),
+                            modifiers: Modifiers::default(),
+                        },
+                        cx,
+                    )
+                    .expect("move succeeds");
+                    assert!(
+                        matches!(
+                            view.interaction_state.active_drag,
+                            ActiveDrag::LeftPan { .. }
+                        ),
+                        "the pan must survive an in-flight render of our own"
+                    );
+                    assert!(
+                        view.session.dirty_domains().data,
+                        "the move must keep panning"
+                    );
+
+                    // The finished frame installs even though it is not the
+                    // latest generation the scheduler handed out.
+                    view.scheduler.schedule(scheduled.request.clone());
+                    assert_eq!(view.scheduler.finish(&scheduled), Some(true));
+                    let _ = frame;
+
+                    // With nothing of ours pending, an externally moved session
+                    // still resets the pointer state.
+                    view.scheduler.take_queued();
+                    view.session.apply_input(PlotInputEvent::Pan {
+                        delta_px: ViewportPoint::new(10.0, 0.0),
+                    });
+                    let request = view.cached_frame.as_ref().expect("cached").request.clone();
+                    let _ = render_frame_from_session(view.session.clone(), request);
+                    view.handle_mouse_move(
+                        &MouseMoveEvent {
+                            position: point(anchor_window.x + px(60.0), anchor_window.y),
+                            pressed_button: Some(MouseButton::Left),
+                            modifiers: Modifiers::default(),
+                        },
+                        cx,
+                    )
+                    .expect("move succeeds");
+                    assert!(
+                        matches!(view.interaction_state.active_drag, ActiveDrag::None),
+                        "an external base change with nothing pending resets the drag"
+                    );
+                })
+            });
+        }
+
+        #[test]
+        fn test_render_scheduler_installs_in_flight_frame_when_newer_request_is_queued() {
+            let mut scheduler = RenderScheduler::default();
+            let first = RenderRequest::new((320, 240), 1.0, 0.0, PresentationMode::Hybrid);
+            let same_contract = RenderRequest::new((320, 240), 1.0, 1.0, PresentationMode::Hybrid);
+            let resized = RenderRequest::new((640, 480), 1.0, 2.0, PresentationMode::Hybrid);
+
+            let scheduled = scheduler.schedule(first).expect("starts");
+            scheduler.start(scheduled.clone());
+            assert!(scheduler.schedule(same_contract).is_none());
+            // Same size/scale/presentation queued: the in-flight frame is still
+            // newer than the screen and installs.
+            assert_eq!(scheduler.finish(&scheduled), Some(true));
+            let queued = scheduler.take_queued().expect("queued");
+            scheduler.start(queued.clone());
+            assert!(scheduler.schedule(resized).is_none());
+            // A resize queued behind it: the stale-size frame is not installed.
+            assert_eq!(scheduler.finish(&queued), Some(false));
         }
 
         #[test]
