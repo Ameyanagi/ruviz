@@ -114,7 +114,7 @@ impl RuvizPlot {
         true
     }
 
-    fn pointer_base_generation_is_current(&mut self, cx: &mut Context<Self>) -> bool {
+    pub(super) fn pointer_base_generation_is_current(&mut self, cx: &mut Context<Self>) -> bool {
         let cached_generation = self
             .cached_frame
             .as_ref()
@@ -131,16 +131,38 @@ impl RuvizPlot {
         // so the drag in progress stays valid; resetting it here would cancel
         // every pan after its first move. Only an externally moved session
         // (nothing of ours in flight or queued) invalidates the pointer state.
+        // That only holds while the pending frame keeps the cached frame's
+        // geometry: a resize, scale or presentation change in flight would
+        // make the delta math lie, so the drag is dropped like any other
+        // stale pointer state.
         let own_render_pending = cached_generation.is_some()
-            && (self.in_flight_render.is_some()
-                || self.scheduler.in_flight.is_some()
-                || self.scheduler.queued.is_some());
+            && self
+                .cached_frame
+                .as_ref()
+                .is_some_and(|frame| self.pending_renders_keep_frame_contract(&frame.request));
         if own_render_pending {
             return true;
         }
         self.reset_pointer_state();
         cx.notify();
         false
+    }
+
+    /// Whether every render in flight or queued was requested for the same
+    /// frame geometry as `request` (and at least one is pending).
+    fn pending_renders_keep_frame_contract(&self, request: &RenderRequest) -> bool {
+        let pending = [
+            self.scheduler.in_flight.as_ref(),
+            self.scheduler.queued.as_ref(),
+        ];
+        let mut any = false;
+        for scheduled in pending.into_iter().flatten() {
+            any = true;
+            if !scheduled.request.same_frame_contract(request) {
+                return false;
+            }
+        }
+        any
     }
 
     fn emit_plot_click(

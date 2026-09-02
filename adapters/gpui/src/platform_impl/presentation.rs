@@ -100,7 +100,19 @@ impl RuvizPlot {
         };
 
         if let Some(previous) = previous {
-            maybe_retire_replaced_primary(&mut self.retired_images, &previous.primary, &primary);
+            let anchored = match (&previous.primary, self.pan_anchor.as_ref()) {
+                (PrimaryFrame::Image(image), Some(anchor)) => {
+                    matches!(&anchor.primary, PrimaryFrame::Image(held) if Arc::ptr_eq(held, image))
+                }
+                _ => false,
+            };
+            if !anchored {
+                maybe_retire_replaced_primary(
+                    &mut self.retired_images,
+                    &previous.primary,
+                    &primary,
+                );
+            }
             if let Some(previous_overlay) = previous.overlay_image {
                 let overlay_reused = overlay_image
                     .as_ref()
@@ -131,10 +143,21 @@ impl RuvizPlot {
             Some(RenderedPrimary::Image(image)) => Some(PrimaryFrame::Image(image)),
             #[cfg(all(feature = "gpu", target_os = "macos"))]
             Some(RenderedPrimary::Surface(base_layer)) => {
-                let previous_surface = previous.and_then(|cached| match &cached.primary {
-                    PrimaryFrame::Surface(surface) => Some(surface),
-                    PrimaryFrame::Image(_) => None,
-                });
+                // The anchor keeps its pixels for the whole drag, so a frame
+                // it shares its surface with must render into a new one.
+                let anchor_surface =
+                    self.pan_anchor
+                        .as_ref()
+                        .and_then(|anchor| match &anchor.primary {
+                            PrimaryFrame::Surface(surface) => Some(surface.as_CFTypeRef()),
+                            PrimaryFrame::Image(_) => None,
+                        });
+                let previous_surface = previous
+                    .and_then(|cached| match &cached.primary {
+                        PrimaryFrame::Surface(surface) => Some(surface),
+                        PrimaryFrame::Image(_) => None,
+                    })
+                    .filter(|surface| anchor_surface != Some(surface.as_CFTypeRef()));
 
                 match self.surface_upload.update(previous_surface, &base_layer) {
                     Ok(surface) => Some(PrimaryFrame::Surface(surface)),
@@ -237,12 +260,104 @@ impl RuvizPlot {
             self.last_layout = None;
         }
 
-        let preview = self.pan_preview();
-        self.cached_frame.as_ref().map(|frame| PaintFrame {
-            primary: frame.primary.clone(),
-            overlay_image: frame.overlay_image.as_ref().map(Arc::clone),
-            preview,
-        })
+        self.update_pan_anchor(cx);
+        self.pan_paint()
+    }
+
+    /// Keep the drag anchor in step with the drag: capture the frame on
+    /// screen when a pan crosses its threshold, drop it once the drag has
+    /// ended and the final raster shows the pending view, and drop it early
+    /// when the frame geometry changes (resize, scale, presentation).
+    pub(super) fn update_pan_anchor(&mut self, cx: &mut App) {
+        let contract_changed = match (self.pan_anchor.as_ref(), self.cached_frame.as_ref()) {
+            (Some(anchor), Some(frame)) => !anchor.request.same_frame_contract(&frame.request),
+            _ => false,
+        };
+        if contract_changed {
+            self.clear_pan_anchor(cx);
+        }
+        if self.pan_drag_active() {
+            if self.pan_anchor.is_none()
+                && let Some(frame) = self.cached_frame.as_ref()
+                && let Some(view) = frame.view.as_ref()
+            {
+                self.pan_anchor = Some(PanAnchor {
+                    request: frame.request.clone(),
+                    primary: frame.primary.clone(),
+                    view: view.clone(),
+                });
+            }
+            return;
+        }
+        if self.pan_anchor.is_some() && self.pan_preview().is_none() {
+            // The drag is over and the frame on screen shows the pending view:
+            // its own axes are correct again.
+            self.clear_pan_anchor(cx);
+        }
+    }
+
+    fn clear_pan_anchor(&mut self, cx: &mut App) {
+        let Some(anchor) = self.pan_anchor.take() else {
+            return;
+        };
+        if let PrimaryFrame::Image(image) = anchor.primary {
+            let still_shown = self.cached_frame.as_ref().is_some_and(|frame| {
+                matches!(&frame.primary, PrimaryFrame::Image(current) if Arc::ptr_eq(current, &image))
+            });
+            if !still_shown {
+                cx.drop_image(image, None);
+            }
+        }
+    }
+
+    /// What to paint: the plot-area content (the newest frame whose plot
+    /// area matches the anchor's, else the anchor itself) shifted under the
+    /// anchor's axes while a pan drag is in progress, or the cached frame
+    /// with a plain pan preview otherwise.
+    pub(super) fn pan_paint(&self) -> Option<PaintFrame> {
+        let frame = self.cached_frame.as_ref()?;
+        let overlay_image = frame.overlay_image.as_ref().map(Arc::clone);
+        let Some(anchor) = self.pan_anchor.as_ref() else {
+            return Some(PaintFrame {
+                primary: frame.primary.clone(),
+                overlay_image,
+                preview: self.pan_preview(),
+                axes: None,
+            });
+        };
+        let layout = self.last_layout.as_ref()?;
+        let pending = self.session.view_bounds_snapshot().visible_bounds;
+        // A raster whose plot area has the anchor's size slides into the
+        // anchor's frame exactly; one whose margins moved cannot, so the
+        // anchor's own content stays until the drag ends.
+        let (content, view) = match frame.view.as_ref() {
+            Some(view) if same_plot_area_size(view, &anchor.view) => (&frame.primary, view),
+            _ => (&anchor.primary, &anchor.view),
+        };
+        let preview = preview_translation_onto(
+            view,
+            pending,
+            anchor.view.plot_area,
+            anchor.view.axis_inset_px,
+            layout.content_bounds,
+            layout.frame_size_px,
+            true,
+        );
+        match preview {
+            Some(preview) => Some(PaintFrame {
+                primary: content.clone(),
+                overlay_image,
+                preview: Some(preview),
+                axes: Some(anchor.primary.clone()),
+            }),
+            // Not a pure pan any more (a zoom landed): fall back to the frame.
+            None => Some(PaintFrame {
+                primary: frame.primary.clone(),
+                overlay_image,
+                preview: self.pan_preview(),
+                axes: None,
+            }),
+        }
     }
 
     /// The GPU translation that shows the session's pending view with the
@@ -804,6 +919,20 @@ impl SurfaceUploadState {
         )?;
         Ok(pixel_buffer)
     }
+}
+
+/// Whether two frames lay out their plot area with the same size (within
+/// half a frame pixel), so one's content can be shown inside the other's axes.
+pub(super) fn same_plot_area_size(a: &FrameView, b: &FrameView) -> bool {
+    let (aw, ah) = (
+        a.plot_area.max.x - a.plot_area.min.x,
+        a.plot_area.max.y - a.plot_area.min.y,
+    );
+    let (bw, bh) = (
+        b.plot_area.max.x - b.plot_area.min.x,
+        b.plot_area.max.y - b.plot_area.min.y,
+    );
+    (aw - bw).abs() <= 0.5 && (ah - bh).abs() <= 0.5
 }
 
 #[cfg(all(feature = "gpu", target_os = "macos"))]

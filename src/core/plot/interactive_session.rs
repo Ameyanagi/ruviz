@@ -1434,6 +1434,9 @@ struct OverlayFrameCache {
 struct GeometrySnapshot {
     key: InteractiveFrameKey,
     plot_area: tiny_skia::Rect,
+    /// Frame pixels inside the plot-area edge that belong to the axes
+    /// (spine and inward ticks) rather than to the data.
+    axis_inset_px: f32,
     x_bounds: (f64, f64),
     y_bounds: (f64, f64),
     x_scale: AxisScale,
@@ -2715,6 +2718,16 @@ impl InteractivePlotSession {
     }
 
     /// Returns the current interactive viewport state.
+    /// Frame pixels along the inside of the displayed plot-area edge that the
+    /// axes own (spine plus inward tick marks). An embedder that slides the
+    /// plot area of a cached frame keeps this band with the axes.
+    pub fn axis_inset_px(&self) -> Result<f32> {
+        let geometry = self
+            .displayed_geometry()
+            .or_else(|_| self.geometry_snapshot())?;
+        Ok(geometry.axis_inset_px)
+    }
+
     pub fn viewport_snapshot(&self) -> Result<InteractiveViewportSnapshot> {
         self.repair_poisoned_session();
         let geometry = self
@@ -4672,6 +4685,7 @@ fn sanitize_scale_factor(scale_factor: f32) -> f32 {
 
 struct ComputedSessionLayout {
     plot_area_rect: tiny_skia::Rect,
+    axis_inset_px: f32,
     annotation_theme: Theme,
     annotation_font_family: FontFamily,
     annotation_render_scale: RenderScale,
@@ -4697,6 +4711,7 @@ fn geometry_snapshot_for_state(
     Ok(GeometrySnapshot {
         key,
         plot_area: layout.plot_area_rect,
+        axis_inset_px: layout.axis_inset_px,
         x_bounds: (visible.x_min, visible.x_max),
         y_bounds: (visible.y_min, visible.y_max),
         x_scale: plot.layout.x_scale,
@@ -4866,8 +4881,24 @@ fn compute_plot_layout_from_frame(
         position: None,
     })?;
 
+    // Inward tick marks and the axis spine sit just inside the plot area;
+    // a translated preview must leave that band to the frame's own axes.
+    let tick_inward_logical = match layout_plot.layout.tick_config.direction {
+        crate::core::plot::config::TickDirection::Inside => 5.0,
+        crate::core::plot::config::TickDirection::InOut => 2.5,
+        crate::core::plot::config::TickDirection::Outside => 0.0,
+    };
+    let axis_inset_px = layout_plot
+        .render_scale()
+        .logical_pixels_to_pixels(tick_inward_logical)
+        + layout_plot
+            .render_scale()
+            .points_to_pixels(layout_plot.display.config.lines.axis_width)
+        + 1.0;
+
     Ok(ComputedSessionLayout {
         plot_area_rect,
+        axis_inset_px,
         annotation_theme: layout_plot.display.theme.clone(),
         annotation_font_family: layout_plot.display.config.typography.family.clone(),
         annotation_render_scale: layout_plot.render_scale(),

@@ -6,6 +6,8 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- `InteractivePlotSession::axis_inset_px` reports the band inside the plot-area edge that the axes own (spine and inward tick marks), for embedders that slide a cached frame's plot area.
+
 - `ruviz-gpui`: a pan drag no longer waits for a raster. While the pointer
   moves, the cached base frame's plot area is repainted on the GPU at the
   offset the pending view implies (margins and axes keep their place until
@@ -25,6 +27,11 @@ All notable changes to this project will be documented in this file.
   presentation path.
 
 ### Fixed
+
+- A pan drag keeps the frame it started on as its anchor: margins, axis spines, tick marks and tick labels stay exactly where they were for the whole drag while throttled rasters feed only the plot-area content, so a fast drag no longer makes the axes flicker. The preview mask is clipped to where the shifted frame's plot area lands, so its margins never show through, and the axis band is left to the anchor. Only the final raster after release redraws the axes.
+- An in-flight frame is installed under a queued request only when it was rendered for the same instant (`time_bits`), not just the same geometry, so an animation step or `set_time` never shows an older frame first.
+- A generation rollover clears the scheduler's install floor, which otherwise rejected every post-rollover frame.
+- A pan survives its own pending render only while that render keeps the cached frame's geometry (size, scale, presentation); a pending resize resets the pointer state as before.
 
 - `ruviz-gpui`: a pan or brush drag no longer dies after its first move. The
   pointer gate reset the drag whenever the session's displayed base

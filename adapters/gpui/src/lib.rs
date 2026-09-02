@@ -526,6 +526,15 @@ mod platform_impl {
             f64::from_bits(self.time_bits)
         }
 
+        /// Whether two requests describe the same frame geometry: size,
+        /// backing scale and presentation. Frames that agree here map pointer
+        /// positions identically and can stand in for each other on screen.
+        fn same_frame_contract(&self, other: &Self) -> bool {
+            self.size_px == other.size_px
+                && self.scale_bits == other.scale_bits
+                && self.presentation_mode == other.presentation_mode
+        }
+
         fn is_dirty(&self, session: &InteractivePlotSession) -> bool {
             let dirty = session.dirty_domains();
             dirty.layout || dirty.data || dirty.overlay || dirty.temporal || dirty.interaction
@@ -564,6 +573,9 @@ mod platform_impl {
     struct FrameView {
         visible: ViewportRect,
         plot_area: ViewportRect,
+        /// Frame pixels inside the plot-area edge owned by the axes (spine
+        /// and inward ticks); a translated preview leaves them untouched.
+        axis_inset_px: f64,
         x_scale: AxisScale,
         y_scale: AxisScale,
     }
@@ -575,6 +587,17 @@ mod platform_impl {
     struct PanPreview {
         offset: Point<Pixels>,
         mask: Bounds<Pixels>,
+    }
+
+    /// The frame on screen when a pan drag started. Its margins and axes are
+    /// painted unchanged for the whole drag while newer rasters supply the
+    /// plot-area content, so nothing outside the plot area moves until the
+    /// final raster after release replaces it.
+    #[derive(Clone)]
+    struct PanAnchor {
+        request: RenderRequest,
+        primary: PrimaryFrame,
+        view: FrameView,
     }
 
     #[derive(Clone)]
@@ -631,8 +654,8 @@ mod platform_impl {
         install_floor: u64,
         /// The most recently scheduled request; an older in-flight frame is
         /// still installed when it matches this request's frame contract
-        /// (size, scale, presentation), so a drag shows every rendered frame
-        /// instead of only the last one.
+        /// (size, scale, presentation) and time, so a drag shows every
+        /// rendered frame instead of only the last one.
         latest_request: Option<RenderRequest>,
         in_flight: Option<ScheduledRender>,
         queued: Option<ScheduledRender>,
@@ -658,6 +681,10 @@ mod platform_impl {
             if self.latest_requested_generation == u64::MAX {
                 self.scheduler_incarnation = Arc::new(RenderSchedulerIncarnation);
                 self.latest_requested_generation = 1;
+                // The floor names a generation of the old incarnation; every
+                // frame of that incarnation is already rejected by the
+                // incarnation check, so the new one starts unfloored.
+                self.install_floor = 0;
             } else {
                 self.latest_requested_generation += 1;
             }
@@ -701,11 +728,13 @@ mod platform_impl {
             // newer than what is on screen: install it when its frame contract
             // matches the latest request (only the session state differs), so
             // continuous input paints every rendered frame.
+            // The frame must also be for the same time: an animation step or a
+            // `set_time` that queued behind it would otherwise show the older
+            // instant first, and keep showing it if its own render failed.
             let installable = scheduled.generation == self.latest_requested_generation
                 || self.latest_request.as_ref().is_some_and(|latest| {
-                    latest.size_px == scheduled.request.size_px
-                        && latest.scale_bits == scheduled.request.scale_bits
-                        && latest.presentation_mode == scheduled.request.presentation_mode
+                    latest.same_frame_contract(&scheduled.request)
+                        && latest.time_bits == scheduled.request.time_bits
                 });
             Some(same_incarnation && not_superseded && installable)
         }
@@ -923,6 +952,9 @@ mod platform_impl {
         primary: PrimaryFrame,
         overlay_image: Option<Arc<RenderImage>>,
         preview: Option<PanPreview>,
+        /// Painted whole underneath the previewed plot area: the drag anchor's
+        /// frame, whose margins and axes stay put for the whole drag.
+        axes: Option<PrimaryFrame>,
     }
 
     #[cfg(all(feature = "gpu", target_os = "macos"))]
@@ -955,6 +987,7 @@ mod platform_impl {
         scheduler: RenderScheduler,
         in_flight_render: Option<Task<()>>,
         last_render_started: Option<Instant>,
+        pan_anchor: Option<PanAnchor>,
         raster_wakeup: Option<Task<()>>,
         failed_request: Option<RenderRequest>,
         last_error: Option<PlottingError>,
@@ -1017,6 +1050,7 @@ mod platform_impl {
                 scheduler: RenderScheduler::default(),
                 in_flight_render: None,
                 last_render_started: None,
+                pan_anchor: None,
                 raster_wakeup: None,
                 failed_request: None,
                 last_error: None,
@@ -1461,12 +1495,18 @@ mod platform_impl {
                         let fitted_bounds = image_fit
                             .into_gpui()
                             .get_bounds(bounds, primary_size(&image.primary));
-                        paint_primary(window, fitted_bounds, &image.primary);
+                        // During a pan drag the anchor frame supplies the margins
+                        // and axes; otherwise the frame paints itself whole.
+                        paint_primary(
+                            window,
+                            fitted_bounds,
+                            image.axes.as_ref().unwrap_or(&image.primary),
+                        );
                         if let Some(preview) = image.preview {
                             // A pan is pending a raster: repaint the plot area of
-                            // the stale frame shifted to where the pending view
-                            // puts it. Margins and axes keep the frame's own
-                            // placement until the raster lands.
+                            // the content frame shifted to where the pending view
+                            // puts it, clipped to the plot area of the frame
+                            // whose axes are showing.
                             let shifted = Bounds::new(
                                 fitted_bounds.origin + preview.offset,
                                 fitted_bounds.size,
@@ -1664,6 +1704,31 @@ mod platform_impl {
         content_bounds: Bounds<Pixels>,
         frame_size_px: (u32, u32),
     ) -> Option<PanPreview> {
+        preview_translation_onto(
+            view,
+            pending,
+            view.plot_area,
+            view.axis_inset_px,
+            content_bounds,
+            frame_size_px,
+            false,
+        )
+    }
+
+    /// Like [`preview_translation`], but the content is clipped to
+    /// `anchor_plot_area` (the plot area of the frame whose axes are showing)
+    /// and shifted so the frame's own plot area lands on it. With
+    /// `allow_identity` a preview is produced even when nothing moves, so a
+    /// drag anchor keeps painting its axes over a fresh raster.
+    fn preview_translation_onto(
+        view: &FrameView,
+        pending: ViewportRect,
+        anchor_plot_area: ViewportRect,
+        axis_inset_px: f64,
+        content_bounds: Bounds<Pixels>,
+        frame_size_px: (u32, u32),
+        allow_identity: bool,
+    ) -> Option<PanPreview> {
         let shown = view.visible;
         let nx0 = view
             .x_scale
@@ -1692,9 +1757,10 @@ mod platform_impl {
         // A view whose left edge sits `nx0` of the way across the frame is
         // shown by sliding the frame left by that much; the y axis grows
         // upward in data and downward in pixels, so its sign flips.
-        let shift_x = -nx0 * plot_w;
-        let shift_y = ny0 * plot_h;
-        if shift_x.abs() < 0.01 && shift_y.abs() < 0.01 {
+        // Land this frame's plot area on the anchor's before applying the pan.
+        let shift_x = -nx0 * plot_w + (anchor_plot_area.min.x - view.plot_area.min.x);
+        let shift_y = ny0 * plot_h + (anchor_plot_area.min.y - view.plot_area.min.y);
+        if !allow_identity && shift_x.abs() < 0.01 && shift_y.abs() < 0.01 {
             return None;
         }
         let scale_x = f64::from(content_bounds.size.width) / f64::from(frame_size_px.0.max(1));
@@ -1703,12 +1769,29 @@ mod platform_impl {
             px((shift_x * scale_x) as f32),
             px((shift_y * scale_y) as f32),
         );
+        // The spine and inward ticks along the plot-area edge belong to the
+        // axes: keep them out of the mask so they never slide with the data.
+        // The mask is also clipped to where the shifted frame's own plot area
+        // lands, so its margins (labels, spine) never show through.
+        let inset = axis_inset_px.max(0.0);
+        let dest_min_x = anchor_plot_area.min.x + inset;
+        let dest_min_y = anchor_plot_area.min.y + inset;
+        let dest_max_x = anchor_plot_area.max.x - inset;
+        let dest_max_y = anchor_plot_area.max.y - inset;
+        let src_min_x = view.plot_area.min.x + inset + shift_x;
+        let src_min_y = view.plot_area.min.y + inset + shift_y;
+        let src_max_x = view.plot_area.max.x - inset + shift_x;
+        let src_max_y = view.plot_area.max.y - inset + shift_y;
+        let min_x = dest_min_x.max(src_min_x);
+        let min_y = dest_min_y.max(src_min_y);
+        let mask_w = (dest_max_x.min(src_max_x) - min_x).max(0.0);
+        let mask_h = (dest_max_y.min(src_max_y) - min_y).max(0.0);
         let mask = Bounds::new(
             point(
-                content_bounds.origin.x + px((view.plot_area.min.x * scale_x) as f32),
-                content_bounds.origin.y + px((view.plot_area.min.y * scale_y) as f32),
+                content_bounds.origin.x + px((min_x * scale_x) as f32),
+                content_bounds.origin.y + px((min_y * scale_y) as f32),
             ),
-            size(px((plot_w * scale_x) as f32), px((plot_h * scale_y) as f32)),
+            size(px((mask_w * scale_x) as f32), px((mask_h * scale_y) as f32)),
         );
         Some(PanPreview { offset, mask })
     }
@@ -1720,6 +1803,7 @@ mod platform_impl {
         Some(FrameView {
             visible: snapshot.visible_bounds,
             plot_area: snapshot.plot_area,
+            axis_inset_px: f64::from(session.axis_inset_px().unwrap_or(0.0)),
             x_scale: scales.x_scale,
             y_scale: scales.y_scale,
         })
@@ -2012,6 +2096,7 @@ mod platform_impl {
                 scheduler: RenderScheduler::default(),
                 in_flight_render: None,
                 last_render_started: None,
+                pan_anchor: None,
                 raster_wakeup: None,
                 failed_request: None,
                 last_error: None,
@@ -3757,6 +3842,7 @@ mod platform_impl {
                 scheduler: RenderScheduler::default(),
                 in_flight_render: None,
                 last_render_started: None,
+                pan_anchor: None,
                 raster_wakeup: None,
                 failed_request: None,
                 last_error: None,
@@ -4043,6 +4129,7 @@ mod platform_impl {
                 scheduler: RenderScheduler::default(),
                 in_flight_render: None,
                 last_render_started: None,
+                pan_anchor: None,
                 raster_wakeup: None,
                 failed_request: None,
                 last_error: None,
@@ -4495,6 +4582,7 @@ mod platform_impl {
 
         fn unit_frame_view() -> FrameView {
             FrameView {
+                axis_inset_px: 0.0,
                 visible: ViewportRect::from_points(
                     ViewportPoint::new(0.0, 0.0),
                     ViewportPoint::new(1.0, 1.0),
@@ -4523,16 +4611,19 @@ mod platform_impl {
                 .expect("a pure pan previews");
             assert!((f64::from(preview.offset.x) - 10.0).abs() < 1e-4);
             assert!((f64::from(preview.offset.y) - 20.0).abs() < 1e-4);
-            assert_window_points_close(preview.mask.origin, point(px(30.0), px(40.0)));
-            assert!((f64::from(preview.mask.size.width) - 100.0).abs() < 1e-4);
-            assert!((f64::from(preview.mask.size.height) - 100.0).abs() < 1e-4);
+            // The mask is the plot area intersected with where the shifted
+            // frame's plot area lands: the strip the pan uncovers is left to
+            // the frame underneath instead of showing the shifted margins.
+            assert_window_points_close(preview.mask.origin, point(px(40.0), px(60.0)));
+            assert!((f64::from(preview.mask.size.width) - 90.0).abs() < 1e-4);
+            assert!((f64::from(preview.mask.size.height) - 80.0).abs() < 1e-4);
 
             // Logical pixels scale with the fitted content bounds.
             let half = Bounds::new(point(px(0.0), px(0.0)), size(px(150.0), px(150.0)));
             let preview = preview_translation(&view, pending, half, (300, 300))
                 .expect("a pure pan previews at any fit");
             assert!((f64::from(preview.offset.x) - 5.0).abs() < 1e-4);
-            assert!((f64::from(preview.mask.size.width) - 50.0).abs() < 1e-4);
+            assert!((f64::from(preview.mask.size.width) - 45.0).abs() < 1e-4);
         }
 
         #[test]
@@ -4581,8 +4672,13 @@ mod platform_impl {
                         .expect("a pending pan previews on the cached frame");
                     assert!((f64::from(preview.offset.x) - 12.0).abs() < 1e-3);
                     assert!((f64::from(preview.offset.y) + 7.0).abs() < 1e-3);
+                    // The mask covers the plot area minus the axis band on each
+                    // side and minus the strip the pan uncovered.
                     let plot_w = frame_view.plot_area.max.x - frame_view.plot_area.min.x;
-                    assert!((f64::from(preview.mask.size.width) - plot_w).abs() < 1e-3);
+                    let inset = 2.0 * frame_view.axis_inset_px;
+                    assert!(
+                        (f64::from(preview.mask.size.width) - (plot_w - inset - 12.0)).abs() < 1e-3
+                    );
 
                     // The raster of the pending view replaces the preview exactly.
                     let request = view.cached_frame.as_ref().expect("cached").request.clone();
@@ -4600,8 +4696,8 @@ mod platform_impl {
         fn test_render_scheduler_installs_in_flight_frame_when_newer_request_is_queued() {
             let mut scheduler = RenderScheduler::default();
             let first = RenderRequest::new((320, 240), 1.0, 0.0, PresentationMode::Hybrid);
-            let same_contract = RenderRequest::new((320, 240), 1.0, 1.0, PresentationMode::Hybrid);
-            let resized = RenderRequest::new((640, 480), 1.0, 2.0, PresentationMode::Hybrid);
+            let same_contract = RenderRequest::new((320, 240), 1.0, 0.0, PresentationMode::Hybrid);
+            let resized = RenderRequest::new((640, 480), 1.0, 0.0, PresentationMode::Hybrid);
 
             let scheduled = scheduler.schedule(first).expect("starts");
             scheduler.start(scheduled.clone());
@@ -4614,6 +4710,217 @@ mod platform_impl {
             assert!(scheduler.schedule(resized).is_none());
             // A resize queued behind it: the stale-size frame is not installed.
             assert_eq!(scheduler.finish(&queued), Some(false));
+        }
+
+        /// Whether two primaries are the same GPU resource.
+        fn same_primary(a: &PrimaryFrame, b: &PrimaryFrame) -> bool {
+            match (a, b) {
+                (PrimaryFrame::Image(a), PrimaryFrame::Image(b)) => Arc::ptr_eq(a, b),
+                #[cfg(all(feature = "gpu", target_os = "macos"))]
+                (PrimaryFrame::Surface(a), PrimaryFrame::Surface(b)) => {
+                    a.as_CFTypeRef() == b.as_CFTypeRef()
+                }
+                #[cfg(all(feature = "gpu", target_os = "macos"))]
+                _ => false,
+            }
+        }
+
+        #[test]
+        fn test_render_scheduler_declines_in_flight_frame_from_an_older_time() {
+            let mut scheduler = RenderScheduler::default();
+            let at_zero = RenderRequest::new((320, 240), 1.0, 0.0, PresentationMode::Hybrid);
+            let at_one = RenderRequest::new((320, 240), 1.0, 1.0, PresentationMode::Hybrid);
+
+            let scheduled = scheduler.schedule(at_zero).expect("starts");
+            scheduler.start(scheduled.clone());
+            assert!(scheduler.schedule(at_one).is_none());
+            // Same geometry but an older instant: showing it would step the
+            // animation backwards, and keep it there if the newer render failed.
+            assert_eq!(scheduler.finish(&scheduled), Some(false));
+        }
+
+        #[test]
+        fn test_render_scheduler_rollover_clears_install_floor() {
+            let mut scheduler = RenderScheduler {
+                latest_requested_generation: u64::MAX - 1,
+                ..RenderScheduler::default()
+            };
+            // Superseding at the top of the range raises the floor to u64::MAX.
+            scheduler.supersede_in_flight();
+            assert_eq!(scheduler.install_floor, u64::MAX);
+
+            // The next request rolls the generation over; without clearing the
+            // floor every post-rollover frame would compare as superseded.
+            let request = RenderRequest::new((320, 240), 1.0, 0.0, PresentationMode::Hybrid);
+            let scheduled = scheduler.schedule(request).expect("starts");
+            assert_eq!(scheduled.generation, 1);
+            assert_eq!(scheduler.install_floor, 0);
+            scheduler.start(scheduled.clone());
+            assert_eq!(scheduler.finish(&scheduled), Some(true));
+        }
+
+        #[test]
+        fn test_pending_render_keeps_pointer_state_only_for_the_same_frame_contract() {
+            let component_bounds =
+                Bounds::new(point(px(20.0), px(30.0)), size(px(300.0), px(300.0)));
+            let plot: Plot = Plot::new()
+                .line(&[0.0, 1.0], &[0.0, 1.0])
+                .xlim(0.0, 1.0)
+                .ylim(0.0, 1.0)
+                .into();
+            let (cx, view) = mapped_test_view(
+                plot,
+                RuvizPlotOptions::default(),
+                (300, 300),
+                1.0,
+                component_bounds,
+            );
+            cx.update(|app| {
+                view.update(app, |view, cx| {
+                    let drag = ActiveDrag::LeftPan {
+                        anchor_px: ViewportPoint::new(10.0, 10.0),
+                        anchor_window: point(px(30.0), px(40.0)),
+                        last_px: ViewportPoint::new(10.0, 10.0),
+                        crossed_threshold: true,
+                        click_eligible: false,
+                    };
+                    let cached_request =
+                        view.cached_frame.as_ref().expect("cached").request.clone();
+                    // The session moved past the cached frame (a render of ours
+                    // is pending) — the pointer state survives when the pending
+                    // frame keeps the geometry...
+                    view.cached_frame.as_mut().expect("cached").base_generation = u64::MAX;
+                    view.interaction_state.active_drag = drag;
+                    view.scheduler.in_flight = Some(ScheduledRender {
+                        scheduler_incarnation: Arc::clone(&view.scheduler.scheduler_incarnation),
+                        generation: 1,
+                        request: cached_request.clone(),
+                    });
+                    assert!(view.pointer_base_generation_is_current(cx));
+                    assert_eq!(view.interaction_state.active_drag, drag);
+
+                    // ...and is reset when a resize is what is pending.
+                    view.scheduler.in_flight = Some(ScheduledRender {
+                        scheduler_incarnation: Arc::clone(&view.scheduler.scheduler_incarnation),
+                        generation: 2,
+                        request: RenderRequest::new((600, 600), 1.0, 0.0, PresentationMode::Hybrid),
+                    });
+                    assert!(!view.pointer_base_generation_is_current(cx));
+                    assert_eq!(view.interaction_state.active_drag, ActiveDrag::None);
+                });
+            });
+        }
+
+        #[test]
+        fn test_pan_anchor_keeps_axes_until_the_final_raster_shows_the_view() {
+            let component_bounds =
+                Bounds::new(point(px(20.0), px(30.0)), size(px(300.0), px(300.0)));
+            let plot: Plot = Plot::new()
+                .line(&[0.0, 1.0], &[0.0, 1.0])
+                .xlim(0.0, 1.0)
+                .ylim(0.0, 1.0)
+                .into();
+            let (cx, view) = mapped_test_view(
+                plot,
+                RuvizPlotOptions::default(),
+                (300, 300),
+                1.0,
+                component_bounds,
+            );
+            cx.update(|app| {
+                view.update(app, |view, cx| {
+                    let frame_view = frame_view_from_session(&view.session)
+                        .expect("a rendered session has a view");
+                    view.cached_frame
+                        .as_mut()
+                        .expect("mapped view has a cached frame")
+                        .view = Some(frame_view.clone());
+                    let anchor_primary_is = |view: &RuvizPlot, primary: &PrimaryFrame| {
+                        view.pan_anchor
+                            .as_ref()
+                            .is_some_and(|anchor| same_primary(&anchor.primary, primary))
+                    };
+
+                    // No drag: no anchor, the frame paints itself.
+                    view.update_pan_anchor(cx);
+                    assert!(view.pan_anchor.is_none());
+                    assert!(view.pan_paint().expect("frame").axes.is_none());
+
+                    // The pan crosses its threshold: the frame on screen becomes
+                    // the anchor and supplies the axes.
+                    view.interaction_state.active_drag = ActiveDrag::LeftPan {
+                        anchor_px: ViewportPoint::new(10.0, 10.0),
+                        anchor_window: point(px(30.0), px(40.0)),
+                        last_px: ViewportPoint::new(10.0, 10.0),
+                        crossed_threshold: true,
+                        click_eligible: false,
+                    };
+                    view.update_pan_anchor(cx);
+                    let anchor_primary =
+                        view.cached_frame.as_ref().expect("cached").primary.clone();
+                    assert!(anchor_primary_is(view, &anchor_primary));
+
+                    view.session.apply_input(PlotInputEvent::Pan {
+                        delta_px: ViewportPoint::new(12.0, -7.0),
+                    });
+                    let paint = view.pan_paint().expect("frame");
+                    assert!(
+                        paint.axes.is_some(),
+                        "the anchor's axes show during the drag"
+                    );
+                    let preview = paint.preview.expect("the pan previews");
+                    assert!((f64::from(preview.offset.x) - 12.0).abs() < 1e-3);
+                    assert!((f64::from(preview.offset.y) + 7.0).abs() < 1e-3);
+
+                    // A throttled raster of the pending view lands mid-drag: it
+                    // supplies the content, the anchor still supplies the axes,
+                    // and the content does not move.
+                    let request = view.cached_frame.as_ref().expect("cached").request.clone();
+                    let frame = render_frame_from_session(view.session.clone(), request.clone())
+                        .expect("render succeeds");
+                    view.replace_cached_frame(request, frame);
+                    view.update_layout(component_bounds, (300, 300));
+                    view.update_pan_anchor(cx);
+                    assert!(
+                        anchor_primary_is(view, &anchor_primary),
+                        "the anchor is kept"
+                    );
+                    let paint = view.pan_paint().expect("frame");
+                    assert!(paint.axes.is_some());
+                    let preview = paint.preview.expect("identity preview under the anchor");
+                    assert!(f64::from(preview.offset.x).abs() < 1e-3);
+                    assert!(f64::from(preview.offset.y).abs() < 1e-3);
+                    // The fresh raster supplies the content when its plot area
+                    // has the anchor's size; if the pan changed the tick label
+                    // widths the anchor's own content stays instead.
+                    let fresh_view = view
+                        .cached_frame
+                        .as_ref()
+                        .and_then(|frame| frame.view.clone())
+                        .expect("frames carry their view");
+                    let anchor_view = view.pan_anchor.as_ref().expect("anchor").view.clone();
+                    let expected: PrimaryFrame = if same_plot_area_size(&fresh_view, &anchor_view) {
+                        view.cached_frame.as_ref().expect("cached").primary.clone()
+                    } else {
+                        anchor_primary.clone()
+                    };
+                    assert!(
+                        same_primary(&paint.primary, &expected),
+                        "content comes from the fresh raster when it fits the anchor's plot area"
+                    );
+                    assert!(
+                        view.retired_images.is_empty(),
+                        "the anchor's image is not retired while it paints"
+                    );
+
+                    // Release: the frame on screen shows the pending view, so
+                    // the anchor is dropped and its image retired.
+                    view.reset_pointer_state();
+                    view.update_pan_anchor(cx);
+                    assert!(view.pan_anchor.is_none());
+                    assert!(view.pan_paint().expect("frame").axes.is_none());
+                });
+            });
         }
 
         #[test]
