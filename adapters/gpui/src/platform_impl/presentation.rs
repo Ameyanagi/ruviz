@@ -118,6 +118,7 @@ impl RuvizPlot {
             overlay_image,
             stats: frame.stats,
             target: frame.target,
+            view: frame.view,
         });
     }
 
@@ -129,19 +130,16 @@ impl RuvizPlot {
         match frame.primary.take() {
             Some(RenderedPrimary::Image(image)) => Some(PrimaryFrame::Image(image)),
             #[cfg(all(feature = "gpu", target_os = "macos"))]
-            Some(RenderedPrimary::Surface(base_image)) => {
+            Some(RenderedPrimary::Surface(base_layer)) => {
                 let previous_surface = previous.and_then(|cached| match &cached.primary {
                     PrimaryFrame::Surface(surface) => Some(surface),
                     PrimaryFrame::Image(_) => None,
                 });
 
-                match self
-                    .surface_upload
-                    .update(previous_surface, base_image.as_ref())
-                {
+                match self.surface_upload.update(previous_surface, &base_layer) {
                     Ok(surface) => Some(PrimaryFrame::Surface(surface)),
                     Err(_) => Some(PrimaryFrame::Image(render_image_from_ruviz(
-                        base_image.as_ref().clone(),
+                        base_layer.image().as_ref().clone(),
                     ))),
                 }
             }
@@ -239,10 +237,59 @@ impl RuvizPlot {
             self.last_layout = None;
         }
 
+        let preview = self.pan_preview();
         self.cached_frame.as_ref().map(|frame| PaintFrame {
             primary: frame.primary.clone(),
             overlay_image: frame.overlay_image.as_ref().map(Arc::clone),
+            preview,
         })
+    }
+
+    /// The GPU translation that shows the session's pending view with the
+    /// cached frame, or `None` when the frame already shows it (or the
+    /// change is not a pure pan).
+    pub(super) fn pan_preview(&self) -> Option<PanPreview> {
+        let frame = self.cached_frame.as_ref()?;
+        let view = frame.view.as_ref()?;
+        let layout = self.last_layout.as_ref()?;
+        let pending = self.session.view_bounds_snapshot().visible_bounds;
+        preview_translation(view, pending, layout.content_bounds, layout.frame_size_px)
+    }
+
+    /// Whether a left-button pan drag has crossed its threshold.
+    pub(super) fn pan_drag_active(&self) -> bool {
+        matches!(
+            self.interaction_state.active_drag,
+            ActiveDrag::LeftPan {
+                crossed_threshold: true,
+                ..
+            }
+        )
+    }
+
+    /// Wake the view up once `delay` has passed so a throttled raster is
+    /// scheduled even if no further input arrives.
+    fn arm_raster_wakeup(
+        &mut self,
+        entity: Entity<Self>,
+        delay: Duration,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        if self.raster_wakeup.is_some() {
+            return;
+        }
+        let timer = cx.background_executor().timer(delay);
+        let task = window.spawn(cx, async move |cx| {
+            timer.await;
+            cx.on_next_frame(move |_, cx| {
+                entity.update(cx, |view, cx| {
+                    view.raster_wakeup = None;
+                    cx.notify();
+                });
+            });
+        });
+        self.raster_wakeup = Some(task);
     }
 
     #[cfg(test)]
@@ -274,6 +321,18 @@ impl RuvizPlot {
         cx: &mut App,
     ) {
         if !self.should_start_render(&request) {
+            return;
+        }
+
+        // During a pan the cached frame is translated on the GPU, so rasters
+        // only need to keep the axes fresh: space them out instead of
+        // rendering after every pointer move.
+        if self.pan_drag_active()
+            && self.scheduler.in_flight.is_none()
+            && let Some(started) = self.last_render_started
+            && started.elapsed() < PAN_RASTER_INTERVAL
+        {
+            self.arm_raster_wakeup(entity, PAN_RASTER_INTERVAL - started.elapsed(), window, cx);
             return;
         }
 
@@ -323,6 +382,7 @@ impl RuvizPlot {
 
         self.scheduler.start(scheduled);
         self.in_flight_render = Some(task);
+        self.last_render_started = Some(Instant::now());
     }
 
     pub(super) fn finish_render(
@@ -718,10 +778,10 @@ impl SurfaceUploadState {
     pub(super) fn update(
         &mut self,
         previous: Option<&CVPixelBuffer>,
-        image: &RuvizImage,
+        layer: &RenderedLayer,
     ) -> std::result::Result<CVPixelBuffer, String> {
-        let width = image.width as usize;
-        let height = image.height as usize;
+        let width = layer.width() as usize;
+        let height = layer.height() as usize;
         let pixel_buffer = match previous {
             Some(previous) if previous.get_width() == width && previous.get_height() == height => {
                 previous.clone()
@@ -735,7 +795,13 @@ impl SurfaceUploadState {
             .map_err(|status| format!("Failed to create CVPixelBuffer: {status}"))?,
         };
 
-        write_surface_pixels(&pixel_buffer, width, height, &image.pixels)?;
+        write_surface_pixels(
+            &pixel_buffer,
+            width,
+            height,
+            layer.pixels(),
+            layer.alpha_mode(),
+        )?;
         Ok(pixel_buffer)
     }
 }
@@ -746,7 +812,16 @@ fn write_surface_pixels(
     width: usize,
     height: usize,
     rgba_pixels: &[u8],
+    alpha_mode: AlphaMode,
 ) -> std::result::Result<(), String> {
+    if rgba_pixels.len() < width * height * 4 {
+        return Err(format!(
+            "surface source has {} bytes, expected at least {} for {width}x{height}",
+            rgba_pixels.len(),
+            width * height * 4
+        ));
+    }
+
     let lock_status = pixel_buffer.lock_base_address(0);
     if lock_status != 0 {
         return Err(format!(
@@ -759,21 +834,25 @@ fn write_surface_pixels(
             return Err("Expected a bi-planar 420f CVPixelBuffer".to_string());
         }
 
-        let y_width = pixel_buffer.get_width_of_plane(0);
-        let y_height = pixel_buffer.get_height_of_plane(0);
+        let y_width = pixel_buffer.get_width_of_plane(0).min(width);
+        let y_height = pixel_buffer.get_height_of_plane(0).min(height);
         let y_stride = pixel_buffer.get_bytes_per_row_of_plane(0);
         let y_plane = unsafe { pixel_buffer.get_base_address_of_plane(0) } as *mut u8;
         if y_plane.is_null() {
             return Err("CVPixelBuffer luma plane base address was null".to_string());
         }
 
-        for row in 0..height.min(y_height) {
-            for col in 0..width.min(y_width) {
-                let pixel = rgba_at(rgba_pixels, width, row, col);
-                let y = rgb_to_ycbcr_full_range(pixel.0, pixel.1, pixel.2).0;
-                unsafe {
-                    *y_plane.add(row * y_stride + col) = y;
-                }
+        let row_bytes = width * 4;
+        for row in 0..y_height {
+            let src = &rgba_pixels[row * row_bytes..row * row_bytes + y_width * 4];
+            // SAFETY: the plane is locked for the duration of this closure and
+            // `y_width` is clamped to the plane width, so every write stays
+            // inside row `row` of the plane.
+            let dst =
+                unsafe { std::slice::from_raw_parts_mut(y_plane.add(row * y_stride), y_width) };
+            for (dst, px) in dst.iter_mut().zip(src.chunks_exact(4)) {
+                let (r, g, b) = straight_rgb(px, alpha_mode);
+                *dst = luma_full_range(r, g, b);
             }
         }
 
@@ -786,41 +865,41 @@ fn write_surface_pixels(
         }
 
         for uv_row in 0..uv_height {
-            for uv_col in 0..uv_width {
+            let y0 = uv_row * 2;
+            if y0 >= height {
+                break;
+            }
+            let rows = if y0 + 1 < height { 2 } else { 1 };
+            let row0 = &rgba_pixels[y0 * row_bytes..y0 * row_bytes + row_bytes];
+            let row1 =
+                &rgba_pixels[(y0 + rows - 1) * row_bytes..(y0 + rows - 1) * row_bytes + row_bytes];
+            let uv_cols = uv_width.min(width.div_ceil(2));
+            // SAFETY: as above, for row `uv_row` of the chroma plane; `uv_cols`
+            // is clamped to the plane width so `uv_cols * 2` bytes fit.
+            let dst = unsafe {
+                std::slice::from_raw_parts_mut(uv_plane.add(uv_row * uv_stride), uv_cols * 2)
+            };
+            for (uv_col, dst) in dst.chunks_exact_mut(2).enumerate() {
                 let x0 = uv_col * 2;
-                let y0 = uv_row * 2;
-                if x0 >= width || y0 >= height {
-                    continue;
-                }
-
+                let cols = if x0 + 1 < width { 2 } else { 1 };
                 let mut r_sum: u32 = 0;
                 let mut g_sum: u32 = 0;
                 let mut b_sum: u32 = 0;
-                let mut sample_count: u32 = 0;
-
-                for sample_y in y0..(y0 + 2).min(height) {
-                    for sample_x in x0..(x0 + 2).min(width) {
-                        let (r, g, b, _) = rgba_at(rgba_pixels, width, sample_y, sample_x);
-                        r_sum += r as u32;
-                        g_sum += g as u32;
-                        b_sum += b as u32;
-                        sample_count += 1;
+                for source_row in [row0, row1].iter().take(rows) {
+                    for x in x0..x0 + cols {
+                        let (r, g, b) = straight_rgb(&source_row[x * 4..x * 4 + 4], alpha_mode);
+                        r_sum += u32::from(r);
+                        g_sum += u32::from(g);
+                        b_sum += u32::from(b);
                     }
                 }
-
-                if sample_count == 0 {
-                    continue;
-                }
-
+                let sample_count = (rows * cols) as u32;
                 let r = (r_sum / sample_count) as u8;
                 let g = (g_sum / sample_count) as u8;
                 let b = (b_sum / sample_count) as u8;
                 let (_, cb, cr) = rgb_to_ycbcr_full_range(r, g, b);
-                let uv_offset = uv_row * uv_stride + uv_col * 2;
-                unsafe {
-                    *uv_plane.add(uv_offset) = cb;
-                    *uv_plane.add(uv_offset + 1) = cr;
-                }
+                dst[0] = cb;
+                dst[1] = cr;
             }
         }
 
@@ -842,21 +921,31 @@ fn write_surface_pixels(
     copy_result
 }
 
+/// Straight RGB of one pixel, undoing premultiplication only where the alpha
+/// says it changed something. A plot's base layer is opaque, so this is a
+/// branch per pixel rather than a full-frame divide.
 #[cfg(all(feature = "gpu", target_os = "macos"))]
-fn rgba_at(rgba_pixels: &[u8], width: usize, row: usize, col: usize) -> (u8, u8, u8, u8) {
-    let offset = (row * width + col) * 4;
-    let end = offset.saturating_add(4);
-    debug_assert!(
-        rgba_pixels.len() >= end,
-        "pixel buffer too small for ({row}, {col}) in {width}-wide image: len={} need>={end}",
-        rgba_pixels.len()
-    );
-    (
-        rgba_pixels[offset],
-        rgba_pixels[offset + 1],
-        rgba_pixels[offset + 2],
-        rgba_pixels[offset + 3],
-    )
+#[inline]
+fn straight_rgb(px: &[u8], alpha_mode: AlphaMode) -> (u8, u8, u8) {
+    let (r, g, b, a) = (px[0], px[1], px[2], px[3]);
+    match alpha_mode {
+        AlphaMode::Straight => (r, g, b),
+        AlphaMode::Premultiplied => match a {
+            255 => (r, g, b),
+            0 => (0, 0, 0),
+            a => {
+                let a = u32::from(a);
+                let un = |c: u8| ((u32::from(c) * 255 + a / 2) / a).min(255) as u8;
+                (un(r), un(g), un(b))
+            }
+        },
+    }
+}
+
+#[cfg(all(feature = "gpu", target_os = "macos"))]
+#[inline]
+fn luma_full_range(r: u8, g: u8, b: u8) -> u8 {
+    ((77 * i32::from(r) + 150 * i32::from(g) + 29 * i32::from(b) + 128) >> 8).clamp(0, 255) as u8
 }
 
 #[cfg(all(feature = "gpu", target_os = "macos"))]
@@ -876,82 +965,83 @@ pub(super) fn render_frame_from_session(
     session: InteractivePlotSession,
     request: RenderRequest,
 ) -> Result<RenderedFrame> {
-    let result = match request.presentation_mode {
-        PresentationMode::Image => session.render_to_image_with_generation(ImageTarget {
-            size_px: request.size_px,
-            scale_factor: request.scale_factor(),
-            time_seconds: request.time_seconds(),
-        })?,
-        PresentationMode::Hybrid => session.render_to_surface_with_generation(SurfaceTarget {
-            size_px: request.size_px,
-            scale_factor: request.scale_factor(),
-            time_seconds: request.time_seconds(),
-        })?,
-        #[allow(deprecated)]
-        PresentationMode::SurfaceExperimental => {
-            session.render_to_surface_with_generation(SurfaceTarget {
+    let frame = match request.presentation_mode {
+        PresentationMode::Image => {
+            let result = session.render_to_image_with_generation(ImageTarget {
                 size_px: request.size_px,
                 scale_factor: request.scale_factor(),
                 time_seconds: request.time_seconds(),
-            })?
+            })?;
+            RenderedFrame {
+                base_generation: result.base_generation,
+                primary: Some(RenderedPrimary::Image(render_image_from_ruviz(
+                    result.frame.image.as_ref().clone(),
+                ))),
+                overlay: RenderedOverlay::Replace(None),
+                stats: result.frame.stats,
+                target: result.frame.target,
+                view: None,
+            }
+        }
+        #[allow(deprecated)]
+        PresentationMode::Hybrid | PresentationMode::SurfaceExperimental => {
+            // Layers stay in the renderer's native alpha representation: the
+            // surface upload converts straight from them, so no frame pays
+            // the full-size premultiplied -> straight pass.
+            let layers = session.render_surface_layers_stamped(SurfaceTarget {
+                size_px: request.size_px,
+                scale_factor: request.scale_factor(),
+                time_seconds: request.time_seconds(),
+            })?;
+            let base_generation = layers.base_generation;
+            let layer_state = layers.layer_state;
+            let generation_changed = request.presented_base_generation != Some(base_generation);
+            let include_base = layer_state.base_dirty || generation_changed;
+            let use_surface_primary = should_use_surface_primary(
+                request.presentation_mode,
+                layers.target,
+                layers.surface_capability,
+            );
+            let primary = if use_surface_primary {
+                #[cfg(all(feature = "gpu", target_os = "macos"))]
+                {
+                    include_base.then(|| RenderedPrimary::Surface(layers.base.clone()))
+                }
+                #[cfg(not(all(feature = "gpu", target_os = "macos")))]
+                {
+                    unreachable!("surface primary is only enabled on macOS with the gpu feature")
+                }
+            } else {
+                include_base.then(|| {
+                    RenderedPrimary::Image(render_image_from_ruviz(
+                        layers.base.image().as_ref().clone(),
+                    ))
+                })
+            };
+            let overlay = if layer_state.overlay_dirty || generation_changed {
+                RenderedOverlay::Replace(
+                    layers
+                        .overlay
+                        .as_ref()
+                        .map(|overlay| render_image_from_ruviz(overlay.image().as_ref().clone())),
+                )
+            } else {
+                RenderedOverlay::Reuse
+            };
+            RenderedFrame {
+                base_generation,
+                primary,
+                overlay,
+                stats: layers.stats,
+                target: layers.target,
+                view: None,
+            }
         }
     };
-
-    let base_generation = result.base_generation;
-    let frame = result.frame;
-    let layer_state = frame.layer_state;
-    let generation_changed = request.presented_base_generation != Some(base_generation);
-    let include_base = layer_state.base_dirty || generation_changed;
-    let use_surface_primary = should_use_surface_primary(
-        request.presentation_mode,
-        frame.target,
-        frame.surface_capability,
-    );
-    Ok(RenderedFrame {
-        base_generation,
-        primary: if use_surface_primary {
-            #[cfg(all(feature = "gpu", target_os = "macos"))]
-            {
-                include_base.then(|| RenderedPrimary::Surface(Arc::clone(&frame.layers.base)))
-            }
-            #[cfg(not(all(feature = "gpu", target_os = "macos")))]
-            {
-                unreachable!("surface primary is only enabled on macOS with the gpu feature")
-            }
-        } else {
-            match request.presentation_mode {
-                PresentationMode::Image => Some(RenderedPrimary::Image(render_image_from_ruviz(
-                    frame.image.as_ref().clone(),
-                ))),
-                PresentationMode::Hybrid => include_base.then(|| {
-                    RenderedPrimary::Image(render_image_from_ruviz(
-                        frame.layers.base.as_ref().clone(),
-                    ))
-                }),
-                #[allow(deprecated)]
-                PresentationMode::SurfaceExperimental => include_base.then(|| {
-                    RenderedPrimary::Image(render_image_from_ruviz(
-                        frame.layers.base.as_ref().clone(),
-                    ))
-                }),
-            }
-        },
-        overlay: if matches!(request.presentation_mode, PresentationMode::Image) {
-            RenderedOverlay::Replace(None)
-        } else if layer_state.overlay_dirty || generation_changed {
-            RenderedOverlay::Replace(
-                frame
-                    .layers
-                    .overlay
-                    .as_ref()
-                    .map(|overlay| render_image_from_ruviz(overlay.as_ref().clone())),
-            )
-        } else {
-            RenderedOverlay::Reuse
-        },
-        stats: frame.stats,
-        target: frame.target,
-    })
+    // The session's displayed geometry is this frame's: one render is in
+    // flight per view, and the worker just committed it.
+    let view = frame_view_from_session(&session);
+    Ok(RenderedFrame { view, ..frame })
 }
 
 pub(super) fn render_image_from_ruviz(image: RuvizImage) -> Arc<RenderImage> {
@@ -994,5 +1084,79 @@ pub(super) fn blend_rgba_into_rgba(src_rgba: &[u8], dst_rgba: &mut [u8]) {
         let destination = [dst[0], dst[1], dst[2], dst[3]];
         let source = [src[0], src[1], src[2], src[3]];
         dst.copy_from_slice(&source_over_straight_rgba(destination, source));
+    }
+}
+
+#[cfg(all(test, feature = "gpu", target_os = "macos"))]
+mod surface_tests {
+    use super::*;
+
+    #[test]
+    fn straight_rgb_undoes_premultiplication_only_where_alpha_asks() {
+        assert_eq!(
+            straight_rgb(&[10, 20, 30, 255], AlphaMode::Premultiplied),
+            (10, 20, 30)
+        );
+        assert_eq!(
+            straight_rgb(&[10, 20, 30, 0], AlphaMode::Premultiplied),
+            (0, 0, 0)
+        );
+        assert_eq!(
+            straight_rgb(&[64, 32, 16, 128], AlphaMode::Premultiplied),
+            (128, 64, 32)
+        );
+        assert_eq!(
+            straight_rgb(&[64, 32, 16, 128], AlphaMode::Straight),
+            (64, 32, 16)
+        );
+    }
+
+    #[test]
+    fn surface_upload_from_premultiplied_layer_matches_straight_layer() {
+        // A half-transparent premultiplied pixel and its straight twin must
+        // land as the same luma/chroma: the upload un-premultiplies inline
+        // instead of asking the layer for a materialized straight view.
+        let straight = RenderedLayer::from_straight_image(Arc::new(RuvizImage::new(
+            2,
+            2,
+            vec![
+                200, 100, 50, 255, 128, 64, 32, 128, 0, 0, 255, 255, 255, 255, 255, 255,
+            ],
+        )));
+        let premultiplied = RenderedLayer::from_premultiplied_pixels(
+            2,
+            2,
+            vec![
+                200, 100, 50, 255, 64, 32, 16, 128, 0, 0, 255, 255, 255, 255, 255, 255,
+            ],
+        );
+        let mut upload = SurfaceUploadState::default();
+        let a = upload.update(None, &straight).expect("straight upload");
+        let mut upload = SurfaceUploadState::default();
+        let b = upload
+            .update(None, &premultiplied)
+            .expect("premultiplied upload");
+        let read = |buffer: &CVPixelBuffer| {
+            buffer.lock_base_address(1);
+            let mut bytes = Vec::new();
+            for plane in 0..2 {
+                let stride = buffer.get_bytes_per_row_of_plane(plane);
+                let rows = buffer.get_height_of_plane(plane);
+                let cols = buffer.get_width_of_plane(plane) * if plane == 1 { 2 } else { 1 };
+                let base = unsafe { buffer.get_base_address_of_plane(plane) } as *const u8;
+                for row in 0..rows {
+                    bytes.extend_from_slice(unsafe {
+                        std::slice::from_raw_parts(base.add(row * stride), cols)
+                    });
+                }
+            }
+            buffer.unlock_base_address(1);
+            bytes
+        };
+        assert_eq!(read(&a), read(&b));
+        assert!(
+            !premultiplied.has_straight_view(),
+            "no straight view was materialized"
+        );
     }
 }

@@ -666,6 +666,10 @@ pub struct StampedInteractiveLayers {
     pub stats: FrameStats,
     /// Base-image generation used by the frame's interaction geometry.
     pub base_generation: u64,
+    /// Render target the layers were produced for.
+    pub target: RenderTargetKind,
+    /// Whether a surface presenter may upload the base layer directly.
+    pub surface_capability: SurfaceCapability,
     render_stamp: InteractiveRenderStamp,
 }
 
@@ -723,6 +727,8 @@ impl RenderOutcome {
             layer_state: self.layer_state,
             stats: self.stats,
             base_generation: self.base_generation,
+            target: self.target,
+            surface_capability: self.surface_capability,
             render_stamp: self.render_stamp,
         }
     }
@@ -2601,6 +2607,30 @@ impl InteractivePlotSession {
     pub fn render_layers_stamped(&self, target: ImageTarget) -> Result<StampedInteractiveLayers> {
         self.render_to_target(
             RenderTargetKind::Image,
+            ComposeLayers::No,
+            target.size_px,
+            target.scale_factor,
+            target.time_seconds,
+        )
+        .map(RenderOutcome::into_stamped_layers)
+    }
+
+    /// Render for a surface presenter and hand the layers over untouched.
+    ///
+    /// The surface counterpart of [`render_layers_stamped`]: the base layer
+    /// keeps the renderer's native (premultiplied) bytes so a presenter that
+    /// converts into its own pixel format — a YCbCr `CVPixelBuffer`, say —
+    /// reads them once instead of paying the full-frame straight-alpha divide
+    /// first. `target` and `surface_capability` on the result say whether the
+    /// fast path applies to this frame.
+    ///
+    /// [`render_layers_stamped`]: Self::render_layers_stamped
+    pub fn render_surface_layers_stamped(
+        &self,
+        target: SurfaceTarget,
+    ) -> Result<StampedInteractiveLayers> {
+        self.render_to_target(
+            RenderTargetKind::Surface,
             ComposeLayers::No,
             target.size_px,
             target.scale_factor,

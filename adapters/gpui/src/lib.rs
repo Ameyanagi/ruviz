@@ -99,12 +99,14 @@ mod platform_impl {
         executor::block_on,
     };
     use gpui::{
-        AnyElement, App, Bounds, Context, Corners, Entity, FocusHandle, Focusable,
+        AnyElement, App, Bounds, ContentMask, Context, Corners, Entity, FocusHandle, Focusable,
         InteractiveElement, IntoElement, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
         MouseUpEvent, ObjectFit, Pixels, Point, Render, RenderImage, ScrollDelta, ScrollWheelEvent,
         Task, Window, canvas, div, point, prelude::*, px, rgb, rgba, size,
     };
     use image::{Frame, ImageBuffer, Rgba};
+    #[cfg(all(feature = "gpu", target_os = "macos"))]
+    use ruviz::core::RenderedLayer;
     use ruviz::{
         axes::AxisScale,
         core::plot::Image as RuvizImage,
@@ -136,6 +138,10 @@ mod platform_impl {
     pub use ruviz;
 
     const DRAG_THRESHOLD_PX: f64 = 3.0;
+    /// Minimum spacing between base rasters while a pan drag is active. The
+    /// cached frame is translated on the GPU between rasters, so input stays
+    /// at display rate no matter how long a raster takes.
+    const PAN_RASTER_INTERVAL: Duration = Duration::from_millis(32);
     const LINE_SCROLL_DELTA_PX: f32 = 50.0;
     const MENU_MIN_WIDTH_PX: f32 = 220.0;
     const MENU_ITEM_HEIGHT_PX: f32 = 30.0;
@@ -547,7 +553,28 @@ mod platform_impl {
     enum RenderedPrimary {
         Image(Arc<RenderImage>),
         #[cfg(all(feature = "gpu", target_os = "macos"))]
-        Surface(Arc<RuvizImage>),
+        Surface(RenderedLayer),
+    }
+
+    /// The view a rendered frame shows: its visible data bounds, the plot
+    /// area inside the frame (frame pixels), and the axis scales that map
+    /// between the two. Lets the adapter place a stale frame under a newer
+    /// pending view without waiting for a raster.
+    #[derive(Clone, Debug, PartialEq)]
+    struct FrameView {
+        visible: ViewportRect,
+        plot_area: ViewportRect,
+        x_scale: AxisScale,
+        y_scale: AxisScale,
+    }
+
+    /// GPU-side placement of the cached frame under a pending pan: the plot
+    /// area is repainted at `offset`, clipped to `mask` (window coordinates),
+    /// while the margins and axes stay where the frame drew them.
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    struct PanPreview {
+        offset: Point<Pixels>,
+        mask: Bounds<Pixels>,
     }
 
     #[derive(Clone)]
@@ -558,6 +585,7 @@ mod platform_impl {
         overlay_image: Option<Arc<RenderImage>>,
         stats: FrameStats,
         target: RenderTargetKind,
+        view: Option<FrameView>,
     }
 
     struct RenderedFrame {
@@ -566,6 +594,7 @@ mod platform_impl {
         overlay: RenderedOverlay,
         stats: FrameStats,
         target: RenderTargetKind,
+        view: Option<FrameView>,
     }
 
     enum RenderedOverlay {
@@ -893,6 +922,7 @@ mod platform_impl {
     struct PaintFrame {
         primary: PrimaryFrame,
         overlay_image: Option<Arc<RenderImage>>,
+        preview: Option<PanPreview>,
     }
 
     #[cfg(all(feature = "gpu", target_os = "macos"))]
@@ -924,6 +954,8 @@ mod platform_impl {
         surface_upload: SurfaceUploadState,
         scheduler: RenderScheduler,
         in_flight_render: Option<Task<()>>,
+        last_render_started: Option<Instant>,
+        raster_wakeup: Option<Task<()>>,
         failed_request: Option<RenderRequest>,
         last_error: Option<PlottingError>,
         last_layout: Option<InteractionLayout>,
@@ -984,6 +1016,8 @@ mod platform_impl {
                 surface_upload: SurfaceUploadState::default(),
                 scheduler: RenderScheduler::default(),
                 in_flight_render: None,
+                last_render_started: None,
+                raster_wakeup: None,
                 failed_request: None,
                 last_error: None,
                 last_layout: None,
@@ -1421,56 +1455,38 @@ mod platform_impl {
                             .lock()
                             .expect("RuvizPlot presentation clock lock poisoned")
                             .record_now();
-                        if let Some(image) = image {
-                            let fitted_bounds = match image.primary {
-                                PrimaryFrame::Image(primary_image) => {
-                                    let image_size = primary_image.size(0);
-                                    let fitted_bounds =
-                                        image_fit.into_gpui().get_bounds(bounds, image_size);
-                                    let _ = window.paint_image(
-                                        fitted_bounds,
-                                        Corners::default(),
-                                        primary_image,
-                                        0,
-                                        false,
-                                    );
-                                    fitted_bounds
-                                }
-                                #[cfg(all(feature = "gpu", target_os = "macos"))]
-                                PrimaryFrame::Surface(surface) => {
-                                    let image_size = size(
-                                        surface.get_width().into(),
-                                        surface.get_height().into(),
-                                    );
-                                    let fitted_bounds =
-                                        image_fit.into_gpui().get_bounds(bounds, image_size);
-                                    // `gpui` 0.2.2 from crates.io uses core-video
-                                    // 0.4, while the workspace GPUI patch uses
-                                    // core-video 0.5 like this crate. Both wrappers
-                                    // own the same Core Foundation object, but their
-                                    // Rust types are intentionally distinct. Borrow
-                                    // the raw CF object under the get rule so GPUI's
-                                    // inferred wrapper receives its own retain; the
-                                    // ruviz wrapper can then drop independently.
-                                    // SAFETY: both wrapper versions use the same
-                                    // non-null CVPixelBufferRef ABI, and the get rule
-                                    // balances the target wrapper's eventual release.
-                                    let gpui_surface = unsafe {
-                                        TCFType::wrap_under_get_rule(surface.as_CFTypeRef() as _)
-                                    };
-                                    window.paint_surface(fitted_bounds, gpui_surface);
-                                    fitted_bounds
-                                }
-                            };
-                            if let Some(overlay_image) = image.overlay_image {
-                                let _ = window.paint_image(
-                                    fitted_bounds,
-                                    Corners::default(),
-                                    overlay_image,
-                                    0,
-                                    false,
-                                );
-                            }
+                        let Some(image) = image else {
+                            return;
+                        };
+                        let fitted_bounds = image_fit
+                            .into_gpui()
+                            .get_bounds(bounds, primary_size(&image.primary));
+                        paint_primary(window, fitted_bounds, &image.primary);
+                        if let Some(preview) = image.preview {
+                            // A pan is pending a raster: repaint the plot area of
+                            // the stale frame shifted to where the pending view
+                            // puts it. Margins and axes keep the frame's own
+                            // placement until the raster lands.
+                            let shifted = Bounds::new(
+                                fitted_bounds.origin + preview.offset,
+                                fitted_bounds.size,
+                            );
+                            window.with_content_mask(
+                                Some(ContentMask {
+                                    bounds: preview.mask,
+                                }),
+                                |window| paint_primary(window, shifted, &image.primary),
+                            );
+                            return;
+                        }
+                        if let Some(overlay_image) = image.overlay_image {
+                            let _ = window.paint_image(
+                                fitted_bounds,
+                                Corners::default(),
+                                overlay_image,
+                                0,
+                                false,
+                            );
                         }
                     }
                 },
@@ -1602,6 +1618,113 @@ mod platform_impl {
         }
     }
 
+    fn primary_size(primary: &PrimaryFrame) -> gpui::Size<gpui::DevicePixels> {
+        match primary {
+            PrimaryFrame::Image(image) => image.size(0),
+            #[cfg(all(feature = "gpu", target_os = "macos"))]
+            PrimaryFrame::Surface(surface) => {
+                size(surface.get_width().into(), surface.get_height().into())
+            }
+        }
+    }
+
+    fn paint_primary(window: &mut Window, bounds: Bounds<Pixels>, primary: &PrimaryFrame) {
+        match primary {
+            PrimaryFrame::Image(image) => {
+                let _ = window.paint_image(bounds, Corners::default(), Arc::clone(image), 0, false);
+            }
+            #[cfg(all(feature = "gpu", target_os = "macos"))]
+            PrimaryFrame::Surface(surface) => {
+                // `gpui` 0.2.2 from crates.io uses core-video 0.4, while the
+                // workspace GPUI patch uses core-video 0.5 like this crate.
+                // Both wrappers own the same Core Foundation object, but their
+                // Rust types are intentionally distinct. Borrow the raw CF
+                // object under the get rule so GPUI's inferred wrapper receives
+                // its own retain; the ruviz wrapper can then drop independently.
+                // SAFETY: both wrapper versions use the same non-null
+                // CVPixelBufferRef ABI, and the get rule balances the target
+                // wrapper's eventual release.
+                let gpui_surface =
+                    unsafe { TCFType::wrap_under_get_rule(surface.as_CFTypeRef() as _) };
+                window.paint_surface(bounds, gpui_surface);
+            }
+        }
+    }
+
+    /// Where the cached frame's plot area must be drawn so that it shows
+    /// `pending` — the session's current view — using nothing but a translation.
+    ///
+    /// Returns `None` when the two views differ by more than a pan (a zoom
+    /// changes the span, and a translated raster would lie about the axes),
+    /// when the shift is under a hundredth of a frame pixel, or when either
+    /// bound is outside the frame's axis scale.
+    fn preview_translation(
+        view: &FrameView,
+        pending: ViewportRect,
+        content_bounds: Bounds<Pixels>,
+        frame_size_px: (u32, u32),
+    ) -> Option<PanPreview> {
+        let shown = view.visible;
+        let nx0 = view
+            .x_scale
+            .normalized_position(pending.min.x, shown.min.x, shown.max.x);
+        let nx1 = view
+            .x_scale
+            .normalized_position(pending.max.x, shown.min.x, shown.max.x);
+        let ny0 = view
+            .y_scale
+            .normalized_position(pending.min.y, shown.min.y, shown.max.y);
+        let ny1 = view
+            .y_scale
+            .normalized_position(pending.max.y, shown.min.y, shown.max.y);
+        if ![nx0, nx1, ny0, ny1].iter().all(|v| v.is_finite()) {
+            return None;
+        }
+        const SPAN_TOLERANCE: f64 = 1e-6;
+        if (nx1 - nx0 - 1.0).abs() > SPAN_TOLERANCE || (ny1 - ny0 - 1.0).abs() > SPAN_TOLERANCE {
+            return None;
+        }
+        let plot_w = view.plot_area.max.x - view.plot_area.min.x;
+        let plot_h = view.plot_area.max.y - view.plot_area.min.y;
+        if plot_w <= 0.0 || plot_h <= 0.0 {
+            return None;
+        }
+        // A view whose left edge sits `nx0` of the way across the frame is
+        // shown by sliding the frame left by that much; the y axis grows
+        // upward in data and downward in pixels, so its sign flips.
+        let shift_x = -nx0 * plot_w;
+        let shift_y = ny0 * plot_h;
+        if shift_x.abs() < 0.01 && shift_y.abs() < 0.01 {
+            return None;
+        }
+        let scale_x = f64::from(content_bounds.size.width) / f64::from(frame_size_px.0.max(1));
+        let scale_y = f64::from(content_bounds.size.height) / f64::from(frame_size_px.1.max(1));
+        let offset = point(
+            px((shift_x * scale_x) as f32),
+            px((shift_y * scale_y) as f32),
+        );
+        let mask = Bounds::new(
+            point(
+                content_bounds.origin.x + px((view.plot_area.min.x * scale_x) as f32),
+                content_bounds.origin.y + px((view.plot_area.min.y * scale_y) as f32),
+            ),
+            size(px((plot_w * scale_x) as f32), px((plot_h * scale_y) as f32)),
+        );
+        Some(PanPreview { offset, mask })
+    }
+
+    /// The view of the frame the session just rendered.
+    fn frame_view_from_session(session: &InteractivePlotSession) -> Option<FrameView> {
+        let snapshot = session.viewport_snapshot().ok()?;
+        let scales = session.view_bounds_snapshot();
+        Some(FrameView {
+            visible: snapshot.visible_bounds,
+            plot_area: snapshot.plot_area,
+            x_scale: scales.x_scale,
+            y_scale: scales.y_scale,
+        })
+    }
+
     impl Focusable for RuvizPlot {
         fn focus_handle(&self, _: &App) -> FocusHandle {
             self.focus_handle.clone()
@@ -1698,6 +1821,7 @@ mod platform_impl {
                         overlay_image: None,
                         stats: frame.stats,
                         target: frame.target,
+                        view: None,
                     });
                     view.update_layout(component_bounds, frame_size_px);
                     view
@@ -1880,12 +2004,15 @@ mod platform_impl {
                     overlay_image: Some(render_image_from_ruviz(overlay)),
                     stats: FrameStats::default(),
                     target: RenderTargetKind::Surface,
+                    view: None,
                 }),
                 retired_images: Vec::new(),
                 #[cfg(all(feature = "gpu", target_os = "macos"))]
                 surface_upload: SurfaceUploadState::default(),
                 scheduler: RenderScheduler::default(),
                 in_flight_render: None,
+                last_render_started: None,
+                raster_wakeup: None,
                 failed_request: None,
                 last_error: None,
                 last_layout: None,
@@ -2920,6 +3047,7 @@ mod platform_impl {
                         overlay_image: None,
                         stats: FrameStats::default(),
                         target: RenderTargetKind::Surface,
+                        view: None,
                     });
                     view.scheduler.latest_requested_generation = 7;
                     view.scheduler.in_flight = Some(ScheduledRender {
@@ -3612,6 +3740,7 @@ mod platform_impl {
                 overlay_image: None,
                 stats: FrameStats::default(),
                 target: RenderTargetKind::Surface,
+                view: None,
             };
             let mut view = RuvizPlot {
                 session: initial_session,
@@ -3627,6 +3756,8 @@ mod platform_impl {
                 surface_upload: SurfaceUploadState::default(),
                 scheduler: RenderScheduler::default(),
                 in_flight_render: None,
+                last_render_started: None,
+                raster_wakeup: None,
                 failed_request: None,
                 last_error: None,
                 last_layout: Some(InteractionLayout {
@@ -3911,6 +4042,8 @@ mod platform_impl {
                 surface_upload: SurfaceUploadState::default(),
                 scheduler: RenderScheduler::default(),
                 in_flight_render: None,
+                last_render_started: None,
+                raster_wakeup: None,
                 failed_request: None,
                 last_error: None,
                 last_layout: None,
@@ -4357,6 +4490,109 @@ mod platform_impl {
                         "an external base change with nothing pending resets the drag"
                     );
                 })
+            });
+        }
+
+        fn unit_frame_view() -> FrameView {
+            FrameView {
+                visible: ViewportRect::from_points(
+                    ViewportPoint::new(0.0, 0.0),
+                    ViewportPoint::new(1.0, 1.0),
+                ),
+                plot_area: ViewportRect::from_points(
+                    ViewportPoint::new(10.0, 10.0),
+                    ViewportPoint::new(110.0, 110.0),
+                ),
+                x_scale: AxisScale::Linear,
+                y_scale: AxisScale::Linear,
+            }
+        }
+
+        #[test]
+        fn test_preview_translation_slides_the_plot_area_by_the_pan() {
+            // A pan of (+10, +20) frame px moves the view to x -0.1..0.9 and
+            // y 0.2..1.2 on a 100 px plot area; the frame must slide by the
+            // same pixels, and the mask must cover the plot area only.
+            let view = unit_frame_view();
+            let content_bounds = Bounds::new(point(px(20.0), px(30.0)), size(px(300.0), px(300.0)));
+            let pending = ViewportRect::from_points(
+                ViewportPoint::new(-0.1, 0.2),
+                ViewportPoint::new(0.9, 1.2),
+            );
+            let preview = preview_translation(&view, pending, content_bounds, (300, 300))
+                .expect("a pure pan previews");
+            assert!((f64::from(preview.offset.x) - 10.0).abs() < 1e-4);
+            assert!((f64::from(preview.offset.y) - 20.0).abs() < 1e-4);
+            assert_window_points_close(preview.mask.origin, point(px(30.0), px(40.0)));
+            assert!((f64::from(preview.mask.size.width) - 100.0).abs() < 1e-4);
+            assert!((f64::from(preview.mask.size.height) - 100.0).abs() < 1e-4);
+
+            // Logical pixels scale with the fitted content bounds.
+            let half = Bounds::new(point(px(0.0), px(0.0)), size(px(150.0), px(150.0)));
+            let preview = preview_translation(&view, pending, half, (300, 300))
+                .expect("a pure pan previews at any fit");
+            assert!((f64::from(preview.offset.x) - 5.0).abs() < 1e-4);
+            assert!((f64::from(preview.mask.size.width) - 50.0).abs() < 1e-4);
+        }
+
+        #[test]
+        fn test_preview_translation_declines_zooms_and_identity() {
+            let view = unit_frame_view();
+            let content_bounds = Bounds::new(point(px(0.0), px(0.0)), size(px(300.0), px(300.0)));
+            let zoomed = ViewportRect::from_points(
+                ViewportPoint::new(0.0, 0.0),
+                ViewportPoint::new(0.5, 1.0),
+            );
+            assert!(preview_translation(&view, zoomed, content_bounds, (300, 300)).is_none());
+            assert!(preview_translation(&view, view.visible, content_bounds, (300, 300)).is_none());
+        }
+
+        #[test]
+        fn test_pan_preview_follows_pending_view_until_the_raster_lands() {
+            let component_bounds =
+                Bounds::new(point(px(20.0), px(30.0)), size(px(300.0), px(300.0)));
+            let plot: Plot = Plot::new()
+                .line(&[0.0, 1.0], &[0.0, 1.0])
+                .xlim(0.0, 1.0)
+                .ylim(0.0, 1.0)
+                .into();
+            let (cx, view) = mapped_test_view(
+                plot,
+                RuvizPlotOptions::default(),
+                (300, 300),
+                1.0,
+                component_bounds,
+            );
+            cx.update(|app| {
+                view.update(app, |view, _cx| {
+                    let frame_view = frame_view_from_session(&view.session)
+                        .expect("a rendered session has a view");
+                    view.cached_frame
+                        .as_mut()
+                        .expect("mapped view has a cached frame")
+                        .view = Some(frame_view.clone());
+                    assert!(view.pan_preview().is_none(), "the frame shows the view");
+
+                    view.session.apply_input(PlotInputEvent::Pan {
+                        delta_px: ViewportPoint::new(12.0, -7.0),
+                    });
+                    let preview = view
+                        .pan_preview()
+                        .expect("a pending pan previews on the cached frame");
+                    assert!((f64::from(preview.offset.x) - 12.0).abs() < 1e-3);
+                    assert!((f64::from(preview.offset.y) + 7.0).abs() < 1e-3);
+                    let plot_w = frame_view.plot_area.max.x - frame_view.plot_area.min.x;
+                    assert!((f64::from(preview.mask.size.width) - plot_w).abs() < 1e-3);
+
+                    // The raster of the pending view replaces the preview exactly.
+                    let request = view.cached_frame.as_ref().expect("cached").request.clone();
+                    let frame = render_frame_from_session(view.session.clone(), request.clone())
+                        .expect("render succeeds");
+                    assert!(frame.view.is_some(), "frames carry their view");
+                    view.replace_cached_frame(request, frame);
+                    view.update_layout(component_bounds, (300, 300));
+                    assert!(view.pan_preview().is_none(), "the new frame shows the view");
+                });
             });
         }
 
@@ -5033,6 +5269,7 @@ mod platform_impl {
                         overlay_image: None,
                         stats: FrameStats::default(),
                         target: RenderTargetKind::Surface,
+                        view: None,
                     });
 
                     let current = view
@@ -5194,6 +5431,7 @@ mod platform_impl {
                 overlay_image: None,
                 stats: FrameStats::default(),
                 target: RenderTargetKind::Surface,
+                view: None,
             };
 
             assert_eq!(
@@ -5203,19 +5441,24 @@ mod platform_impl {
         }
 
         #[cfg(all(feature = "gpu", target_os = "macos"))]
+        fn straight_layer(image: ruviz::core::plot::Image) -> RenderedLayer {
+            RenderedLayer::from_straight_image(Arc::new(image))
+        }
+
+        #[cfg(all(feature = "gpu", target_os = "macos"))]
         #[test]
         fn test_active_backend_reports_fast_path_for_surface_backed_frames() {
             let mut upload = SurfaceUploadState::default();
             let surface = upload
                 .update(
                     None,
-                    &ruviz::core::plot::Image::new(
+                    &straight_layer(ruviz::core::plot::Image::new(
                         2,
                         2,
                         vec![
                             255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255,
                         ],
-                    ),
+                    )),
                 )
                 .expect("surface upload should succeed");
             let frame = CachedFrame {
@@ -5225,6 +5468,7 @@ mod platform_impl {
                 overlay_image: None,
                 stats: FrameStats::default(),
                 target: RenderTargetKind::Surface,
+                view: None,
             };
 
             assert_eq!(
@@ -5240,13 +5484,21 @@ mod platform_impl {
             let first = upload
                 .update(
                     None,
-                    &ruviz::core::plot::Image::new(2, 1, vec![1, 2, 3, 255, 4, 5, 6, 255]),
+                    &straight_layer(ruviz::core::plot::Image::new(
+                        2,
+                        1,
+                        vec![1, 2, 3, 255, 4, 5, 6, 255],
+                    )),
                 )
                 .expect("first surface upload should succeed");
             let reused = upload
                 .update(
                     Some(&first),
-                    &ruviz::core::plot::Image::new(2, 1, vec![10, 20, 30, 255, 40, 50, 60, 255]),
+                    &straight_layer(ruviz::core::plot::Image::new(
+                        2,
+                        1,
+                        vec![10, 20, 30, 255, 40, 50, 60, 255],
+                    )),
                 )
                 .expect("second surface upload should succeed");
 
@@ -5269,13 +5521,13 @@ mod platform_impl {
                 let source = upload
                     .update(
                         None,
-                        &ruviz::core::plot::Image::new(
+                        &straight_layer(ruviz::core::plot::Image::new(
                             2,
                             2,
                             vec![
                                 255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255,
                             ],
-                        ),
+                        )),
                     )
                     .expect("surface upload should succeed");
 

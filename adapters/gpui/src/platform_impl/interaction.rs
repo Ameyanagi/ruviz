@@ -924,7 +924,13 @@ impl RuvizPlot {
             self.emit_plot_click(event.position, cx)?;
         }
 
+        let pan_ended = self.pan_drag_active();
         self.reset_pointer_state();
+        if pan_ended {
+            // The final raster after a throttled pan must not wait for the
+            // next pointer move.
+            cx.notify();
+        }
         Ok(())
     }
 

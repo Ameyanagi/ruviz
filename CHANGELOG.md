@@ -4,6 +4,26 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- `ruviz-gpui`: a pan drag no longer waits for a raster. While the pointer
+  moves, the cached base frame's plot area is repainted on the GPU at the
+  offset the pending view implies (margins and axes keep their place until
+  the next raster), rasters are spaced at least 32 ms apart, and the frame
+  that lands replaces the translated preview without a jump. Input now stays
+  at display rate on large Retina plots where a raster costs 8–10 ms.
+- `InteractivePlotSession::render_surface_layers_stamped` hands a surface
+  presenter the native (premultiplied) base layer; `StampedInteractiveLayers`
+  gains `target` and `surface_capability`.
+
+### Changed
+
+- `ruviz-gpui`'s surface upload reads the base layer's native premultiplied
+  bytes and un-premultiplies per pixel only where alpha asks, instead of
+  materializing a straight-alpha copy of the whole frame first; the YCbCr
+  conversion runs row-wise. Roughly halves the per-frame cost on the gpu
+  presentation path.
+
 ### Fixed
 
 - `ruviz-gpui`: a pan or brush drag no longer dies after its first move. The
