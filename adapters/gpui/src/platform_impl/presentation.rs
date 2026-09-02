@@ -300,13 +300,18 @@ impl RuvizPlot {
         let Some(anchor) = self.pan_anchor.take() else {
             return;
         };
-        if let PrimaryFrame::Image(image) = anchor.primary {
-            let still_shown = self.cached_frame.as_ref().is_some_and(|frame| {
-                matches!(&frame.primary, PrimaryFrame::Image(current) if Arc::ptr_eq(current, &image))
-            });
-            if !still_shown {
-                cx.drop_image(image, None);
+        match anchor.primary {
+            PrimaryFrame::Image(image) => {
+                let still_shown = self.cached_frame.as_ref().is_some_and(|frame| {
+                    matches!(&frame.primary, PrimaryFrame::Image(current) if Arc::ptr_eq(current, &image))
+                });
+                if !still_shown {
+                    cx.drop_image(image, None);
+                }
             }
+            // A surface is released with the anchor; nothing else holds it.
+            #[cfg(all(feature = "gpu", target_os = "macos"))]
+            PrimaryFrame::Surface(_) => {}
         }
     }
 
