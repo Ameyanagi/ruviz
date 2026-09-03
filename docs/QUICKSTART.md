@@ -2,16 +2,17 @@
 
 Get started with ruviz in less than 5 minutes!
 
-## What's New in v0.12.1
+## What's New in v0.12.2
 
-- Interactive overlays render straight again: dynamic annotations, hover and
-  selection markers, brushes and tooltips could shear diagonally when the
-  fitted canvas came out one pixel narrower than the rendered base layer.
-  Canvas sizing now shares the renderer's arithmetic and the overlay takes
-  its size from the base layer it is composited onto.
-- Long 2D titles wrap at Unicode line-break opportunities before shrinking,
-  and `LegendPosition::Best` scores the visible geometry with a bounded
-  screen-space mask so dense sampling no longer moves the legend.
+- Panning an interactive GPUI plot is smooth at any drag speed: the plot
+  content translates on the GPU every frame while the axes, ticks and margins
+  stay anchored, rasters run on a throttle with one in flight, and the final
+  raster lands exactly under the preview on release.
+- A pan no longer stalls after its first move when the adapter's own render is
+  pending, and compatible in-flight frames install instead of being dropped
+  under continuous input.
+- The macOS GPU surface upload converts rows in place without materialising a
+  straight-alpha copy of the frame, roughly halving the per-raster cost.
 
 See full details:
 
@@ -29,7 +30,7 @@ cd my_plot
 2. **Add ruviz to your `Cargo.toml`**:
 ```toml
 [dependencies]
-ruviz = "0.12.1"
+ruviz = "0.12.2"
 ```
 
 3. **Write your first plot** in `src/main.rs`:
@@ -68,8 +69,8 @@ an embedded interactive plot view:
 
 ```toml
 [dependencies]
-ruviz = "0.12.1"
-ruviz-gpui = "0.12.1"
+ruviz = "0.12.2"
+ruviz-gpui = "0.12.2"
 ```
 
 `ruviz-gpui` is supported on Linux, macOS, and Windows. On Windows, prefer the
@@ -97,7 +98,7 @@ If you want publication-style math in labels and titles, enable Typst text rende
 
 ```toml
 [dependencies]
-ruviz = { version = "0.12.1", features = ["typst-math"] }
+ruviz = { version = "0.12.2", features = ["typst-math"] }
 ```
 
 `.typst(true)` is only available when `typst-math` is enabled. The configured
@@ -116,7 +117,7 @@ If you want Typst to stay optional in your own crate, forward a local feature fi
 
 ```toml
 [dependencies]
-ruviz = { version = "0.12.1", default-features = false }
+ruviz = { version = "0.12.2", default-features = false }
 
 [features]
 default = []
@@ -368,7 +369,7 @@ Plot::new()
 ### With polars (requires `polars_support` feature)
 ```toml
 [dependencies]
-ruviz = { version = "0.12.1", features = ["polars_support"] }
+ruviz = { version = "0.12.2", features = ["polars_support"] }
 polars = "0.50"
 ```
 
@@ -396,7 +397,7 @@ Plot::new()
 only when you have benchmarked a path that benefits from the extra SIMD support:
 ```toml
 [dependencies]
-ruviz = { version = "0.12.1", features = ["performance"] }
+ruviz = { version = "0.12.2", features = ["performance"] }
 ```
 
 ### Large Dataset Export

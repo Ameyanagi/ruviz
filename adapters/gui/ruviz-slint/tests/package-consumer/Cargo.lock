@@ -2961,7 +2961,7 @@ dependencies = [
 
 [[package]]
 name = "ruviz"
-version = "0.12.1"
+version = "0.12.2"
 dependencies = [
  "cosmic-text",
  "ctor",
@@ -2986,7 +2986,7 @@ dependencies = [
 
 [[package]]
 name = "ruviz-slint"
-version = "0.12.1"
+version = "0.12.2"
 dependencies = [
  "arboard",
  "rfd",
