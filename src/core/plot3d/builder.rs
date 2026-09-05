@@ -414,7 +414,7 @@ macro_rules! impl_common_builder {
             /// Keep the scene's scale and framing fixed while orbiting.
             ///
             /// Uses a little more space around the scene so every orientation
-            /// fits. Enabled by default for [`spheres3d`].
+            /// fits. Enabled by default for [`crate::spheres3d`].
             pub fn stable_scale(mut self, enabled: bool) -> Self {
                 self.plot.camera = self.plot.camera.stable_scale(enabled);
                 self

@@ -4,12 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [0.13.0] - 2026-09-05
 
+### Added
+
 - Add `stable_scale(true)` to keep 3D framing and scale fixed while rotating;
   molecular spheres enable it by default. Web builders expose fixed X:Y:Z
   `axisAspect(...)`, physical `equalScale()`, and `stableScale()` controls.
-
-### Added
-
 - Opt-in `spheres3d(&[Sphere3D])` with data-unit radii, per-atom color/alpha and
   stable picking IDs, analytic sphere depth, and ambient/diffuse/specular
   lighting on software and GPU renderers (#182). Existing flat scatter markers
@@ -22,7 +21,6 @@ All notable changes to this project will be documented in this file.
 - `AxisAspect3D::Data` preserves physical data proportions, and
   `PickPrimitive3D::Sphere` identifies sphere hits. Downstream exhaustive matches
   on these enums must handle the new variants.
-
 - Browser 3D builders append series through the core builders; `clearSeries()`
   makes replacement explicit. Scheduled errors reach `onError` and `session.error`,
   with coalesced input and retry support. The public SDK powers the 3D demos.
