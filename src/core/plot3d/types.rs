@@ -575,14 +575,36 @@ impl Camera3D {
         }
 
         let axis_aspect = if self.aspect == AxisAspect3D::Data {
-            let extent = bounds.extent();
-            let longest = extent.x.max(extent.y).max(extent.z).max(f64::MIN_POSITIVE);
-            Vec3::new(
-                (extent.x / longest) as f32,
-                (extent.y / longest) as f32,
-                (extent.z / longest) as f32,
-            )
-            .max(Vec3::splat(1e-6))
+            let ranges = [
+                (bounds.min.x, bounds.max.x),
+                (bounds.min.y, bounds.max.y),
+                (bounds.min.z, bounds.max.z),
+            ];
+            let mut spans = ranges.map(|(low, high)| high - low);
+            if spans.iter().any(|span| !span.is_finite()) {
+                // Apply the same factor to every axis when a full span overflows.
+                spans = ranges.map(|(low, high)| high * 0.5 - low * 0.5);
+            }
+            let longest = spans.into_iter().fold(0.0_f64, f64::max);
+            let ratios = std::array::from_fn(|axis| {
+                if ranges[axis].0 == ranges[axis].1 {
+                    // A collapsed axis has no distances to preserve; keep its
+                    // inverse defined for picking and planar data.
+                    1e-6
+                } else {
+                    (spans[axis] / longest) as f32
+                }
+            });
+            let aspect = Vec3::from_array(ratios);
+            AxisAspect3D::fixed(aspect.x, aspect.y, aspect.z).validate()?;
+            if !Mat4::from_scale(aspect).inverse().is_finite() {
+                return Err(PlottingError::InvalidCamera3D {
+                    field: "aspect.data",
+                    value: aspect.min_element(),
+                    reason: "data ranges cannot preserve equal units in 3D coordinates",
+                });
+            }
+            aspect
         } else {
             self.aspect.resolved()
         };
@@ -947,6 +969,37 @@ mod tests {
     use approx::assert_abs_diff_eq;
 
     use super::*;
+
+    #[test]
+    fn data_aspect_preserves_small_ratios_and_rejects_unrepresentable_ranges() {
+        let camera = Camera3D::default().axis_aspect(AxisAspect3D::Data);
+        let bounds = Bounds3D::new(Point3D::new(-1e8, -1.0, -2.0), Point3D::new(1e8, 1.0, 2.0))
+            .expect("bounds");
+        let prepared = camera.prepare(1.0, bounds).expect("representable ratios");
+        assert_abs_diff_eq!(prepared.axis_aspect.y, 1e-8, epsilon = 1e-14);
+        assert_abs_diff_eq!(prepared.axis_aspect.z, 2e-8, epsilon = 1e-14);
+        let huge = Bounds3D::new(
+            Point3D::new(-f64::MAX, -f64::MAX * 0.5, -f64::MAX * 0.25),
+            Point3D::new(f64::MAX, f64::MAX * 0.5, f64::MAX * 0.25),
+        )
+        .expect("bounds");
+        assert_eq!(
+            camera
+                .prepare(1.0, huge)
+                .expect("overflow-safe proportions")
+                .axis_aspect,
+            Vec3::new(1.0, 0.5, 0.25)
+        );
+        let impossible = Bounds3D::new(
+            Point3D::new(-1e300, -1.0, -1.0),
+            Point3D::new(1e300, 1.0, 1.0),
+        )
+        .expect("finite bounds");
+        assert!(camera.prepare(1.0, impossible).is_err());
+        let planar = Bounds3D::new(Point3D::new(-1.0, -1.0, 0.0), Point3D::new(1.0, 1.0, 0.0))
+            .expect("planar bounds");
+        assert!(camera.prepare(1.0, planar).is_ok());
+    }
 
     #[test]
     fn default_camera_matches_documented_contract() {

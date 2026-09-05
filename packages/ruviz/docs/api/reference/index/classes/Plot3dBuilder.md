@@ -6,7 +6,7 @@
 
 # Class: Plot3dBuilder
 
-Defined in: [3d.ts:563](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L563)
+Defined in: [3d.ts:567](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L567)
 
 Fluent high-level WebGPU 3D plot builder.
 
@@ -29,7 +29,7 @@ Use clearSeries() before adding a replacement.
 
 > **axisAspect**(`x`, `y`, `z`): `this`
 
-Defined in: [3d.ts:618](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L618)
+Defined in: [3d.ts:622](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L622)
 
 Fix the plotting box's X:Y:Z proportions; each component must be positive.
 
@@ -57,7 +57,7 @@ Fix the plotting box's X:Y:Z proportions; each component must be positive.
 
 > **clearSeries**(): `this`
 
-Defined in: [3d.ts:612](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L612)
+Defined in: [3d.ts:616](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L616)
 
 Remove series while retaining plot options, for explicit replacement.
 
@@ -71,7 +71,7 @@ Remove series while retaining plot options, for explicit replacement.
 
 > **equalScale**(): `this`
 
-Defined in: [3d.ts:638](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L638)
+Defined in: [3d.ts:642](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L642)
 
 Keep equal data units equally long on all axes, preserving physical shapes.
 
@@ -85,7 +85,7 @@ Keep equal data units equally long on all axes, preserving physical shapes.
 
 > **line3d**(`x`, `y`, `z`): `this`
 
-Defined in: [3d.ts:578](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L578)
+Defined in: [3d.ts:582](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L582)
 
 #### Parameters
 
@@ -111,7 +111,7 @@ Defined in: [3d.ts:578](https://github.com/Ameyanagi/ruviz/blob/main/packages/ru
 
 > **mount**(`canvas`, `options?`): `Promise`\<[`Plot3dSession`](../interfaces/Plot3dSession.md)\>
 
-Defined in: [3d.ts:654](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L654)
+Defined in: [3d.ts:658](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L658)
 
 #### Parameters
 
@@ -133,7 +133,7 @@ Defined in: [3d.ts:654](https://github.com/Ameyanagi/ruviz/blob/main/packages/ru
 
 > **scatter3d**(`x`, `y`, `z`): `this`
 
-Defined in: [3d.ts:569](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L569)
+Defined in: [3d.ts:573](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L573)
 
 #### Parameters
 
@@ -159,7 +159,7 @@ Defined in: [3d.ts:569](https://github.com/Ameyanagi/ruviz/blob/main/packages/ru
 
 > **stableScale**(`enabled?`): `this`
 
-Defined in: [3d.ts:644](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L644)
+Defined in: [3d.ts:648](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L648)
 
 Keep framing and scale fixed while rotating; explicit zoom still works.
 
@@ -179,7 +179,7 @@ Keep framing and scale fixed while rotating; explicit zoom still works.
 
 > **surface**(`x`, `y`, `z`): `this`
 
-Defined in: [3d.ts:587](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L587)
+Defined in: [3d.ts:591](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L591)
 
 #### Parameters
 
@@ -205,7 +205,7 @@ Defined in: [3d.ts:587](https://github.com/Ameyanagi/ruviz/blob/main/packages/ru
 
 > **title**(`title`): `this`
 
-Defined in: [3d.ts:649](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L649)
+Defined in: [3d.ts:653](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L653)
 
 #### Parameters
 
@@ -223,7 +223,7 @@ Defined in: [3d.ts:649](https://github.com/Ameyanagi/ruviz/blob/main/packages/ru
 
 > **wireframe**(`x`, `y`, `z`): `this`
 
-Defined in: [3d.ts:599](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L599)
+Defined in: [3d.ts:603](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L603)
 
 #### Parameters
 

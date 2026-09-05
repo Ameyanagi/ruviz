@@ -2,11 +2,15 @@ import { line3d } from "ruviz/3d";
 
 let session;
 let initializing;
+let target;
+const ready = "Ready. Explore the helix with the view controls or drag to orbit.";
 function status(type, message) {
   self.postMessage({ type, message });
 }
 
 async function initialize(data) {
+  session?.dispose();
+  session = undefined;
   const t = Array.from({ length: 300 }, (_, i) => i * 0.06);
   session = await line3d(
     t.map(Math.cos),
@@ -22,20 +26,33 @@ async function initialize(data) {
         status("error", `Rendering paused: ${error.message}`);
       },
     });
-  status("ready", "Ready. Explore the helix with the view controls or drag to orbit.");
+  status("ready", ready);
 }
 
 self.onmessage = async ({ data }) => {
   try {
     if (data.type === "initialize") {
-      initializing = initialize(data);
+      target = data;
+      initializing = initialize(target);
       await initializing;
+      return;
+    }
+    if (data.type === "retry") {
+      await initializing?.catch(() => {});
+      if (!session || session.needsRecreate()) {
+        initializing = initialize(target);
+        await initializing;
+      } else {
+        session.render();
+        status("ready", ready);
+      }
       return;
     }
     await initializing;
     if (!session) return;
     switch (data.type) {
       case "resize":
+        target.scale = data.scale;
         session.resize(data.width, data.height, data.scale);
         break;
       case "pointerDown":

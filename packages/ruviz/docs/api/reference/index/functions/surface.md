@@ -8,7 +8,7 @@
 
 > **surface**(`x`, `y`, `z`): [`Plot3dBuilder`](../classes/Plot3dBuilder.md)
 
-Defined in: [3d.ts:762](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L762)
+Defined in: [3d.ts:766](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L766)
 
 Create a WebGPU 3D surface plot.
 

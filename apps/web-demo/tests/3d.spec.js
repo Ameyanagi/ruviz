@@ -140,6 +140,23 @@ test("public SDK demo exposes keyboard controls and preserves composed series", 
   });
   await expect(page.locator("#main-3d")).toHaveAccessibleName("Explore a surface");
   await expect(page.locator("#worker-3d")).toHaveAccessibleName("Follow a path");
+  await page.evaluate(() => {
+    window.__ruviz3d.worker.dispatchEvent(
+      new MessageEvent("message", {
+        data: { type: "error", message: "Simulated recoverable frame failure" },
+      }),
+    );
+  });
+  await expect(page.getByRole("button", { name: "Retry path rendering" })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Reset follow a path", exact: true }),
+  ).toBeDisabled();
+  await page.getByRole("button", { name: "Retry path rendering" }).click();
+  await expect(page.locator("#worker-3d-status")).toContainText("Ready");
+  await expect(page.getByRole("button", { name: "Retry path rendering" })).toBeHidden();
+  await expect(
+    page.getByRole("button", { name: "Reset follow a path", exact: true }),
+  ).toBeEnabled();
   const bytes = () =>
     page.evaluate(async () => Array.from(await window.__ruviz3d.main.exportPng()));
   const before = await bytes();

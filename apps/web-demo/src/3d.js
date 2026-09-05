@@ -85,6 +85,8 @@ function setupWorker() {
     return;
   }
   const worker = new Worker(new URL("./3d-worker.js", import.meta.url), { type: "module" });
+  const retry = document.getElementById("worker-3d-retry");
+  let workerFailed = false;
   const canvas = workerCanvas.transferControlToOffscreen();
   const send = (type, payload = {}) => worker.postMessage({ type, ...payload });
   const resize = () => {
@@ -97,11 +99,29 @@ function setupWorker() {
     });
   };
   worker.postMessage({ type: "initialize", canvas, scale: window.devicePixelRatio || 1 }, [canvas]);
+  retry.addEventListener("click", () => {
+    if (workerFailed) {
+      window.location.reload();
+      return;
+    }
+    retry.disabled = true;
+    workerStatus.textContent = "Retrying rendering…";
+    send("retry");
+  });
   worker.addEventListener("message", ({ data }) => {
     if (data.type === "ready") resize();
+    retry.hidden = data.type !== "error";
+    retry.disabled = false;
+    for (const button of document.querySelectorAll("#worker-3d-controls button")) {
+      button.disabled = data.type === "error";
+    }
     workerStatus.textContent = data.message;
   });
   worker.addEventListener("error", (event) => {
+    workerFailed = true;
+    retry.textContent = "Reload page";
+    retry.hidden = false;
+    retry.disabled = false;
     workerStatus.textContent = event.message;
   });
   const controls = {

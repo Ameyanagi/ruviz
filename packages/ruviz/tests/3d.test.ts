@@ -72,12 +72,15 @@ class RawSession {
     if (failResize) throw new Error("invalid size");
   }
   pointer_down(...args) {
+    this.dragging = true;
     this.calls.push(["down", ...args]);
   }
   pointer_move(...args) {
     this.calls.push(["move", ...args]);
+    if (this.moveFailure) throw this.moveFailure;
   }
   pointer_up(...args) {
+    this.dragging = false;
     this.calls.push(["up", ...args]);
   }
   wheel(...args) {
@@ -238,4 +241,24 @@ test("fixed ratios and stable scale survive replacement, and invalid ratios are 
   );
   expect(last.aspect).toBe("data");
   expect(last.stable).toBe(false);
+});
+
+test("a failed final move still releases the retained drag and reports the failure", async () => {
+  const errors = [];
+  const { session, canvas } = await mount({
+    bindInput: true,
+    onError: (error) => errors.push(error),
+  });
+  const event = { clientX: 10, clientY: 20, pointerId: 1, button: 0 };
+  canvas.listeners.get("pointerdown")(event);
+  canvas.listeners.get("pointermove")({ ...event, clientX: 30 });
+  last.moveFailure = new Error("move failed");
+  canvas.listeners.get("pointerup")({ ...event, clientX: 30 });
+  expect(last.dragging).toBe(false);
+  expect(last.calls.at(-1)).toEqual(["up", 30, 20, 0]);
+  expect(session.error?.message).toBe("move failed");
+  expect(errors).toHaveLength(1);
+  last.moveFailure = null;
+  flush();
+  expect(session.error).toBeNull();
 });

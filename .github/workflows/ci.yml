@@ -294,6 +294,7 @@ jobs:
             --stage-dir "${native_gui_stage_dir}" \
             --expect ruviz-gpui:coordinate_events \
             --expect ruviz-gpui:fixed_bounds_dashboard \
+            --expect ruviz-gpui:molecular_spheres \
             --expect ruviz-gpui:movable_annotation \
             --expect ruviz-gpui:observable_embed \
             --expect ruviz-gpui:plot3d_embed \
@@ -316,6 +317,7 @@ jobs:
             --expect ruviz-slint:mixed_3d_dashboard \
             --expect ruviz-gpui:coordinate_events \
             --expect ruviz-gpui:fixed_bounds_dashboard \
+            --expect ruviz-gpui:molecular_spheres \
             --expect ruviz-gpui:movable_annotation \
             --expect ruviz-gpui:observable_embed \
             --expect ruviz-gpui:plot3d_embed \

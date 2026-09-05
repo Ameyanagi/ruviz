@@ -376,9 +376,13 @@ class MountedPlot3dSession implements Plot3dSession {
 
   pointerUp(x: number, y: number, button: number): void {
     this.#assertActive();
-    this.#flushInput();
-    this.#raw.pointer_up(x, y, button);
-    this.render();
+    try {
+      this.#flushInput();
+    } finally {
+      // Release the retained drag even if its last queued move failed.
+      this.#raw.pointer_up(x, y, button);
+      this.render();
+    }
   }
 
   doubleClick(x: number, y: number): void {
