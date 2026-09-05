@@ -51,6 +51,9 @@ export interface Plot3dMountOptions {
    * a transferred canvas in a worker.
    */
   scaleFactor?: number;
+
+  /** Scheduled render/input errors. Initial mounting errors reject mount(). */
+  onError?: (error: Error) => void;
 }
 
 export type Plot3dSessionMode = "main-thread" | "offscreen";
@@ -67,6 +70,9 @@ export interface Plot3dSession {
 
   /** Request a frame. Multiple requests in one animation frame are coalesced. */
   render(): void;
+
+  /** Last scheduled failure, cleared after a successful render. */
+  readonly error: Error | null;
 
   resize(width?: number, height?: number, scaleFactor?: number): void;
   resetView(): void;
@@ -272,29 +278,67 @@ class MountedPlot3dSession implements Plot3dSession {
   #cleanup: Array<() => void> = [];
   #destroyed = false;
   #scaleFactor: number;
+  #onError?: (error: Error) => void;
+  #error: Error | null = null;
+  #pendingMove: { x: number; y: number } | null = null;
+  #pendingWheel = 0;
 
   constructor(
     rawSession: RawSession3d,
     canvas: HTMLCanvasElement | OffscreenCanvas,
     scaleFactor: number,
+    onError?: (error: Error) => void,
   ) {
     this.#raw = rawSession;
     this.canvas = canvas;
     this.mode = isHtmlCanvas(canvas) ? "main-thread" : "offscreen";
     this.#scaleFactor = scaleFactor;
+    this.#onError = onError;
     this.#scheduler = new FrameScheduler3d(() => {
-      if (!this.#destroyed) {
+      this.handleEvent(() => {
+        this.#flushInput();
         this.#raw.render();
-      }
+        this.#error = null;
+      });
     });
   }
 
+  get error(): Error | null {
+    return this.#error;
+  }
+
   render(): void {
+    this.#assertActive();
     this.#scheduler.request();
+  }
+
+  // Browser event callbacks cannot reject a caller's promise. Route them to
+  // the same explicit error channel as scheduled rendering.
+  handleEvent(callback: () => void): void {
+    if (this.#destroyed) return;
+    try {
+      callback();
+    } catch (error) {
+      this.#pendingMove = null;
+      this.#pendingWheel = 0;
+      this.#error = error instanceof Error ? error : new Error(String(error));
+      if (this.#onError) this.#onError(this.#error);
+      else console.error(this.#error);
+    }
+  }
+
+  #flushInput(): void {
+    const move = this.#pendingMove;
+    const wheel = this.#pendingWheel;
+    this.#pendingMove = null;
+    this.#pendingWheel = 0;
+    if (move) this.#raw.pointer_move(move.x, move.y);
+    if (wheel !== 0) this.#raw.wheel(wheel);
   }
 
   resize(width?: number, height?: number, scaleFactor?: number): void {
     this.#assertActive();
+    this.#flushInput();
     if (isHtmlCanvas(this.canvas) && (width === undefined || height === undefined)) {
       const metrics = getCanvasMetrics(this.canvas, scaleFactor ?? this.#scaleFactor);
       this.#scaleFactor = metrics.scaleFactor;
@@ -311,37 +355,43 @@ class MountedPlot3dSession implements Plot3dSession {
 
   resetView(): void {
     this.#assertActive();
+    this.#pendingMove = null;
+    this.#pendingWheel = 0;
     this.#raw.reset_view();
     this.render();
   }
 
   pointerDown(x: number, y: number, button: number): void {
     this.#assertActive();
+    this.#flushInput();
     this.#raw.pointer_down(x, y, button);
     this.render();
   }
 
   pointerMove(x: number, y: number): void {
     this.#assertActive();
-    this.#raw.pointer_move(x, y);
+    this.#pendingMove = { x, y };
     this.render();
   }
 
   pointerUp(x: number, y: number, button: number): void {
     this.#assertActive();
+    this.#flushInput();
     this.#raw.pointer_up(x, y, button);
     this.render();
   }
 
   doubleClick(x: number, y: number): void {
     this.#assertActive();
+    this.#pendingMove = null;
+    this.#pendingWheel = 0;
     this.#raw.double_click(x, y);
     this.render();
   }
 
   wheel(deltaY: number): void {
     this.#assertActive();
-    this.#raw.wheel(deltaY);
+    this.#pendingWheel += deltaY;
     this.render();
   }
 
@@ -368,6 +418,7 @@ class MountedPlot3dSession implements Plot3dSession {
 
   async exportPng(): Promise<Uint8Array> {
     this.#assertActive();
+    this.#flushInput();
     return new Uint8Array(this.#raw.export_png());
   }
 
@@ -426,13 +477,14 @@ function installCanvasResize(
   };
 
   sync();
-  const observer = new ResizeObserver(sync);
+  const onResize = () => session.handleEvent(sync);
+  const observer = new ResizeObserver(onResize);
   observer.observe(canvas);
-  window.addEventListener("resize", sync);
+  window.addEventListener("resize", onResize);
 
   return () => {
     observer.disconnect();
-    window.removeEventListener("resize", sync);
+    window.removeEventListener("resize", onResize);
   };
 }
 
@@ -445,37 +497,42 @@ function bindCanvasInput(session: MountedPlot3dSession, canvas: HTMLCanvasElemen
     event.preventDefault();
   };
 
-  const onPointerDown = (event: PointerEvent) => {
-    const point = pointerPosition(canvas, event);
-    activePointer = { id: event.pointerId, button: event.button };
-    canvas.setPointerCapture(event.pointerId);
-    session.pointerDown(point.x, point.y, event.button);
-  };
+  const onPointerDown = (event: PointerEvent) =>
+    session.handleEvent(() => {
+      const point = pointerPosition(canvas, event);
+      activePointer = { id: event.pointerId, button: event.button };
+      canvas.setPointerCapture(event.pointerId);
+      session.pointerDown(point.x, point.y, event.button);
+    });
 
-  const onPointerMove = (event: PointerEvent) => {
-    const point = pointerPosition(canvas, event);
-    session.pointerMove(point.x, point.y);
-  };
+  const onPointerMove = (event: PointerEvent) =>
+    session.handleEvent(() => {
+      const point = pointerPosition(canvas, event);
+      session.pointerMove(point.x, point.y);
+    });
 
-  const releasePointer = (event: PointerEvent) => {
-    const point = pointerPosition(canvas, event);
-    const button = activePointer?.id === event.pointerId ? activePointer.button : event.button;
-    if (canvas.hasPointerCapture(event.pointerId)) {
-      canvas.releasePointerCapture(event.pointerId);
-    }
-    activePointer = null;
-    session.pointerUp(point.x, point.y, button);
-  };
+  const releasePointer = (event: PointerEvent) =>
+    session.handleEvent(() => {
+      const point = pointerPosition(canvas, event);
+      const button = activePointer?.id === event.pointerId ? activePointer.button : event.button;
+      if (canvas.hasPointerCapture(event.pointerId)) {
+        canvas.releasePointerCapture(event.pointerId);
+      }
+      activePointer = null;
+      session.pointerUp(point.x, point.y, button);
+    });
 
-  const onDoubleClick = (event: MouseEvent) => {
-    const point = pointerPosition(canvas, event);
-    session.doubleClick(point.x, point.y);
-  };
+  const onDoubleClick = (event: MouseEvent) =>
+    session.handleEvent(() => {
+      const point = pointerPosition(canvas, event);
+      session.doubleClick(point.x, point.y);
+    });
 
-  const onWheel = (event: WheelEvent) => {
-    event.preventDefault();
-    session.wheel(event.deltaY);
-  };
+  const onWheel = (event: WheelEvent) =>
+    session.handleEvent(() => {
+      event.preventDefault();
+      session.wheel(event.deltaY);
+    });
 
   canvas.addEventListener("contextmenu", onContextMenu);
   canvas.addEventListener("pointerdown", onPointerDown);
@@ -500,19 +557,21 @@ function bindCanvasInput(session: MountedPlot3dSession, canvas: HTMLCanvasElemen
 /**
  * Fluent high-level WebGPU 3D plot builder.
  *
- * A builder describes one 3D series. Calling another series method replaces
- * the previous series, matching the raw browser bridge.
+ * Series methods append in drawing order, matching the Rust builders.
+ * Use clearSeries() before adding a replacement.
  */
 export class Plot3dBuilder {
-  #series: Series3d | null = null;
+  #series: Series3d[] = [];
   #title: string | null = null;
+  #axisAspect: [number, number, number] | "data" | null = null;
+  #stableScale = false;
 
   scatter3d(x: NumericArray, y: NumericArray, z: NumericArray): this {
     const xValues = numericValues(x, "scatter3d x", 1);
     const yValues = numericValues(y, "scatter3d y", 1);
     const zValues = numericValues(z, "scatter3d z", 1);
     equalPointLengths("scatter3d", xValues, yValues, zValues);
-    this.#series = { kind: "scatter3d", x: xValues, y: yValues, z: zValues };
+    this.#series.push({ kind: "scatter3d", x: xValues, y: yValues, z: zValues });
     return this;
   }
 
@@ -521,31 +580,69 @@ export class Plot3dBuilder {
     const yValues = numericValues(y, "line3d y", 2);
     const zValues = numericValues(z, "line3d z", 2);
     equalPointLengths("line3d", xValues, yValues, zValues);
-    this.#series = { kind: "line3d", x: xValues, y: yValues, z: zValues };
+    this.#series.push({ kind: "line3d", x: xValues, y: yValues, z: zValues });
     return this;
   }
 
   surface(x: NumericArray, y: NumericArray, z: GridValues3d): this {
     const xValues = numericValues(x, "surface x", 2);
     const yValues = numericValues(y, "surface y", 2);
-    this.#series = {
+    this.#series.push({
       kind: "surface",
       x: xValues,
       y: yValues,
       z: gridValues("surface", xValues, yValues, z),
-    };
+    });
     return this;
   }
 
   wireframe(x: NumericArray, y: NumericArray, z: GridValues3d): this {
     const xValues = numericValues(x, "wireframe x", 2);
     const yValues = numericValues(y, "wireframe y", 2);
-    this.#series = {
+    this.#series.push({
       kind: "wireframe",
       x: xValues,
       y: yValues,
       z: gridValues("wireframe", xValues, yValues, z),
-    };
+    });
+    return this;
+  }
+
+  /** Remove series while retaining plot options, for explicit replacement. */
+  clearSeries(): this {
+    this.#series = [];
+    return this;
+  }
+
+  /** Fix the plotting box's X:Y:Z proportions; each component must be positive. */
+  axisAspect(x: number, y: number, z: number): this {
+    const values: [number, number, number] = [Math.fround(x), Math.fround(y), Math.fround(z)];
+    const max = Math.max(...values);
+    if (
+      values.some(
+        (value) =>
+          !Number.isFinite(value) ||
+          value <= 0 ||
+          !Number.isFinite(Math.fround(1 / Math.fround(value / max))),
+      )
+    ) {
+      throw new Error(
+        "axisAspect(): ratios must be finite, positive, and representable in 3D coordinates",
+      );
+    }
+    this.#axisAspect = values;
+    return this;
+  }
+
+  /** Keep equal data units equally long on all axes, preserving physical shapes. */
+  equalScale(): this {
+    this.#axisAspect = "data";
+    return this;
+  }
+
+  /** Keep framing and scale fixed while rotating; explicit zoom still works. */
+  stableScale(enabled = true): this {
+    this.#stableScale = enabled;
     return this;
   }
 
@@ -559,7 +656,7 @@ export class Plot3dBuilder {
     options: Plot3dMountOptions = {},
   ): Promise<Plot3dSession> {
     assertWebGpuAvailable();
-    if (!this.#series) {
+    if (this.#series.length === 0) {
       throw new Error(
         "createPlot3d(): call scatter3d(), line3d(), surface(), or wireframe() before mount()",
       );
@@ -593,14 +690,18 @@ export class Plot3dBuilder {
       rawPlot.free();
     }
 
-    const session = new MountedPlot3dSession(rawSession, canvas, scaleFactor);
-    session.resize(canvas.width, canvas.height, scaleFactor);
-
-    if (htmlCanvas && (options.autoResize ?? true)) {
-      session.pushCleanup(installCanvasResize(session, canvas, options.scaleFactor));
-    }
-    if (htmlCanvas && (options.bindInput ?? true)) {
-      session.pushCleanup(bindCanvasInput(session, canvas));
+    const session = new MountedPlot3dSession(rawSession, canvas, scaleFactor, options.onError);
+    try {
+      session.resize(canvas.width, canvas.height, scaleFactor);
+      if (htmlCanvas && (options.autoResize ?? true)) {
+        session.pushCleanup(installCanvasResize(session, canvas, options.scaleFactor));
+      }
+      if (htmlCanvas && (options.bindInput ?? true)) {
+        session.pushCleanup(bindCanvasInput(session, canvas));
+      }
+    } catch (error) {
+      session.dispose();
+      throw error;
     }
 
     return session;
@@ -608,33 +709,37 @@ export class Plot3dBuilder {
 
   #toRawPlot(module: RawModule): RawPlot3d {
     const rawPlot = new module.JsPlot3D();
-    const series = this.#series;
-    if (!series) {
+    try {
+      for (const series of this.#series) {
+        const x = Float64Array.from(series.x);
+        const y = Float64Array.from(series.y);
+        const z = Float64Array.from(series.z);
+        switch (series.kind) {
+          case "scatter3d":
+            rawPlot.scatter3d(x, y, z);
+            break;
+          case "line3d":
+            rawPlot.line3d(x, y, z);
+            break;
+          case "surface":
+            rawPlot.surface(x, y, z);
+            break;
+          case "wireframe":
+            rawPlot.wireframe(x, y, z);
+            break;
+        }
+      }
+      if (this.#axisAspect === "data") rawPlot.equal_scale();
+      else if (this.#axisAspect !== null) rawPlot.axis_aspect(...this.#axisAspect);
+      rawPlot.stable_scale(this.#stableScale);
+      if (this.#title !== null) {
+        rawPlot.title(this.#title);
+      }
       return rawPlot;
+    } catch (error) {
+      rawPlot.free();
+      throw error;
     }
-
-    const x = Float64Array.from(series.x);
-    const y = Float64Array.from(series.y);
-    const z = Float64Array.from(series.z);
-    switch (series.kind) {
-      case "scatter3d":
-        rawPlot.scatter3d(x, y, z);
-        break;
-      case "line3d":
-        rawPlot.line3d(x, y, z);
-        break;
-      case "surface":
-        rawPlot.surface(x, y, z);
-        break;
-      case "wireframe":
-        rawPlot.wireframe(x, y, z);
-        break;
-    }
-
-    if (this.#title !== null) {
-      rawPlot.title(this.#title);
-    }
-    return rawPlot;
   }
 }
 

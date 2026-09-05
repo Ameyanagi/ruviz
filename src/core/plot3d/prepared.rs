@@ -12,7 +12,7 @@ use crate::render::three_d::gpu::{GpuFrameOutput3D, Wgpu3DRenderer, render_with_
 use crate::render::three_d::scene::{
     LineBatch3D, LineGeometryBatch3D, MeshBatch3D, MeshColor3D, MeshGeometryBatch3D, MeshStyle3D,
     MeshVertex3D, PointBatch3D, PointGeometryBatch3D, PointStyle3D, Scene3D, SceneGeometry3D,
-    StrokeStyle3D,
+    SphereBatch3D, SphereGeometryBatch3D, SphereInstance3D, StrokeStyle3D,
 };
 #[cfg(feature = "parallel")]
 use crate::render::three_d::software::raster::SoftwareQuality3D;
@@ -269,6 +269,29 @@ fn lower_geometry(
                 reason: "3D series count exceeds u32 indexing".to_string(),
             })?;
         match series {
+            Series3D::Spheres { data, .. } => {
+                let half = [
+                    frame.bounds.max.x * 0.5 - frame.bounds.min.x * 0.5,
+                    frame.bounds.max.y * 0.5 - frame.bounds.min.y * 0.5,
+                    frame.bounds.max.z * 0.5 - frame.bounds.min.z * 0.5,
+                ];
+                let instances = data.iter().map(|sphere| {
+                    let center = frame.bounds.normalize(sphere.center, Vec3::ONE).to_array();
+                    let radii = half.map(|span| (sphere.radius / span) as f32);
+                    if center.iter().any(|v| !v.is_finite())
+                        || radii.iter().any(|v| !v.is_finite() || *v <= 0.0)
+                    {
+                        return Err(PlottingError::InvalidInput(format!(
+                            "spheres3d: sphere {} cannot be represented within these axis limits", sphere.id
+                        )));
+                    }
+                    Ok(SphereInstance3D { center, radii, color: sphere.color, id: sphere.id })
+                }).collect::<Result<Vec<_>>>()?;
+                geometry.spheres.push(Arc::new(SphereGeometryBatch3D {
+                    series_index,
+                    instances: instances.into(),
+                }));
+            }
             Series3D::Scatter { data, .. } => {
                 geometry
                     .points
@@ -379,8 +402,22 @@ fn assemble_scene(frame: &ResolvedFrame3D, geometry: Arc<SceneGeometry3D>) -> Re
         });
     }
 
+    let spheres = geometry
+        .spheres
+        .iter()
+        .map(|batch| {
+            let Series3D::Spheres { style, .. } = &frame.series[batch.series_index as usize] else {
+                return Err(series_geometry_mismatch(batch.series_index));
+            };
+            Ok(SphereBatch3D {
+                geometry: Arc::clone(batch),
+                style: *style,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
     Ok(Scene3D {
         geometry,
+        spheres,
         points,
         lines,
         meshes,

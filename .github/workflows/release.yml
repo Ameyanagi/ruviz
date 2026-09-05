@@ -770,7 +770,7 @@ jobs:
 
           if curl --silent --fail \
               --header "User-Agent: ${CRATES_IO_USER_AGENT}" \
-              "https://crates.io/api/v1/bindings/wasm/${VERSION}" >/dev/null; then
+              "https://crates.io/api/v1/crates/ruviz-web/${VERSION}" >/dev/null; then
             echo "published=true" >> "$GITHUB_OUTPUT"
           else
             echo "published=false" >> "$GITHUB_OUTPUT"
@@ -827,7 +827,7 @@ jobs:
 
           if curl --silent --fail \
               --header "User-Agent: ${CRATES_IO_USER_AGENT}" \
-              "https://crates.io/api/v1/adapters/gpui/${VERSION}" >/dev/null; then
+              "https://crates.io/api/v1/crates/ruviz-gpui/${VERSION}" >/dev/null; then
             echo "published=true" >> "$GITHUB_OUTPUT"
           else
             echo "published=false" >> "$GITHUB_OUTPUT"

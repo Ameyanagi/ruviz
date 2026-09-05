@@ -20,7 +20,7 @@ test("direct 3d WebGPU renders and coalesces main and worker input", async ({
     };
   });
 
-  await openDemo(page, "/3d.html", "ruviz 3d WebGPU demo");
+  await openDemo(page, "/3d-benchmark.html", "ruviz 3d WebGPU benchmark");
   await expect(page.locator("#main-3d-status")).toContainText("gpu3d-surface", {
     timeout: DEMO_READY_TIMEOUT_MS,
   });
@@ -122,4 +122,66 @@ test("direct 3d WebGPU renders and coalesces main and worker input", async ({
   expect(result.beforePngHash).not.toBe(result.afterPngHash);
   expect(result.pngSignature).toEqual([137, 80, 78, 71, 13, 10, 26, 10]);
   expect(pageErrors).toEqual([]);
+});
+
+test("public SDK demo exposes keyboard controls and preserves composed series", async ({
+  browserName,
+  page,
+}) => {
+  test.skip(browserName !== "chromium", "WebGPU is required");
+  const errors = [];
+  page.on("pageerror", (error) => errors.push(String(error)));
+  await openDemo(page, "/3d.html", "ruviz 3d WebGPU demo");
+  await expect(page.locator("#main-3d-status")).toContainText("Ready", {
+    timeout: DEMO_READY_TIMEOUT_MS,
+  });
+  await expect(page.locator("#worker-3d-status")).toContainText("Ready", {
+    timeout: DEMO_READY_TIMEOUT_MS,
+  });
+  await expect(page.locator("#main-3d")).toHaveAccessibleName("Explore a surface");
+  await expect(page.locator("#worker-3d")).toHaveAccessibleName("Follow a path");
+  const bytes = () =>
+    page.evaluate(async () => Array.from(await window.__ruviz3d.main.exportPng()));
+  const before = await bytes();
+  await page.getByRole("button", { name: "Rotate left: explore a surface", exact: true }).focus();
+  await page.keyboard.press("Enter");
+  expect(await bytes()).not.toEqual(before);
+  await page.getByRole("button", { name: "Reset explore a surface", exact: true }).click();
+  expect(await bytes()).toEqual(before);
+
+  const composition = await page.evaluate(async () => {
+    const { createPlot3d } = window.__ruviz3d.sdk;
+    const makeCanvas = () => {
+      const canvas = document.createElement("canvas");
+      canvas.style.cssText = "width:320px;height:200px";
+      document.body.append(canvas);
+      return canvas;
+    };
+    const builder = createPlot3d()
+      .surface(
+        [-1, 1],
+        [-1, 1],
+        [
+          [0, 1],
+          [1, 0],
+        ],
+      )
+      .line3d([-2, 2], [0, 0], [2, 2]);
+    const firstCanvas = makeCanvas();
+    const first = await builder.mount(firstCanvas, { autoResize: false, bindInput: false });
+    const composed = Array.from(await first.exportPng());
+    builder.clearSeries().line3d([-2, 2], [0, 0], [2, 2]);
+    const secondCanvas = makeCanvas();
+    const second = await builder.mount(secondCanvas, { autoResize: false, bindInput: false });
+    const replaced = Array.from(await second.exportPng());
+    const retained = Array.from(await first.exportPng());
+    first.dispose();
+    second.dispose();
+    firstCanvas.remove();
+    secondCanvas.remove();
+    return { composed, replaced, retained };
+  });
+  expect(composition.composed).not.toEqual(composition.replaced);
+  expect(composition.retained).toEqual(composition.composed);
+  expect(errors).toEqual([]);
 });

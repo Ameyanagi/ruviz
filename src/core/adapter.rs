@@ -73,6 +73,7 @@ macro_rules! impl_try_into_plot3d_session {
 #[cfg(feature = "3d")]
 impl_try_into_plot3d_session!(
     super::Scatter3DBuilder,
+    super::Spheres3DBuilder,
     super::Line3DBuilder,
     super::Surface3DBuilder,
     super::Wireframe3DBuilder,

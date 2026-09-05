@@ -102,13 +102,28 @@ const session = await surface(
 session.render();
 ```
 
+Use `.axisAspect(1, 2, 1).stableScale()` for a fixed X:Y:Z plotting box that
+keeps its framing while rotating. Use `.equalScale().stableScale()` when equal
+data units must have equal lengths, such as physical geometry. Fixed box ratios
+and equal data units differ when axis ranges differ. Stable scale reserves room
+for every orientation; explicit zoom and resize still change the view.
+
 The top-level `scatter3d(x, y, z)`, `line3d(x, y, z)`, `surface(x, y, z)`,
 and `wireframe(x, y, z)` factories accept arrays or typed arrays.
 `createPlot3d()` exposes the same series methods on a discoverable builder.
 Surface grids may be a flat row-major array or one row per y value as above.
 Mounting an `HTMLCanvasElement` binds input and resize handling automatically.
-The current browser bridge retains one 3D series, so calling a second series
-method on the same builder replaces the first.
+Series methods append, matching Rust: `surface(...).wireframe(...)` keeps both.
+For replacement, call `builder.clearSeries().surface(...)`. Existing mounted
+sessions keep their own scene when the builder changes.
+
+Pass `onError: (error) => ...` to `mount()` to handle scheduled rendering and
+browser-input failures. `session.error` retains the last failure and clears after
+a successful frame. Call `session.render()` to retry a transient failure; if
+`session.needsRecreate()` is true, call `dispose()` and mount a fresh session.
+Failures preserve the last presented frame where the browser surface remains
+available. Initial mounting failures reject the `mount()` promise. Without an
+error callback, scheduled failures are logged to the console.
 
 The same builder works inside a worker after the main thread transfers its
 canvas:
@@ -192,3 +207,13 @@ bun run --cwd packages/ruviz docs:dev
 
 `build:js` runs the TypeScript build against existing generated wasm bindings.
 `build` also rebuilds the wasm package before compiling TypeScript.
+
+## Session cleanup
+
+Use `detach()` on a 2D `CanvasSession` or `WorkerSession` to clear its plot while
+keeping input and resize bindings. Call `setPlot(...)` to attach another plot.
+Use `dispose()` when removing the session from your application; it removes
+bindings and terminates a worker. Dispose a 3D session before mounting a replacement.
+
+`destroy()` remains a compatibility alias: it means `detach()` for 2D and
+`dispose()` for 3D. New code should use the explicit names above.

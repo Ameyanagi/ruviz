@@ -553,7 +553,7 @@ jobs:
           # PDF export assertions in both suites are cfg'd on it.
           - name: 3D correctness
             cache-key: 3d
-            command: cargo test --no-default-features --features 3d,pdf --test three_d_correctness_test
+            command: cargo test --no-default-features --features 3d,pdf --test three_d_correctness_test --test three_d_spheres_test
           - name: 3D public API and static output
             cache-key: 3d-api
             command: cargo test --features 3d,pdf,nalgebra,nalgebra_support --test three_d_api_test --test three_d_api_ui --test three_d_visual_test
@@ -658,7 +658,7 @@ jobs:
         run: |
           mkdir -p generated/tests/render
           cargo test --no-default-features --features gpu --test gpu_backend_test
-          cargo test --no-default-features --features 3d,gpu --test three_d_gpu_test --test three_d_parity_test
+          cargo test --no-default-features --features 3d,gpu --test three_d_gpu_test --test three_d_parity_test --test three_d_spheres_test
         env:
           LIBGL_ALWAYS_SOFTWARE: "1"
           RUVIZ_REQUIRE_GPU_TESTS: "1"

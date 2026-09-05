@@ -8,7 +8,7 @@
 
 > **line3d**(`x`, `y`, `z`): [`Plot3dBuilder`](../classes/Plot3dBuilder.md)
 
-Defined in: [3d.ts:652](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L652)
+Defined in: [3d.ts:757](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L757)
 
 Create a WebGPU 3D line plot.
 

@@ -3,10 +3,10 @@ SHELL := /bin/bash
 RELEASE_DOCS_BRANCH := docs/release-0.12.0-refresh
 PYTHON_SITE_DIR := ../../generated/python/site
 
-.PHONY: help setup-hooks assert-release-branch clean-generated release-docs release-docs-rust release-docs-python release-docs-web rust-gallery check-rust-gallery build-generated-preview build-generated-preview-rust build-generated-preview-python build-generated-preview-web generated-manifest check-doc-asset-refs check-docs check-repository check-ci-test-coverage fmt clippy clippy-gpui check-web check bench-plotting bench-plotting-smoke bench-rust-features bench-rust-features-smoke
+.PHONY: help setup-hooks assert-release-branch clean-generated release-docs release-docs-rust release-docs-python release-docs-web rust-gallery check-rust-gallery build-generated-preview build-generated-preview-rust build-generated-preview-python build-generated-preview-web generated-manifest check-doc-asset-refs check-docs check-repository check-ci-test-coverage fmt clippy clippy-gpui clippy-gui check-web check bench-plotting bench-plotting-smoke bench-rust-features bench-rust-features-smoke
 
 help:
-	@echo "ruviz release documentation workflow"
+	@echo "ruviz development and release workflow"
 	@echo ""
 	@echo "Primary targets:"
 	@echo "  make setup-hooks         Install Lefthook git hooks"
@@ -29,6 +29,7 @@ help:
 	@echo "  make fmt                 cargo fmt --all -- --check (all workspaces)"
 	@echo "  make clippy              cargo clippy --all-targets --all-features -- -D warnings"
 	@echo "  make clippy-gpui         Lint the separate adapters/gpui workspace (pulls the zed GPUI checkout)"
+	@echo "  make clippy-gui          Lint the separate egui, Iced, and Slint workspace"
 	@echo "  make check-web           bun run check:web"
 	@echo "  make check-repository    Validate tracked directory and generated-output boundaries"
 	@echo "  make check-ci-test-coverage Fail if CI compiles a test target it never runs"
@@ -153,6 +154,9 @@ clippy:
 
 clippy-gpui:
 	cargo clippy --manifest-path $(GPUI_MANIFEST) --all-targets --all-features -- -D warnings
+
+clippy-gui:
+	cargo clippy --manifest-path $(GUI_ADAPTERS_MANIFEST) --workspace --all-targets --all-features -- -D warnings
 
 check-web:
 	bun run check:web

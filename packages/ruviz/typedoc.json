@@ -12,7 +12,8 @@
   "hideGenerator": true,
   "intentionallyNotExported": [
     "PlotState",
-    "XYSeriesInput",
+    "LineSeriesInput",
+    "ScatterSeriesInput",
     "BarSeriesInput",
     "ContourInput",
     "ErrorBarsInput",

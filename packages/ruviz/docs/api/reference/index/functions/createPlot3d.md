@@ -8,7 +8,7 @@
 
 > **createPlot3d**(): [`Plot3dBuilder`](../classes/Plot3dBuilder.md)
 
-Defined in: [3d.ts:642](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L642)
+Defined in: [3d.ts:747](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L747)
 
 Create a fluent high-level WebGPU 3D plot.
 

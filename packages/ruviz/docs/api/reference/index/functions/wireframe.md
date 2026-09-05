@@ -8,7 +8,7 @@
 
 > **wireframe**(`x`, `y`, `z`): [`Plot3dBuilder`](../classes/Plot3dBuilder.md)
 
-Defined in: [3d.ts:662](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L662)
+Defined in: [3d.ts:767](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L767)
 
 Create a WebGPU 3D wireframe plot.
 

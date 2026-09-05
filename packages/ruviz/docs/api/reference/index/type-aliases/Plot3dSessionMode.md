@@ -8,4 +8,4 @@
 
 > **Plot3dSessionMode** = `"main-thread"` \| `"offscreen"`
 
-Defined in: [3d.ts:56](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L56)
+Defined in: [3d.ts:59](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L59)

@@ -172,11 +172,13 @@ fn serial_and_parallel_mixed_scenes_are_byte_identical_across_tile_boundaries() 
         indices: Arc::from([0, 1, 2]),
     });
     let geometry = Arc::new(SceneGeometry3D {
+        spheres: Vec::new(),
         points: vec![Arc::clone(&point_geometry)],
         lines: vec![Arc::clone(&line_geometry)],
         meshes: vec![Arc::clone(&mesh_geometry)],
     });
     let scene = Scene3D {
+        spheres: Vec::new(),
         geometry,
         points: vec![PointBatch3D {
             geometry: point_geometry,

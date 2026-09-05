@@ -8,7 +8,7 @@
 
 > **createWorkerSession**(`canvas`, `options?`): `Promise`\<[`WorkerSession`](../classes/WorkerSession.md)\>
 
-Defined in: [index.ts:2826](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L2826)
+Defined in: [index.ts:2840](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L2840)
 
 Create a worker-backed canvas session with optional main-thread fallback.
 

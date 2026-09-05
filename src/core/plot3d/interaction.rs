@@ -415,6 +415,7 @@ impl InteractivePlot3DSession {
             ylabel: None,
             zlabel: None,
             legend: None,
+            axes: true,
             keys: FrameKeys3D {
                 geometry: CacheKey3D(0),
                 appearance: CacheKey3D(0),
@@ -427,6 +428,7 @@ impl InteractivePlot3DSession {
             frame,
             scene: Arc::new(Scene3D {
                 geometry,
+                spheres: Vec::new(),
                 points: Vec::new(),
                 lines: Vec::new(),
                 meshes: Vec::new(),
@@ -472,6 +474,41 @@ impl InteractivePlot3DSession {
         self.view_stamp().scene_generation == stamp.scene_generation
             && self.view_stamp().camera_generation == stamp.camera_generation
             && self.view_stamp().target_generation == stamp.target_generation
+    }
+
+    /// Toggle lighting for every sphere series without changing geometry, camera,
+    /// drag state, or the selected atom. Returns whether anything changed.
+    pub fn set_sphere_shading(&mut self, enabled: bool) -> Result<bool> {
+        if !self
+            .scene
+            .spheres
+            .iter()
+            .any(|batch| batch.style.shaded != enabled)
+        {
+            return Ok(false);
+        }
+        let generation = NEXT_SCENE_GENERATION
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
+                value.checked_add(1)
+            })
+            .map_err(|_| {
+                PlottingError::RenderError("3D scene generation space was exhausted".into())
+            })?;
+        for series in &mut Arc::make_mut(&mut self.frame).series {
+            if let super::builder::Series3D::Spheres { style, .. } = series {
+                style.shaded = enabled;
+            }
+        }
+        for batch in &mut Arc::make_mut(&mut self.scene).spheres {
+            batch.style.shaded = enabled;
+        }
+        self.scene_generation = generation;
+        let stamp = self.view_stamp();
+        if let Some(pick) = &mut self.current_pick {
+            pick.hit.scene_generation = generation;
+            pick.view = stamp;
+        }
+        Ok(true)
     }
 
     /// Replace the current camera without rebuilding scene geometry.

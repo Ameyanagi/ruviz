@@ -78,8 +78,8 @@ pub use plot3d::{
     BackgroundRenderer3D, Bounds3D, Camera3D, CameraSnapshot3D, CameraView3D, InputEvent3D,
     InteractionResult3D, InteractivePlot3DSession, Line3DBuilder, PickHit3D, PickPrimitive3D,
     Point3D, PointerButton3D, ProjectedPoint3D, Projection3D, RenderDiagnostics3D, RenderStamp3D,
-    RenderedImage3D, Scatter3DBuilder, ScreenRay3D, StampedPick3D, Surface3DBuilder, ViewStamp3D,
-    Wireframe3DBuilder, release_3d_gpu_resources,
+    RenderedImage3D, Scatter3DBuilder, ScreenRay3D, Sphere3D, Spheres3DBuilder, StampedPick3D,
+    Surface3DBuilder, ViewStamp3D, Wireframe3DBuilder, release_3d_gpu_resources,
 };
 #[cfg(all(feature = "3d", feature = "gpu"))]
 #[doc(hidden)]

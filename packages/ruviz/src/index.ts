@@ -2238,12 +2238,19 @@ export class CanvasSession {
     return result;
   }
 
-  destroy(): void {
+  /** Remove the plot but keep input/resize bindings for a later setPlot(). */
+  detach(): void {
     this.#rawSession.destroy();
     this.#attachedPlot = null;
     this.#attachedRevision = null;
   }
 
+  /** @deprecated Use detach() to clear the plot, or dispose() to remove bindings. */
+  destroy(): void {
+    this.detach();
+  }
+
+  /** Remove event/resize bindings and release the attached plot and worker. */
   dispose(): void {
     for (const dispose of this.#cleanup.splice(0)) {
       dispose();
@@ -2602,7 +2609,8 @@ export class WorkerSession {
     return this.#readyPromise;
   }
 
-  destroy(): void {
+  /** Remove the plot but keep input/resize bindings for a later setPlot(). */
+  detach(): void {
     if (this.#fallbackSession) {
       this.#fallbackSession.destroy();
       this.#hasPlot = false;
@@ -2618,6 +2626,12 @@ export class WorkerSession {
     this.#post("destroy");
   }
 
+  /** @deprecated Use detach() to clear the plot, or dispose() to remove bindings. */
+  destroy(): void {
+    this.detach();
+  }
+
+  /** Remove event/resize bindings and release the attached plot and worker. */
   dispose(): void {
     for (const dispose of this.#cleanup.splice(0)) {
       dispose();

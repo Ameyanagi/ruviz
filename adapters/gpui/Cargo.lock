@@ -2562,6 +2562,7 @@ dependencies = [
  "strum",
  "util",
  "uuid",
+ "zed-font-kit",
 ]
 
 [[package]]
@@ -5120,7 +5121,7 @@ dependencies = [
 
 [[package]]
 name = "ruviz"
-version = "0.12.2"
+version = "0.13.0"
 dependencies = [
  "base64",
  "bytemuck",
@@ -5150,7 +5151,7 @@ dependencies = [
 
 [[package]]
 name = "ruviz-gpui"
-version = "0.12.2"
+version = "0.13.0"
 dependencies = [
  "arboard",
  "core-foundation 0.10.0",

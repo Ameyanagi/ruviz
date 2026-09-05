@@ -445,24 +445,14 @@ impl Plot {
                     }
                 }
                 (SeriesType::Bar { config, .. }, ResolvedSeries::Bar { values, .. }) => {
-                    let edge_width = config
-                        .resolved_edge(&self.display.theme, color)
-                        .map(|(_, width_pt)| render_scale.points_to_pixels(width_pt))
+                    let bars = self.prepare_bar_batch(
+                        values, config, color, plot_area, x_min, x_max, y_min, y_max,
+                    );
+                    let half_edge = bars
+                        .edge
+                        .map(|(_, width)| render_scale.points_to_pixels(width) * 0.5)
                         .unwrap_or(0.0);
-                    let half_edge = edge_width * 0.5;
-                    for (bar_index, &value) in values.iter().enumerate() {
-                        let (x, y, width, height) = super::series_internal::bar_pixel_rect(
-                            bar_index,
-                            value,
-                            config,
-                            plot_area,
-                            x_min,
-                            x_max,
-                            y_min,
-                            y_max,
-                            &self.layout.x_scale,
-                            &self.layout.y_scale,
-                        );
+                    for &(x, y, width, height) in bars.rectangles.iter() {
                         occupancy.mark_rect(
                             x - half_edge,
                             y - half_edge,

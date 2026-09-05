@@ -1944,3 +1944,28 @@ test("worker sessions answer hit and visibility queries asynchronously", async (
   expect(result.hiddenChanged).toBeTruthy();
   expect(result.restored).toBeTruthy();
 });
+
+test("keyboard series controls and explicit detach preserve the session lifecycle", async ({
+  page,
+}) => {
+  await waitForDemoReady(page);
+  await expect(page.locator("#main-canvas")).toHaveAccessibleName("Explore data");
+  await expect(page.locator("#temporal-canvas")).toHaveAccessibleName("Play a signal");
+  const wave = page.getByRole("checkbox", { name: "wave", exact: true });
+  await wave.focus();
+  await page.keyboard.press("Space");
+  expect(await page.evaluate(() => window.__ruvizDemo.mainSession.seriesVisible(0))).toBe(false);
+  await page.keyboard.press("Space");
+  expect(await page.evaluate(() => window.__ruvizDemo.mainSession.seriesVisible(0))).toBe(true);
+  await page.locator("#main-destroy").click();
+  await expect(page.locator("#main-reset")).toBeDisabled();
+  await expect(page.locator("#main-zoom-in")).toBeDisabled();
+  await page.locator("#main-reattach").click();
+  await expect(page.locator("#main-reset")).toBeEnabled();
+  await expect(page.getByRole("checkbox", { name: "wave", exact: true })).toBeChecked();
+  const before = await page.locator("#main-canvas").screenshot();
+  await page.locator("#main-zoom-in").focus();
+  await page.keyboard.press("Enter");
+  const after = await page.locator("#main-canvas").screenshot();
+  expect(after.equals(before)).toBe(false);
+});
