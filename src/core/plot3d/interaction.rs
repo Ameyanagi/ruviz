@@ -499,6 +499,8 @@ impl InteractivePlot3DSession {
                 style.shaded = enabled;
             }
         }
+        // The GPU appearance cache retains this Arc, so make_mut detaches
+        // whenever cached uniforms exist. Geometry remains shared either way.
         for batch in &mut Arc::make_mut(&mut self.scene).spheres {
             batch.style.shaded = enabled;
         }

@@ -310,12 +310,18 @@ fn gpu_spheres_match_software_through_orbit_and_reuse_buffers_on_toggle() {
         }
     }
     let mut session = plot(&atoms).interactive_session().unwrap();
-    let (_, first) = session.render_gpu_readback().unwrap();
+    let (shaded, first) = session.render_gpu_readback().unwrap();
     assert!(first.vertex_upload_bytes > 0);
     session.set_sphere_shading(false).unwrap();
-    let (_, toggled) = session.render_gpu_readback().unwrap();
+    let (unlit, toggled) = session.render_gpu_readback().unwrap();
+    assert_ne!(shaded.pixels, unlit.pixels);
     assert_eq!(toggled.vertex_upload_bytes, 0);
     assert_eq!(toggled.index_upload_bytes, 0);
+    session.set_sphere_shading(true).unwrap();
+    let (restored, restored_stats) = session.render_gpu_readback().unwrap();
+    assert_eq!(restored.pixels, shaded.pixels);
+    assert_eq!(restored_stats.vertex_upload_bytes, 0);
+    assert_eq!(restored_stats.index_upload_bytes, 0);
 }
 
 #[test]
