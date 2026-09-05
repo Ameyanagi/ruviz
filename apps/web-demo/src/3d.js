@@ -63,6 +63,7 @@ async function setupMain() {
     pointerUp: (...args) => session.pointerUp(...args),
   });
   retry.addEventListener("click", async () => {
+    retry.disabled = true;
     try {
       if (session.needsRecreate()) await mount();
       else {
@@ -73,6 +74,8 @@ async function setupMain() {
     } catch (error) {
       mainStatus.textContent = errorMessage(error);
       retry.hidden = false;
+    } finally {
+      retry.disabled = false;
     }
   });
   window.addEventListener("pagehide", () => session.dispose(), { once: true });

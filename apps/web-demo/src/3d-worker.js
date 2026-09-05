@@ -1,7 +1,7 @@
 import { line3d } from "ruviz/3d";
 
 let session;
-let initializing;
+let pending = Promise.resolve();
 let target;
 const ready = "Ready. Explore the helix with the view controls or drag to orbit.";
 function status(type, message) {
@@ -29,26 +29,22 @@ async function initialize(data) {
   status("ready", ready);
 }
 
-self.onmessage = async ({ data }) => {
+async function handleMessage(data) {
   try {
     if (data.type === "initialize") {
       target = data;
-      initializing = initialize(target);
-      await initializing;
+      await initialize(target);
       return;
     }
     if (data.type === "retry") {
-      await initializing?.catch(() => {});
       if (!session || session.needsRecreate()) {
-        initializing = initialize(target);
-        await initializing;
+        await initialize(target);
       } else {
         session.render();
         status("ready", ready);
       }
       return;
     }
-    await initializing;
     if (!session) return;
     switch (data.type) {
       case "resize":
@@ -76,4 +72,11 @@ self.onmessage = async ({ data }) => {
   } catch (error) {
     status("error", error instanceof Error ? error.message : String(error));
   }
+}
+
+// Queue initialization, recovery, and input together so a retry cannot mount
+// another session while the previous asynchronous mount is still pending.
+self.onmessage = ({ data }) => {
+  pending = pending.then(() => handleMessage(data));
+  return pending;
 };

@@ -4,6 +4,8 @@ const messages = [];
 const mounted = [];
 let failMount = false;
 let options;
+let mountWait;
+let mountCalls = 0;
 const builder = {
   equalScale() {
     return this;
@@ -15,7 +17,9 @@ const builder = {
     return this;
   },
   async mount(canvas, config) {
+    mountCalls += 1;
     options = config;
+    await mountWait;
     if (failMount) {
       failMount = false;
       throw new Error("mount failed");
@@ -48,6 +52,8 @@ beforeEach(() => {
   messages.length = 0;
   mounted.length = 0;
   failMount = false;
+  mountWait = undefined;
+  mountCalls = 0;
 });
 
 test("worker retry renders recoverable errors and remounts a lost session on the same canvas", async () => {
@@ -75,4 +81,27 @@ test("worker can retry a failed initial mount", async () => {
   await send({ type: "retry" });
   expect(mounted).toHaveLength(1);
   expect(messages.at(-1).type).toBe("ready");
+});
+
+test("concurrent retries create only one replacement session", async () => {
+  await send({ type: "initialize", canvas: {}, scale: 1 });
+  const original = mounted[0];
+  original.lost = true;
+  let release;
+  mountWait = new Promise((resolve) => {
+    release = resolve;
+  });
+  const first = send({ type: "retry" });
+  const second = send({ type: "retry" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  options.onError(new Error("error while retrying"));
+  const third = send({ type: "retry" });
+  expect(mountCalls).toBe(2);
+  release();
+  await Promise.all([first, second, third]);
+  expect(mountCalls).toBe(2);
+  expect(mounted).toHaveLength(2);
+  expect(original.disposed).toBe(true);
+  expect(mounted[1].disposed).toBe(false);
+  expect(mounted[1].renders).toBe(2);
 });
