@@ -18,6 +18,8 @@ const LEAF_SIZE: usize = 8;
 pub enum PickPrimitive3D {
     /// One scatter marker.
     Point,
+    /// A data-space sphere. Source indices contain its application-owned ID.
+    Sphere,
     /// One line or wireframe segment.
     LineSegment,
     /// One triangle from a surface series.
@@ -38,7 +40,8 @@ pub struct PickHit3D {
     /// This compatibility field matches [`Self::primitive_index`] for a
     /// surface and is zero for points and line segments.
     pub triangle_index: u32,
-    /// Source-data indices. Read the first [`Self::source_count`] entries.
+    /// Source-data indices (stable IDs for spheres). Read the first
+    /// [`Self::source_count`] entries.
     pub source_indices: [u32; 3],
     /// Number of meaningful entries in [`Self::source_indices`].
     pub source_count: u8,
@@ -327,6 +330,48 @@ pub(crate) fn pick_scene(
                 barycentric: [1.0, 0.0, 0.0],
                 point: frame.bounds.denormalize(local, Vec3::ONE),
                 ray_distance: (local - ray_origin).dot(ray_direction).max(0.0),
+                scene_generation,
+                camera_generation,
+            };
+            consider_pick(
+                &mut closest,
+                projected.z,
+                0,
+                batch.geometry.series_index,
+                primitive_index,
+                hit,
+            );
+        }
+    }
+
+    for batch in &scene.spheres {
+        for (index, sphere) in batch.geometry.instances.iter().enumerate() {
+            // Context with <=5% opacity is visible but does not intercept picks.
+            if sphere.color.a <= 12 {
+                continue;
+            }
+            let center = Vec3::from_array(sphere.center);
+            let radii = Vec3::from_array(sphere.radii);
+            let Some(distance) =
+                crate::render::three_d::sphere::intersect(ray_origin, ray_direction, center, radii)
+            else {
+                continue;
+            };
+            let local = ray_origin + ray_direction * distance;
+            let Some(projected) = project_visible_local(layout, local) else {
+                continue;
+            };
+            let primitive_index = checked_u32(index, "3D sphere pick index")?;
+            let hit = PickHit3D {
+                series_index: batch.geometry.series_index,
+                primitive: PickPrimitive3D::Sphere,
+                primitive_index,
+                triangle_index: 0,
+                source_indices: [sphere.id; 3],
+                source_count: 1,
+                barycentric: [1.0, 0.0, 0.0],
+                point: frame.bounds.denormalize(local, Vec3::ONE),
+                ray_distance: distance,
                 scene_generation,
                 camera_generation,
             };

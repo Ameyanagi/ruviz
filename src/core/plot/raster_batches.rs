@@ -458,8 +458,41 @@ impl RectGridBatch {
     }
 }
 
+/// Resolved bar geometry and edge style shared by raster, SVG, and occupancy.
+#[derive(Debug, Clone)]
+pub(super) struct BarBatch {
+    pub(super) rectangles: Arc<[(f32, f32, f32, f32)]>,
+    pub(super) fill: Color,
+    pub(super) edge: Option<(Color, f32)>,
+    pub(super) clip_rect: ClipRect,
+}
+
+impl BarBatch {
+    fn execute(&self, renderer: &mut SkiaRenderer) -> Result<()> {
+        for &(x, y, width, height) in self.rectangles.iter() {
+            renderer.draw_rectangle_styled_clipped(
+                x,
+                y,
+                width,
+                height,
+                Some(self.fill),
+                self.edge,
+                self.clip_rect,
+            )?;
+        }
+        Ok(())
+    }
+
+    pub(super) fn draw_svg(&self, svg: &mut crate::export::SvgRenderer) {
+        for &(x, y, width, height) in self.rectangles.iter() {
+            svg.draw_rectangle_styled(x, y, width, height, Some(self.fill), self.edge);
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(super) enum StaticRasterBatch {
+    Bars(BarBatch),
     Polyline(PolylineBatch),
     Markers(MarkerBatch),
     Density(DensityBatch),
@@ -469,6 +502,7 @@ pub(super) enum StaticRasterBatch {
 impl StaticRasterBatch {
     fn execute(&self, renderer: &mut SkiaRenderer) -> Result<()> {
         match self {
+            Self::Bars(batch) => batch.execute(renderer),
             Self::Polyline(batch) => batch.execute(renderer),
             Self::Markers(batch) => batch.execute(renderer),
             Self::Density(batch) => batch.execute(renderer),
@@ -485,6 +519,10 @@ pub(super) struct SeriesRasterPlan {
 }
 
 impl SeriesRasterPlan {
+    pub(super) fn push_bars(&mut self, batch: BarBatch) {
+        self.batches.push(StaticRasterBatch::Bars(batch));
+    }
+
     pub(super) fn push_polyline(
         &mut self,
         points: Arc<[Point2f]>,

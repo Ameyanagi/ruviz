@@ -8,7 +8,7 @@
 
 > **createCanvasSession**(`canvas`, `options?`): `Promise`\<[`CanvasSession`](../classes/CanvasSession.md)\>
 
-Defined in: [index.ts:2781](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L2781)
+Defined in: [index.ts:2795](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L2795)
 
 Create an interactive main-thread canvas session.
 

@@ -664,39 +664,10 @@ impl Plot {
                 )?;
             }
             (SeriesType::Bar { config, .. }, ResolvedSeries::Bar { values, .. }) => {
-                // Same resolution the raster path uses, so PNG and SVG bars
-                // carry the identical edge. The width is in points and
-                // `draw_rectangle_styled` scales it, so it is DPI-invariant.
-                let edge = config.resolved_edge(&self.display.theme, color);
-
-                for (i, &value) in values.iter().enumerate() {
-                    // Shared with the raster backend: SVG used to lay bars out
-                    // positionally (ignoring the real x-scale) at a different
-                    // width fraction, so a PNG and an SVG of the same chart put
-                    // their bars in different places.
-                    let (bar_x, bar_y, bar_width, bar_height) =
-                        super::series_internal::bar_pixel_rect(
-                            i,
-                            value,
-                            config,
-                            plot_area,
-                            x_min,
-                            x_max,
-                            y_min,
-                            y_max,
-                            &self.layout.x_scale,
-                            &self.layout.y_scale,
-                        );
-
-                    svg.draw_rectangle_styled(
-                        bar_x,
-                        bar_y,
-                        bar_width,
-                        bar_height,
-                        Some(color),
-                        edge,
-                    );
-                }
+                self.prepare_bar_batch(
+                    values, config, color, plot_area, x_min, x_max, y_min, y_max,
+                )
+                .draw_svg(svg);
             }
             (SeriesType::Heatmap { data }, ResolvedSeries::Other(_)) => {
                 let area = super::raster_batches::plot_area_from_rect(

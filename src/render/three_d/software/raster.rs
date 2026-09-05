@@ -14,6 +14,9 @@ use crate::render::{Color, ColorMap, LineStyle, MarkerStyle};
 
 use super::clip::{ClipVertex3D, clip_segment, clip_triangle, is_inside_depth_range};
 use super::shading::shade;
+use crate::core::plot3d::spheres::SphereStyle3D;
+use crate::render::three_d::scene::SphereInstance3D;
+use crate::render::three_d::sphere::{self, SphereCamera3D};
 
 const TILE_SIZE: u32 = 32;
 const MAX_DEPTH_24: f32 = 16_777_215.0;
@@ -145,7 +148,17 @@ struct RasterPoint3D {
 }
 
 #[derive(Clone)]
+struct RasterSphere3D {
+    instance: SphereInstance3D,
+    style: SphereStyle3D,
+    camera: Arc<SphereCamera3D>,
+    primitive_id: u64,
+    bounds: PixelBounds3D,
+}
+
+#[derive(Clone)]
 enum RasterPrimitive3D {
+    Sphere(RasterSphere3D),
     Triangle(RasterTriangle3D),
     Line(RasterLine3D),
     Point(RasterPoint3D),
@@ -154,6 +167,7 @@ enum RasterPrimitive3D {
 impl RasterPrimitive3D {
     fn bounds(&self) -> PixelBounds3D {
         match self {
+            Self::Sphere(sphere) => sphere.bounds,
             Self::Triangle(triangle) => triangle.bounds,
             Self::Line(line) => line.bounds,
             Self::Point(point) => point.bounds,
@@ -227,6 +241,32 @@ impl TileSamples3D {
             self.owners[index] = primitive_id;
             self.colors[index] = [color.r, color.g, color.b, color.a];
         }
+    }
+
+    // Transparent spheres are drawn back-to-front after every opaque primitive.
+    // Depth testing reads the opaque depth buffer; blending never writes depth.
+    fn blend(&mut self, x: u32, y: u32, sample: usize, depth: f32, color: Color) {
+        if !(0.0..=1.0).contains(&depth) || color.a == 0 {
+            return;
+        }
+        let index =
+            (((y - self.y) * self.width + x - self.x) as usize) * self.sample_count + sample;
+        if quantize_depth(depth) > self.depths[index] {
+            return;
+        }
+        use crate::render::three_d::color::{linear_to_srgb, srgb_to_linear};
+        let old = self.colors[index];
+        let alpha = f32::from(color.a) / 255.0;
+        let behind = f32::from(old[3]) / 255.0 * (1.0 - alpha);
+        let combined = alpha + behind;
+        for (channel, value) in [color.r, color.g, color.b].into_iter().enumerate() {
+            let linear = (srgb_to_linear(f32::from(value) / 255.0) * alpha
+                + srgb_to_linear(f32::from(old[channel]) / 255.0) * behind)
+                / combined;
+            self.colors[index][channel] =
+                (linear_to_srgb(linear.clamp(0.0, 1.0)) * 255.0).round() as u8;
+        }
+        self.colors[index][3] = (combined * 255.0).round() as u8;
     }
 
     /// Resolve the sample grid to straight-alpha RGBA.
@@ -509,6 +549,41 @@ fn prepare_primitives(
         }
     }
 
+    if !scene.spheres.is_empty() {
+        let camera = Arc::new(SphereCamera3D::new(layout));
+        let mut transparent = Vec::new();
+        for batch in &scene.spheres {
+            if !batch.geometry.instances.is_empty() {
+                draw_calls += 1;
+            }
+            for &instance in batch.geometry.instances.iter() {
+                let center = Vec3::from_array(instance.center);
+                let radii = Vec3::from_array(instance.radii);
+                let (low, high) = camera.screen_bounds(center, radii);
+                if let Some(bounds) = clipped_bounds(low.x, low.y, high.x, high.y, layout.viewport)
+                    .filter(|_| instance.color.a > 0)
+                {
+                    let sphere = RasterPrimitive3D::Sphere(RasterSphere3D {
+                        instance,
+                        style: batch.style,
+                        camera: Arc::clone(&camera),
+                        primitive_id,
+                        bounds,
+                    });
+                    if instance.color.a == 255 {
+                        primitives.push(sphere);
+                    } else {
+                        transparent.push((camera.matrix.project_point3(center).z, sphere));
+                    }
+                } else {
+                    culled += 1;
+                }
+                primitive_id = primitive_id.saturating_add(1);
+            }
+        }
+        transparent.sort_by(|a, b| b.0.total_cmp(&a.0));
+        primitives.extend(transparent.into_iter().map(|(_, primitive)| primitive));
+    }
     Ok((primitives, culled, draw_calls))
 }
 
@@ -575,6 +650,9 @@ fn render_tile(
     let mut samples = TileSamples3D::new(x, y, width, height, sample_offsets.len());
     for &primitive_index in bin {
         match &primitives[primitive_index] {
+            RasterPrimitive3D::Sphere(sphere) => {
+                rasterize_sphere(sphere, &mut samples, sample_offsets);
+            }
             RasterPrimitive3D::Triangle(triangle) => {
                 rasterize_triangle(triangle, &mut samples, sample_offsets);
             }
@@ -587,6 +665,36 @@ fn render_tile(
         }
     }
     samples.resolve()
+}
+
+fn rasterize_sphere(sphere: &RasterSphere3D, tile: &mut TileSamples3D, offsets: &[Vec2]) {
+    let bounds = intersection(sphere.bounds, tile_bounds(tile));
+    let center = Vec3::from_array(sphere.instance.center);
+    let radii = Vec3::from_array(sphere.instance.radii);
+    for y in bounds.min_y..=bounds.max_y {
+        for x in bounds.min_x..=bounds.max_x {
+            for (sample, offset) in offsets.iter().enumerate() {
+                let (origin, direction) =
+                    sphere.camera.ray(Vec2::new(x as f32, y as f32) + *offset);
+                let Some(t) = sphere::intersect(origin, direction, center, radii) else {
+                    continue;
+                };
+                let surface = origin + direction * t;
+                let depth = sphere.camera.matrix.project_point3(surface).z;
+                if !(0.0..=1.0).contains(&depth) {
+                    continue;
+                }
+                let normal = (surface - center) / (radii * radii);
+                let normal_view = sphere.camera.normal_to_view.transform_vector3(normal);
+                let color = sphere::shade(sphere.instance.color, normal_view, sphere.style);
+                if color.a == 255 {
+                    tile.write(x, y, sample, depth, sphere.primitive_id, color);
+                } else {
+                    tile.blend(x, y, sample, depth, color);
+                }
+            }
+        }
+    }
 }
 
 fn rasterize_triangle(triangle: &RasterTriangle3D, tile: &mut TileSamples3D, offsets: &[Vec2]) {

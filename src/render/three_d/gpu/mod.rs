@@ -14,3 +14,5 @@ pub(crate) use presenter::{PresentedFrame3D, SurfacePresentOutcome3D, SurfacePre
 pub(crate) use renderer::{GpuFrameOutput3D, Wgpu3DRenderer};
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use renderer::{release_shared_renderer, render_with_shared_renderer};
+
+mod spheres;

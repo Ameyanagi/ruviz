@@ -1,277 +1,187 @@
-import initRaw, {
-  JsPlot3D,
-  WebGPU3DCanvasSession,
-  register_default_browser_fonts_js,
-} from "ruviz/raw";
+import * as sdk from "ruviz/3d";
 
 const mainCanvas = document.getElementById("main-3d");
 const workerCanvas = document.getElementById("worker-3d");
 const mainStatus = document.getElementById("main-3d-status");
 const workerStatus = document.getElementById("worker-3d-status");
-const mainReset = document.getElementById("main-3d-reset");
-const workerReset = document.getElementById("worker-3d-reset");
 
-function describeError(error) {
+function surfacePlot() {
+  const size = 48;
+  const axis = Float64Array.from({ length: size }, (_, i) => -3 + (i / (size - 1)) * 6);
+  const z = Array.from(axis, (y) =>
+    Array.from(axis, (x) => {
+      const radius = Math.hypot(x, y);
+      return Math.cos(radius * 2) * Math.exp(-radius * 0.28);
+    }),
+  );
+  return sdk.surface(axis, axis, z).axisAspect(1, 1, 0.5).stableScale().title("Damped radial wave");
+}
+
+function errorMessage(error) {
   return error instanceof Error ? error.message : String(error);
 }
 
-function surfaceData(size) {
-  const axis = Float64Array.from({ length: size }, (_, index) => -3 + (index / (size - 1)) * 6);
-  const z = new Float64Array(size * size);
-  for (let row = 0; row < size; row += 1) {
-    for (let column = 0; column < size; column += 1) {
-      const x = axis[column];
-      const y = axis[row];
-      const radius = Math.hypot(x, y);
-      z[row * size + column] = Math.cos(radius * 2) * Math.exp(-radius * 0.28);
+function bindControls(prefix, session) {
+  const root = document.getElementById(`${prefix}-controls`);
+  root.addEventListener("click", (event) => {
+    const action = event.target.closest("button")?.dataset.action;
+    if (action === "reset") session.resetView();
+    if (action === "in") session.wheel(-120);
+    if (action === "out") session.wheel(120);
+    if (action === "left" || action === "right") {
+      session.pointerDown(0, 0, 0);
+      session.pointerMove(action === "left" ? -60 : 60, 0);
+      session.pointerUp(action === "left" ? -60 : 60, 0, 0);
     }
-  }
-  return { axis, z };
-}
-
-function plot3d(title) {
-  const { axis, z } = surfaceData(48);
-  const plot = new JsPlot3D();
-  plot.surface(axis, axis, z);
-  plot.title(title);
-  return plot;
-}
-
-function backingPoint(canvas, event) {
-  const bounds = canvas.getBoundingClientRect();
-  return [
-    ((event.clientX - bounds.left) * canvas.width) / bounds.width,
-    ((event.clientY - bounds.top) * canvas.height) / bounds.height,
-  ];
-}
-
-function createInputScheduler(session, requestFrame = requestAnimationFrame) {
-  let frame = 0;
-  let latestMove = null;
-  let wheelDelta = 0;
-  let appliedMoves = 0;
-  let renderCalls = 0;
-  let presentedFrames = 0;
-
-  function flush() {
-    frame = 0;
-    if (latestMove) {
-      session.pointer_move(latestMove[0], latestMove[1]);
-      latestMove = null;
-      appliedMoves += 1;
-    }
-    if (wheelDelta !== 0) {
-      session.wheel(wheelDelta);
-      wheelDelta = 0;
-    }
-    renderCalls += 1;
-    if (session.render()) {
-      presentedFrames += 1;
-    }
-  }
-
-  function schedule() {
-    if (frame === 0) {
-      frame = requestFrame(flush);
-    }
-  }
-
-  return {
-    pointerDown(x, y, button) {
-      session.pointer_down(x, y, button);
-    },
-    pointerMove(x, y) {
-      latestMove = [x, y];
-      schedule();
-    },
-    pointerUp(x, y, button) {
-      if (latestMove) {
-        session.pointer_move(latestMove[0], latestMove[1]);
-        latestMove = null;
-        appliedMoves += 1;
-      }
-      session.pointer_up(x, y, button);
-      schedule();
-    },
-    wheel(delta) {
-      wheelDelta += delta;
-      schedule();
-    },
-    resize(width, height, scale) {
-      session.resize(width, height, scale);
-      schedule();
-    },
-    reset() {
-      session.reset_view();
-      schedule();
-    },
-    metrics() {
-      return { appliedMoves, renderCalls, presentedFrames };
-    },
-  };
-}
-
-function bindCanvas(canvas, scheduler) {
-  canvas.addEventListener("pointerdown", (event) => {
-    canvas.setPointerCapture(event.pointerId);
-    scheduler.pointerDown(...backingPoint(canvas, event), event.button);
   });
-  canvas.addEventListener("pointermove", (event) => {
-    scheduler.pointerMove(...backingPoint(canvas, event));
-  });
-  canvas.addEventListener("pointerup", (event) => {
-    scheduler.pointerUp(...backingPoint(canvas, event), event.button);
-  });
-  canvas.addEventListener(
-    "wheel",
-    (event) => {
-      event.preventDefault();
-      scheduler.wheel(event.deltaY);
-    },
-    { passive: false },
-  );
-  canvas.addEventListener("dblclick", () => scheduler.reset());
-}
-
-function resizeMainCanvas(canvas, scheduler) {
-  const scale = window.devicePixelRatio || 1;
-  const bounds = canvas.getBoundingClientRect();
-  scheduler.resize(
-    Math.max(1, Math.round(bounds.width * scale)),
-    Math.max(1, Math.round(bounds.height * scale)),
-    scale,
-  );
-}
-
-function createWorkerInputScheduler(worker) {
-  let frame = 0;
-  let latestMove = null;
-  let wheelDelta = 0;
-  let sentMoves = 0;
-
-  function flush() {
-    frame = 0;
-    if (latestMove) {
-      worker.postMessage({ type: "pointerMove", ...latestMove });
-      latestMove = null;
-      sentMoves += 1;
-    }
-    if (wheelDelta !== 0) {
-      worker.postMessage({ type: "wheel", delta: wheelDelta });
-      wheelDelta = 0;
-    }
-  }
-
-  function schedule() {
-    if (frame === 0) {
-      frame = requestAnimationFrame(flush);
-    }
-  }
-
-  return {
-    pointerDown(x, y, button) {
-      worker.postMessage({ type: "pointerDown", x, y, button });
-    },
-    pointerMove(x, y) {
-      latestMove = { x, y };
-      schedule();
-    },
-    pointerUp(x, y, button) {
-      if (latestMove) {
-        worker.postMessage({ type: "pointerMove", ...latestMove });
-        latestMove = null;
-        sentMoves += 1;
-      }
-      worker.postMessage({ type: "pointerUp", x, y, button });
-      schedule();
-    },
-    wheel(delta) {
-      wheelDelta += delta;
-      schedule();
-    },
-    reset() {
-      worker.postMessage({ type: "reset" });
-    },
-    metrics() {
-      return { sentMoves };
-    },
-  };
 }
 
 async function setupMain() {
-  await initRaw();
-  register_default_browser_fonts_js();
-  const session = await WebGPU3DCanvasSession.create(mainCanvas, plot3d("WebGPU surface"));
-  const scheduler = createInputScheduler(session);
-  bindCanvas(mainCanvas, scheduler);
-  mainReset.addEventListener("click", () => scheduler.reset());
-  resizeMainCanvas(mainCanvas, scheduler);
-  window.addEventListener("resize", () => resizeMainCanvas(mainCanvas, scheduler));
-  mainStatus.textContent = `${session.backend()} | readback ${session.readback_bytes()} | CPU frame upload ${session.cpu_frame_upload_bytes()}`;
-  return { session, scheduler };
+  const retry = document.getElementById("main-3d-retry");
+  let session;
+  async function mount() {
+    session?.dispose();
+    mainStatus.textContent = "Loading surface…";
+    session = await surfacePlot().mount(mainCanvas, {
+      onError(error) {
+        mainStatus.textContent = `Rendering paused: ${error.message}`;
+        retry.hidden = false;
+      },
+    });
+    mainStatus.textContent = "Ready. Drag to orbit, or use the view controls.";
+    document.getElementById("main-3d-diagnostics").textContent = session.backend();
+    retry.hidden = true;
+    window.__ruviz3d.main = session;
+  }
+  await mount();
+  // Forward to the current session after a device-loss remount.
+  bindControls("main-3d", {
+    resetView: () => session.resetView(),
+    wheel: (delta) => session.wheel(delta),
+    pointerDown: (...args) => session.pointerDown(...args),
+    pointerMove: (...args) => session.pointerMove(...args),
+    pointerUp: (...args) => session.pointerUp(...args),
+  });
+  retry.addEventListener("click", async () => {
+    retry.disabled = true;
+    try {
+      if (session.needsRecreate()) await mount();
+      else {
+        session.render();
+        mainStatus.textContent = "Retry requested. Use the view controls to continue.";
+        retry.hidden = true;
+      }
+    } catch (error) {
+      mainStatus.textContent = errorMessage(error);
+      retry.hidden = false;
+    } finally {
+      retry.disabled = false;
+    }
+  });
+  window.addEventListener("pagehide", () => session.dispose(), { once: true });
 }
 
 function setupWorker() {
   if (!workerCanvas.transferControlToOffscreen) {
-    workerStatus.textContent = "OffscreenCanvas unavailable";
-    return null;
+    workerStatus.textContent =
+      "Worker rendering is unavailable in this browser. Explore the surface above.";
+    return;
   }
-  const bounds = workerCanvas.getBoundingClientRect();
-  const scale = window.devicePixelRatio || 1;
-  const width = Math.max(1, Math.round(bounds.width * scale));
-  const height = Math.max(1, Math.round(bounds.height * scale));
-  workerCanvas.width = width;
-  workerCanvas.height = height;
-
-  const offscreen = workerCanvas.transferControlToOffscreen();
   const worker = new Worker(new URL("./3d-worker.js", import.meta.url), { type: "module" });
-  const scheduler = createWorkerInputScheduler(worker);
-  workerReset.addEventListener("click", () => scheduler.reset());
-  worker.postMessage({ type: "initialize", canvas: offscreen, width, height, scale }, [offscreen]);
-
-  worker.addEventListener("message", ({ data }) => {
-    if (data.type === "status") {
-      workerStatus.textContent = data.message;
+  const retry = document.getElementById("worker-3d-retry");
+  let workerFailed = false;
+  const canvas = workerCanvas.transferControlToOffscreen();
+  const send = (type, payload = {}) => worker.postMessage({ type, ...payload });
+  const resize = () => {
+    const bounds = workerCanvas.getBoundingClientRect();
+    const scale = window.devicePixelRatio || 1;
+    send("resize", {
+      width: Math.max(1, Math.round(bounds.width * scale)),
+      height: Math.max(1, Math.round(bounds.height * scale)),
+      scale,
+    });
+  };
+  worker.postMessage({ type: "initialize", canvas, scale: window.devicePixelRatio || 1 }, [canvas]);
+  retry.addEventListener("click", () => {
+    if (workerFailed) {
+      window.location.reload();
+      return;
     }
+    retry.disabled = true;
+    workerStatus.textContent = "Retrying rendering…";
+    send("retry");
+  });
+  worker.addEventListener("message", ({ data }) => {
+    if (data.type === "ready") resize();
+    retry.hidden = data.type !== "error";
+    retry.disabled = false;
+    for (const button of document.querySelectorAll("#worker-3d-controls button")) {
+      button.disabled = data.type === "error";
+    }
+    workerStatus.textContent = data.message;
   });
   worker.addEventListener("error", (event) => {
+    workerFailed = true;
+    retry.textContent = "Reload page";
+    retry.hidden = false;
+    retry.disabled = false;
     workerStatus.textContent = event.message;
   });
-
+  const controls = {
+    resetView: () => send("reset"),
+    wheel: (delta) => send("wheel", { delta }),
+    pointerDown: (x, y, button) => send("pointerDown", { x, y, button }),
+    pointerMove: (x, y) => send("pointerMove", { x, y }),
+    pointerUp: (x, y, button) => send("pointerUp", { x, y, button }),
+  };
+  bindControls("worker-3d", controls);
+  let activeButton = null;
+  const point = (event) => {
+    const bounds = workerCanvas.getBoundingClientRect();
+    const scale = window.devicePixelRatio || 1;
+    return [(event.clientX - bounds.left) * scale, (event.clientY - bounds.top) * scale];
+  };
+  workerCanvas.addEventListener("contextmenu", (event) => event.preventDefault());
   workerCanvas.addEventListener("pointerdown", (event) => {
+    activeButton = event.button;
     workerCanvas.setPointerCapture(event.pointerId);
-    scheduler.pointerDown(...backingPoint(workerCanvas, event), event.button);
+    controls.pointerDown(...point(event), event.button);
   });
-  workerCanvas.addEventListener("pointermove", (event) => {
-    scheduler.pointerMove(...backingPoint(workerCanvas, event));
-  });
-  workerCanvas.addEventListener("pointerup", (event) => {
-    scheduler.pointerUp(...backingPoint(workerCanvas, event), event.button);
-  });
-  workerCanvas.addEventListener("dblclick", () => scheduler.reset());
+  workerCanvas.addEventListener("pointermove", (event) => controls.pointerMove(...point(event)));
+  const release = (event) => {
+    controls.pointerUp(...point(event), activeButton ?? event.button);
+    activeButton = null;
+    if (workerCanvas.hasPointerCapture(event.pointerId))
+      workerCanvas.releasePointerCapture(event.pointerId);
+  };
+  workerCanvas.addEventListener("pointerup", release);
+  workerCanvas.addEventListener("pointercancel", release);
+  workerCanvas.addEventListener("dblclick", controls.resetView);
   workerCanvas.addEventListener(
     "wheel",
     (event) => {
       event.preventDefault();
-      scheduler.wheel(event.deltaY);
+      controls.wheel(event.deltaY);
     },
     { passive: false },
   );
-  return { worker, scheduler };
+  const observer = new ResizeObserver(resize);
+  observer.observe(workerCanvas);
+  window.addEventListener("resize", resize);
+  window.addEventListener(
+    "pagehide",
+    () => {
+      observer.disconnect();
+      window.removeEventListener("resize", resize);
+      worker.terminate();
+    },
+    { once: true },
+  );
+  window.__ruviz3d.worker = worker;
 }
 
-async function main() {
-  if (!navigator.gpu) {
-    throw new Error("WebGPU is unavailable");
-  }
-  const main3d = await setupMain();
-  const worker = setupWorker();
-  window.__ruviz3d = { main: main3d, worker };
-}
-
-main().catch((error) => {
-  const message = describeError(error);
-  mainStatus.textContent = message;
-  workerStatus.textContent = message;
-  console.error(error);
+window.__ruviz3d = { sdk };
+setupMain().catch((error) => {
+  mainStatus.textContent = errorMessage(error);
 });
+setupWorker();

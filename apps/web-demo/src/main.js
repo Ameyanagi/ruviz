@@ -58,7 +58,7 @@ function buildMainPlotTemplate() {
     .setSizePx(640, 360)
     .setTheme("light")
     .setTicks(true)
-    .setTitle("Session API coverage")
+    .setTitle("Wave and sampled points")
     .setXLabel("x")
     .setYLabel("y")
     .addLine({ x, y, style: { label: "wave" } })
@@ -107,7 +107,7 @@ function buildObservablePlot(xObservable, yObservable, markerXObservable, marker
 
 function buildDirectExportPlot() {
   const plot = buildMainPlotTemplate().clone();
-  plot.setTitle("Direct wasm export");
+  plot.setTitle("Wave and sampled points");
   return plot;
 }
 
@@ -184,14 +184,46 @@ function backendPreference() {
   return mainBackendSelect.value;
 }
 
+function bindZoom(prefix, session, canvas) {
+  for (const [direction, delta] of [
+    ["in", -120],
+    ["out", 120],
+  ]) {
+    document.getElementById(`${prefix}-zoom-${direction}`).addEventListener("click", () => {
+      session.wheel(delta, canvas.width / 2, canvas.height / 2);
+    });
+  }
+}
+
 async function setupMainThreadDemo() {
   const plotTemplate = buildMainPlotTemplate();
   const session = await createCanvasSession(mainCanvas, {
     backendPreference: backendPreference(),
   });
 
+  const seriesControls = document.getElementById("main-series");
+  function syncSeriesControls() {
+    const legend = document.createElement("legend");
+    legend.textContent = "Visible series";
+    seriesControls.replaceChildren(legend);
+    for (let i = 0; i < session.seriesCount(); i += 1) {
+      const label = document.createElement("label");
+      const input = document.createElement("input");
+      input.type = "checkbox";
+      input.checked = session.seriesVisible(i);
+      input.addEventListener("change", () => {
+        session.setSeriesVisible(i, input.checked);
+      });
+      label.append(input, ` ${session.seriesLabel(i) ?? `Series ${i + 1}`}`);
+      seriesControls.append(label);
+    }
+  }
   function syncStatus(mode = session.hasPlot() ? "ready" : "detached") {
     status(mainStatus, `${mode} | backend ${backendPreference()} | has_plot ${session.hasPlot()}`);
+    for (const action of ["reset", "export", "export-svg", "destroy", "zoom-in", "zoom-out"]) {
+      document.getElementById(`main-${action}`).disabled = !session.hasPlot();
+    }
+    syncSeriesControls();
   }
 
   async function attachPlot() {
@@ -237,7 +269,7 @@ async function setupMainThreadDemo() {
   });
 
   document.getElementById("main-destroy").addEventListener("click", () => {
-    session.destroy();
+    session.detach();
     syncStatus("detached");
   });
 
@@ -279,9 +311,11 @@ async function setupMainThreadDemo() {
       session.setSeriesVisible(entry, !session.seriesVisible(entry));
       const label = session.seriesLabel(entry) ?? `series ${entry}`;
       status(hitStatus, `${label} ${session.seriesVisible(entry) ? "shown" : "hidden"}`);
+      syncSeriesControls();
     }
   });
 
+  bindZoom("main", session, mainCanvas);
   return session;
 }
 
@@ -306,6 +340,7 @@ async function setupWorkerDemo() {
     downloadText(await session.exportSvg(), "ruviz-offscreen.svg", "image/svg+xml");
   });
 
+  bindZoom("worker", session, workerCanvas);
   return session;
 }
 
@@ -411,6 +446,7 @@ async function setupTemporalDemo() {
   });
 
   renderTime(0);
+  bindZoom("temporal", session, temporalCanvas);
   return session;
 }
 
@@ -513,6 +549,7 @@ async function setupObservableDemo() {
   });
 
   renderPhase(0);
+  bindZoom("observable", session, observableCanvas);
   return session;
 }
 

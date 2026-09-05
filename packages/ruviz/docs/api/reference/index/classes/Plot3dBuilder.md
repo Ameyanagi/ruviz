@@ -6,12 +6,12 @@
 
 # Class: Plot3dBuilder
 
-Defined in: [3d.ts:506](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L506)
+Defined in: [3d.ts:567](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L567)
 
 Fluent high-level WebGPU 3D plot builder.
 
-A builder describes one 3D series. Calling another series method replaces
-the previous series, matching the raw browser bridge.
+Series methods append in drawing order, matching the Rust builders.
+Use clearSeries() before adding a replacement.
 
 ## Constructors
 
@@ -25,11 +25,67 @@ the previous series, matching the raw browser bridge.
 
 ## Methods
 
+### axisAspect()
+
+> **axisAspect**(`x`, `y`, `z`): `this`
+
+Defined in: [3d.ts:622](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L622)
+
+Fix the plotting box's X:Y:Z proportions; each component must be positive.
+
+#### Parameters
+
+##### x
+
+`number`
+
+##### y
+
+`number`
+
+##### z
+
+`number`
+
+#### Returns
+
+`this`
+
+***
+
+### clearSeries()
+
+> **clearSeries**(): `this`
+
+Defined in: [3d.ts:616](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L616)
+
+Remove series while retaining plot options, for explicit replacement.
+
+#### Returns
+
+`this`
+
+***
+
+### equalScale()
+
+> **equalScale**(): `this`
+
+Defined in: [3d.ts:642](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L642)
+
+Keep equal data units equally long on all axes, preserving physical shapes.
+
+#### Returns
+
+`this`
+
+***
+
 ### line3d()
 
 > **line3d**(`x`, `y`, `z`): `this`
 
-Defined in: [3d.ts:519](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L519)
+Defined in: [3d.ts:582](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L582)
 
 #### Parameters
 
@@ -55,7 +111,7 @@ Defined in: [3d.ts:519](https://github.com/Ameyanagi/ruviz/blob/main/packages/ru
 
 > **mount**(`canvas`, `options?`): `Promise`\<[`Plot3dSession`](../interfaces/Plot3dSession.md)\>
 
-Defined in: [3d.ts:557](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L557)
+Defined in: [3d.ts:658](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L658)
 
 #### Parameters
 
@@ -77,7 +133,7 @@ Defined in: [3d.ts:557](https://github.com/Ameyanagi/ruviz/blob/main/packages/ru
 
 > **scatter3d**(`x`, `y`, `z`): `this`
 
-Defined in: [3d.ts:510](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L510)
+Defined in: [3d.ts:573](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L573)
 
 #### Parameters
 
@@ -99,11 +155,31 @@ Defined in: [3d.ts:510](https://github.com/Ameyanagi/ruviz/blob/main/packages/ru
 
 ***
 
+### stableScale()
+
+> **stableScale**(`enabled?`): `this`
+
+Defined in: [3d.ts:648](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L648)
+
+Keep framing and scale fixed while rotating; explicit zoom still works.
+
+#### Parameters
+
+##### enabled?
+
+`boolean` = `true`
+
+#### Returns
+
+`this`
+
+***
+
 ### surface()
 
 > **surface**(`x`, `y`, `z`): `this`
 
-Defined in: [3d.ts:528](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L528)
+Defined in: [3d.ts:591](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L591)
 
 #### Parameters
 
@@ -129,7 +205,7 @@ Defined in: [3d.ts:528](https://github.com/Ameyanagi/ruviz/blob/main/packages/ru
 
 > **title**(`title`): `this`
 
-Defined in: [3d.ts:552](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L552)
+Defined in: [3d.ts:653](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L653)
 
 #### Parameters
 
@@ -147,7 +223,7 @@ Defined in: [3d.ts:552](https://github.com/Ameyanagi/ruviz/blob/main/packages/ru
 
 > **wireframe**(`x`, `y`, `z`): `this`
 
-Defined in: [3d.ts:540](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L540)
+Defined in: [3d.ts:603](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L603)
 
 #### Parameters
 

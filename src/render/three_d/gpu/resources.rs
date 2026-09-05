@@ -63,6 +63,20 @@ struct PointMaterialUniformGpu {
     parameters: [f32; 4],
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct SphereInstanceGpu {
+    center: [f32; 4],
+    radii: [f32; 4],
+    color: [f32; 4],
+}
+
+pub(super) struct SphereGeometryGpu {
+    pub(super) buffer: Option<wgpu::Buffer>,
+    pub(super) opaque_count: u32,
+    pub(super) transparent: Vec<(u32, [f32; 3])>,
+}
+
 pub(super) struct PointGeometryGpu {
     pub(super) buffer: Option<wgpu::Buffer>,
     pub(super) instance_count: u32,
@@ -80,6 +94,7 @@ pub(super) struct MeshGeometryGpu {
 }
 
 pub(super) struct GeometryResources3D {
+    pub(super) spheres: Vec<SphereGeometryGpu>,
     _geometry: Arc<SceneGeometry3D>,
     pub(super) points: Vec<PointGeometryGpu>,
     pub(super) lines: Vec<LineGeometryGpu>,
@@ -94,6 +109,7 @@ pub(super) struct MaterialGpu {
 }
 
 pub(super) struct AppearanceResources3D {
+    pub(super) spheres: Vec<MaterialGpu>,
     _scene: Arc<Scene3D>,
     pub(super) points: Vec<MaterialGpu>,
     pub(super) lines: Vec<MaterialGpu>,
@@ -255,6 +271,41 @@ fn create_geometry_resources(
     geometry: Arc<SceneGeometry3D>,
 ) -> Result<(GeometryResources3D, ResourceUpdate3D)> {
     let mut update = ResourceUpdate3D::default();
+    let mut spheres = Vec::with_capacity(geometry.spheres.len());
+    for batch in &geometry.spheres {
+        let mut instances = Vec::with_capacity(batch.instances.len());
+        let mut transparent = Vec::new();
+        let mut opaque_count = 0;
+        for opaque in [true, false] {
+            for sphere in batch
+                .instances
+                .iter()
+                .filter(|s| (s.color.a == 255) == opaque && s.color.a > 0)
+            {
+                let index = checked_u32(instances.len(), "3d sphere instance count")?;
+                if opaque {
+                    opaque_count += 1;
+                } else {
+                    transparent.push((index, sphere.center));
+                }
+                instances.push(SphereInstanceGpu {
+                    center: [sphere.center[0], sphere.center[1], sphere.center[2], 0.0],
+                    radii: [sphere.radii[0], sphere.radii[1], sphere.radii[2], 0.0],
+                    color: linear_color(sphere.color),
+                });
+            }
+        }
+        let buffer = create_vertex_buffer(device, "ruviz sphere instances", &instances);
+        if buffer.is_some() {
+            update.buffer_creations += 1;
+            update.vertex_upload_bytes += byte_len(&instances)?;
+        }
+        spheres.push(SphereGeometryGpu {
+            buffer,
+            opaque_count,
+            transparent,
+        });
+    }
     let mut points = Vec::with_capacity(geometry.points.len());
     for batch in &geometry.points {
         let instances: Vec<_> = batch
@@ -351,6 +402,7 @@ fn create_geometry_resources(
     Ok((
         GeometryResources3D {
             _geometry: geometry,
+            spheres,
             points,
             lines,
             meshes,
@@ -366,6 +418,25 @@ fn create_appearance_resources(
     scene: Arc<Scene3D>,
 ) -> Result<(AppearanceResources3D, ResourceUpdate3D)> {
     let mut update = ResourceUpdate3D::default();
+    let mut spheres = Vec::with_capacity(scene.spheres.len());
+    for batch in &scene.spheres {
+        let uniform = PointMaterialUniformGpu {
+            color: [0.0; 4],
+            parameters: [
+                f32::from(batch.style.shaded),
+                batch.style.specular,
+                batch.style.gloss,
+                0.0,
+            ],
+        };
+        spheres.push(create_uniform_material(
+            device,
+            "ruviz sphere material",
+            &pipelines.point_material_layout,
+            &uniform,
+        ));
+        update.buffer_creations += 1;
+    }
     let mut points = Vec::with_capacity(scene.points.len());
     for batch in &scene.points {
         let uniform = PointMaterialUniformGpu {
@@ -462,6 +533,7 @@ fn create_appearance_resources(
     Ok((
         AppearanceResources3D {
             _scene: scene,
+            spheres,
             points,
             lines,
             meshes,

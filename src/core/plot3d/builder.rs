@@ -1,4 +1,7 @@
 use std::path::Path;
+use std::sync::Arc;
+
+use super::spheres::{Sphere3D, SphereStyle3D, sphere_bounds};
 
 use crate::core::{Bounds3D, FigureConfig, Image, Legend, PlottingError, Result};
 use crate::data::{NumericData1D, NumericData2D};
@@ -36,6 +39,7 @@ pub(crate) struct Plot3D {
     /// which turns the 3D legend off — and is the same [`Legend`] type the 2D
     /// legend uses, laid out by the same `layout_legend`.
     pub(super) legend: Option<Legend>,
+    pub(super) axes: Option<bool>,
     pub(super) pending_error: Option<PlottingError>,
 }
 
@@ -53,6 +57,11 @@ impl Plot3D {
 
 #[derive(Clone, Debug)]
 pub(crate) enum Series3D {
+    Spheres {
+        data: Arc<[Sphere3D]>,
+        style: SphereStyle3D,
+        label: Option<String>,
+    },
     Scatter {
         data: Points3DData,
         config: Scatter3DConfig,
@@ -78,6 +87,7 @@ pub(crate) enum Series3D {
 impl Series3D {
     pub(super) fn bounds(&self) -> Result<Bounds3D> {
         match self {
+            Self::Spheres { data, .. } => sphere_bounds(data),
             Self::Scatter { data, .. } | Self::Line { data, .. } => point_data_bounds(data),
             Self::Surface { data, .. } | Self::Wireframe { data, .. } => grid_data_bounds(data),
         }
@@ -85,6 +95,10 @@ impl Series3D {
 
     pub(super) fn validate_style(&self) -> Result<()> {
         match self {
+            Self::Spheres { style, label, .. } => {
+                style.validate()?;
+                validate_label(label)
+            }
             Self::Scatter { config, label, .. } => {
                 validate_positive_style("scatter3d marker size", config.marker_size)?;
                 validate_opaque_color("scatter3d", config.color)?;
@@ -397,6 +411,15 @@ macro_rules! impl_common_builder {
                 self
             }
 
+            /// Keep the scene's scale and framing fixed while orbiting.
+            ///
+            /// Uses a little more space around the scene so every orientation
+            /// fits. Enabled by default for [`crate::spheres3d`].
+            pub fn stable_scale(mut self, enabled: bool) -> Self {
+                self.plot.camera = self.plot.camera.stable_scale(enabled);
+                self
+            }
+
             /// Set figure size in inches.
             ///
             /// Same vocabulary as the 2D builder's `Plot::size`.
@@ -447,6 +470,13 @@ macro_rules! impl_common_builder {
                 self
             }
 
+            /// Show plot axes, grid, and panes (default true). When hidden,
+            /// a compact orientation cue remains; title and legend are preserved.
+            pub fn axes(mut self, visible: bool) -> Self {
+                self.plot.axes = Some(visible);
+                self
+            }
+
             /// Configure the legend.
             ///
             /// Takes the same [`Legend`] the 2D API takes, and it is laid out
@@ -465,6 +495,11 @@ macro_rules! impl_common_builder {
             pub fn legend(mut self, legend: Legend) -> Self {
                 self.plot.legend = Some(legend);
                 self
+            }
+
+            /// Add spheres whose radii are measured in data units.
+            pub fn spheres3d(self, spheres: &[Sphere3D]) -> Spheres3DBuilder {
+                Spheres3DBuilder::with_plot(self.finalize(), spheres)
             }
 
             /// Continue with a 3D scatter series.
@@ -521,7 +556,7 @@ macro_rules! impl_common_builder {
                 self.finalize().validate_and_bounds()
             }
 
-            /// Pick the nearest surface triangle at a full-canvas pixel.
+            /// Pick the nearest marker, sphere surface, line, or surface triangle at a full-canvas pixel.
             ///
             /// Coordinates use the same top-left-origin pixel system as the
             /// image returned by [`Self::render`]. A point outside the Axis3
@@ -532,9 +567,9 @@ macro_rules! impl_common_builder {
 
             /// Project a data-space point to the full-canvas pixel it occupies.
             ///
-            /// This is the exact inverse of [`Self::pick`] and uses the same
-            /// top-left-origin pixel system, so `project(p)` feeds straight back
-            /// into `pick(..)`. Returns `Ok(None)` when the point falls outside
+            /// This uses the same top-left-origin pixel system as [`Self::pick`].
+            /// Picking the result returns the nearest visible geometry on that
+            /// ray, which may occlude the projected point. Returns `Ok(None)` when the point falls outside
             /// the camera's clip volume.
             ///
             /// Use this instead of hard-coding a pixel: the layout that decides
@@ -736,6 +771,71 @@ macro_rules! impl_common_builder {
         impl crate::core::BuilderWhen for $builder {}
     };
 }
+
+/// Builder returned by [`crate::spheres3d`].
+///
+/// Defaults to smooth camera-relative lighting and equal data units. Turning
+/// shading off retains spherical silhouettes and depth; ordinary screen-space
+/// flat markers continue to use [`crate::scatter3d`].
+#[derive(Clone, Debug)]
+pub struct Spheres3DBuilder {
+    plot: Plot3D,
+    data: Arc<[Sphere3D]>,
+    style: SphereStyle3D,
+    label: Option<String>,
+}
+
+impl Spheres3DBuilder {
+    pub(crate) fn from_data(spheres: &[Sphere3D]) -> Self {
+        let plot = Plot3D {
+            camera: Camera3D::default()
+                .axis_aspect(AxisAspect3D::Data)
+                .stable_scale(true),
+            ..Plot3D::default()
+        };
+        Self::with_plot(plot, spheres)
+    }
+
+    fn with_plot(plot: Plot3D, spheres: &[Sphere3D]) -> Self {
+        Self {
+            plot,
+            data: spheres.into(),
+            style: SphereStyle3D::default(),
+            label: None,
+        }
+    }
+
+    pub(crate) fn finalize(mut self) -> Plot3D {
+        self.plot.series.push(Series3D::Spheres {
+            data: self.data,
+            style: self.style,
+            label: self.label,
+        });
+        self.plot
+    }
+
+    /// Enable smooth lighting (default). This never changes sphere geometry.
+    pub fn shading(mut self, enabled: bool) -> Self {
+        self.style.shaded = enabled;
+        self
+    }
+
+    /// Set highlight strength (0..=1) and gloss exponent (1..=256).
+    /// Defaults to `(0.15, 32.0)`; strength zero gives ambient/diffuse only.
+    pub fn specular(mut self, strength: f32, gloss: f32) -> Self {
+        self.style.specular = strength;
+        self.style.gloss = gloss;
+        self
+    }
+
+    /// Set the legend label (the first sphere supplies its swatch color).
+    pub fn label(mut self, label: impl Into<String>) -> Self {
+        self.label = Some(label.into());
+        self
+    }
+}
+
+impl_common_builder!(Spheres3DBuilder);
 
 /// Builder returned by [`crate::scatter3d`].
 #[derive(Clone, Debug)]

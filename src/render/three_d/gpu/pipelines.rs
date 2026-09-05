@@ -69,6 +69,7 @@ impl PipelineLibrary3D {
             &[mesh_vertex_layout()],
             wgpu::PrimitiveTopology::TriangleList,
             sample_count,
+            true,
         );
         let line = create_pipeline(
             device,
@@ -78,6 +79,7 @@ impl PipelineLibrary3D {
             &[line_instance_layout()],
             wgpu::PrimitiveTopology::TriangleStrip,
             sample_count,
+            true,
         );
         let point = create_pipeline(
             device,
@@ -87,6 +89,7 @@ impl PipelineLibrary3D {
             &[point_instance_layout()],
             wgpu::PrimitiveTopology::TriangleStrip,
             sample_count,
+            true,
         );
 
         Self {
@@ -149,7 +152,7 @@ fn point_instance_layout() -> wgpu::VertexBufferLayout<'static> {
     }
 }
 
-fn create_pipeline(
+pub(super) fn create_pipeline(
     device: &wgpu::Device,
     label: &'static str,
     shader_source: &'static str,
@@ -157,6 +160,7 @@ fn create_pipeline(
     buffers: &[wgpu::VertexBufferLayout<'_>],
     topology: wgpu::PrimitiveTopology,
     sample_count: u32,
+    depth_write: bool,
 ) -> wgpu::RenderPipeline {
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some(label),
@@ -205,7 +209,7 @@ fn create_pipeline(
         },
         depth_stencil: Some(wgpu::DepthStencilState {
             format: DEPTH_FORMAT,
-            depth_write_enabled: Some(true),
+            depth_write_enabled: Some(depth_write),
             depth_compare: Some(wgpu::CompareFunction::LessEqual),
             stencil: wgpu::StencilState::default(),
             bias: wgpu::DepthBiasState::default(),

@@ -7,10 +7,14 @@ pub(crate) mod layout;
 mod picking;
 mod prepared;
 mod resolve;
+pub(crate) mod spheres;
 mod types;
+pub use spheres::Sphere3D;
 
 pub use crate::render::three_d::release_3d_gpu_resources;
-pub use builder::{Line3DBuilder, Scatter3DBuilder, Surface3DBuilder, Wireframe3DBuilder};
+pub use builder::{
+    Line3DBuilder, Scatter3DBuilder, Spheres3DBuilder, Surface3DBuilder, Wireframe3DBuilder,
+};
 pub use diagnostics::RenderDiagnostics3D;
 pub use interaction::{
     BackgroundRenderBackend3D, BackgroundRenderJob3D, BackgroundRenderOutcome3D,

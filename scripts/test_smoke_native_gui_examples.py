@@ -204,6 +204,7 @@ class WorkflowContractTests(unittest.TestCase):
             "ruviz-slint:mixed_3d_dashboard",
             "ruviz-gpui:coordinate_events",
             "ruviz-gpui:fixed_bounds_dashboard",
+            "ruviz-gpui:molecular_spheres",
             "ruviz-gpui:movable_annotation",
             "ruviz-gpui:observable_embed",
             "ruviz-gpui:plot3d_embed",

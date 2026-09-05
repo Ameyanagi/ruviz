@@ -330,6 +330,16 @@ impl RuvizPlot3D {
         self.active_pointer_button
     }
 
+    /// Toggle sphere lighting while retaining camera, selection, and active drag.
+    pub fn set_sphere_shading(&mut self, enabled: bool, cx: &mut Context<Self>) -> Result<()> {
+        if self.session.set_sphere_shading(enabled)? {
+            self.selected = self.session.current_pick();
+            self.requested_view = None;
+            cx.notify();
+        }
+        Ok(())
+    }
+
     /// Replace the camera and schedule a fresh frame.
     pub fn set_camera(&mut self, camera: Camera3D, cx: &mut Context<Self>) -> Result<()> {
         let before = self.session.camera_snapshot();
@@ -1298,6 +1308,43 @@ mod tests {
                 assert!(!view.installed_view_is_current());
                 assert!(!view.session.is_render_current(pre_replacement));
             });
+        });
+    }
+
+    #[test]
+    fn sphere_shading_retains_selection_and_invalidates_the_displayed_frame() {
+        use ruviz::prelude::{Color, Point3D, Sphere3D, spheres3d};
+        let atoms = [Sphere3D::new(
+            42,
+            Point3D::new(0.0, 0.0, 0.0),
+            1.0,
+            Color::RED,
+        )];
+        let plot = spheres3d(&atoms);
+        let position = plot.clone().project(atoms[0].center).unwrap().unwrap();
+        let mut session = plot.interactive_session().unwrap();
+        session.pick(position.0, position.1).unwrap();
+        let camera = session.camera();
+        let cx = TestAppContext::single();
+        let entity = cx.update(|cx| {
+            cx.new(move |cx| {
+                let mut view =
+                    RuvizPlot3D::new(session, RuvizPlot3DOptions::default(), None, None, cx);
+                view.selected = view.session.current_pick();
+                view
+            })
+        });
+        cx.update(|cx| {
+            entity.update(cx, |view, cx| {
+                let old = view.session.background_render_job().unwrap().stamp();
+                view.requested_view = Some(old.view());
+                view.set_sphere_shading(false, cx).unwrap();
+                assert_eq!(view.session.camera(), camera);
+                assert_eq!(view.selected().unwrap().sources(), &[42]);
+                assert!(view.stamped_pick().is_some());
+                assert!(view.requested_view.is_none());
+                assert!(!view.session.is_render_current(old));
+            })
         });
     }
 

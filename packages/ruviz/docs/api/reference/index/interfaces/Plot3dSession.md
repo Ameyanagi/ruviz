@@ -6,7 +6,7 @@
 
 # Interface: Plot3dSession
 
-Defined in: [3d.ts:64](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L64)
+Defined in: [3d.ts:67](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L67)
 
 A mounted retained WebGPU 3D plot.
 
@@ -19,7 +19,17 @@ submission per animation frame.
 
 > `readonly` **canvas**: `HTMLCanvasElement` \| `OffscreenCanvas`
 
-Defined in: [3d.ts:66](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L66)
+Defined in: [3d.ts:69](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L69)
+
+***
+
+### error
+
+> `readonly` **error**: `Error` \| `null`
+
+Defined in: [3d.ts:75](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L75)
+
+Last scheduled failure, cleared after a successful render.
 
 ***
 
@@ -27,7 +37,7 @@ Defined in: [3d.ts:66](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruv
 
 > `readonly` **mode**: [`Plot3dSessionMode`](../type-aliases/Plot3dSessionMode.md)
 
-Defined in: [3d.ts:65](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L65)
+Defined in: [3d.ts:68](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L68)
 
 ## Methods
 
@@ -35,7 +45,7 @@ Defined in: [3d.ts:65](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruv
 
 > **backend**(): `string`
 
-Defined in: [3d.ts:81](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L81)
+Defined in: [3d.ts:87](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L87)
 
 #### Returns
 
@@ -47,7 +57,7 @@ Defined in: [3d.ts:81](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruv
 
 > **destroy**(): `void`
 
-Defined in: [3d.ts:85](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L85)
+Defined in: [3d.ts:91](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L91)
 
 #### Returns
 
@@ -59,7 +69,7 @@ Defined in: [3d.ts:85](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruv
 
 > **dispose**(): `void`
 
-Defined in: [3d.ts:86](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L86)
+Defined in: [3d.ts:92](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L92)
 
 #### Returns
 
@@ -71,7 +81,7 @@ Defined in: [3d.ts:86](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruv
 
 > **doubleClick**(`x`, `y`): `void`
 
-Defined in: [3d.ts:76](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L76)
+Defined in: [3d.ts:82](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L82)
 
 #### Parameters
 
@@ -93,7 +103,7 @@ Defined in: [3d.ts:76](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruv
 
 > **exportPng**(): `Promise`\<`Uint8Array`\<`ArrayBufferLike`\>\>
 
-Defined in: [3d.ts:83](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L83)
+Defined in: [3d.ts:89](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L89)
 
 #### Returns
 
@@ -105,7 +115,7 @@ Defined in: [3d.ts:83](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruv
 
 > **needsRecreate**(): `boolean`
 
-Defined in: [3d.ts:82](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L82)
+Defined in: [3d.ts:88](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L88)
 
 #### Returns
 
@@ -117,7 +127,7 @@ Defined in: [3d.ts:82](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruv
 
 > **pointerDown**(`x`, `y`, `button`): `void`
 
-Defined in: [3d.ts:73](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L73)
+Defined in: [3d.ts:79](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L79)
 
 #### Parameters
 
@@ -143,7 +153,7 @@ Defined in: [3d.ts:73](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruv
 
 > **pointerMove**(`x`, `y`): `void`
 
-Defined in: [3d.ts:74](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L74)
+Defined in: [3d.ts:80](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L80)
 
 #### Parameters
 
@@ -165,7 +175,7 @@ Defined in: [3d.ts:74](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruv
 
 > **pointerUp**(`x`, `y`, `button`): `void`
 
-Defined in: [3d.ts:75](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L75)
+Defined in: [3d.ts:81](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L81)
 
 #### Parameters
 
@@ -191,7 +201,7 @@ Defined in: [3d.ts:75](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruv
 
 > **render**(): `void`
 
-Defined in: [3d.ts:69](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L69)
+Defined in: [3d.ts:72](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L72)
 
 Request a frame. Multiple requests in one animation frame are coalesced.
 
@@ -205,7 +215,7 @@ Request a frame. Multiple requests in one animation frame are coalesced.
 
 > **resetView**(): `void`
 
-Defined in: [3d.ts:72](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L72)
+Defined in: [3d.ts:78](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L78)
 
 #### Returns
 
@@ -217,7 +227,7 @@ Defined in: [3d.ts:72](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruv
 
 > **resize**(`width?`, `height?`, `scaleFactor?`): `void`
 
-Defined in: [3d.ts:71](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L71)
+Defined in: [3d.ts:77](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L77)
 
 #### Parameters
 
@@ -243,7 +253,7 @@ Defined in: [3d.ts:71](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruv
 
 > **selectedSeries**(): `number` \| `null`
 
-Defined in: [3d.ts:79](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L79)
+Defined in: [3d.ts:85](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L85)
 
 #### Returns
 
@@ -255,7 +265,7 @@ Defined in: [3d.ts:79](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruv
 
 > **selectedSource**(): `number` \| `null`
 
-Defined in: [3d.ts:80](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L80)
+Defined in: [3d.ts:86](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L86)
 
 #### Returns
 
@@ -267,7 +277,7 @@ Defined in: [3d.ts:80](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruv
 
 > **wheel**(`deltaY`): `void`
 
-Defined in: [3d.ts:77](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L77)
+Defined in: [3d.ts:83](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L83)
 
 #### Parameters
 

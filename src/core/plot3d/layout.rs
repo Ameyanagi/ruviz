@@ -181,12 +181,31 @@ impl Axis3Layout {
             camera,
             panes,
             grid_lines,
-            box_edges,
+            mut box_edges,
             tick_marks,
             tick_labels,
-            axis_labels,
+            mut axis_labels,
             ..
         } = scene;
+        if !frame.axes {
+            let origin = Vec2::new(
+                viewport.x as f32 + 44.0 * line_scale,
+                viewport.bottom() - 44.0 * line_scale,
+            );
+            for (axis, label) in [(Vec3::X, "x"), (Vec3::Y, "y"), (Vec3::Z, "z")] {
+                let direction = camera.view.transform_vector3(axis);
+                let screen = Vec2::new(direction.x, -direction.y);
+                box_edges.push(OverlayLine3D {
+                    start: origin,
+                    end: origin + screen * (25.0 * line_scale),
+                });
+                axis_labels.push(OverlayText3D {
+                    text: label.to_string(),
+                    position: origin + screen * (36.0 * line_scale),
+                    centered: true,
+                });
+            }
+        }
         let (legend, colorbars) = resolve_decorations(frame, viewport, canvas_width, &decorations)?;
 
         Ok(Self {
@@ -420,6 +439,40 @@ fn fit_scene(
     canvas_width: u32,
     canvas_height: u32,
 ) -> Result<Scene3D> {
+    if frame.camera.has_stable_scale() {
+        // A measured fit changes with orientation even when the projection is
+        // fixed. Reserve the same label band on every side instead, so orbit
+        // never changes the viewport or silently zooms the scene.
+        let scale = frame.figure.dpi / 72.0;
+        let mut pad = LABEL_EDGE_PAD_PT * scale;
+        if frame.axes {
+            let tick_font = frame.theme.tick_label_font_size * scale;
+            let axis_font = frame.theme.axis_label_font_size * scale;
+            let tick_extent = ticks
+                .iter()
+                .flat_map(|(_, labels)| labels)
+                .fold(tick_font, |max, label| {
+                    max.max(estimated_label_width(label, tick_font))
+                });
+            let axis_extent = [&frame.xlabel, &frame.ylabel, &frame.zlabel]
+                .into_iter()
+                .flatten()
+                .fold(0.0_f32, |max, label| {
+                    max.max(estimated_label_width(label, axis_font).max(axis_font))
+                });
+            pad += (TICK_MARK_LENGTH_PT + TICK_LABEL_GAP_PT + AXIS_LABEL_GAP_PT) * scale
+                + tick_extent
+                + axis_extent;
+        }
+        let margins = Margins3D {
+            left: limits.floors.left + pad,
+            right: limits.floors.right + pad,
+            top: limits.floors.top + pad,
+            bottom: limits.floors.bottom + pad,
+        }
+        .clamped(limits);
+        return lay_out_scene(frame, margins.viewport(canvas_width, canvas_height), ticks);
+    }
     let mut margins = limits.floors.clamped(limits);
     let mut scene = lay_out_scene(frame, margins.viewport(canvas_width, canvas_height), ticks)?;
     for _ in 0..MAX_FIT_PASSES {
@@ -443,6 +496,23 @@ fn lay_out_scene(
         .camera
         .prepare(viewport.width as f32 / viewport.height as f32, frame.bounds)?;
     let corners = projected_box_corners(camera, viewport)?;
+    if !frame.axes {
+        let mut ink = InkBox3D::empty();
+        for point in corners {
+            ink.add_point(Vec2::new(point.x, point.y));
+        }
+        return Ok(Scene3D {
+            viewport,
+            camera,
+            ink,
+            panes: Vec::new(),
+            grid_lines: Vec::new(),
+            box_edges: Vec::new(),
+            tick_marks: Vec::new(),
+            tick_labels: Vec::new(),
+            axis_labels: Vec::new(),
+        });
+    }
     let anchor_index = outer_anchor_corner(&corners);
     let anchor_signs = corner_signs(anchor_index);
     // x and y run along the bottom edges that meet at the anchor corner, but
@@ -774,6 +844,11 @@ fn decoration_sources(frame: &ResolvedFrame3D) -> DecorationSources3D {
     let mut colorbars = Vec::new();
     for (series_index, series) in frame.series.iter().enumerate() {
         match series {
+            Series3D::Spheres { data, label, .. } => {
+                if let Some(sphere) = data.first() {
+                    push_legend_source(&mut legend, label, sphere.color, LegendGlyph3D::Marker);
+                }
+            }
             Series3D::Scatter { config, label, .. } => {
                 push_legend_source(
                     &mut legend,
@@ -1458,6 +1533,61 @@ mod tests {
     use crate::{scatter3d, surface};
 
     use super::*;
+
+    #[test]
+    fn stable_orbit_preserves_viewport_scale_and_axis_proportions() {
+        use crate::core::plot3d::AxisAspect3D;
+        for aspect in [AxisAspect3D::Data, AxisAspect3D::fixed(1.0, 2.0, 3.0)] {
+            for axes in [false, true] {
+                for perspective in [false, true] {
+                    let base = scatter3d(&[-3.0, 3.0], &[-2.0, 2.0], &[-1.0, 1.0])
+                        .axis_aspect(aspect)
+                        .stable_scale(true)
+                        .axes(axes)
+                        .title("Stable orbit")
+                        .xlabel("x")
+                        .ylabel("y")
+                        .zlabel("z")
+                        .size_px(640, 480)
+                        .dpi(96);
+                    let mut reference: Option<(Viewport3D, f32, Vec3)> = None;
+                    for angle in (0..360).step_by(30) {
+                        let mut frame = base
+                            .clone()
+                            .azimuth_deg(angle as f32)
+                            .elevation_deg((angle as f32 * 0.5).sin() * 70.0)
+                            .finalize()
+                            .resolve()
+                            .expect("frame");
+                        if perspective {
+                            frame.camera = frame.camera.perspective_deg(45.0);
+                        }
+                        let layout = Axis3Layout::resolve(&frame).expect("layout");
+                        let camera = layout.camera;
+                        let center =
+                            project_local(Vec3::ZERO, camera, layout.viewport).expect("center");
+                        let right = camera.view.inverse().transform_vector3(Vec3::X * 0.1);
+                        let up = camera.view.inverse().transform_vector3(Vec3::Y * 0.1);
+                        // project_local accepts normalized box coordinates.
+                        let x = project_local(right / camera.axis_aspect, camera, layout.viewport)
+                            .expect("right");
+                        let y = project_local(up / camera.axis_aspect, camera, layout.viewport)
+                            .expect("up");
+                        let radius_x = (x.x - center.x).hypot(x.y - center.y);
+                        let radius_y = (y.x - center.x).hypot(y.y - center.y);
+                        assert!((radius_x - radius_y).abs() < 0.001, "projection stretched");
+                        if let Some((viewport, radius, proportions)) = reference {
+                            assert_eq!(layout.viewport, viewport);
+                            assert_eq!(camera.axis_aspect, proportions);
+                            assert!((radius_x - radius).abs() < 0.001, "orbit changed scale");
+                        } else {
+                            reference = Some((layout.viewport, radius_x, camera.axis_aspect));
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn layout_stays_inside_the_canvas_and_has_a_complete_box() {

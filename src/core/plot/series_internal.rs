@@ -1,8 +1,8 @@
 use super::*;
 use crate::core::Point2f;
 use crate::core::plot::raster_batches::{
-    DensityBatch, RectGridBatch, SeriesRasterPlan, clip_rect_from_plot_area, plot_area_from_rect,
-    project_xy_points, project_xy_subpaths,
+    BarBatch, DensityBatch, RectGridBatch, SeriesRasterPlan, clip_rect_from_plot_area,
+    plot_area_from_rect, project_xy_points, project_xy_subpaths,
 };
 use crate::core::plot::raster_fast_path::{
     canonicalize_line_points_exact, reduce_line_points_for_raster, should_reduce_line_series,
@@ -395,6 +395,44 @@ impl Plot {
             .and_then(|edge| edge.resolve(&self.display.theme, fill))
     }
 
+    pub(super) fn prepare_bar_batch(
+        &self,
+        values: &[f64],
+        config: &crate::plots::basic::BarConfig,
+        color: Color,
+        plot_area: tiny_skia::Rect,
+        x_min: f64,
+        x_max: f64,
+        y_min: f64,
+        y_max: f64,
+    ) -> BarBatch {
+        let rectangles = values
+            .iter()
+            .enumerate()
+            .map(|(i, &value)| {
+                bar_pixel_rect(
+                    i,
+                    value,
+                    config,
+                    plot_area,
+                    x_min,
+                    x_max,
+                    y_min,
+                    y_max,
+                    &self.layout.x_scale,
+                    &self.layout.y_scale,
+                )
+            })
+            .collect::<Vec<_>>()
+            .into();
+        BarBatch {
+            rectangles,
+            fill: color,
+            edge: config.resolved_edge(&self.display.theme, color),
+            clip_rect: clip_rect_from_plot_area(plot_area),
+        }
+    }
+
     pub(super) fn build_prepared_series_raster_plan(
         &self,
         series: &PlotSeries,
@@ -417,6 +455,14 @@ impl Plot {
         let clip_rect = clip_rect_from_plot_area(plot_area);
 
         let plan = match (&series.series_type, resolved) {
+            (SeriesType::Bar { config, .. }, ResolvedSeries::Bar { values, .. }) => {
+                let mut plan = SeriesRasterPlan::default();
+                plan.push_bars(self.prepare_bar_batch(
+                    values, config, color, plot_area, x_min, x_max, y_min, y_max,
+                ));
+                Some(plan)
+            }
+
             (SeriesType::Line { .. }, ResolvedSeries::Line { x, y }) => {
                 // One sub-path per contiguous run of representable samples: a
                 // sample the axis cannot place (non-finite anywhere, or
@@ -865,38 +911,10 @@ impl Plot {
 
         match (&series.series_type, resolved) {
             (SeriesType::Line { .. }, ResolvedSeries::Line { .. })
-            | (SeriesType::Scatter { .. }, ResolvedSeries::Scatter { .. }) => unreachable!(
-                "cacheable line/scatter series should return before fallback rendering"
+            | (SeriesType::Scatter { .. }, ResolvedSeries::Scatter { .. })
+            | (SeriesType::Bar { .. }, ResolvedSeries::Bar { .. }) => unreachable!(
+                "cacheable line/scatter/bar series should return before fallback rendering"
             ),
-            (SeriesType::Bar { config, .. }, ResolvedSeries::Bar { values, .. }) => {
-                // The edge is configured in points, so it survives a DPI change.
-                // `edge_color: None` derives it by darkening the fill.
-                let edge = config.resolved_edge(&self.display.theme, color);
-
-                for (i, &value) in values.iter().enumerate() {
-                    let (bx, by, bw, bh) = bar_pixel_rect(
-                        i,
-                        value,
-                        config,
-                        plot_area,
-                        x_min,
-                        x_max,
-                        y_min,
-                        y_max,
-                        &self.layout.x_scale,
-                        &self.layout.y_scale,
-                    );
-                    renderer.draw_rectangle_styled_clipped(
-                        bx,
-                        by,
-                        bw,
-                        bh,
-                        Some(color),
-                        edge,
-                        clip_rect,
-                    )?;
-                }
-            }
             (SeriesType::Histogram { .. }, ResolvedSeries::Histogram { data: hist_data }) => {
                 // Histogram bars are adjacent, so the bin boundaries only read as
                 // boundaries if the bars carry an edge. Resolve it from the series

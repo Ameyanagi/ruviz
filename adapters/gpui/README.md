@@ -10,8 +10,8 @@ own the window, layout tree, and surrounding application shell.
 
 ```toml
 [dependencies]
-ruviz = { version = "0.12.2", features = ["3d"] }
-ruviz-gpui = { version = "0.12.2", features = ["3d"] }
+ruviz = { version = "0.13.0", features = ["3d"] }
+ruviz-gpui = { version = "0.13.0", features = ["3d"] }
 ```
 
 ## What This Crate Provides
@@ -60,6 +60,27 @@ The adapter is image-backed. With `3d-gpu`, a worker-owned GPU renderer is
 created lazily and retained across frames, but each completed frame is read back
 and uploaded as a GPUI image. The feature does not imply zero-copy or direct
 GPUI texture presentation. Without `3d-gpu`, the worker uses CPU rendering.
+
+## Molecular spheres
+
+Pass `ruviz::spheres3d(&atoms)` directly to `plot3d_builder`. Call
+`RuvizPlot3D::set_sphere_shading(enabled, cx)` to update lighting while preserving
+camera, zoom, active drag, and selection. `set_plot_keep_view` remains the route
+for replacing atom coordinates or whole structures.
+
+Each `Sphere3D` has an application-owned ID, center, data-space radius, and color
+including alpha. Sphere hits return the ID in `hit.sources()[0]`. See the
+[molecular guide](../../docs/guide/13_molecular_views.md) for lighting, transparent
+context, picking, and software/export behavior.
+
+Run the example with:
+
+```sh
+cargo run --release --example molecular_spheres --features 3d-gpu
+```
+
+Use `--features 3d` for software rendering. The example has a shading toggle,
+mixed elements/radii, bonds, a cutoff guide, faded context, and a path overlay.
 
 ## Coordinates and pointer callbacks
 

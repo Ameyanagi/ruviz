@@ -11,6 +11,7 @@ export default defineConfig({
       input: {
         main: resolve(rootDir, "index.html"),
         "3d": resolve(rootDir, "3d.html"),
+        "3d-benchmark": resolve(rootDir, "3d-benchmark.html"),
         "bench-interactive": resolve(rootDir, "bench-interactive.html"),
         "bench-plotting": resolve(rootDir, "bench-plotting.html"),
       },

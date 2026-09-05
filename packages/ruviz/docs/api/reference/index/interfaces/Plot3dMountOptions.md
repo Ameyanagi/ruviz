@@ -36,6 +36,26 @@ Defaults to `true` for `HTMLCanvasElement` and is unavailable for an
 
 ***
 
+### onError?
+
+> `optional` **onError?**: (`error`) => `void`
+
+Defined in: [3d.ts:56](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L56)
+
+Scheduled render/input errors. Initial mounting errors reject mount().
+
+#### Parameters
+
+##### error
+
+`Error`
+
+#### Returns
+
+`void`
+
+***
+
 ### scaleFactor?
 
 > `optional` **scaleFactor?**: `number`

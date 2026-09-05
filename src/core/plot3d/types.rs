@@ -184,6 +184,8 @@ pub enum AxisAspect3D {
     Auto,
     /// Equal visual length for every axis.
     Equal,
+    /// Equal length per data unit, preserving spheres and molecular distances.
+    Data,
     /// Explicit positive x/y/z proportions.
     Fixed { x: f32, y: f32, z: f32 },
 }
@@ -226,6 +228,13 @@ impl AxisAspect3D {
         if let Self::Fixed { x, y, z } = self {
             for (field, value) in [("aspect.x", x), ("aspect.y", y), ("aspect.z", z)] {
                 validate_positive_finite(field, value)?;
+                if !(value / x.max(y).max(z)).recip().is_finite() {
+                    return Err(PlottingError::InvalidCamera3D {
+                        field,
+                        value,
+                        reason: "normalized ratio is too small to represent",
+                    });
+                }
             }
         }
         Ok(())
@@ -234,7 +243,7 @@ impl AxisAspect3D {
     fn resolved(self) -> Vec3 {
         let raw = match self {
             Self::Auto => Vec3::new(4.0, 4.0, 3.0),
-            Self::Equal => Vec3::ONE,
+            Self::Equal | Self::Data => Vec3::ONE,
             Self::Fixed { x, y, z } => Vec3::new(x, y, z),
         };
         raw / raw.max_element()
@@ -249,6 +258,7 @@ pub struct Camera3D {
     roll_deg: f32,
     projection: Projection3D,
     aspect: AxisAspect3D,
+    stable_scale: bool,
     zoom: f32,
     target: Option<Point3D>,
 }
@@ -317,6 +327,20 @@ impl Camera3D {
     pub fn axis_aspect(mut self, aspect: AxisAspect3D) -> Self {
         self.aspect = aspect;
         self
+    }
+
+    /// Keep projection scale and framing independent of the orbit angle.
+    ///
+    /// Reserves room for the whole scene at every orientation. Explicit zoom
+    /// and viewport resizing still change its on-screen size. Defaults to false.
+    pub fn stable_scale(mut self, enabled: bool) -> Self {
+        self.stable_scale = enabled;
+        self
+    }
+
+    /// Whether orbiting preserves projection scale and framing.
+    pub const fn has_stable_scale(self) -> bool {
+        self.stable_scale
     }
 
     /// Set a positive zoom factor.
@@ -550,7 +574,40 @@ impl Camera3D {
             });
         }
 
-        let axis_aspect = self.aspect.resolved();
+        let axis_aspect = if self.aspect == AxisAspect3D::Data {
+            let ranges = [
+                (bounds.min.x, bounds.max.x),
+                (bounds.min.y, bounds.max.y),
+                (bounds.min.z, bounds.max.z),
+            ];
+            let mut spans = ranges.map(|(low, high)| high - low);
+            if spans.iter().any(|span| !span.is_finite()) {
+                // Apply the same factor to every axis when a full span overflows.
+                spans = ranges.map(|(low, high)| high * 0.5 - low * 0.5);
+            }
+            let longest = spans.into_iter().fold(0.0_f64, f64::max);
+            let ratios = std::array::from_fn(|axis| {
+                if ranges[axis].0 == ranges[axis].1 {
+                    // A collapsed axis has no distances to preserve; keep its
+                    // inverse defined for picking and planar data.
+                    1e-6
+                } else {
+                    (spans[axis] / longest) as f32
+                }
+            });
+            let aspect = Vec3::from_array(ratios);
+            AxisAspect3D::fixed(aspect.x, aspect.y, aspect.z).validate()?;
+            if !Mat4::from_scale(aspect).inverse().is_finite() {
+                return Err(PlottingError::InvalidCamera3D {
+                    field: "aspect.data",
+                    value: aspect.min_element(),
+                    reason: "data ranges cannot preserve equal units in 3D coordinates",
+                });
+            }
+            aspect
+        } else {
+            self.aspect.resolved()
+        };
         // The look-at target is clamped to the plotting box. `look_at(1e6, 0, 0)`
         // is a valid call today, and without this it normalizes to a point far
         // outside the box, putting every primitive behind the eye where the
@@ -590,6 +647,27 @@ impl Camera3D {
         // as well as an orthographic one instead of being sized for the box's
         // circumscribed sphere, which is nearly 30% larger than the box.
         let projection = match self.projection {
+            Projection3D::Orthographic if self.stable_scale => {
+                let half_y = scene_radius / viewport_aspect.min(1.0) / self.zoom;
+                let half_x = half_y * viewport_aspect;
+                Mat4::orthographic_rh(
+                    -half_x,
+                    half_x,
+                    -half_y,
+                    half_y,
+                    ORTHOGRAPHIC_NEAR,
+                    ORTHOGRAPHIC_FAR,
+                )
+            }
+            Projection3D::Perspective { vertical_fov_deg } if self.stable_scale => {
+                let fov = 2.0 * ((vertical_fov_deg.to_radians() * 0.5).tan() / self.zoom).atan();
+                Mat4::perspective_rh(
+                    fov,
+                    viewport_aspect,
+                    (eye_distance - scene_radius * 1.25).max(0.001),
+                    eye_distance + scene_radius * 1.25,
+                )
+            }
             Projection3D::Orthographic => {
                 orthographic_fit(view, axis_aspect, viewport_aspect, self.zoom)
             }
@@ -604,6 +682,7 @@ impl Camera3D {
         };
         let view_projection = projection * view;
         Ok(PreparedCamera3D {
+            view,
             view_projection,
             inverse_view_projection: view_projection.inverse(),
             axis_aspect,
@@ -823,6 +902,7 @@ impl Default for Camera3D {
             roll_deg: 0.0,
             projection: Projection3D::Orthographic,
             aspect: AxisAspect3D::Auto,
+            stable_scale: false,
             zoom: 1.0,
             target: None,
         }
@@ -878,6 +958,7 @@ pub struct ScreenRay3D {
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct PreparedCamera3D {
+    pub(crate) view: Mat4,
     pub(crate) view_projection: Mat4,
     pub(crate) inverse_view_projection: Mat4,
     pub(crate) axis_aspect: Vec3,
@@ -888,6 +969,37 @@ mod tests {
     use approx::assert_abs_diff_eq;
 
     use super::*;
+
+    #[test]
+    fn data_aspect_preserves_small_ratios_and_rejects_unrepresentable_ranges() {
+        let camera = Camera3D::default().axis_aspect(AxisAspect3D::Data);
+        let bounds = Bounds3D::new(Point3D::new(-1e8, -1.0, -2.0), Point3D::new(1e8, 1.0, 2.0))
+            .expect("bounds");
+        let prepared = camera.prepare(1.0, bounds).expect("representable ratios");
+        assert_abs_diff_eq!(prepared.axis_aspect.y, 1e-8, epsilon = 1e-14);
+        assert_abs_diff_eq!(prepared.axis_aspect.z, 2e-8, epsilon = 1e-14);
+        let huge = Bounds3D::new(
+            Point3D::new(-f64::MAX, -f64::MAX * 0.5, -f64::MAX * 0.25),
+            Point3D::new(f64::MAX, f64::MAX * 0.5, f64::MAX * 0.25),
+        )
+        .expect("bounds");
+        assert_eq!(
+            camera
+                .prepare(1.0, huge)
+                .expect("overflow-safe proportions")
+                .axis_aspect,
+            Vec3::new(1.0, 0.5, 0.25)
+        );
+        let impossible = Bounds3D::new(
+            Point3D::new(-1e300, -1.0, -1.0),
+            Point3D::new(1e300, 1.0, 1.0),
+        )
+        .expect("finite bounds");
+        assert!(camera.prepare(1.0, impossible).is_err());
+        let planar = Bounds3D::new(Point3D::new(-1.0, -1.0, 0.0), Point3D::new(1.0, 1.0, 0.0))
+            .expect("planar bounds");
+        assert!(camera.prepare(1.0, planar).is_ok());
+    }
 
     #[test]
     fn default_camera_matches_documented_contract() {

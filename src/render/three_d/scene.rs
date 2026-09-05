@@ -1,7 +1,28 @@
 use std::sync::Arc;
 
+use crate::core::plot3d::spheres::SphereStyle3D;
 use crate::plots::SurfaceShading;
 use crate::render::{Color, ColorMap, LineStyle, MarkerStyle};
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct SphereInstance3D {
+    pub(crate) center: [f32; 3],
+    pub(crate) radii: [f32; 3],
+    pub(crate) color: Color,
+    pub(crate) id: u32,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct SphereGeometryBatch3D {
+    pub(crate) series_index: u32,
+    pub(crate) instances: Arc<[SphereInstance3D]>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct SphereBatch3D {
+    pub(crate) geometry: Arc<SphereGeometryBatch3D>,
+    pub(crate) style: SphereStyle3D,
+}
 
 /// Camera-independent point geometry retained by CPU and GPU renderers.
 #[derive(Clone, Debug)]
@@ -42,6 +63,7 @@ pub(crate) struct MeshGeometryBatch3D {
 /// Geometry retained independently from camera and appearance.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct SceneGeometry3D {
+    pub(crate) spheres: Vec<Arc<SphereGeometryBatch3D>>,
     pub(crate) points: Vec<Arc<PointGeometryBatch3D>>,
     pub(crate) lines: Vec<Arc<LineGeometryBatch3D>>,
     pub(crate) meshes: Vec<Arc<MeshGeometryBatch3D>>,
@@ -102,6 +124,7 @@ pub(crate) struct MeshBatch3D {
 #[derive(Clone, Debug)]
 pub(crate) struct Scene3D {
     pub(crate) geometry: Arc<SceneGeometry3D>,
+    pub(crate) spheres: Vec<SphereBatch3D>,
     pub(crate) points: Vec<PointBatch3D>,
     pub(crate) lines: Vec<LineBatch3D>,
     pub(crate) meshes: Vec<MeshBatch3D>,
@@ -112,7 +135,12 @@ impl Scene3D {
         self.points
             .iter()
             .map(|batch| batch.geometry.positions.len())
-            .sum()
+            .sum::<usize>()
+            + self
+                .spheres
+                .iter()
+                .map(|batch| batch.geometry.instances.len())
+                .sum::<usize>()
     }
 
     pub(crate) fn segment_count(&self) -> usize {

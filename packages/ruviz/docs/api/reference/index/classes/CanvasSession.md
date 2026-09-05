@@ -50,7 +50,7 @@ Defined in: [index.ts:2064](https://github.com/Ameyanagi/ruviz/blob/main/package
 
 > **\_pushCleanup**(`dispose`): `void`
 
-Defined in: [index.ts:2256](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L2256)
+Defined in: [index.ts:2263](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L2263)
 
 #### Parameters
 
@@ -64,11 +64,29 @@ Defined in: [index.ts:2256](https://github.com/Ameyanagi/ruviz/blob/main/package
 
 ***
 
-### destroy()
+### ~~destroy()~~
 
 > **destroy**(): `void`
 
-Defined in: [index.ts:2241](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L2241)
+Defined in: [index.ts:2249](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L2249)
+
+#### Returns
+
+`void`
+
+#### Deprecated
+
+Use detach() to clear the plot, or dispose() to remove bindings.
+
+***
+
+### detach()
+
+> **detach**(): `void`
+
+Defined in: [index.ts:2242](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L2242)
+
+Remove the plot but keep input/resize bindings for a later setPlot().
 
 #### Returns
 
@@ -80,7 +98,9 @@ Defined in: [index.ts:2241](https://github.com/Ameyanagi/ruviz/blob/main/package
 
 > **dispose**(): `void`
 
-Defined in: [index.ts:2247](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L2247)
+Defined in: [index.ts:2254](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L2254)
+
+Remove event/resize bindings and release the attached plot and worker.
 
 #### Returns
 

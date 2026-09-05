@@ -872,8 +872,8 @@ pub mod prelude {
         BackgroundRenderer3D, Bounds3D, Camera3D, CameraSnapshot3D, CameraView3D, InputEvent3D,
         InteractionResult3D, InteractivePlot3DSession, Line3DBuilder, PickHit3D, PickPrimitive3D,
         Point3D, PointerButton3D, ProjectedPoint3D, Projection3D, RenderDiagnostics3D,
-        RenderStamp3D, RenderedImage3D, Scatter3DBuilder, ScreenRay3D, StampedPick3D,
-        Surface3DBuilder, TryIntoPlot3DSession, ViewStamp3D, Wireframe3DBuilder,
+        RenderStamp3D, RenderedImage3D, Scatter3DBuilder, ScreenRay3D, Sphere3D, Spheres3DBuilder,
+        StampedPick3D, Surface3DBuilder, TryIntoPlot3DSession, ViewStamp3D, Wireframe3DBuilder,
         release_3d_gpu_resources,
     };
     pub use crate::data::{
@@ -910,7 +910,7 @@ pub mod prelude {
     // 3D entry points are *not* deprecated: there is no `Plot3D` builder, so
     // these free functions are the one obvious way to start a 3D plot.
     #[cfg(feature = "3d")]
-    pub use crate::{line3d, scatter3d, surface, wireframe};
+    pub use crate::{line3d, scatter3d, spheres3d, surface, wireframe};
 
     #[cfg(all(feature = "interactive", not(target_arch = "wasm32")))]
     pub use crate::interactive::{
@@ -941,6 +941,13 @@ use plots::{BarConfig, LineConfig, ScatterConfig};
 
 #[cfg(feature = "3d")]
 use core::{Line3DBuilder, Scatter3DBuilder, Surface3DBuilder, Wireframe3DBuilder};
+
+/// Create spheres with data-space radii, per-atom colors/opacity, and stable pick IDs.
+/// Requires `3d`; GPU acceleration uses the existing `gpu` feature.
+#[cfg(feature = "3d")]
+pub fn spheres3d(spheres: &[core::Sphere3D]) -> core::Spheres3DBuilder {
+    core::Spheres3DBuilder::from_data(spheres)
+}
 #[cfg(feature = "3d")]
 use data::NumericData2D;
 

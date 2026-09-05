@@ -3,7 +3,7 @@
 # ruviz
 
 High-performance 2D and 3D plotting for Rust. One builder, 29 plot types
-(33 with the `3d` feature), PNG / SVG / PDF output.
+(34 with the `3d` feature), PNG / SVG / PDF output.
 
 [![Crates.io](https://img.shields.io/crates/v/ruviz)](https://crates.io/crates/ruviz)
 [![Documentation](https://docs.rs/ruviz/badge.svg)](https://docs.rs/ruviz)
@@ -29,7 +29,7 @@ bindings. Every figure in it is real ruviz output.
 
 ```toml
 [dependencies]
-ruviz = "0.12.2"
+ruviz = "0.13.0"
 ```
 
 ## Hello, plot
@@ -203,7 +203,7 @@ also return a `SubplotFigure`.
 
 3D plots start from free functions — **there is no `Plot3D` type**:
 `scatter3d(&x, &y, &z)`, `line3d(..)`, `surface(&x, &y, &z_2d)`,
-`wireframe(..)`. They take `.title()`, `.xlabel()`, `.zlabel()` and `.save()`
+`wireframe(..)`, and `spheres3d(&atoms)`. They take `.title()`, `.xlabel()`, `.zlabel()` and `.save()`
 like a 2D plot.
 
 ```rust,check,features=3d
@@ -225,6 +225,12 @@ fn main() -> PlotResult<()> {
 }
 ```
 
+For atoms with physical radii, per-atom colors and picking IDs, see
+[Molecular spheres](docs/guide/13_molecular_views.md). The sphere builder supports
+`.shading(false)` and a retained GPUI shading toggle.
+
+For frontend differences and session cleanup, see the [API map](docs/guide/14_api_map.md).
+
 ## Gotchas
 
 - **No `Plot3D`.** Use the free functions above.
@@ -244,7 +250,7 @@ Defaults: `ndarray_support`, `parallel`.
 
 | Feature | Adds |
 |---|---|
-| `3d` | 3D scatter, line, surface, wireframe |
+| `3d` | 3D scatter, line, surface, wireframe, molecular spheres |
 | `ndarray_support` / `polars_support` / `nalgebra_support` | data-type support (aliases: `ndarray`, `polars`, `nalgebra`) |
 | `pdf` | PDF export |
 | `typst-math` | Typst text and math rendering |

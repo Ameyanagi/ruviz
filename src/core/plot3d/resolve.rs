@@ -29,6 +29,7 @@ pub(crate) struct ResolvedFrame3D {
     pub(crate) zlabel: Option<String>,
     /// User legend configuration, or `None` to derive one from the theme.
     pub(crate) legend: Option<Legend>,
+    pub(crate) axes: bool,
     pub(crate) keys: FrameKeys3D,
 }
 
@@ -65,6 +66,7 @@ impl Plot3D {
             self.ylabel.as_deref(),
             self.zlabel.as_deref(),
             self.legend.as_ref(),
+            self.axes.unwrap_or(true),
         );
 
         Ok(ResolvedFrame3D {
@@ -78,6 +80,7 @@ impl Plot3D {
             ylabel: self.ylabel,
             zlabel: self.zlabel,
             legend: self.legend,
+            axes: self.axes.unwrap_or(true),
             keys,
         })
     }
@@ -94,6 +97,7 @@ fn frame_keys(
     ylabel: Option<&str>,
     zlabel: Option<&str>,
     legend: Option<&Legend>,
+    axes: bool,
 ) -> FrameKeys3D {
     let mut geometry = StableHasher3D::new();
     let mut appearance = StableHasher3D::new();
@@ -102,6 +106,24 @@ fn frame_keys(
         geometry.usize(index);
         appearance.usize(index);
         match series {
+            Series3D::Spheres { data, style, label } => {
+                geometry.byte(4);
+                geometry.usize(data.len());
+                for sphere in data.iter() {
+                    geometry.u32(sphere.id);
+                    geometry.f64(sphere.center.x);
+                    geometry.f64(sphere.center.y);
+                    geometry.f64(sphere.center.z);
+                    geometry.f64(sphere.radius);
+                    geometry.color(sphere.color);
+                }
+                appearance.byte(4);
+                appearance.bool(style.shaded);
+                appearance.f32(style.specular);
+                appearance.f32(style.gloss);
+                appearance.optional_str(label.as_deref());
+                layout.optional_str(label.as_deref());
+            }
             Series3D::Scatter {
                 data,
                 config,
@@ -185,6 +207,7 @@ fn frame_keys(
     hash_theme_appearance(&mut appearance, theme);
     hash_layout(&mut layout, figure, theme, title, xlabel, ylabel, zlabel);
     hash_legend(&mut layout, legend);
+    layout.bool(axes);
 
     let mut view = StableHasher3D::new();
     hash_camera(&mut view, camera);
@@ -249,6 +272,7 @@ fn hash_camera(hasher: &mut StableHasher3D, camera: Camera3D) {
     hasher.f32(camera.get_elevation_deg());
     hasher.f32(camera.get_roll_deg());
     hasher.f32(camera.get_zoom());
+    hasher.bool(camera.has_stable_scale());
     match camera.target() {
         Some(target) => {
             hasher.byte(1);
@@ -268,6 +292,7 @@ fn hash_camera(hasher: &mut StableHasher3D, camera: Camera3D) {
     match camera.axis_aspect_value() {
         super::AxisAspect3D::Auto => hasher.byte(0),
         super::AxisAspect3D::Equal => hasher.byte(1),
+        super::AxisAspect3D::Data => hasher.byte(3),
         super::AxisAspect3D::Fixed { x, y, z } => {
             hasher.byte(2);
             hasher.f32(x);

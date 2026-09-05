@@ -51,7 +51,7 @@
       .grid {
         display: grid;
         gap: 20px;
-        grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+        grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
       }
 
       .panel {
@@ -148,42 +148,44 @@
         font-size: 0.85rem;
         color: #475569;
       }
+      button:focus-visible, select:focus-visible, input:focus-visible, a:focus-visible, summary:focus-visible { outline: 3px solid #2563eb; outline-offset: 3px; }
+      details { margin: 12px 0; }
+      summary { cursor: pointer; }
+      pre { padding: 12px; overflow: auto; background: #f1f5f9; line-height: 1.6; }
+      fieldset { display: flex; flex-wrap: wrap; gap: 16px; border: 1px solid #cbd5e1; border-radius: 8px; margin: 12px 0; }
+      fieldset label { padding: 6px; }
     </style>
   </head>
   <body>
     <main>
       <h1>ruviz in the browser</h1>
-      <p>
-        This demo uses the new <code>ruviz</code> JS/TS SDK on top of the wasm bridge to
-        render and interact with plots in the browser. Left-drag pans, right-drag box-zooms, and
-        the mouse wheel zooms around the pointer. The panels below cover direct export,
-        main-thread sessions, worker sessions, temporal signal playback, and observable/reactive
-        updates.
-      </p>
-      <div id="capability-status" class="capability-bar"></div>
+      <p>Explore a wave, update live data, or export a plot. Left-drag to pan,
+        right-drag to select a zoom area, and scroll to zoom. Use the buttons and series
+        checkboxes for keyboard access. <a href="/3d.html">Explore 3D plots →</a></p>
+      <details><summary>Browser diagnostics</summary><div id="capability-status" class="capability-bar"></div></details>
 
       <div class="grid">
         <section class="panel">
-          <h2>Direct Export</h2>
+          <h2>Export a plot</h2>
           <p>
-            Static export through <code>Plot::render_png_bytes()</code> and
-            <code>Plot::render_to_svg()</code> without creating an interactive canvas session.
+            Download a wave plot as an image or a scalable vector graphic.
           </p>
           <div class="toolbar">
             <button id="export-direct-png">Download PNG</button>
             <button id="export-direct-svg" class="secondary">Download SVG</button>
           </div>
-          <div id="export-status" class="status"></div>
+          <div id="export-status" class="status" role="status"></div>
         </section>
 
         <section class="panel">
-          <h2>Main-thread Canvas</h2>
+          <h2 id="main-title">Explore data</h2>
           <p>
-            Browser-session API coverage on an HTML canvas, including backend preference, viewport
-            SVG export, and detach/reattach lifecycle controls.
+            Inspect the wave and its sampled points. Hide a series, zoom into a region, or export the current view.
           </p>
           <div class="toolbar">
-            <button id="main-reset">Reset View</button>
+            <button aria-label="Reset explore data" id="main-reset">Reset View</button>
+            <button id="main-zoom-in" class="secondary" aria-label="Zoom in: explore data">Zoom in</button>
+            <button id="main-zoom-out" class="secondary" aria-label="Zoom out: explore data">Zoom out</button>
             <button id="main-export" class="secondary">Download PNG</button>
             <button id="main-export-svg" class="secondary">Download SVG</button>
             <button id="main-reattach" class="secondary">Reattach</button>
@@ -198,33 +200,41 @@
               <option value="gpu">GPU preference</option>
             </select>
           </div>
-          <canvas id="main-canvas" width="640" height="360"></canvas>
-          <div id="main-status" class="status"></div>
+          <fieldset id="main-series"><legend>Visible series</legend></fieldset>
+          <details><summary>Code example</summary><pre><code>const plot = createPlot()
+  .line({ x: [0, 1, 2], y: [0, 1, 0] });
+await plot.mount(canvas);</code></pre></details>
+          <canvas role="img" aria-labelledby="main-title" aria-describedby="main-description" id="main-canvas" width="640" height="360"></canvas>
+          <p id="main-description">A modulated sine wave with sampled markers.</p>
+          <div id="main-status" class="status" role="status"></div>
           <div id="main-hit" class="status">hover a point for a readout; click a legend entry to toggle its series</div>
         </section>
 
         <section class="panel">
-          <h2>Offscreen Worker</h2>
-          <p>Interactive rendering delegated to a worker using <code>OffscreenCanvas</code>.</p>
+          <h2 id="worker-title">Explore in a worker</h2>
+          <p>Explore the same wave while a background worker handles rendering.</p>
           <div class="toolbar">
-            <button id="worker-reset">Reset View</button>
+            <button aria-label="Reset explore in a worker" id="worker-reset">Reset View</button>
+            <button id="worker-zoom-in" class="secondary" aria-label="Zoom in: explore in a worker">Zoom in</button>
+            <button id="worker-zoom-out" class="secondary" aria-label="Zoom out: explore in a worker">Zoom out</button>
             <button id="worker-export" class="secondary">Download PNG</button>
             <button id="worker-export-svg" class="secondary">Download SVG</button>
           </div>
-          <canvas id="worker-canvas" width="640" height="360"></canvas>
-          <div id="worker-status" class="status"></div>
+          <canvas role="img" aria-labelledby="worker-title" aria-describedby="worker-description" id="worker-canvas" width="640" height="360"></canvas>
+          <p id="worker-description">A modulated sine wave rendered in a worker.</p>
+          <div id="worker-status" class="status" role="status"></div>
         </section>
 
         <section class="panel panel-wide">
-          <h2>Temporal Signal View</h2>
+          <h2 id="temporal-title">Play a signal</h2>
           <p>
-            Time-varying data backed by <code>Signal&lt;Vec&lt;f64&gt;&gt;</code>. Use the time
-            slider or Play to drive <code>session.set_time(...)</code> on a plot built from signal
-            sources.
+            Use the time slider or Play to follow a changing signal. Zoom stays fixed while time advances.
           </p>
           <div class="toolbar">
             <button id="temporal-play">Play</button>
-            <button id="temporal-reset" class="secondary">Reset View</button>
+            <button aria-label="Reset play a signal" id="temporal-reset" class="secondary">Reset View</button>
+            <button id="temporal-zoom-in" class="secondary" aria-label="Zoom in: play a signal">Zoom in</button>
+            <button id="temporal-zoom-out" class="secondary" aria-label="Zoom out: play a signal">Zoom out</button>
             <button id="temporal-export" class="secondary">Download PNG</button>
           </div>
           <div class="control-row">
@@ -239,20 +249,21 @@
             />
             <span id="temporal-time-value" class="phase-value">0.00 s</span>
           </div>
-          <canvas id="temporal-canvas" width="960" height="360"></canvas>
-          <div id="temporal-status" class="status"></div>
+          <canvas role="img" aria-labelledby="temporal-title" aria-describedby="temporal-description" id="temporal-canvas" width="960" height="360"></canvas>
+          <p id="temporal-description">A sine signal that changes with the time slider.</p>
+          <div id="temporal-status" class="status" role="status"></div>
         </section>
 
         <section class="panel panel-wide">
-          <h2>Observable Interactive View</h2>
+          <h2 id="observable-title">Update live data</h2>
           <p>
-            Reactive plot data backed by <code>ruviz::data::Observable&lt;Vec&lt;f64&gt;&gt;</code>.
-            Move the phase slider or press Play to mutate the series while keeping the current
-            interactive viewport.
+            Change the phase or press Play to update the wave and its sampled points without resetting the view.
           </p>
           <div class="toolbar">
             <button id="observable-play">Play</button>
-            <button id="observable-reset" class="secondary">Reset View</button>
+            <button aria-label="Reset update live data" id="observable-reset" class="secondary">Reset View</button>
+            <button id="observable-zoom-in" class="secondary" aria-label="Zoom in: update live data">Zoom in</button>
+            <button id="observable-zoom-out" class="secondary" aria-label="Zoom out: update live data">Zoom out</button>
             <button id="observable-export" class="secondary">Download PNG</button>
           </div>
           <div class="control-row">
@@ -267,8 +278,9 @@
             />
             <span id="observable-phase-value" class="phase-value">0.00 rad</span>
           </div>
-          <canvas id="observable-canvas" width="960" height="360"></canvas>
-          <div id="observable-status" class="status"></div>
+          <canvas role="img" aria-labelledby="observable-title" aria-describedby="observable-description" id="observable-canvas" width="960" height="360"></canvas>
+          <p id="observable-description">A wave and sampled points that change with the phase slider.</p>
+          <div id="observable-status" class="status" role="status"></div>
         </section>
       </div>
     </main>

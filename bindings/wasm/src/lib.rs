@@ -2209,27 +2209,27 @@ mod wasm {
     }
 
     #[cfg(feature = "3d")]
+    #[derive(Clone)]
     enum WebPlot3DKind {
-        Scatter {
-            x: Vec<f64>,
-            y: Vec<f64>,
-            z: Vec<f64>,
-        },
-        Line {
-            x: Vec<f64>,
-            y: Vec<f64>,
-            z: Vec<f64>,
-        },
-        Surface {
-            x: Vec<f64>,
-            y: Vec<f64>,
-            z: Vec<Vec<f64>>,
-        },
-        Wireframe {
-            x: Vec<f64>,
-            y: Vec<f64>,
-            z: Vec<Vec<f64>>,
-        },
+        Scatter(ruviz::core::Scatter3DBuilder),
+        Line(ruviz::core::Line3DBuilder),
+        Surface(ruviz::core::Surface3DBuilder),
+        Wireframe(ruviz::core::Wireframe3DBuilder),
+    }
+
+    // Every core builder accepts the same series methods; retain that builder
+    // so browser composition uses the core's ordering, bounds, and validation.
+    #[cfg(feature = "3d")]
+    macro_rules! append_3d_series {
+        ($plot:expr, $method:ident, $variant:ident, $x:expr, $y:expr, $z:expr) => {
+            $plot.kind = Some(WebPlot3DKind::$variant(match $plot.kind.take() {
+                Some(WebPlot3DKind::Scatter(builder)) => builder.$method($x, $y, $z),
+                Some(WebPlot3DKind::Line(builder)) => builder.$method($x, $y, $z),
+                Some(WebPlot3DKind::Surface(builder)) => builder.$method($x, $y, $z),
+                Some(WebPlot3DKind::Wireframe(builder)) => builder.$method($x, $y, $z),
+                None => $method($x, $y, $z),
+            }));
+        };
     }
 
     #[cfg(feature = "3d")]
@@ -2241,6 +2241,7 @@ mod wasm {
     pub struct JsPlot3D {
         kind: Option<WebPlot3DKind>,
         title: Option<String>,
+        camera: ruviz::core::Camera3D,
     }
 
     #[cfg(feature = "3d")]
@@ -2267,29 +2268,29 @@ mod wasm {
 
         fn build_session(&self) -> Result<InteractivePlot3DSession, JsValue> {
             match self.kind.as_ref() {
-                Some(WebPlot3DKind::Scatter { x, y, z }) => {
-                    let builder = scatter3d(x, y, z);
+                Some(WebPlot3DKind::Scatter(builder)) => {
+                    let builder = builder.clone().camera(self.camera);
                     match &self.title {
                         Some(title) => builder.title(title).interactive_session(),
                         None => builder.interactive_session(),
                     }
                 }
-                Some(WebPlot3DKind::Line { x, y, z }) => {
-                    let builder = line3d(x, y, z);
+                Some(WebPlot3DKind::Line(builder)) => {
+                    let builder = builder.clone().camera(self.camera);
                     match &self.title {
                         Some(title) => builder.title(title).interactive_session(),
                         None => builder.interactive_session(),
                     }
                 }
-                Some(WebPlot3DKind::Surface { x, y, z }) => {
-                    let builder = surface(x, y, z);
+                Some(WebPlot3DKind::Surface(builder)) => {
+                    let builder = builder.clone().camera(self.camera);
                     match &self.title {
                         Some(title) => builder.title(title).interactive_session(),
                         None => builder.interactive_session(),
                     }
                 }
-                Some(WebPlot3DKind::Wireframe { x, y, z }) => {
-                    let builder = wireframe(x, y, z);
+                Some(WebPlot3DKind::Wireframe(builder)) => {
+                    let builder = builder.clone().camera(self.camera);
                     match &self.title {
                         Some(title) => builder.title(title).interactive_session(),
                         None => builder.interactive_session(),
@@ -2316,31 +2317,57 @@ mod wasm {
             Self {
                 kind: None,
                 title: None,
+                camera: ruviz::core::Camera3D::default(),
             }
         }
 
         pub fn scatter3d(&mut self, x: Vec<f64>, y: Vec<f64>, z: Vec<f64>) -> Result<(), JsValue> {
             Self::validate_points(&x, &y, &z)?;
-            self.kind = Some(WebPlot3DKind::Scatter { x, y, z });
+            append_3d_series!(self, scatter3d, Scatter, &x, &y, &z);
             Ok(())
         }
 
         pub fn line3d(&mut self, x: Vec<f64>, y: Vec<f64>, z: Vec<f64>) -> Result<(), JsValue> {
             Self::validate_points(&x, &y, &z)?;
-            self.kind = Some(WebPlot3DKind::Line { x, y, z });
+            append_3d_series!(self, line3d, Line, &x, &y, &z);
             Ok(())
         }
 
         pub fn surface(&mut self, x: Vec<f64>, y: Vec<f64>, z: Vec<f64>) -> Result<(), JsValue> {
             let (x, y, z) = Self::grid(x, y, z)?;
-            self.kind = Some(WebPlot3DKind::Surface { x, y, z });
+            append_3d_series!(self, surface, Surface, &x, &y, &z);
             Ok(())
         }
 
         pub fn wireframe(&mut self, x: Vec<f64>, y: Vec<f64>, z: Vec<f64>) -> Result<(), JsValue> {
             let (x, y, z) = Self::grid(x, y, z)?;
-            self.kind = Some(WebPlot3DKind::Wireframe { x, y, z });
+            append_3d_series!(self, wireframe, Wireframe, &x, &y, &z);
             Ok(())
+        }
+
+        /// Fix the plotting box's x:y:z proportions.
+        pub fn axis_aspect(&mut self, x: f32, y: f32, z: f32) -> Result<(), JsValue> {
+            let camera = self
+                .camera
+                .axis_aspect(ruviz::core::AxisAspect3D::fixed(x, y, z));
+            camera.validate().map_err(js_err)?;
+            self.camera = camera;
+            Ok(())
+        }
+
+        /// Use the same physical length per data unit on all three axes.
+        pub fn equal_scale(&mut self) {
+            self.camera = self.camera.axis_aspect(ruviz::core::AxisAspect3D::Data);
+        }
+
+        /// Keep scale and framing independent of the orbit angle.
+        pub fn stable_scale(&mut self, enabled: bool) {
+            self.camera = self.camera.stable_scale(enabled);
+        }
+
+        /// Remove all series while retaining plot options for explicit replacement.
+        pub fn clear_series(&mut self) {
+            self.kind = None;
         }
 
         pub fn title(&mut self, title: &str) {

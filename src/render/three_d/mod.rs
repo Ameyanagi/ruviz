@@ -6,6 +6,7 @@ pub(crate) mod gpu;
 pub(crate) mod overlay;
 pub(crate) mod scene;
 pub(crate) mod software;
+pub(crate) mod sphere;
 
 /// Release every GPU resource retained by the shared 3D renderer.
 ///

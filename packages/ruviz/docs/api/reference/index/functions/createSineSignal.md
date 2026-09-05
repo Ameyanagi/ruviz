@@ -8,7 +8,7 @@
 
 > **createSineSignal**(`options`): [`SineSignal`](../classes/SineSignal.md)
 
-Defined in: [index.ts:2734](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L2734)
+Defined in: [index.ts:2748](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/index.ts#L2748)
 
 Create a time-varying sine signal.
 

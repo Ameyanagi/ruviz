@@ -8,7 +8,7 @@
 
 > **scatter3d**(`x`, `y`, `z`): [`Plot3dBuilder`](../classes/Plot3dBuilder.md)
 
-Defined in: [3d.ts:647](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L647)
+Defined in: [3d.ts:756](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz/src/3d.ts#L756)
 
 Create a WebGPU 3D scatter plot.
 

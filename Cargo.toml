@@ -19,7 +19,7 @@ resolver = "2"
 
 [package]
 name = "ruviz"
-version = "0.12.2"
+version = "0.13.0"
 edition = "2024"
 rust-version = "1.92"
 authors = ["Ruviz Contributors"]
@@ -631,4 +631,19 @@ harness = false
 [[bench]]
 name = "three_d"
 harness = false
+required-features = ["3d"]
+
+[[example]]
+name = "sphere_benchmark"
+path = "examples/performance/sphere_benchmark.rs"
+required-features = ["3d"]
+
+[[example]]
+name = "molecular_spheres"
+path = "examples/molecular_spheres.rs"
+required-features = ["3d"]
+
+[[example]]
+name = "flat_marker_benchmark"
+path = "examples/performance/flat_marker_benchmark.rs"
 required-features = ["3d"]

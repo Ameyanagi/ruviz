@@ -37,7 +37,7 @@
 
       .grid {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+        grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
         gap: 18px;
       }
 
@@ -68,8 +68,9 @@
         border-radius: 999px;
         background: #13233a;
         color: #dce8fa;
-        padding: 5px 10px;
-        font: 600 0.72rem/1 ui-sans-serif, system-ui, sans-serif;
+        padding: 10px 12px;
+        min-height: 40px;
+        font: 600 0.85rem/1.2 ui-sans-serif, system-ui, sans-serif;
         cursor: pointer;
       }
 
@@ -92,31 +93,55 @@
         color: #9db0ca;
         font: 0.8rem/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
       }
+      .toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+      a { color: #9bc6ff; }
+      nav { display: flex; gap: 20px; margin-bottom: 20px; }
+      button:focus-visible, a:focus-visible, summary:focus-visible { outline: 3px solid #79bdff; outline-offset: 3px; }
+      details { margin-top: 16px; color: #9db0ca; }
+      pre { overflow: auto; padding: 12px; background: #08111f; border-radius: 8px; line-height: 1.6; }
+      .description { color: #b3c4dc; line-height: 1.5; }
     </style>
   </head>
   <body>
     <main>
-      <h1>ruviz 3d</h1>
-      <p class="lede">
-        Retained WebGPU surfaces with direct presentation, depth-tested geometry, and one render
-        submission per animation frame. Drag to orbit and use the wheel to zoom.
-      </p>
+      <nav aria-label="Demos"><a href="/">2D plots</a><a href="/3d-benchmark.html">Rendering benchmark</a></nav>
+      <h1>Explore in 3D</h1>
+      <p class="lede">Inspect a surface or follow a path. Drag to orbit, right-drag to pan,
+        and scroll to zoom. The buttons provide the same view controls using the keyboard.</p>
       <div class="grid">
-        <section>
-          <div class="section-title">
-            <h2>Main-thread WebGPU</h2>
-            <button id="main-3d-reset" type="button">Reset view</button>
+        <section aria-labelledby="main-3d-title">
+          <h2 id="main-3d-title">Explore a surface</h2>
+          <p class="description" id="main-3d-description">A damped radial wave: peaks and valleys fade toward the edges. Rotate to inspect its shape.</p>
+          <div id="main-3d-controls" class="toolbar" role="group" aria-label="Explore a surface view controls">
+            <button id="main-3d-reset" data-action="reset" aria-label="Reset explore a surface">Reset view</button>
+            <button data-action="in" aria-label="Zoom in: explore a surface">Zoom in</button>
+            <button data-action="out" aria-label="Zoom out: explore a surface">Zoom out</button>
+            <button data-action="left" aria-label="Rotate left: explore a surface">Rotate left</button>
+            <button data-action="right" aria-label="Rotate right: explore a surface">Rotate right</button>
           </div>
-          <canvas id="main-3d" width="640" height="400"></canvas>
-          <div id="main-3d-status" class="status">initializing</div>
+          <canvas id="main-3d" width="640" height="400" role="img" aria-labelledby="main-3d-title" aria-describedby="main-3d-description">A damped radial wave: peaks and valleys fade toward the edges. Rotate to inspect its shape.</canvas>
+          <div id="main-3d-status" class="status" role="status">Loading…</div>
+          <button id="main-3d-retry" hidden>Retry rendering</button>
+          <details><summary>Code example</summary><pre><code>import { surface } from "ruviz/3d";
+
+await surface([0, 1], [0, 1], [[0, 1], [1, 0]])
+  .title("My surface")
+  .mount(canvas);</code></pre></details>
+          <details><summary>Rendering diagnostics</summary><p id="main-3d-diagnostics"></p></details>
         </section>
-        <section>
-          <div class="section-title">
-            <h2>Worker OffscreenCanvas WebGPU</h2>
-            <button id="worker-3d-reset" type="button">Reset view</button>
+        <section aria-labelledby="worker-3d-title">
+          <h2 id="worker-3d-title">Follow a path</h2>
+          <p class="description" id="worker-3d-description">A helix circles the vertical axis as it rises. This example renders in a background worker.</p>
+          <div id="worker-3d-controls" class="toolbar" role="group" aria-label="Follow a path view controls">
+            <button id="worker-3d-reset" data-action="reset" aria-label="Reset follow a path">Reset view</button>
+            <button data-action="in" aria-label="Zoom in: follow a path">Zoom in</button>
+            <button data-action="out" aria-label="Zoom out: follow a path">Zoom out</button>
+            <button data-action="left" aria-label="Rotate left: follow a path">Rotate left</button>
+            <button data-action="right" aria-label="Rotate right: follow a path">Rotate right</button>
           </div>
-          <canvas id="worker-3d" width="640" height="400"></canvas>
-          <div id="worker-3d-status" class="status">initializing</div>
+          <canvas id="worker-3d" width="640" height="400" role="img" aria-labelledby="worker-3d-title" aria-describedby="worker-3d-description">A helix circles the vertical axis as it rises. This example renders in a background worker.</canvas>
+          <div id="worker-3d-status" class="status" role="status">Loading…</div>
+          <button id="worker-3d-retry" hidden>Retry path rendering</button>
         </section>
       </div>
     </main>

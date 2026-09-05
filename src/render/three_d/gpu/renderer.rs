@@ -51,6 +51,7 @@ struct CameraUniformGpu {
 pub(crate) struct Wgpu3DRenderer {
     context: GpuContext3D,
     pipelines: PipelineLibrary3D,
+    spheres: Option<super::spheres::SpherePipelines>,
     resources: ResourceCache3D,
     attachments: Option<OffscreenAttachments3D>,
     camera_buffer: wgpu::Buffer,
@@ -159,6 +160,7 @@ impl Wgpu3DRenderer {
         Ok(Self {
             context,
             pipelines,
+            spheres: None,
             resources: ResourceCache3D::default(),
             attachments: None,
             camera_buffer,
@@ -323,6 +325,19 @@ impl Wgpu3DRenderer {
             .queue
             .write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&camera));
 
+        if !scene.spheres.is_empty() {
+            if self.spheres.is_none() {
+                self.spheres = Some(super::spheres::SpherePipelines::new(
+                    &self.context.device,
+                    &self.pipelines,
+                    self.context.sample_count,
+                ));
+                resource_update.buffer_creations += 1;
+            }
+            if let Some(pipelines) = &self.spheres {
+                pipelines.update_camera(&self.context.queue, layout);
+            }
+        }
         let (geometry, appearance) = self.resources.get(scene)?;
         let attachments = self.attachments.as_ref().ok_or_else(|| {
             PlottingError::RenderError("missing direct 3d GPU attachments".to_string())
@@ -425,6 +440,40 @@ impl Wgpu3DRenderer {
                 pass.draw(0..4, 0..geometry.instance_count);
                 draw_calls = draw_calls.saturating_add(1);
             }
+            if let Some(pipelines) = self.spheres.as_ref().filter(|_| !scene.spheres.is_empty()) {
+                pass.set_bind_group(0, &pipelines.camera_bind_group, &[]);
+                pass.set_pipeline(&pipelines.opaque);
+                let matrix = layout.camera.view_projection
+                    * glam::Mat4::from_scale(layout.camera.axis_aspect);
+                let mut transparent = Vec::new();
+                for (batch, (geometry, material)) in
+                    geometry.spheres.iter().zip(&appearance.spheres).enumerate()
+                {
+                    if let Some(buffer) = &geometry.buffer {
+                        pass.set_bind_group(1, &material.bind_group, &[]);
+                        pass.set_vertex_buffer(0, buffer.slice(..));
+                        if geometry.opaque_count > 0 {
+                            pass.draw(0..4, 0..geometry.opaque_count);
+                            draw_calls += 1;
+                        }
+                        for &(index, center) in &geometry.transparent {
+                            let depth = matrix.project_point3(glam::Vec3::from_array(center)).z;
+                            transparent.push((depth, batch, index));
+                        }
+                    }
+                }
+                transparent.sort_by(|a, b| b.0.total_cmp(&a.0));
+                pass.set_pipeline(&pipelines.transparent);
+                for (_, batch, index) in transparent {
+                    let Some(buffer) = geometry.spheres[batch].buffer.as_ref() else {
+                        continue;
+                    };
+                    pass.set_bind_group(1, &appearance.spheres[batch].bind_group, &[]);
+                    pass.set_vertex_buffer(0, buffer.slice(..));
+                    pass.draw(0..4, index..index + 1);
+                    draw_calls += 1;
+                }
+            }
         }
 
         if readback {
@@ -490,7 +539,7 @@ impl Wgpu3DRenderer {
             GpuFrameOutput3D {
                 draw_calls,
                 resource_update,
-                camera_uniform_writes: 1,
+                camera_uniform_writes: 1 + u64::from(!scene.spheres.is_empty()),
                 adapter_name: self.context.adapter_name.clone(),
                 sample_count: self.context.sample_count,
             },
