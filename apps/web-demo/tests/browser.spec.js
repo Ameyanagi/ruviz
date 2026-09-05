@@ -1870,6 +1870,8 @@ test("series hit queries, legend clicks, and visibility toggling work", async ({
 
 test("the hover readout and legend click UI reflect session hits", async ({ page }) => {
   await waitForDemoReady(page);
+  // Mouse coordinates do not auto-scroll like locator actions do.
+  await page.locator("#main-canvas").scrollIntoViewIfNeeded();
 
   const probe = await page.evaluate(() => {
     const session = window.__ruvizDemo.mainSession;
