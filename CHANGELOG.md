@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.13.1] - 2026-09-06
+
+### Fixed
+
+- GPUI pan previews remove stale traces from the areas uncovered by a fast
+  drag. Image and macOS surface presentation share the corrected composition;
+  opaque plots add only a background quad, while translucent plots exclude
+  the old interior and avoid blending the background twice. Axes stay fixed
+  and the existing render scheduler and raster interval are unchanged.
+- Pixel regression coverage includes horizontal, vertical and diagonal pans,
+  direction reversals, shifts larger than the plot, identity previews, and
+  light, dark, translucent-panel and transparent-figure backgrounds.
+
 ## [0.13.0] - 2026-09-05
 
 ### Added

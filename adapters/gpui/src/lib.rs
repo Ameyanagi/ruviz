@@ -49,8 +49,8 @@
 //!
 //! ```toml
 //! [dependencies]
-//! ruviz = "0.13.0"
-//! ruviz-gpui = "0.13.0"
+//! ruviz = "0.13.1"
+//! ruviz-gpui = "0.13.1"
 //! ```
 //!
 //! Then build a normal `ruviz::Plot` or `PreparedPlot` and hand it to the GPUI
@@ -77,6 +77,7 @@ compile_error!("ruviz-gpui currently supports macOS, Linux, and Windows only.");
 #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
 mod platform_impl {
     mod interaction;
+    mod pan;
     mod presentation;
     #[cfg(feature = "3d")]
     mod three_d;
@@ -130,6 +131,7 @@ mod platform_impl {
     };
 
     use self::interaction::*;
+    use self::pan::{PanLayer, paint_pan_layers};
     use self::presentation::*;
     #[cfg(feature = "3d")]
     pub use self::three_d::*;
@@ -576,6 +578,7 @@ mod platform_impl {
         /// Frame pixels inside the plot-area edge owned by the axes (spine
         /// and inward ticks); a translated preview leaves them untouched.
         axis_inset_px: f64,
+        background: [ruviz::render::Color; 2],
         x_scale: AxisScale,
         y_scale: AxisScale,
     }
@@ -587,6 +590,8 @@ mod platform_impl {
     struct PanPreview {
         offset: Point<Pixels>,
         mask: Bounds<Pixels>,
+        plot_bounds: Bounds<Pixels>,
+        background: [ruviz::render::Color; 2],
     }
 
     /// The frame on screen when a pan drag started. Its margins and axes are
@@ -1495,30 +1500,33 @@ mod platform_impl {
                         let fitted_bounds = image_fit
                             .into_gpui()
                             .get_bounds(bounds, primary_size(&image.primary));
-                        // During a pan drag the anchor frame supplies the margins
-                        // and axes; otherwise the frame paints itself whole.
-                        paint_primary(
-                            window,
-                            fitted_bounds,
-                            image.axes.as_ref().unwrap_or(&image.primary),
-                        );
                         if let Some(preview) = image.preview {
-                            // A pan is pending a raster: repaint the plot area of
-                            // the content frame shifted to where the pending view
-                            // puts it, clipped to the plot area of the frame
-                            // whose axes are showing.
-                            let shifted = Bounds::new(
-                                fitted_bounds.origin + preview.offset,
-                                fitted_bounds.size,
-                            );
-                            window.with_content_mask(
-                                Some(ContentMask {
-                                    bounds: preview.mask,
-                                }),
-                                |window| paint_primary(window, shifted, &image.primary),
-                            );
+                            paint_pan_layers(fitted_bounds, preview, |layer, placement, mask| {
+                                window.with_content_mask(
+                                    Some(ContentMask { bounds: mask }),
+                                    |window| match layer {
+                                        PanLayer::Anchor => paint_primary(
+                                            window,
+                                            placement,
+                                            image.axes.as_ref().unwrap_or(&image.primary),
+                                        ),
+                                        PanLayer::Content => {
+                                            paint_primary(window, placement, &image.primary)
+                                        }
+                                        PanLayer::Background(color) => {
+                                            window.paint_quad(gpui::fill(
+                                                placement,
+                                                rgba(u32::from_be_bytes([
+                                                    color.r, color.g, color.b, color.a,
+                                                ])),
+                                            ))
+                                        }
+                                    },
+                                );
+                            });
                             return;
                         }
+                        paint_primary(window, fitted_bounds, &image.primary);
                         if let Some(overlay_image) = image.overlay_image {
                             let _ = window.paint_image(
                                 fitted_bounds,
@@ -1793,17 +1801,39 @@ mod platform_impl {
             ),
             size(px((mask_w * scale_x) as f32), px((mask_h * scale_y) as f32)),
         );
-        Some(PanPreview { offset, mask })
+        let plot_bounds = Bounds::new(
+            point(
+                content_bounds.origin.x + px((dest_min_x * scale_x) as f32),
+                content_bounds.origin.y + px((dest_min_y * scale_y) as f32),
+            ),
+            size(
+                px(((dest_max_x - dest_min_x).max(0.0) * scale_x) as f32),
+                px(((dest_max_y - dest_min_y).max(0.0) * scale_y) as f32),
+            ),
+        );
+        Some(PanPreview {
+            offset,
+            mask,
+            plot_bounds,
+            background: view.background,
+        })
     }
 
     /// The view of the frame the session just rendered.
     fn frame_view_from_session(session: &InteractivePlotSession) -> Option<FrameView> {
         let snapshot = session.viewport_snapshot().ok()?;
         let scales = session.view_bounds_snapshot();
+        let theme = session.prepared_plot().plot().get_theme();
         Some(FrameView {
             visible: snapshot.visible_bounds,
             plot_area: snapshot.plot_area,
             axis_inset_px: f64::from(session.axis_inset_px().unwrap_or(0.0)),
+            background: [
+                theme.background,
+                theme
+                    .panel_background
+                    .unwrap_or(ruviz::render::Color::TRANSPARENT),
+            ],
             x_scale: scales.x_scale,
             y_scale: scales.y_scale,
         })
@@ -4580,9 +4610,13 @@ mod platform_impl {
             });
         }
 
-        fn unit_frame_view() -> FrameView {
+        pub(super) fn unit_frame_view() -> FrameView {
             FrameView {
                 axis_inset_px: 0.0,
+                background: [
+                    ruviz::render::Color::WHITE,
+                    ruviz::render::Color::TRANSPARENT,
+                ],
                 visible: ViewportRect::from_points(
                     ViewportPoint::new(0.0, 0.0),
                     ViewportPoint::new(1.0, 1.0),
@@ -4613,7 +4647,7 @@ mod platform_impl {
             assert!((f64::from(preview.offset.y) - 20.0).abs() < 1e-4);
             // The mask is the plot area intersected with where the shifted
             // frame's plot area lands: the strip the pan uncovers is left to
-            // the frame underneath instead of showing the shifted margins.
+            // the plot background instead of showing stale data or shifted margins.
             assert_window_points_close(preview.mask.origin, point(px(40.0), px(60.0)));
             assert!((f64::from(preview.mask.size.width) - 90.0).abs() < 1e-4);
             assert!((f64::from(preview.mask.size.height) - 80.0).abs() < 1e-4);
