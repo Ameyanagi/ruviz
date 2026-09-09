@@ -112,7 +112,7 @@ png = "0.18"
 base64 = { version = "0.22", optional = true }
 
 # PDF export (SVG → PDF pipeline)
-svg2pdf = { version = "0.13", optional = true }  # Uses usvg 0.43 internally
+svg2pdf = { version = "0.13", optional = true }  # Vector SVG-to-PDF conversion
 
 # Error handling
 thiserror = "2.0"

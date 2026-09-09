@@ -6,7 +6,7 @@
 use crate::core::{PlottingError, Result};
 use std::{borrow::Cow, path::Path};
 
-/// usvg 0.43 treats start/end anchors as physical left/right, ignoring SVG's
+/// The PDF converter's usvg treats start/end anchors as physical left/right, ignoring SVG's
 /// direction-dependent anchor semantics. Preserve the physical alignment of
 /// the explicit RTL text elements emitted by SvgRenderer during PDF conversion.
 fn prepare_rtl_anchors(svg: &str) -> Result<Cow<'_, str>> {
