@@ -10,6 +10,8 @@ All notable changes to this project will be documented in this file.
   rendering paths. Dense, noisy curves no longer develop triangular miter spikes
   at wide line widths (#186). The minimum stroke width also matches direct
   polyline rendering.
+- Extremely long dashed polylines place chunk boundaries in available dash
+  gaps, avoiding artificial round caps through visible dashes.
 
 ## [0.14.0] - 2026-09-09
 
