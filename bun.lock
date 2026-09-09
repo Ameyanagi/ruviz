@@ -24,7 +24,7 @@
     },
     "packages/ruviz": {
       "name": "ruviz",
-      "version": "0.4.10",
+      "version": "0.14.1",
       "devDependencies": {
         "typedoc": "^0.28.14",
         "typedoc-plugin-markdown": "^4.9.0",

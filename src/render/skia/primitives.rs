@@ -373,23 +373,56 @@ impl SkiaRenderer {
 
     /// Stroke a dashed polyline as consecutive sub-paths, each short enough
     /// for tiny-skia's dasher, carrying the dash phase across the cuts so the
-    /// pattern runs unbroken. A segment longer than one chunk is cut by
-    /// interpolation. Only reachable for paths the single stroke would drop.
+    /// pattern runs unbroken. Place cuts inside available dash gaps, so an
+    /// artificial endpoint cannot add a cap within a visible dash. A segment
+    /// longer than one chunk is cut by interpolation. Only reachable for paths
+    /// the single stroke would drop.
     fn stroke_dashed_polyline_chunked(
         &mut self,
         points: &[(f32, f32)],
         paint: &Paint,
         stroke: &Stroke,
         dash_pattern: Vec<f32>,
-        chunk_len: f32,
+        max_chunk_len: f32,
         mask: Option<&Mask>,
     ) -> Result<()> {
-        let period: f32 = dash_pattern.iter().sum();
-        let mut phase = 0.0f32;
+        // Match tiny-skia's f32 period, but retain precision when subtracting
+        // a short gap from a chunk millions of pixels long.
+        let period = f64::from(dash_pattern.iter().sum::<f32>());
+        let mut gap_midpoint = None;
+        let mut longest_gap = 0.0f32;
+        let mut offset = 0.0f64;
+        for pair in dash_pattern.chunks_exact(2) {
+            offset += f64::from(pair[0]);
+            if pair[1] > longest_gap {
+                longest_gap = pair[1];
+                gap_midpoint = Some(offset + f64::from(pair[1]) / 2.0);
+            }
+            offset += f64::from(pair[1]);
+        }
+
+        let mut phase = 0.0f64;
         let mut cursor = points[0];
         let mut next_index = 1usize;
 
         while next_index < points.len() {
+            let chunk_len = gap_midpoint.map_or(max_chunk_len, |gap_midpoint| {
+                let end_phase = phase + f64::from(max_chunk_len);
+                let back_to_gap = (end_phase - gap_midpoint).rem_euclid(period);
+                let distance = f64::from(max_chunk_len) - back_to_gap;
+                // The production limit spans many periods. Small test limits
+                // can precede the first gap; advance to that gap in that case.
+                let distance = if distance > 0.0 {
+                    distance as f32
+                } else {
+                    (distance + period) as f32
+                };
+                if distance.is_finite() && distance > 0.0 {
+                    distance
+                } else {
+                    max_chunk_len
+                }
+            });
             let mut chunk = vec![cursor];
             let mut remaining = chunk_len;
             while next_index < points.len() && remaining > 0.0 {
@@ -431,11 +464,11 @@ impl SkiaRenderer {
                 }
                 if let Some(path) = path.finish() {
                     let mut stroke = stroke.clone();
-                    stroke.dash = StrokeDash::new(dash_pattern.clone(), phase % period);
+                    stroke.dash = StrokeDash::new(dash_pattern.clone(), phase as f32);
                     self.stroke_path_masked(&path, paint, &stroke, Transform::identity(), mask)?;
                 }
             }
-            phase = (phase + (chunk_len - remaining)) % period;
+            phase = (phase + f64::from(chunk_len - remaining)).rem_euclid(period);
         }
 
         Ok(())
@@ -475,7 +508,9 @@ impl SkiaRenderer {
         paint.anti_alias = true;
 
         let mut stroke = Stroke {
-            width,
+            width: width.max(0.1),
+            line_cap: LineCap::Round,
+            line_join: LineJoin::Round,
             ..Stroke::default()
         };
 
@@ -2456,6 +2491,58 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_chunked_dashed_stroke_does_not_cap_a_visible_dash() {
+        let points = [(6.0, 24.0), (300.0, 24.0), (505.0, 24.0)];
+        for (width, style) in [
+            (2.0, LineStyle::Dashed),
+            (2.0, LineStyle::DashDotDot),
+            (6.0, LineStyle::Custom(vec![8.0, 10.0, 2.0, 10.0])),
+        ] {
+            for alpha in [128, 255] {
+                for chunk_len in [37.0, 40.0] {
+                    let color = Color::from_rgba(31, 119, 180, alpha);
+                    let mut reference = white_canvas(512, 48, 100.0);
+                    reference
+                        .draw_polyline(&points, color, width, style.clone())
+                        .expect("continuous dashed stroke should render");
+                    let reference = reference.into_image();
+
+                    let mut chunked = white_canvas(512, 48, 100.0);
+                    let pattern = chunked.scaled_dash_pattern(&style).expect("dash pattern");
+                    let mut paint = Paint::default();
+                    paint.set_color(color.to_tiny_skia_color());
+                    paint.anti_alias = true;
+                    let stroke = Stroke {
+                        width,
+                        line_cap: LineCap::Round,
+                        line_join: LineJoin::Round,
+                        ..Stroke::default()
+                    };
+                    // Force the rare chunking path on a small canvas. These
+                    // limits would otherwise split some visible dashes, whose
+                    // overlapping round caps darken translucent strokes.
+                    chunked
+                        .stroke_dashed_polyline_chunked(
+                            &points, &paint, &stroke, pattern, chunk_len, None,
+                        )
+                        .expect("chunked dashed stroke should render");
+                    let actual = chunked.into_image();
+                    let changed = actual
+                        .pixels
+                        .chunks_exact(4)
+                        .zip(reference.pixels.chunks_exact(4))
+                        .filter(|(actual, reference)| actual != reference)
+                        .count();
+                    assert_eq!(
+                        changed, 0,
+                        "chunking must preserve dash pixels: {style:?}, width {width}, alpha {alpha}, chunk {chunk_len}"
+                    );
+                }
+            }
+        }
+    }
+
     #[cfg(feature = "parallel")]
     #[test]
     fn serial_and_parallel_marker_blits_are_byte_identical() {
@@ -2961,6 +3048,57 @@ mod tests {
 
     fn has_ink(image: &Image, x: u32, y: u32) -> bool {
         pixel(image, x, y)[0] < 250
+    }
+
+    #[test]
+    fn test_clipped_point_polyline_matches_round_strokes() {
+        // Sharp reversals reproduce the spikes reported for noisy line series
+        // in #186. Include a gap and a clipped endpoint to exercise run caps.
+        let points = [
+            (8.0, 64.0),
+            (44.0, 16.0),
+            (36.0, 64.0),
+            (72.0, 16.0),
+            (64.0, 64.0),
+            (f32::NAN, f32::NAN),
+            (80.0, 56.0),
+            (112.0, 56.0),
+        ];
+        let projected: Vec<_> = points.iter().map(|&(x, y)| Point2f::new(x, y)).collect();
+        let clip = (12.0, 8.0, 96.0, 64.0);
+
+        for (width, style) in [
+            (1.0, LineStyle::Solid),
+            (12.0, LineStyle::Solid),
+            (6.0, LineStyle::Dashed),
+            (0.01, LineStyle::Solid),
+        ] {
+            let mut batched = white_canvas(120, 80, 100.0);
+            batched
+                .draw_polyline_points_clipped(&projected, Color::BLACK, width, style.clone(), clip)
+                .expect("projected line should render");
+            let mut direct = white_canvas(120, 80, 100.0);
+            direct
+                .draw_polyline_clipped(&points, Color::BLACK, width, style.clone(), clip)
+                .expect("reference round stroke should render");
+
+            let actual = batched.into_image();
+            let expected = direct.into_image();
+            assert!(
+                expected.pixels.chunks_exact(4).any(|px| px[0] < 255),
+                "reference must contain ink"
+            );
+            let different_pixels = actual
+                .pixels
+                .chunks_exact(4)
+                .zip(expected.pixels.chunks_exact(4))
+                .filter(|(actual, expected)| actual != expected)
+                .count();
+            assert_eq!(
+                different_pixels, 0,
+                "batched and direct polylines must agree at width {width} with {style:?}"
+            );
+        }
     }
 
     /// Bucket 1. A vertex the axes cannot represent is a *gap*: the runs either
