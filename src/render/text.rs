@@ -30,6 +30,7 @@ use swash::scale::Source as SwashSource;
 use tiny_skia::{Pixmap, PixmapMut, PremultipliedColorU8};
 
 use crate::core::error::{PlottingError, Result};
+use crate::render::TextOptions;
 use crate::render::font_registry::{self, Registration};
 use crate::render::text_anchor::TextPlacementMetrics;
 use crate::render::{
@@ -197,6 +198,21 @@ fn is_renderable_text(text: &str) -> bool {
     !text.trim().is_empty()
 }
 
+fn validate_glyph_coverage(buffer: &Buffer, options: &TextOptions) -> Result<()> {
+    if options.requires_all_glyphs() {
+        for run in buffer.layout_runs() {
+            for glyph in run.glyphs.iter().filter(|glyph| glyph.glyph_id == 0) {
+                if let Some(error) = super::text_options::missing_glyph_error(
+                    run.text.get(glyph.start..glyph.end).unwrap_or(run.text),
+                ) {
+                    return Err(error);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 fn text_line_count(text: &str) -> usize {
     text.split('\n').count().max(1)
 }
@@ -245,16 +261,15 @@ static SWASH_CACHE: OnceLock<Mutex<SwashCache>> = OnceLock::new();
 
 #[cfg(not(target_arch = "wasm32"))]
 fn font_system_with_registered_fonts(snapshot: &font_registry::RegistrySnapshot) -> FontSystem {
-    // Same construction `FontSystem::new()` performs — locale from
-    // `sys_locale`, system fonts, the cosmic-text generic-family defaults —
-    // except the system font discovery goes through the disk cache, which
+    // Discover system fonts through the disk cache, which
     // turns the ~60ms first-render directory walk into a ~10ms reload.
     let mut database = crate::render::font_cache::system_font_database();
-    database.set_monospace_family("Noto Sans Mono");
-    database.set_sans_serif_family("Open Sans");
-    database.set_serif_family("DejaVu Serif");
+
     let locale = sys_locale::get_locale().unwrap_or_else(|| String::from("en-US"));
+    #[cfg(feature = "typst-math")]
+    super::font_policy::load_embedded_fonts(&mut database);
     font_registry::load_with_registered_precedence(&mut database, snapshot);
+    super::font_policy::configure_database(&mut database);
     FontSystem::new_with_locale_and_db(locale, database)
 }
 
@@ -263,7 +278,10 @@ fn font_system_with_registered_fonts(snapshot: &font_registry::RegistrySnapshot)
     let baseline = FontSystem::new();
     let locale = baseline.locale().to_string();
     let mut database = baseline.db().clone();
+    #[cfg(feature = "typst-math")]
+    super::font_policy::load_embedded_fonts(&mut database);
     font_registry::load_with_registered_precedence(&mut database, snapshot);
+    super::font_policy::configure_database(&mut database);
     FontSystem::new_with_locale_and_db(locale, database)
 }
 
@@ -314,6 +332,266 @@ fn lock_font_system() -> Result<MutexGuard<'static, FontSystem>> {
 
 fn lock_swash_cache() -> Result<MutexGuard<'static, SwashCache>> {
     lock_text_resource(get_swash_cache(), "SwashCache")
+}
+
+// Custom family aliases have static names because cosmic-text's Fallback API
+// requires static strings. Their faces share the original font bytes; neither
+// family names nor font data are leaked, and shaped runs remain intact.
+const FALLBACK_ALIASES: [&str; 32] = [
+    "RuvizFallback0",
+    "RuvizFallback1",
+    "RuvizFallback2",
+    "RuvizFallback3",
+    "RuvizFallback4",
+    "RuvizFallback5",
+    "RuvizFallback6",
+    "RuvizFallback7",
+    "RuvizFallback8",
+    "RuvizFallback9",
+    "RuvizFallback10",
+    "RuvizFallback11",
+    "RuvizFallback12",
+    "RuvizFallback13",
+    "RuvizFallback14",
+    "RuvizFallback15",
+    "RuvizFallback16",
+    "RuvizFallback17",
+    "RuvizFallback18",
+    "RuvizFallback19",
+    "RuvizFallback20",
+    "RuvizFallback21",
+    "RuvizFallback22",
+    "RuvizFallback23",
+    "RuvizFallback24",
+    "RuvizFallback25",
+    "RuvizFallback26",
+    "RuvizFallback27",
+    "RuvizFallback28",
+    "RuvizFallback29",
+    "RuvizFallback30",
+    "RuvizFallback31",
+];
+
+const LANGUAGE_ALIASES: [&str; 8] = [
+    "RuvizLanguage0",
+    "RuvizLanguage1",
+    "RuvizLanguage2",
+    "RuvizLanguage3",
+    "RuvizLanguage4",
+    "RuvizLanguage5",
+    "RuvizLanguage6",
+    "RuvizLanguage7",
+];
+
+struct OrderedFallback {
+    preferred: Vec<&'static str>,
+    common: Vec<&'static str>,
+    scripts: [OnceLock<Vec<&'static str>>; 256],
+}
+
+impl cosmic_text::Fallback for OrderedFallback {
+    fn common_fallback(&self) -> &[&'static str] {
+        &self.common
+    }
+    fn forbidden_fallback(&self) -> &[&'static str] {
+        cosmic_text::PlatformFallback.forbidden_fallback()
+    }
+    fn script_fallback(&self, script: unicode_script::Script, locale: &str) -> &[&'static str] {
+        self.scripts[script as usize].get_or_init(|| {
+            self.preferred
+                .iter()
+                .copied()
+                .chain(
+                    cosmic_text::PlatformFallback
+                        .script_fallback(script, locale)
+                        .iter()
+                        .copied(),
+                )
+                .collect()
+        })
+    }
+}
+
+struct ConfiguredContext {
+    options: TextOptions,
+    system: FontSystem,
+    swash: SwashCache,
+    checked_glyph_count: usize,
+}
+
+#[derive(Default)]
+struct ContextPool {
+    generation: u64,
+    entries: Vec<ConfiguredContext>,
+}
+
+impl ContextPool {
+    fn context_index(
+        &mut self,
+        base: &FontSystem,
+        options: &TextOptions,
+        generation: u64,
+    ) -> usize {
+        if self.generation != generation {
+            self.entries.clear();
+            self.generation = generation;
+        }
+        if let Some(index) = self
+            .entries
+            .iter()
+            .position(|entry| entry.options.same_font_context(options))
+        {
+            index
+        } else {
+            let entry = ConfiguredContext::new(base, options);
+            if self.entries.len() == MAX_FONT_CONTEXTS {
+                self.entries.remove(0);
+            }
+            self.entries.push(entry);
+            self.entries.len() - 1
+        }
+    }
+}
+
+static TEXT_CONTEXTS: OnceLock<Mutex<ContextPool>> = OnceLock::new();
+const MAX_FONT_CONTEXTS: usize = 8;
+
+enum TextContext {
+    Default {
+        system: MutexGuard<'static, FontSystem>,
+        swash: MutexGuard<'static, SwashCache>,
+    },
+    Configured {
+        // Match registration's lock order: base system, then derived resources.
+        _base: MutexGuard<'static, FontSystem>,
+        pool: MutexGuard<'static, ContextPool>,
+        index: usize,
+    },
+}
+
+impl TextContext {
+    fn lock(options: &TextOptions) -> Result<Self> {
+        options.validate()?;
+        let system = lock_font_system()?;
+        if !options.needs_font_context() {
+            return Ok(Self::Default {
+                system,
+                swash: lock_swash_cache()?,
+            });
+        }
+        let generation = font_registry::generation()?;
+        let mut pool = lock_text_resource(
+            TEXT_CONTEXTS.get_or_init(|| Mutex::new(ContextPool::default())),
+            "configured font contexts",
+        )?;
+        let index = pool.context_index(&system, options, generation);
+        Ok(Self::Configured {
+            _base: system,
+            pool,
+            index,
+        })
+    }
+
+    fn resources(&mut self) -> (&mut FontSystem, &mut SwashCache) {
+        match self {
+            Self::Default { system, swash } => (system, swash),
+            Self::Configured { pool, index, .. } => {
+                let entry = &mut pool.entries[*index];
+                (&mut entry.system, &mut entry.swash)
+            }
+        }
+    }
+}
+
+impl Drop for TextContext {
+    fn drop(&mut self) {
+        if let Self::Configured { pool, index, .. } = self {
+            pool.entries[*index].trim_glyph_cache();
+        }
+    }
+}
+
+impl ConfiguredContext {
+    fn trim_glyph_cache(&mut self) {
+        let count = self.swash.image_cache.len();
+        if count != self.checked_glyph_count {
+            let bytes: usize = self
+                .swash
+                .image_cache
+                .values()
+                .flatten()
+                .map(|image| image.data.len())
+                .sum();
+            if count > 2048 || bytes > 8 * 1024 * 1024 {
+                self.swash = SwashCache::new();
+                self.checked_glyph_count = 0;
+            } else {
+                self.checked_glyph_count = count;
+            }
+        }
+    }
+
+    fn new(base: &FontSystem, options: &TextOptions) -> Self {
+        use cosmic_text::Fallback;
+        let mut database = base.db().clone();
+        let mut preferred = Vec::new();
+        let explicit = options
+            .fallback_families()
+            .iter()
+            .map(String::as_str)
+            .zip(FALLBACK_ALIASES);
+        let regional = options
+            .language_fallbacks()
+            .iter()
+            .copied()
+            .zip(LANGUAGE_ALIASES);
+        for (family, alias) in explicit.chain(regional) {
+            let faces: Vec<_> = base
+                .db()
+                .faces()
+                .filter(|face| {
+                    face.families
+                        .iter()
+                        .any(|(name, _)| name.eq_ignore_ascii_case(family))
+                })
+                .cloned()
+                .collect();
+            // Do not make the shaping loop repeatedly search for families that
+            // are absent. Registration rebuilds this list when they become available.
+            if faces.is_empty() {
+                continue;
+            }
+            for mut face in faces {
+                for (name, _) in &mut face.families {
+                    *name = alias.to_string();
+                }
+                database.push_face_info(face);
+            }
+            preferred.push(alias);
+        }
+        let common = preferred
+            .iter()
+            .copied()
+            .chain(
+                cosmic_text::PlatformFallback
+                    .common_fallback()
+                    .iter()
+                    .copied(),
+            )
+            .collect();
+        let fallback = OrderedFallback {
+            preferred,
+            common,
+            scripts: std::array::from_fn(|_| OnceLock::new()),
+        };
+        let locale = options.text_language().unwrap_or(base.locale()).to_string();
+        Self {
+            options: options.clone(),
+            system: FontSystem::new_with_locale_and_db_and_fallback(locale, database, fallback),
+            swash: SwashCache::new(),
+            checked_glyph_count: 0,
+        }
+    }
 }
 
 /// Initialize the text rendering system
@@ -521,6 +799,8 @@ impl FontStyle {
 /// Complete font configuration for text rendering
 #[derive(Debug, Clone)]
 pub struct FontConfig {
+    /// Ordered fallback, language, direction, and equation settings.
+    pub text_options: TextOptions,
     /// Font family (e.g., SansSerif, Serif, or specific name)
     pub family: FontFamily,
     /// Font size in pixels
@@ -535,11 +815,18 @@ impl FontConfig {
     /// Create a new font configuration with family and size
     pub fn new(family: FontFamily, size: f32) -> Self {
         Self {
+            text_options: TextOptions::default(),
             family,
             size,
             weight: FontWeight::Normal,
             style: FontStyle::Normal,
         }
+    }
+
+    /// Set international typography options.
+    pub fn text_options(mut self, options: TextOptions) -> Self {
+        self.text_options = options;
+        self
     }
 
     /// Set the font weight
@@ -584,6 +871,7 @@ impl FontConfig {
 impl Default for FontConfig {
     fn default() -> Self {
         Self {
+            text_options: TextOptions::default(),
             family: FontFamily::default(),
             size: 12.0,
             weight: FontWeight::default(),
@@ -672,30 +960,59 @@ impl TextRenderer {
             return Ok(());
         }
 
-        let mut font_system = lock_font_system()?;
+        let mut context = TextContext::lock(&config.text_options)?;
+        let (font_system, swash_cache) = context.resources();
+        let directed = config.text_options.directed_text(text);
+        let text = directed.as_ref();
         if font_system.db().is_empty() {
+            if config.text_options.requires_all_glyphs() {
+                return Err(PlottingError::RenderError(
+                    "No fonts available; install or register a font before rendering text".into(),
+                ));
+            }
             log::debug!("Skipping text render because no fonts are registered");
             return Ok(());
         }
-        let mut swash_cache = lock_swash_cache()?;
 
         // Create metrics for the buffer
         let metrics = Metrics::new(config.size, config.size * 1.2);
 
         // Create buffer for text layout
-        let mut buffer = Buffer::new(&mut font_system, metrics);
+        let mut buffer = Buffer::new(font_system, metrics);
 
         // Calculate buffer dimensions
         let buffer_width = (text.len() as f32 * config.size * 2.0).max(800.0);
         let buffer_height = text_buffer_height(text, config.size, 100.0);
-        buffer.set_size(&mut font_system, Some(buffer_width), Some(buffer_height));
+        buffer.set_size(font_system, Some(buffer_width), Some(buffer_height));
 
         // Set text with font attributes
-        let attrs = config.to_cosmic_attrs();
-        buffer.set_text(&mut font_system, text, &attrs, Shaping::Advanced, None);
+        let resolved_family = if matches!(config.family, FontFamily::Name(_))
+            || config.text_options.needs_font_context()
+        {
+            Some(super::font_policy::resolve(
+                font_system.db(),
+                &config.family,
+                &config.text_options,
+            ))
+        } else {
+            None
+        };
+        let attrs = if let Some(family) = resolved_family.as_deref() {
+            config.to_cosmic_attrs().family(Family::Name(family))
+        } else {
+            config.to_cosmic_attrs()
+        };
+        buffer.set_text(
+            font_system,
+            text,
+            &attrs,
+            Shaping::Advanced,
+            Some(cosmic_text::Align::Left),
+        );
 
         // Shape the text
-        buffer.shape_until_scroll(&mut font_system, false);
+        buffer.shape_until_scroll(font_system, false);
+        validate_glyph_coverage(&buffer, &config.text_options)?;
 
         let width = pixmap.width();
         let height = pixmap.height();
@@ -709,8 +1026,8 @@ impl TextRenderer {
                 let physical_glyph = glyph.physical((x, y + line_y), 1.0);
 
                 with_premultiplied_glyph_pixels(
-                    &mut swash_cache,
-                    &mut font_system,
+                    swash_cache,
+                    font_system,
                     physical_glyph.cache_key,
                     color,
                     |glyph_x, glyph_y, source| {
@@ -831,26 +1148,55 @@ impl TextRenderer {
             return Ok(());
         }
 
-        let mut font_system = lock_font_system()?;
+        let mut context = TextContext::lock(&config.text_options)?;
+        let (font_system, swash_cache) = context.resources();
+        let directed = config.text_options.directed_text(text);
+        let text = directed.as_ref();
         if font_system.db().is_empty() {
+            if config.text_options.requires_all_glyphs() {
+                return Err(PlottingError::RenderError(
+                    "No fonts available; install or register a font before rendering text".into(),
+                ));
+            }
             log::debug!("Skipping rotated text render because no fonts are registered");
             return Ok(());
         }
-        let mut swash_cache = lock_swash_cache()?;
 
         let metrics = Metrics::new(config.size, config.size * 1.2);
-        let mut buffer = Buffer::new(&mut font_system, metrics);
+        let mut buffer = Buffer::new(font_system, metrics);
 
         // Use a generous shaping buffer. Tight placement bounds are computed from
         // rasterized glyph pixels rather than heuristic constants.
         let buffer_width = (text.len() as f32 * config.size * 3.0).max(800.0);
         let buffer_height = text_buffer_height(text, config.size, 180.0);
 
-        buffer.set_size(&mut font_system, Some(buffer_width), Some(buffer_height));
+        buffer.set_size(font_system, Some(buffer_width), Some(buffer_height));
 
-        let attrs = config.to_cosmic_attrs();
-        buffer.set_text(&mut font_system, text, &attrs, Shaping::Advanced, None);
-        buffer.shape_until_scroll(&mut font_system, false);
+        let resolved_family = if matches!(config.family, FontFamily::Name(_))
+            || config.text_options.needs_font_context()
+        {
+            Some(super::font_policy::resolve(
+                font_system.db(),
+                &config.family,
+                &config.text_options,
+            ))
+        } else {
+            None
+        };
+        let attrs = if let Some(family) = resolved_family.as_deref() {
+            config.to_cosmic_attrs().family(Family::Name(family))
+        } else {
+            config.to_cosmic_attrs()
+        };
+        buffer.set_text(
+            font_system,
+            text,
+            &attrs,
+            Shaping::Advanced,
+            Some(cosmic_text::Align::Left),
+        );
+        buffer.shape_until_scroll(font_system, false);
+        validate_glyph_coverage(&buffer, &config.text_options)?;
 
         // Compute tight bounds from rasterized glyph pixels.
         let mut min_x = i32::MAX;
@@ -862,8 +1208,8 @@ impl TextRenderer {
             for glyph in run.glyphs.iter() {
                 let physical_glyph = glyph.physical((0., line_y), 1.0);
                 with_premultiplied_glyph_pixels(
-                    &mut swash_cache,
-                    &mut font_system,
+                    swash_cache,
+                    font_system,
                     physical_glyph.cache_key,
                     color,
                     |dx, dy, _source| {
@@ -899,8 +1245,8 @@ impl TextRenderer {
                 let physical_glyph = glyph.physical((0., line_y), 1.0);
 
                 with_premultiplied_glyph_pixels(
-                    &mut swash_cache,
-                    &mut font_system,
+                    swash_cache,
+                    font_system,
                     physical_glyph.cache_key,
                     color,
                     |dx, dy, source| {
@@ -997,22 +1343,52 @@ impl TextRenderer {
             return Ok(TextPlacementMetrics::new(0.0, config.size, config.size));
         }
 
-        let mut font_system = lock_font_system()?;
+        let mut context = TextContext::lock(&config.text_options)?;
+        let (font_system, _swash_cache) = context.resources();
+        let directed = config.text_options.directed_text(text);
+        let text = directed.as_ref();
         if font_system.db().is_empty() {
+            if config.text_options.requires_all_glyphs() {
+                return Err(PlottingError::RenderError(
+                    "No fonts available; install or register a font before rendering text".into(),
+                ));
+            }
             log::debug!("Estimating text metrics because no fonts are registered");
             return Ok(estimate_text_metrics(text, config));
         }
 
         let metrics = Metrics::new(config.size, config.size * 1.2);
-        let mut buffer = Buffer::new(&mut font_system, metrics);
+        let mut buffer = Buffer::new(font_system, metrics);
 
         let buffer_width = (text.len() as f32 * config.size * 2.0).max(800.0);
         let buffer_height = text_buffer_height(text, config.size, 100.0);
-        buffer.set_size(&mut font_system, Some(buffer_width), Some(buffer_height));
+        buffer.set_size(font_system, Some(buffer_width), Some(buffer_height));
 
-        let attrs = config.to_cosmic_attrs();
-        buffer.set_text(&mut font_system, text, &attrs, Shaping::Advanced, None);
-        buffer.shape_until_scroll(&mut font_system, false);
+        let resolved_family = if matches!(config.family, FontFamily::Name(_))
+            || config.text_options.needs_font_context()
+        {
+            Some(super::font_policy::resolve(
+                font_system.db(),
+                &config.family,
+                &config.text_options,
+            ))
+        } else {
+            None
+        };
+        let attrs = if let Some(family) = resolved_family.as_deref() {
+            config.to_cosmic_attrs().family(Family::Name(family))
+        } else {
+            config.to_cosmic_attrs()
+        };
+        buffer.set_text(
+            font_system,
+            text,
+            &attrs,
+            Shaping::Advanced,
+            Some(cosmic_text::Align::Left),
+        );
+        buffer.shape_until_scroll(font_system, false);
+        validate_glyph_coverage(&buffer, &config.text_options)?;
 
         let mut width: f32 = 0.0;
         let mut height: f32 = 0.0;
@@ -1046,8 +1422,16 @@ impl TextRenderer {
             });
         }
 
-        let mut font_system = lock_font_system()?;
+        let mut context = TextContext::lock(&config.text_options)?;
+        let (font_system, swash_cache) = context.resources();
+        let directed = config.text_options.directed_text(text);
+        let text = directed.as_ref();
         if font_system.db().is_empty() {
+            if config.text_options.requires_all_glyphs() {
+                return Err(PlottingError::RenderError(
+                    "No fonts available; install or register a font before rendering text".into(),
+                ));
+            }
             log::debug!("Estimating text ink metrics because no fonts are registered");
             let estimated = estimate_text_metrics(text, config);
             return Ok(InkBoxMetrics {
@@ -1059,17 +1443,38 @@ impl TextRenderer {
             });
         }
 
-        let mut swash_cache = lock_swash_cache()?;
         let metrics = Metrics::new(config.size, config.size * 1.2);
-        let mut buffer = Buffer::new(&mut font_system, metrics);
+        let mut buffer = Buffer::new(font_system, metrics);
 
         let buffer_width = (text.len() as f32 * config.size * 2.0).max(800.0);
         let buffer_height = text_buffer_height(text, config.size, 100.0);
-        buffer.set_size(&mut font_system, Some(buffer_width), Some(buffer_height));
+        buffer.set_size(font_system, Some(buffer_width), Some(buffer_height));
 
-        let attrs = config.to_cosmic_attrs();
-        buffer.set_text(&mut font_system, text, &attrs, Shaping::Advanced, None);
-        buffer.shape_until_scroll(&mut font_system, false);
+        let resolved_family = if matches!(config.family, FontFamily::Name(_))
+            || config.text_options.needs_font_context()
+        {
+            Some(super::font_policy::resolve(
+                font_system.db(),
+                &config.family,
+                &config.text_options,
+            ))
+        } else {
+            None
+        };
+        let attrs = if let Some(family) = resolved_family.as_deref() {
+            config.to_cosmic_attrs().family(Family::Name(family))
+        } else {
+            config.to_cosmic_attrs()
+        };
+        buffer.set_text(
+            font_system,
+            text,
+            &attrs,
+            Shaping::Advanced,
+            Some(cosmic_text::Align::Left),
+        );
+        buffer.shape_until_scroll(font_system, false);
+        validate_glyph_coverage(&buffer, &config.text_options)?;
 
         let cosmic_color = CosmicColor::rgba(0, 0, 0, 255);
         let mut min_x = i32::MAX;
@@ -1085,7 +1490,7 @@ impl TextRenderer {
             for glyph in run.glyphs.iter() {
                 let physical_glyph = glyph.physical((0.0, line_y), 1.0);
                 swash_cache.with_pixels(
-                    &mut font_system,
+                    font_system,
                     physical_glyph.cache_key,
                     cosmic_color,
                     |dx, dy, glyph_color| {
@@ -1105,6 +1510,7 @@ impl TextRenderer {
         }
 
         if min_x == i32::MAX || min_y == i32::MAX {
+            drop(context);
             let placement = self.measure_text_placement(text, config)?;
             return Ok(InkBoxMetrics {
                 width: placement.width,
@@ -1178,6 +1584,182 @@ impl Default for TextRenderer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn font_contexts_are_bounded_reused_and_invalidated_by_registration_generation() {
+        let base = FontSystem::new_with_locale_and_db(
+            "en-US".into(),
+            cosmic_text::fontdb::Database::new(),
+        );
+        let mut pool = ContextPool::default();
+        for index in 0..MAX_FONT_CONTEXTS + 3 {
+            pool.context_index(
+                &base,
+                &TextOptions::new().font_fallbacks([format!("Family {index}")]),
+                7,
+            );
+            assert!(pool.entries.len() <= MAX_FONT_CONTEXTS);
+        }
+        let options = TextOptions::new().language("ja");
+        let original = pool.context_index(&base, &options, 7);
+        let restyled = options
+            .clone()
+            .math_font("Another math font")
+            .direction(crate::render::TextDirection::RightToLeft);
+        assert_eq!(pool.context_index(&base, &restyled, 7), original);
+        let mut updated_db = cosmic_text::fontdb::Database::new();
+        updated_db.load_font_data(include_bytes!("../dejavu-sans.ttf").to_vec());
+        let updated = FontSystem::new_with_locale_and_db("en-US".into(), updated_db);
+        let index = pool.context_index(&updated, &options, 8);
+        assert_eq!(pool.entries.len(), 1);
+        assert!(!pool.entries[index].system.db().is_empty());
+        assert_eq!(pool.generation, 8);
+    }
+
+    #[test]
+    fn configured_glyph_cache_limits_cover_entry_count_and_pixel_bytes() {
+        let base = FontSystem::new_with_locale_and_db(
+            "en-US".into(),
+            cosmic_text::fontdb::Database::new(),
+        );
+        let mut context = ConfiguredContext::new(&base, &TextOptions::new());
+        let key = |glyph| {
+            CacheKey::new(
+                cosmic_text::fontdb::ID::dummy(),
+                glyph,
+                12.0,
+                (0.0, 0.0),
+                cosmic_text::fontdb::Weight::NORMAL,
+                cosmic_text::CacheKeyFlags::empty(),
+            )
+            .0
+        };
+        for glyph in 0..2049 {
+            context.swash.image_cache.insert(key(glyph), None);
+        }
+        context.trim_glyph_cache();
+        assert!(context.swash.image_cache.is_empty());
+        let image = swash::scale::image::Image {
+            data: vec![0; 8 * 1024 * 1024 + 1],
+            ..Default::default()
+        };
+        context.swash.image_cache.insert(key(0), Some(image));
+        context.trim_glyph_cache();
+        assert!(context.swash.image_cache.is_empty());
+        assert_eq!(context.checked_glyph_count, 0);
+    }
+
+    #[test]
+    fn configured_fallback_order_is_used_without_splitting_shaped_runs() {
+        let Some(first_bytes) = font_registry::renamed_test_font(b"OrdA") else {
+            return;
+        };
+        let Some(second_bytes) = font_registry::renamed_test_font(b"OrdB") else {
+            return;
+        };
+        let first = font_registry::validate(first_bytes).unwrap();
+        let second = font_registry::validate(second_bytes).unwrap();
+        let first_family = first.faces[0].family.clone();
+        let second_family = second.faces[0].family.clone();
+        let mut db = cosmic_text::fontdb::Database::new();
+        db.load_font_source(first.fontdb_source());
+        db.load_font_source(second.fontdb_source());
+        let base = FontSystem::new_with_locale_and_db("en-US".into(), db);
+        for families in [
+            [first_family.clone(), second_family.clone()],
+            [second_family, first_family],
+        ] {
+            let options = TextOptions::new().font_fallbacks(families.clone());
+            let mut context = ConfiguredContext::new(&base, &options);
+            let mut buffer = Buffer::new(&mut context.system, Metrics::new(20.0, 24.0));
+            buffer.set_text(
+                &mut context.system,
+                "Ångström λ",
+                &Attrs::new().family(Family::Name("Unavailable primary")),
+                Shaping::Advanced,
+                Some(cosmic_text::Align::Left),
+            );
+            buffer.shape_until_scroll(&mut context.system, false);
+            let glyph = buffer.layout_runs().next().unwrap().glyphs[0].clone();
+            let face = context.system.db().face(glyph.font_id).unwrap();
+            assert_eq!(face.families[0].0, FALLBACK_ALIASES[0]);
+            let original = base
+                .db()
+                .faces()
+                .find(|face| face.families[0].0 == families[0])
+                .unwrap();
+            assert_eq!(face.post_script_name, original.post_script_name);
+            assert!(
+                buffer
+                    .layout_runs()
+                    .flat_map(|run| run.glyphs)
+                    .all(|glyph| glyph.glyph_id != 0)
+            );
+        }
+    }
+
+    #[test]
+    fn arabic_shaping_retains_joining_and_renders_inside_measured_width() {
+        let mut bytes = include_bytes!("../dejavu-sans.ttf").to_vec();
+        for (from, to) in [
+            (b"DejaVu".to_vec(), b"ArTest".to_vec()),
+            (
+                "DejaVu".encode_utf16().flat_map(u16::to_be_bytes).collect(),
+                "ArTest".encode_utf16().flat_map(u16::to_be_bytes).collect(),
+            ),
+        ] {
+            for offset in 0..=bytes.len() - from.len() {
+                if bytes[offset..offset + from.len()] == from {
+                    bytes[offset..offset + from.len()].copy_from_slice(&to);
+                }
+            }
+        }
+        register_font_bytes(bytes).unwrap();
+        let options = TextOptions::new()
+            .language("ar")
+            .font_fallbacks(["ArTest Sans"])
+            .require_all_glyphs(true);
+        let config = FontConfig::new(FontFamily::from("ArTest Sans"), 32.0).text_options(options);
+        let renderer = TextRenderer::new();
+        let (width, height) = renderer.measure_text("سلام 123", &config).unwrap();
+        let mut pixels = Pixmap::new(width.ceil() as u32 + 8, height.ceil() as u32 + 8).unwrap();
+        renderer
+            .render_text(&mut pixels, "سلام 123", 4.0, 4.0, &config, Color::BLACK)
+            .unwrap();
+        let bounds = nontransparent_bounds(&pixels).expect("visible Arabic ink");
+        assert!(
+            bounds.0 < width as u32 / 2,
+            "RTL must not align to the oversized shaping buffer"
+        );
+        let mut context = TextContext::lock(&config.text_options).unwrap();
+        let (system, _) = context.resources();
+        let mut buffer = Buffer::new(system, Metrics::new(32.0, 38.4));
+        buffer.set_text(
+            system,
+            "سلام",
+            &config.to_cosmic_attrs(),
+            Shaping::Advanced,
+            Some(cosmic_text::Align::Left),
+        );
+        buffer.shape_until_scroll(system, false);
+        let glyphs = buffer.layout_runs().next().unwrap().glyphs;
+        assert_eq!(
+            glyphs.len(),
+            3,
+            "Arabic lam-alef ligature must survive shaping"
+        );
+        assert!(glyphs.iter().all(|glyph| glyph.glyph_id != 0));
+    }
+
+    #[test]
+    fn strict_coverage_reports_the_missing_unicode_character() {
+        let config =
+            FontConfig::default().text_options(TextOptions::new().require_all_glyphs(true));
+        let error = TextRenderer::new()
+            .measure_text("Missing \u{10ffff}", &config)
+            .unwrap_err();
+        assert!(error.to_string().contains("U+10FFFF"), "{error}");
+    }
 
     #[test]
     fn test_font_family_from_str() {

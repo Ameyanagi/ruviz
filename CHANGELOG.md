@@ -2,6 +2,39 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.14.0] - 2026-09-09
+
+### Added
+
+- `TextOptions` configures ordered font fallbacks, language, paragraph direction,
+  an OpenType math font, and optional missing-glyph errors. Plot and series
+  builders share the settings, with inheritable annotation overrides.
+- `TypographyConfig::publication()` selects the Arial/Helvetica/Liberation/Noto
+  stack and enables missing-glyph errors. Regional CJK fallbacks and Arabic/Hebrew
+  direction are selected from language settings.
+- A multilingual plain/Typst comparison example, typography guide, and warmed
+  text-rendering benchmarks cover the new controls.
+
+### Changed
+
+- Plain and Typst text use the same generic font preferences and preserve font
+  settings across mode switches. SVG records concrete family choices, fallback
+  stacks, language, and direction. PDF uses the raster renderer's font database.
+- Configured font systems share source data and retain at most eight contexts;
+  glyph caches are bounded by count and bytes. Typst cache keys include all text
+  settings, and late font registration refreshes affected contexts.
+- `FontConfig` and `TypographyConfig` add `text_options`; `TextStyle` adds optional
+  `text_options`. Complete struct literals must initialize the new field.
+
+### Fixed
+
+- Å accents and tall math no longer protrude outside zero-margin Typst label
+  pages, including rotated labels.
+- RTL labels render within their measured extent instead of at the right edge
+  of an oversized internal shaping buffer. Joined Arabic letters are preserved.
+- Missing-glyph validation recognizes macOS LastResort replacement glyphs as
+  unavailable characters.
+
 ## [0.13.1] - 2026-09-06
 
 ### Fixed

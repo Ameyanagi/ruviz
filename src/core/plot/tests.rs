@@ -6300,7 +6300,7 @@ fn test_render_to_svg_propagates_named_font_family() {
         .render_to_svg()
         .expect("SVG render should succeed");
 
-    assert!(svg.contains(r#"font-family="&quot;serif&quot;""#));
+    assert!(svg.contains(r#"font-family="&quot;serif&quot;"#));
 }
 
 fn plot_with_weighted_title(weight: crate::render::FontWeight) -> Plot {
@@ -6675,7 +6675,7 @@ fn plain_svg_multiline_title_uses_weighted_measurement_and_reserves_each_line() 
         .lines()
         .find(|line| line.contains("wide title"))
         .expect("multiline plain-SVG title");
-    assert!(title.contains(r#"font-family="monospace""#));
+    assert!(title.contains(r#", monospace""#) || title.contains(r#"font-family="monospace""#));
     assert!(title.contains(r#"font-weight="700""#));
     assert!(title.contains(r#"text-anchor="middle""#));
     assert_eq!(title.matches("<tspan ").count(), 2);
@@ -6714,6 +6714,7 @@ fn test_svg_text_annotation_uses_resolved_typography_and_full_text_style() {
         })
         .build();
     let style = crate::core::TextStyle {
+        text_options: None,
         font_size: 10.0,
         color: Color::from_rgba(20, 30, 40, 200),
         align: crate::core::TextAlign::Right,
@@ -6735,7 +6736,7 @@ fn test_svg_text_annotation_uses_resolved_typography_and_full_text_style() {
 
     assert!(svg.contains(r#"data-ruviz-text-style="annotation""#));
     assert!(svg.contains("rotate(-25.00)"));
-    assert!(svg.contains(r#"font-family="&quot;Annotation Font&quot;""#));
+    assert!(svg.contains(r#"font-family="&quot;Annotation Font&quot;"#));
     let annotation_line = svg
         .lines()
         .find(|line| line.contains(">Styled annotation</text>"))
@@ -7760,5 +7761,27 @@ fn test_violin_sits_inside_its_frame_with_room_at_top_and_bottom() {
         (right - left) as f32 <= width * 0.55,
         "violin body spans {} of a {width}px frame",
         right - left
+    );
+}
+
+#[cfg(feature = "typst-math")]
+#[test]
+fn text_options_survive_engine_switch_and_series_builder_forwarding() {
+    let options = crate::render::TextOptions::new()
+        .font_fallbacks(["Noto Sans CJK JP"])
+        .language("ja")
+        .math_font("New Computer Modern Math")
+        .require_all_glyphs(true);
+    let plot: Plot = Plot::new()
+        .line(&[0.0, 1.0], &[0.0, 1.0])
+        .text_options(options.clone())
+        .font_family("Arial")
+        .typst(true)
+        .typst(false)
+        .into();
+    assert_eq!(plot.get_config().typography.text_options, options);
+    assert_eq!(
+        plot.get_config().typography.family,
+        crate::render::FontFamily::from("Arial")
     );
 }

@@ -133,6 +133,7 @@ impl PlotStyle {
                     legend_scale: 0.9,
                     family: FontFamily::SansSerif,
                     title_weight: FontWeight::Normal,
+                    text_options: crate::render::TextOptions::default(),
                 },
                 lines: LineConfig {
                     data_width: 1.0,
@@ -166,6 +167,7 @@ impl PlotStyle {
                     legend_scale: 0.875,
                     family: FontFamily::Serif,
                     title_weight: FontWeight::Normal,
+                    text_options: crate::render::TextOptions::default(),
                 },
                 lines: LineConfig {
                     data_width: 1.0,
@@ -199,6 +201,7 @@ impl PlotStyle {
                     legend_scale: 0.75,
                     family: FontFamily::Serif,
                     title_weight: FontWeight::Normal,
+                    text_options: crate::render::TextOptions::default(),
                 },
                 lines: LineConfig {
                     data_width: 0.75,
@@ -235,6 +238,7 @@ impl PlotStyle {
                     legend_scale: 0.85,
                     family: FontFamily::SansSerif,
                     title_weight: FontWeight::Normal,
+                    text_options: crate::render::TextOptions::default(),
                 },
                 lines: LineConfig {
                     data_width: 0.75,
@@ -268,6 +272,7 @@ impl PlotStyle {
                     legend_scale: 0.85,
                     family: FontFamily::SansSerif,
                     title_weight: FontWeight::Bold,
+                    text_options: crate::render::TextOptions::default(),
                 },
                 lines: LineConfig {
                     data_width: 2.5,
@@ -308,6 +313,7 @@ impl PlotStyle {
                     legend_scale: 0.9,
                     family: FontFamily::SansSerif,
                     title_weight: FontWeight::Bold,
+                    text_options: crate::render::TextOptions::default(),
                 },
                 lines: LineConfig {
                     data_width: 2.0,
@@ -341,6 +347,7 @@ impl PlotStyle {
                     legend_scale: 0.9,
                     family: FontFamily::SansSerif,
                     title_weight: FontWeight::Normal,
+                    text_options: crate::render::TextOptions::default(),
                 },
                 lines: LineConfig {
                     data_width: 1.5,
@@ -369,6 +376,7 @@ impl PlotStyle {
                     legend_scale: 0.8,
                     family: FontFamily::SansSerif,
                     title_weight: FontWeight::Bold,
+                    text_options: crate::render::TextOptions::default(),
                 },
                 lines: LineConfig {
                     data_width: 3.0,

@@ -602,6 +602,7 @@ impl Theme {
             legend_scale: scale(self.legend_font_size, defaults.legend_scale),
             family,
             title_weight: super::FontWeight::Normal,
+            text_options: crate::render::TextOptions::default(),
         }
     }
 

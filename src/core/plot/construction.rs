@@ -1021,6 +1021,48 @@ impl Plot {
         self
     }
 
+    /// Set international typography options.
+    pub fn text_options(mut self, value: crate::render::TextOptions) -> Self {
+        self.display.config.typography.text_options = value;
+        self
+    }
+
+    /// Set the text language (for example `ja` or `zh-TW`).
+    pub fn language(mut self, value: impl Into<String>) -> Self {
+        self.display.config.typography.text_options =
+            self.display.config.typography.text_options.language(value);
+        self
+    }
+
+    /// Set the paragraph direction.
+    pub fn text_direction(mut self, value: crate::render::TextDirection) -> Self {
+        self.display.config.typography.text_options =
+            self.display.config.typography.text_options.direction(value);
+        self
+    }
+
+    /// Set an installed or registered OpenType math font.
+    pub fn math_font(mut self, value: impl Into<String>) -> Self {
+        self.display.config.typography.text_options =
+            self.display.config.typography.text_options.math_font(value);
+        self
+    }
+
+    /// Set ordered fallback families after the primary font.
+    pub fn font_fallbacks<I, S>(mut self, families: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.display.config.typography.text_options = self
+            .display
+            .config
+            .typography
+            .text_options
+            .font_fallbacks(families);
+        self
+    }
+
     /// Set the font family used for plot text.
     ///
     /// This applies to titles, axis labels, tick labels, legends, and text

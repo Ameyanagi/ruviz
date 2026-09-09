@@ -4,18 +4,16 @@
 //! This provides publication-quality vector PDF output.
 
 use crate::core::{PlottingError, Result};
-#[cfg(feature = "pdf")]
-use crate::render::font_registry;
 use std::path::Path;
 
 #[cfg(feature = "pdf")]
 fn pdf_font_database() -> Result<svg2pdf::usvg::fontdb::Database> {
-    let mut database = svg2pdf::usvg::fontdb::Database::new();
-    #[cfg(not(target_arch = "wasm32"))]
-    database.load_system_fonts();
-    let registered_fonts = font_registry::snapshot()?;
-    font_registry::load_with_registered_precedence(&mut database, &registered_fonts);
-    Ok(database)
+    let system = crate::render::get_font_system().lock().map_err(|_| {
+        PlottingError::RenderError(
+            "Text rendering aborted because FontSystem lock is poisoned".into(),
+        )
+    })?;
+    Ok(system.db().clone())
 }
 
 /// Convert SVG string to PDF bytes

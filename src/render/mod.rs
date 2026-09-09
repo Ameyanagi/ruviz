@@ -5,6 +5,7 @@ pub mod color;
 pub mod colorbar;
 pub mod cosmic_text_renderer;
 pub(crate) mod font_cache;
+pub(crate) mod font_policy;
 pub(crate) mod font_registry;
 #[cfg(feature = "gpu")]
 pub mod gpu;
@@ -16,6 +17,7 @@ pub mod skia;
 pub mod style;
 pub mod text;
 pub(crate) mod text_anchor;
+mod text_options;
 pub mod theme;
 #[cfg(feature = "3d")]
 pub(crate) mod three_d;
@@ -37,6 +39,7 @@ pub use text::{
     TextRenderer, get_font_system, get_swash_cache, has_registered_fonts, initialize_text_system,
     register_font_bytes,
 };
+pub use text_options::{TextDirection, TextOptions};
 pub use theme::{Theme, ThemeBuilder, ThemeVariant};
 
 /// Viewport defining visible data bounds with optional margin

@@ -5361,7 +5361,7 @@ dependencies = [
 
 [[package]]
 name = "ruviz"
-version = "0.13.1"
+version = "0.14.0"
 dependencies = [
  "anyhow",
  "approx",
@@ -5410,7 +5410,9 @@ dependencies = [
  "typst-kit",
  "typst-render",
  "typst-svg",
+ "unicode-bidi",
  "unicode-linebreak",
+ "unicode-script",
  "unicode-segmentation",
  "unicode-width",
  "wgpu",
@@ -5421,7 +5423,7 @@ dependencies = [
 
 [[package]]
 name = "ruviz-py"
-version = "0.13.1"
+version = "0.14.0"
 dependencies = [
  "image",
  "numpy",
@@ -5432,7 +5434,7 @@ dependencies = [
 
 [[package]]
 name = "ruviz-web"
-version = "0.13.1"
+version = "0.14.0"
 dependencies = [
  "console_error_panic_hook",
  "js-sys",

@@ -73,6 +73,11 @@ fn lock_registry() -> Result<MutexGuard<'static, FontRegistry>> {
     })
 }
 
+/// Read the generation without cloning the registered font list.
+pub(crate) fn generation() -> Result<u64> {
+    Ok(lock_registry()?.generation)
+}
+
 pub(crate) fn validate(bytes: Vec<u8>) -> Result<RegisteredFont> {
     let bytes = SharedFontBytes(Arc::new(bytes));
     let face_count = ttf_parser::fonts_in_collection(bytes.as_slice()).unwrap_or(1);

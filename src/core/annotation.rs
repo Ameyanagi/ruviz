@@ -46,6 +46,8 @@ pub enum TextVAlign {
 /// Style configuration for text annotations
 #[derive(Debug, Clone)]
 pub struct TextStyle {
+    /// Per-annotation overrides, inheriting unspecified plot settings.
+    pub text_options: Option<crate::render::TextOptions>,
     /// Font size in points
     pub font_size: f32,
     /// Text color
@@ -69,6 +71,7 @@ pub struct TextStyle {
 impl Default for TextStyle {
     fn default() -> Self {
         Self {
+            text_options: None,
             font_size: 10.0,
             color: Color::BLACK,
             align: TextAlign::Center,
@@ -86,6 +89,12 @@ impl TextStyle {
     /// Create a new text style with default settings
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Override font fallback, language, direction, or math font for this label.
+    pub fn text_options(mut self, options: crate::render::TextOptions) -> Self {
+        self.text_options = Some(options);
+        self
     }
 
     /// Set the font size
@@ -737,6 +746,7 @@ mod tests {
     #[test]
     fn text_style_remains_constructible_with_the_public_fields() {
         let _style = TextStyle {
+            text_options: None,
             font_size: 11.0,
             color: Color::BLUE,
             align: TextAlign::Right,

@@ -41,7 +41,7 @@ module support:
 
 ```toml
 [dependencies]
-ruviz-slint = "0.13.1"
+ruviz-slint = "0.14.0"
 slint = { version = "~1.17", default-features = false, features = [
     "std", "compat-1-2", "backend-winit", "renderer-femtovg"
 ] }

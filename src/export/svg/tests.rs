@@ -124,7 +124,8 @@ fn test_plain_svg_generic_font_families_are_unquoted() {
 
         let svg = renderer.to_svg_string();
         assert!(
-            svg.contains(&format!(r#"font-family="{expected}""#)),
+            svg.contains(&format!(r#", {expected}""#))
+                || svg.contains(&format!(r#"font-family="{expected}""#)),
             "unexpected SVG font family: {svg}"
         );
     }
@@ -142,7 +143,7 @@ fn test_plain_svg_named_font_family_is_css_quoted() {
         .unwrap();
 
     let svg = renderer.to_svg_string();
-    assert!(svg.contains(r#"font-family="&quot;New Computer Modern Sans&quot;""#));
+    assert!(svg.contains(r#"font-family="&quot;New Computer Modern Sans&quot;"#));
 }
 
 #[test]
@@ -154,7 +155,7 @@ fn test_plain_svg_named_generic_keyword_remains_quoted() {
         .unwrap();
 
     let svg = renderer.to_svg_string();
-    assert!(svg.contains(r#"font-family="&quot;serif&quot;""#));
+    assert!(svg.contains(r#"font-family="&quot;serif&quot;"#));
 }
 
 #[test]
@@ -169,7 +170,7 @@ fn test_plain_svg_named_font_family_css_and_xml_escaping() {
         .unwrap();
 
     let svg = renderer.to_svg_string();
-    assert!(svg.contains(r#"font-family="&quot;Font, \&quot;A\&quot;\\B &amp; &lt;C&gt;&quot;""#));
+    assert!(svg.contains(r#"font-family="&quot;Font, \&quot;A\&quot;\\B &amp; &lt;C&gt;&quot;"#));
 }
 
 #[test]
@@ -193,10 +194,9 @@ fn test_plain_svg_named_font_family_escapes_control_characters() {
         .expect("missing SVG text element");
     let family = svg_attr_value(text_line, "font-family");
 
-    assert_eq!(
-        family,
+    assert!(family.starts_with(
         r#"&quot;Line\00000ABreak\00000DReturn\000009Tab\00000CForm�Null\000001Unit\00007FDelete\00FFFEEnd&quot;"#
-    );
+    ));
     assert!(
         family
             .chars()
@@ -699,6 +699,7 @@ fn styled_text_defaults_to_center_middle_and_scales_decoration() {
         let mut renderer = SvgRenderer::new(240.0, 160.0);
         renderer.set_render_scale(RenderScale::new(dpi));
         let style = TextStyle {
+            text_options: None,
             font_size: 12.0,
             color: Color::BLACK,
             align: TextAlign::Center,
@@ -746,6 +747,7 @@ fn styled_text_honors_alignment_counter_clockwise_rotation_and_font_family() {
     let mut renderer = SvgRenderer::new(240.0, 160.0);
     renderer.set_render_scale(RenderScale::new(144.0));
     let style = TextStyle {
+        text_options: None,
         font_size: 10.0,
         color: Color::from_rgba(10, 20, 30, 200),
         align: TextAlign::Right,
@@ -769,7 +771,7 @@ fn styled_text_honors_alignment_counter_clockwise_rotation_and_font_family() {
     let svg = renderer.to_svg_string();
     assert!(svg.contains(r#"transform="translate(100.00,70.00) rotate(-30.00)""#));
     assert!(svg.contains(r#"text-anchor="end""#));
-    assert!(svg.contains(r#"font-family="&quot;New Computer Modern Sans&quot;""#));
+    assert!(svg.contains(r#"font-family="&quot;New Computer Modern Sans&quot;"#));
     assert!(svg.contains(r#"font-weight="400""#));
     assert!(svg.contains(r#"fill="rgba(10,20,30,0.784)""#));
 
@@ -912,7 +914,7 @@ fn weighted_multiline_title_uses_matching_metrics_tspans_and_svg_whitespace() {
         .lines()
         .find(|line| line.contains("wide\tgap"))
         .expect("multiline title element");
-    assert!(title.contains(r#"font-family="monospace""#));
+    assert!(title.contains(r#", monospace""#) || title.contains(r#"font-family="monospace""#));
     assert!(title.contains(r#"font-weight="700""#));
     assert!(title.contains(r#"text-anchor="middle""#));
     assert!(title.contains(r#"xml:space="preserve""#));
@@ -990,4 +992,31 @@ fn test_typst_rotated_text_uses_typst_rotation_path() {
     let svg = renderer.to_svg_string();
     assert!(svg.contains("data-ruviz-text-engine=\"typst\""));
     assert!(!svg.contains("data-ruviz-text-engine=\"typst\" transform=\"rotate("));
+}
+
+#[test]
+fn international_svg_keeps_font_stack_language_and_geometric_rtl_anchor() {
+    let mut renderer = SvgRenderer::with_font_family(400.0, 200.0, FontFamily::from("Arial"));
+    renderer.set_text_options(
+        crate::render::TextOptions::new()
+            .font_fallbacks(["Fallback \"font\" <x>"])
+            .language("ja"),
+    );
+    renderer
+        .draw_text("Hello Å", 10.0, 10.0, 16.0, Color::BLACK)
+        .unwrap();
+    let style = TextStyle::new()
+        .align(TextAlign::Left)
+        .text_options(crate::render::TextOptions::new().language("ar"));
+    renderer
+        .draw_styled_text("123", 20.0, 40.0, &FontFamily::SansSerif, &style)
+        .unwrap();
+    let svg = renderer.content;
+    assert!(svg.contains("lang=\"ja\""));
+    assert!(svg.contains("Noto Sans CJK JP"));
+    assert!(svg.contains("lang=\"ar\""));
+    assert!(svg.contains("direction=\"rtl\""));
+    assert!(svg.contains("text-anchor=\"end\""));
+    assert!(svg.contains("&lt;x&gt;"));
+    assert!(!svg.contains("<x>"));
 }

@@ -42,6 +42,7 @@ pub struct SvgRenderer {
     text_renderer: TextRenderer,
     /// Font family for plain SVG text and Typst-rendered SVG text.
     font_family: FontFamily,
+    text_options: crate::render::TextOptions,
     /// First shape that reached an emitter with a non-finite dimension.
     ///
     /// Latched rather than returned because most emitters are infallible by
@@ -73,6 +74,7 @@ impl SvgRenderer {
             text_engine_mode: TextEngineMode::Plain,
             text_renderer: TextRenderer::new(),
             font_family,
+            text_options: crate::render::TextOptions::default(),
             invalid_geometry: None,
         }
     }
@@ -113,6 +115,11 @@ impl SvgRenderer {
     /// Get text rendering backend mode.
     pub fn text_engine_mode(&self) -> TextEngineMode {
         self.text_engine_mode
+    }
+
+    /// Set shared international typography options.
+    pub fn set_text_options(&mut self, options: crate::render::TextOptions) {
+        self.text_options = options;
     }
 
     /// Set the font family used by plain and Typst text rendering.
@@ -374,7 +381,8 @@ impl SvgRenderer {
     }
 
     fn plain_text_metrics(&self, text: &str, font_size: f32) -> Result<TextPlacementMetrics> {
-        let config = FontConfig::new(self.font_family.clone(), font_size);
+        let config = FontConfig::new(self.font_family.clone(), font_size)
+            .text_options(self.text_options.clone());
         self.plain_text_metrics_with_config(text, &config)
     }
 
@@ -405,20 +413,90 @@ impl SvgRenderer {
         escaped
     }
 
-    fn escaped_font_family(&self) -> String {
+    fn escaped_font_family(&self) -> Result<String> {
         self.escaped_font_family_for(&self.font_family)
     }
 
-    fn escaped_font_family_for(&self, family: &FontFamily) -> String {
-        let css_value = match family {
-            FontFamily::Serif
-            | FontFamily::SansSerif
-            | FontFamily::Monospace
-            | FontFamily::Cursive
-            | FontFamily::Fantasy => family.as_str().to_string(),
-            FontFamily::Name(name) => format!("\"{}\"", Self::escape_css_string(name)),
+    fn escaped_font_family_for(&self, family: &FontFamily) -> Result<String> {
+        self.escaped_font_family_with_options(family, &self.text_options)
+    }
+
+    fn escaped_font_family_with_options(
+        &self,
+        family: &FontFamily,
+        options: &crate::render::TextOptions,
+    ) -> Result<String> {
+        let system = crate::render::get_font_system().lock().map_err(|_| {
+            crate::core::PlottingError::RenderError(
+                "Text rendering aborted because FontSystem lock is poisoned".into(),
+            )
+        })?;
+        let resolved = crate::render::font_policy::resolve(system.db(), family, options);
+        let generic = match family {
+            FontFamily::Name(_) => None,
+            _ => Some(family.as_str()),
         };
-        self.escape_xml(&css_value)
+        let mut css_value = match family {
+            FontFamily::Name(name) => format!("\"{}\"", Self::escape_css_string(name)),
+            _ if resolved != family.as_str() => {
+                format!("\"{}\"", Self::escape_css_string(&resolved))
+            }
+            _ => String::new(),
+        };
+        for fallback in options
+            .fallback_families()
+            .iter()
+            .map(String::as_str)
+            .chain(options.language_fallbacks().iter().copied())
+        {
+            if !css_value.is_empty() {
+                css_value.push_str(", ");
+            }
+            let _ = write!(css_value, "\"{}\"", Self::escape_css_string(fallback));
+        }
+        if let FontFamily::Name(name) = family
+            && !resolved.eq_ignore_ascii_case(name)
+            && !options
+                .fallback_families()
+                .iter()
+                .any(|family| family.eq_ignore_ascii_case(&resolved))
+            && !options
+                .language_fallbacks()
+                .iter()
+                .any(|family| family.eq_ignore_ascii_case(&resolved))
+        {
+            let _ = write!(css_value, ", \"{}\"", Self::escape_css_string(&resolved));
+        }
+        // CSS generics must come last: a viewer's generic font otherwise
+        // preempts the requested CJK or other script-specific fallback.
+        if let Some(generic) = generic {
+            if !css_value.is_empty() {
+                css_value.push_str(", ");
+            }
+            css_value.push_str(generic);
+        }
+        Ok(self.escape_xml(&css_value))
+    }
+
+    fn text_attributes(&self, options: &crate::render::TextOptions) -> String {
+        let mut attrs = String::new();
+        if let Some(language) = options.text_language() {
+            let _ = write!(
+                attrs,
+                " lang=\"{}\" xml:lang=\"{}\"",
+                self.escape_xml(language),
+                self.escape_xml(language)
+            );
+        }
+        if let Some(direction) = options.resolved_direction() {
+            let direction = if direction == crate::render::TextDirection::RightToLeft {
+                "rtl"
+            } else {
+                "ltr"
+            };
+            let _ = write!(attrs, " direction=\"{direction}\" unicode-bidi=\"embed\"");
+        }
+        attrs
     }
 
     fn svg_text_anchor(align: TextAlign) -> &'static str {
@@ -438,13 +516,14 @@ impl SvgRenderer {
             #[cfg(feature = "typst-math")]
             TextEngineMode::Typst => {
                 let size_pt = self.typst_size_pt(font_size);
-                typst_text::measure_text_with_font_family(
+                typst_text::measure_text_with_options(
                     text,
                     size_pt,
                     Color::BLACK,
                     0.0,
                     TypstBackendKind::Svg,
                     &self.font_family,
+                    &self.text_options,
                     "SVG text measurement",
                 )
             }
@@ -1033,7 +1112,10 @@ impl SvgRenderer {
         }
 
         let weight = FontWeight::Normal;
-        let config = FontConfig::new(family.clone(), font_size).weight(weight);
+        let options = self.text_options.overlay(style.text_options.as_ref());
+        let config = FontConfig::new(family.clone(), font_size)
+            .text_options(options.clone())
+            .weight(weight);
         #[cfg(feature = "typst-math")]
         let mut typst_rendered = None;
         let metrics = if text.trim().is_empty() {
@@ -1047,12 +1129,13 @@ impl SvgRenderer {
                     let weighted_text = typst_text::with_font_weight(&multiline_text, weight);
                     let aligned_text =
                         typst_text::with_horizontal_alignment(&weighted_text, style.align);
-                    let rendered = typst_text::render_svg_with_font_family(
+                    let rendered = typst_text::render_svg_with_options(
                         &aligned_text,
                         self.typst_size_pt(font_size),
                         style.color,
                         0.0,
                         family,
+                        &options,
                         "SVG annotation text rendering",
                     )?;
                     let metrics =
@@ -1100,14 +1183,26 @@ impl SvgRenderer {
         if text_visible {
             match self.text_engine_mode {
                 TextEngineMode::Plain => {
-                    let font_family = self.escaped_font_family_for(family);
+                    let font_family = self.escaped_font_family_with_options(family, &options)?;
+                    let text_attributes = self.text_attributes(&options);
                     let color = self.color_to_svg(style.color);
-                    let text_anchor = Self::svg_text_anchor(style.align);
+                    let align = if options.resolved_direction()
+                        == Some(crate::render::TextDirection::RightToLeft)
+                    {
+                        match style.align {
+                            TextAlign::Left => TextAlign::Right,
+                            TextAlign::Right => TextAlign::Left,
+                            other => other,
+                        }
+                    } else {
+                        style.align
+                    };
+                    let text_anchor = Self::svg_text_anchor(align);
                     let baseline_y = layout.text_y + metrics.baseline_from_top;
                     if text.contains('\n') {
                         write!(
                             self.content,
-                            r#"    <text x="0" font-family="{}" font-size="{:.1}" font-weight="{}" fill="{}" text-anchor="{}" xml:space="preserve">"#,
+                            r#"    <text x="0" font-family="{}"{text_attributes} font-size="{:.1}" font-weight="{}" fill="{}" text-anchor="{}" xml:space="preserve">"#,
                             font_family,
                             font_size,
                             weight.numeric(),
@@ -1131,7 +1226,7 @@ impl SvgRenderer {
                     } else {
                         writeln!(
                             self.content,
-                            r#"    <text x="0" y="{:.2}" font-family="{}" font-size="{:.1}" font-weight="{}" fill="{}" text-anchor="{}" xml:space="preserve">{}</text>"#,
+                            r#"    <text x="0" y="{:.2}" font-family="{}"{text_attributes} font-size="{:.1}" font-weight="{}" fill="{}" text-anchor="{}" xml:space="preserve">{}</text>"#,
                             baseline_y,
                             font_family,
                             font_size,
@@ -1176,10 +1271,16 @@ impl SvgRenderer {
                 let escaped_text = self.escape_xml(text);
                 let metrics = self.plain_text_metrics(text, size)?;
                 let baseline_y = top_anchor_to_baseline(y, metrics);
-                let font_family = self.escaped_font_family();
+                let font_family = self.escaped_font_family()?;
+                let mut text_attributes = self.text_attributes(&self.text_options);
+                if self.text_options.resolved_direction()
+                    == Some(crate::render::TextDirection::RightToLeft)
+                {
+                    text_attributes.push_str(" text-anchor=\"end\"");
+                }
                 writeln!(
                     self.content,
-                    r#"  <text x="{:.2}" y="{:.2}" font-family="{}" font-size="{:.1}" fill="{}">{}</text>"#,
+                    r#"  <text x="{:.2}" y="{:.2}" font-family="{}"{text_attributes} font-size="{:.1}" fill="{}">{}</text>"#,
                     x, baseline_y, font_family, size, color_str, escaped_text
                 )
                 .unwrap();
@@ -1188,12 +1289,13 @@ impl SvgRenderer {
             #[cfg(feature = "typst-math")]
             TextEngineMode::Typst => {
                 let size_pt = self.typst_size_pt(size);
-                let rendered = typst_text::render_svg_with_font_family(
+                let rendered = typst_text::render_svg_with_options(
                     text,
                     size_pt,
                     color,
                     0.0,
                     &self.font_family,
+                    &self.text_options,
                     "SVG text rendering",
                 )?;
                 let (draw_x, draw_y) = typst_text::anchored_top_left(
@@ -1257,18 +1359,20 @@ impl SvgRenderer {
             TextEngineMode::Plain => {
                 let color_str = self.color_to_svg(color);
                 let resolved_weight = weight.unwrap_or(FontWeight::Normal);
-                let config =
-                    FontConfig::new(self.font_family.clone(), size).weight(resolved_weight);
+                let config = FontConfig::new(self.font_family.clone(), size)
+                    .text_options(self.text_options.clone())
+                    .weight(resolved_weight);
                 let metrics = self.plain_text_metrics_with_config(text, &config)?;
                 let baseline_y = top_anchor_to_baseline(y, metrics);
-                let font_family = self.escaped_font_family();
+                let font_family = self.escaped_font_family()?;
+                let text_attributes = self.text_attributes(&self.text_options);
                 let weight_attr = weight
                     .map(|weight| format!(r#" font-weight="{}""#, weight.numeric()))
                     .unwrap_or_default();
                 if text.contains('\n') {
                     write!(
                         self.content,
-                        r#"  <text x="{:.2}" font-family="{}" font-size="{:.1}"{} fill="{}" text-anchor="middle" xml:space="preserve">"#,
+                        r#"  <text x="{:.2}" font-family="{}"{text_attributes} font-size="{:.1}"{} fill="{}" text-anchor="middle" xml:space="preserve">"#,
                         x, font_family, size, weight_attr, color_str
                     )
                     .unwrap();
@@ -1289,7 +1393,7 @@ impl SvgRenderer {
                 } else {
                     writeln!(
                         self.content,
-                        r#"  <text x="{:.2}" y="{:.2}" font-family="{}" font-size="{:.1}"{} fill="{}" text-anchor="middle" xml:space="preserve">{}</text>"#,
+                        r#"  <text x="{:.2}" y="{:.2}" font-family="{}"{text_attributes} font-size="{:.1}"{} fill="{}" text-anchor="middle" xml:space="preserve">{}</text>"#,
                         x,
                         baseline_y,
                         font_family,
@@ -1312,12 +1416,13 @@ impl SvgRenderer {
                     weighted_text.as_deref().unwrap_or(&multiline_text),
                     TextAlign::Center,
                 );
-                let rendered = typst_text::render_svg_with_font_family(
+                let rendered = typst_text::render_svg_with_options(
                     &aligned_text,
                     size_pt,
                     color,
                     0.0,
                     &self.font_family,
+                    &self.text_options,
                     "SVG centered text rendering",
                 )?;
                 let (draw_x, draw_y) = typst_text::anchored_top_left(
@@ -1359,10 +1464,11 @@ impl SvgRenderer {
                 let escaped_text = self.escape_xml(text);
                 let metrics = self.plain_text_metrics(text, size)?;
                 let center_baseline_y = center_anchor_to_baseline(0.0, metrics);
-                let font_family = self.escaped_font_family();
+                let font_family = self.escaped_font_family()?;
+                let text_attributes = self.text_attributes(&self.text_options);
                 writeln!(
                     self.content,
-                    r#"  <g transform="translate({:.2},{:.2}) rotate({:.1})"><text x="0" y="{:.2}" font-family="{}" font-size="{:.1}" fill="{}" text-anchor="middle">{}</text></g>"#,
+                    r#"  <g transform="translate({:.2},{:.2}) rotate({:.1})"><text x="0" y="{:.2}" font-family="{}"{text_attributes} font-size="{:.1}" fill="{}" text-anchor="middle">{}</text></g>"#,
                     x, y, angle, center_baseline_y, font_family, size, color_str, escaped_text
                 )
                 .unwrap();
@@ -1371,12 +1477,13 @@ impl SvgRenderer {
             #[cfg(feature = "typst-math")]
             TextEngineMode::Typst => {
                 let size_pt = self.typst_size_pt(size);
-                let rendered = typst_text::render_svg_with_font_family(
+                let rendered = typst_text::render_svg_with_options(
                     text,
                     size_pt,
                     color,
                     angle,
                     &self.font_family,
+                    &self.text_options,
                     "SVG rotated text rendering",
                 )?;
                 let (draw_x, draw_y) = typst_text::anchored_top_left(
@@ -2497,7 +2604,8 @@ impl crate::render::colorbar::ColorbarCanvas for SvgRenderer {
     fn colorbar_measure_ink_center_from_top(&self, text: &str, size: f32) -> Result<f32> {
         match self.text_engine_mode {
             TextEngineMode::Plain => {
-                let config = FontConfig::new(self.font_family.clone(), size);
+                let config = FontConfig::new(self.font_family.clone(), size)
+                    .text_options(self.text_options.clone());
                 self.text_renderer
                     .measure_text_ink_center_from_top(text, &config)
             }

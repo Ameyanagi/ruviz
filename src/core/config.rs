@@ -121,6 +121,8 @@ impl Default for FigureConfig {
 /// relative to `base_size`. Scale factors are multipliers (e.g., 1.4 = 140% of base).
 #[derive(Debug, Clone, PartialEq)]
 pub struct TypographyConfig {
+    /// Font fallback, language, direction, and equation settings.
+    pub text_options: crate::render::TextOptions,
     /// Base font size in points (default: 10.0)
     pub base_size: f32,
     /// Title size scale factor (default: 1.4)
@@ -210,6 +212,24 @@ impl TypographyConfig {
         self
     }
 
+    /// Set international typography settings.
+    pub fn text_options(mut self, options: crate::render::TextOptions) -> Self {
+        self.text_options = options;
+        self
+    }
+
+    /// Prefer Arial or Helvetica for publication text, retaining system fallback.
+    /// Equation fonts remain separately configurable with `TextOptions::math_font`.
+    pub fn publication() -> Self {
+        Self::default()
+            .family(FontFamily::from("Arial"))
+            .text_options(
+                crate::render::TextOptions::new()
+                    .font_fallbacks(["Helvetica", "Liberation Sans", "Noto Sans"])
+                    .require_all_glyphs(true),
+            )
+    }
+
     /// Set the title font weight
     pub fn title_weight(mut self, weight: FontWeight) -> Self {
         self.title_weight = weight;
@@ -220,6 +240,7 @@ impl TypographyConfig {
 impl Default for TypographyConfig {
     fn default() -> Self {
         Self {
+            text_options: crate::render::TextOptions::default(),
             base_size: 10.0,   // matplotlib default
             title_scale: 1.4,  // 14pt title
             label_scale: 1.0,  // 10pt labels
@@ -1084,6 +1105,12 @@ impl PlotConfigBuilder {
     /// Set base font size in points
     pub fn font_size(mut self, size: f32) -> Self {
         self.config.typography.base_size = size;
+        self
+    }
+
+    /// Set font fallback, language, direction, and equation settings.
+    pub fn text_options(mut self, options: crate::render::TextOptions) -> Self {
+        self.config.typography.text_options = options;
         self
     }
 
