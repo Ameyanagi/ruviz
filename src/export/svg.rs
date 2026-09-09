@@ -1189,6 +1189,8 @@ impl SvgRenderer {
                     let align = if options.resolved_direction()
                         == Some(crate::render::TextDirection::RightToLeft)
                     {
+                        // SVG start/end follow paragraph direction. Reversing
+                        // them preserves the requested physical box alignment.
                         match style.align {
                             TextAlign::Left => TextAlign::Right,
                             TextAlign::Right => TextAlign::Left,
@@ -1276,6 +1278,8 @@ impl SvgRenderer {
                 if self.text_options.resolved_direction()
                     == Some(crate::render::TextDirection::RightToLeft)
                 {
+                    // In SVG, RTL + end anchors the physical left edge at x.
+                    // PDF conversion adapts this for usvg's LTR-only anchors.
                     text_attributes.push_str(" text-anchor=\"end\"");
                 }
                 writeln!(

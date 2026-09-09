@@ -198,10 +198,26 @@ fn is_renderable_text(text: &str) -> bool {
     !text.trim().is_empty()
 }
 
-fn validate_glyph_coverage(buffer: &Buffer, options: &TextOptions) -> Result<()> {
+fn validate_glyph_coverage(
+    buffer: &Buffer,
+    system: &FontSystem,
+    options: &TextOptions,
+) -> Result<()> {
     if options.requires_all_glyphs() {
         for run in buffer.layout_runs() {
-            for glyph in run.glyphs.iter().filter(|glyph| glyph.glyph_id == 0) {
+            for glyph in run.glyphs.iter().filter(|glyph| {
+                glyph.glyph_id == 0
+                    || system.db().face(glyph.font_id).is_some_and(|face| {
+                        // Aliased fallback faces retain their PostScript name.
+                        // LastResort supplies replacement boxes with nonzero IDs.
+                        let is_last_resort = |name: &str| {
+                            name.trim_start_matches('.')
+                                .eq_ignore_ascii_case("LastResort")
+                        };
+                        is_last_resort(&face.post_script_name)
+                            || face.families.iter().any(|(name, _)| is_last_resort(name))
+                    })
+            }) {
                 if let Some(error) = super::text_options::missing_glyph_error(
                     run.text.get(glyph.start..glyph.end).unwrap_or(run.text),
                 ) {
@@ -307,7 +323,7 @@ pub fn get_font_system() -> &'static Mutex<FontSystem> {
 /// Get or initialize the global SwashCache
 ///
 /// The SwashCache stores rasterized glyphs to avoid re-rasterizing the same
-/// glyphs repeatedly. It implements LRU eviction when memory limits are reached.
+/// glyphs repeatedly. Configured font contexts use separate, bounded caches.
 pub fn get_swash_cache() -> &'static Mutex<SwashCache> {
     SWASH_CACHE.get_or_init(|| {
         log::debug!("Initializing global SwashCache for glyph caching");
@@ -1012,7 +1028,7 @@ impl TextRenderer {
 
         // Shape the text
         buffer.shape_until_scroll(font_system, false);
-        validate_glyph_coverage(&buffer, &config.text_options)?;
+        validate_glyph_coverage(&buffer, font_system, &config.text_options)?;
 
         let width = pixmap.width();
         let height = pixmap.height();
@@ -1196,7 +1212,7 @@ impl TextRenderer {
             Some(cosmic_text::Align::Left),
         );
         buffer.shape_until_scroll(font_system, false);
-        validate_glyph_coverage(&buffer, &config.text_options)?;
+        validate_glyph_coverage(&buffer, font_system, &config.text_options)?;
 
         // Compute tight bounds from rasterized glyph pixels.
         let mut min_x = i32::MAX;
@@ -1388,7 +1404,7 @@ impl TextRenderer {
             Some(cosmic_text::Align::Left),
         );
         buffer.shape_until_scroll(font_system, false);
-        validate_glyph_coverage(&buffer, &config.text_options)?;
+        validate_glyph_coverage(&buffer, font_system, &config.text_options)?;
 
         let mut width: f32 = 0.0;
         let mut height: f32 = 0.0;
@@ -1474,7 +1490,7 @@ impl TextRenderer {
             Some(cosmic_text::Align::Left),
         );
         buffer.shape_until_scroll(font_system, false);
-        validate_glyph_coverage(&buffer, &config.text_options)?;
+        validate_glyph_coverage(&buffer, font_system, &config.text_options)?;
 
         let cosmic_color = CosmicColor::rgba(0, 0, 0, 255);
         let mut min_x = i32::MAX;
@@ -1584,6 +1600,39 @@ impl Default for TextRenderer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn strict_coverage_rejects_nonzero_last_resort_glyphs_including_aliases() {
+        let mut source = cosmic_text::fontdb::Database::new();
+        source.load_font_data(include_bytes!("../dejavu-sans.ttf").to_vec());
+        let mut face = source.faces().next().unwrap().clone();
+        face.post_script_name = "LastResort".into();
+        for (name, _) in &mut face.families {
+            *name = ".LastResort".into();
+        }
+        let mut database = cosmic_text::fontdb::Database::new();
+        database.push_face_info(face);
+        let base = FontSystem::new_with_locale_and_db("en-US".into(), database);
+        let options = TextOptions::new()
+            .font_fallbacks([".LastResort"])
+            .require_all_glyphs(true);
+        let mut context = ConfiguredContext::new(&base, &options);
+        for family in [".LastResort", FALLBACK_ALIASES[0]] {
+            let mut buffer = Buffer::new(&mut context.system, Metrics::new(20.0, 24.0));
+            buffer.set_text(
+                &mut context.system,
+                "Å",
+                &Attrs::new().family(Family::Name(family)),
+                Shaping::Advanced,
+                Some(cosmic_text::Align::Left),
+            );
+            buffer.shape_until_scroll(&mut context.system, false);
+            assert_ne!(buffer.layout_runs().next().unwrap().glyphs[0].glyph_id, 0);
+            let error = validate_glyph_coverage(&buffer, &context.system, &options).unwrap_err();
+            assert!(error.to_string().contains("U+00C5"));
+            assert!(validate_glyph_coverage(&buffer, &context.system, &TextOptions::new()).is_ok());
+        }
+    }
 
     #[test]
     fn font_contexts_are_bounded_reused_and_invalidated_by_registration_generation() {
