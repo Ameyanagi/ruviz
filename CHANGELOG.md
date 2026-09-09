@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.14.1] - 2026-09-09
+
+### Fixed
+
+- Batched PNG line series use round joins and caps, matching the other polyline
+  rendering paths. Dense, noisy curves no longer develop triangular miter spikes
+  at wide line widths (#186). The minimum stroke width also matches direct
+  polyline rendering.
+
 ## [0.14.0] - 2026-09-09
 
 ### Added

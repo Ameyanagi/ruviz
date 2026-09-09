@@ -475,7 +475,9 @@ impl SkiaRenderer {
         paint.anti_alias = true;
 
         let mut stroke = Stroke {
-            width,
+            width: width.max(0.1),
+            line_cap: LineCap::Round,
+            line_join: LineJoin::Round,
             ..Stroke::default()
         };
 
@@ -2961,6 +2963,57 @@ mod tests {
 
     fn has_ink(image: &Image, x: u32, y: u32) -> bool {
         pixel(image, x, y)[0] < 250
+    }
+
+    #[test]
+    fn test_clipped_point_polyline_matches_round_strokes() {
+        // Sharp reversals reproduce the spikes reported for noisy line series
+        // in #186. Include a gap and a clipped endpoint to exercise run caps.
+        let points = [
+            (8.0, 64.0),
+            (44.0, 16.0),
+            (36.0, 64.0),
+            (72.0, 16.0),
+            (64.0, 64.0),
+            (f32::NAN, f32::NAN),
+            (80.0, 56.0),
+            (112.0, 56.0),
+        ];
+        let projected: Vec<_> = points.iter().map(|&(x, y)| Point2f::new(x, y)).collect();
+        let clip = (12.0, 8.0, 96.0, 64.0);
+
+        for (width, style) in [
+            (1.0, LineStyle::Solid),
+            (12.0, LineStyle::Solid),
+            (6.0, LineStyle::Dashed),
+            (0.01, LineStyle::Solid),
+        ] {
+            let mut batched = white_canvas(120, 80, 100.0);
+            batched
+                .draw_polyline_points_clipped(&projected, Color::BLACK, width, style.clone(), clip)
+                .expect("projected line should render");
+            let mut direct = white_canvas(120, 80, 100.0);
+            direct
+                .draw_polyline_clipped(&points, Color::BLACK, width, style.clone(), clip)
+                .expect("reference round stroke should render");
+
+            let actual = batched.into_image();
+            let expected = direct.into_image();
+            assert!(
+                expected.pixels.chunks_exact(4).any(|px| px[0] < 255),
+                "reference must contain ink"
+            );
+            let different_pixels = actual
+                .pixels
+                .chunks_exact(4)
+                .zip(expected.pixels.chunks_exact(4))
+                .filter(|(actual, expected)| actual != expected)
+                .count();
+            assert_eq!(
+                different_pixels, 0,
+                "batched and direct polylines must agree at width {width} with {style:?}"
+            );
+        }
     }
 
     /// Bucket 1. A vertex the axes cannot represent is a *gap*: the runs either
