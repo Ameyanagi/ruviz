@@ -246,6 +246,11 @@ impl SkiaRenderer {
             return Ok(());
         }
         let font = FontConfig::new(self.font_config.family.clone(), font_size_px)
+            .text_options(
+                self.font_config
+                    .text_options
+                    .overlay(style.text_options.as_ref()),
+            )
             .weight(FontWeight::Normal);
 
         #[cfg(feature = "typst-math")]
@@ -261,12 +266,13 @@ impl SkiaRenderer {
                     let weighted_text = typst_text::with_font_weight(&multiline_text, font.weight);
                     let aligned_text =
                         typst_text::with_horizontal_alignment(&weighted_text, style.align);
-                    let rendered = typst_text::render_raster_with_font_family(
+                    let rendered = typst_text::render_raster_with_options(
                         &aligned_text,
                         self.typst_size_pt(font_size_px),
                         style.color,
                         0.0,
                         &font.family,
+                        &font.text_options,
                         "Skia annotation text rendering",
                     )?;
                     let metrics = crate::render::text_anchor::TextPlacementMetrics::new(

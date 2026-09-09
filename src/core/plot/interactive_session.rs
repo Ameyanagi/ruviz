@@ -1443,6 +1443,7 @@ struct GeometrySnapshot {
     y_scale: AxisScale,
     annotation_theme: Theme,
     annotation_font_family: FontFamily,
+    annotation_text_options: crate::render::TextOptions,
     annotation_render_scale: RenderScale,
     annotation_text_engine: TextEngineMode,
     transform: CoordinateTransform,
@@ -3337,6 +3338,7 @@ impl InteractivePlotSession {
                 theme,
                 geometry.annotation_font_family.clone(),
             )?;
+            renderer.set_text_options(geometry.annotation_text_options.clone());
             renderer.set_text_engine_mode(geometry.annotation_text_engine);
             let render_scale = geometry.annotation_render_scale;
             renderer.set_render_scale(render_scale);
@@ -4688,6 +4690,7 @@ struct ComputedSessionLayout {
     axis_inset_px: f32,
     annotation_theme: Theme,
     annotation_font_family: FontFamily,
+    annotation_text_options: crate::render::TextOptions,
     annotation_render_scale: RenderScale,
     annotation_text_engine: TextEngineMode,
 }
@@ -4718,6 +4721,7 @@ fn geometry_snapshot_for_state(
         y_scale: plot.layout.y_scale,
         annotation_theme: layout.annotation_theme,
         annotation_font_family: layout.annotation_font_family,
+        annotation_text_options: layout.annotation_text_options,
         annotation_render_scale: layout.annotation_render_scale,
         annotation_text_engine: layout.annotation_text_engine,
         transform: CoordinateTransform::new(
@@ -4829,6 +4833,7 @@ fn compute_plot_layout_from_frame(
         layout_plot.display.theme.clone(),
         layout_plot.display.config.typography.family.clone(),
     )?;
+    renderer.set_text_options(layout_plot.display.config.typography.text_options.clone());
     renderer.set_text_engine_mode(layout_plot.display.text_engine);
     renderer.set_tick_notation(layout_plot.layout.scientific_notation);
     renderer.set_render_scale(layout_plot.render_scale());
@@ -4901,6 +4906,7 @@ fn compute_plot_layout_from_frame(
         axis_inset_px,
         annotation_theme: layout_plot.display.theme.clone(),
         annotation_font_family: layout_plot.display.config.typography.family.clone(),
+        annotation_text_options: layout_plot.display.config.typography.text_options.clone(),
         annotation_render_scale: layout_plot.render_scale(),
         annotation_text_engine: layout_plot.display.text_engine,
     })

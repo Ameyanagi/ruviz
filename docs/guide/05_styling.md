@@ -358,6 +358,10 @@ let bare_panel = Theme::builder()
 
 ## Typography
 
+Plain and Typst modes share font settings and resolve generic families consistently.
+See [international and publication typography](international_typography.md) for
+ordered fallbacks, language and direction, per-label overrides, and equation fonts.
+
 ### Global Font Family
 
 ```rust

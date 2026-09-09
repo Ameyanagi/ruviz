@@ -964,6 +964,40 @@ where
         self
     }
 
+    /// Set international typography options.
+    pub fn text_options(mut self, value: crate::render::TextOptions) -> Self {
+        self.plot = self.plot.text_options(value);
+        self
+    }
+
+    /// Set the text language (for example `ja` or `zh-TW`).
+    pub fn language(mut self, value: impl Into<String>) -> Self {
+        self.plot = self.plot.language(value);
+        self
+    }
+
+    /// Set the paragraph direction.
+    pub fn text_direction(mut self, value: crate::render::TextDirection) -> Self {
+        self.plot = self.plot.text_direction(value);
+        self
+    }
+
+    /// Set an installed or registered OpenType math font.
+    pub fn math_font(mut self, value: impl Into<String>) -> Self {
+        self.plot = self.plot.math_font(value);
+        self
+    }
+
+    /// Set ordered fallback families after the primary font.
+    pub fn font_fallbacks<I, S>(mut self, families: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.plot = self.plot.font_fallbacks(families);
+        self
+    }
+
     /// Set the font family used for plot text.
     ///
     /// This method forwards to the inner Plot.

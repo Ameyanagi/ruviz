@@ -255,6 +255,71 @@ pub fn measure_text_with_font_family(
     })
 }
 
+#[cfg(not(feature = "typst-math"))]
+#[allow(clippy::too_many_arguments)]
+pub fn render_raster_with_options(
+    snippet: &str,
+    size_pt: f32,
+    color: Color,
+    rotation_deg: f32,
+    font_family: &FontFamily,
+    _options: &crate::render::TextOptions,
+    operation: &str,
+) -> Result<TypstRasterOutput> {
+    render_raster_with_font_family(
+        snippet,
+        size_pt,
+        color,
+        rotation_deg,
+        font_family,
+        operation,
+    )
+}
+
+#[cfg(not(feature = "typst-math"))]
+#[allow(clippy::too_many_arguments)]
+pub fn render_svg_with_options(
+    snippet: &str,
+    size_pt: f32,
+    color: Color,
+    rotation_deg: f32,
+    font_family: &FontFamily,
+    _options: &crate::render::TextOptions,
+    operation: &str,
+) -> Result<TypstSvgOutput> {
+    render_svg_with_font_family(
+        snippet,
+        size_pt,
+        color,
+        rotation_deg,
+        font_family,
+        operation,
+    )
+}
+
+#[cfg(not(feature = "typst-math"))]
+#[allow(clippy::too_many_arguments)]
+pub fn measure_text_with_options(
+    snippet: &str,
+    size_pt: f32,
+    color: Color,
+    rotation_deg: f32,
+    backend: TypstBackendKind,
+    font_family: &FontFamily,
+    _options: &crate::render::TextOptions,
+    operation: &str,
+) -> Result<(f32, f32)> {
+    measure_text_with_font_family(
+        snippet,
+        size_pt,
+        color,
+        rotation_deg,
+        backend,
+        font_family,
+        operation,
+    )
+}
+
 #[cfg(feature = "typst-math")]
 mod imp {
     use super::{TypstBackendKind, TypstRasterOutput, TypstSvgOutput};
@@ -293,6 +358,7 @@ mod imp {
         rotation_bits: u32,
         backend: TypstBackendKind,
         font_family: String,
+        options: crate::render::TextOptions,
     }
 
     #[derive(Debug, Clone)]
@@ -341,6 +407,8 @@ mod imp {
         sans_family: String,
         serif_family: String,
         mono_family: String,
+        cursive_family: String,
+        fantasy_family: String,
     }
 
     #[derive(Debug)]
@@ -394,21 +462,21 @@ mod imp {
     fn font_context() -> Result<Arc<FontContext>> {
         static FONTS: OnceLock<Mutex<Option<Arc<FontContext>>>> = OnceLock::new();
 
-        let snapshot = font_registry::snapshot()?;
+        let generation = font_registry::generation()?;
         let contexts = FONTS.get_or_init(|| Mutex::new(None));
         let mut context = lock_cache_resource(contexts, "Typst font context")?;
         if let Some(existing) = context.as_ref()
-            && existing.generation >= snapshot.generation
+            && existing.generation >= generation
         {
             return Ok(existing.clone());
         }
 
-        let rebuilt = Arc::new(build_font_context(snapshot));
+        let rebuilt = Arc::new(build_font_context(font_registry::snapshot()?)?);
         *context = Some(rebuilt.clone());
         Ok(rebuilt)
     }
 
-    fn build_font_context(snapshot: font_registry::RegistrySnapshot) -> FontContext {
+    fn build_font_context(snapshot: font_registry::RegistrySnapshot) -> Result<FontContext> {
         let mut searcher = FontSearcher::new();
         #[cfg(target_arch = "wasm32")]
         searcher.include_system_fonts(false);
@@ -434,56 +502,60 @@ mod imp {
             }
         }
 
-        let sans_family = select_family(
-            &book,
-            &[
-                "noto sans",
-                "dejavu sans",
-                "liberation sans",
-                "arial",
-                "helvetica",
-                "new computer modern sans",
-                "latin modern sans",
-            ],
+        // Use the concrete generic families chosen by the plain renderer. This
+        // also keeps platform-specific names and registration precedence aligned.
+        let system = crate::render::get_font_system().lock().map_err(|_| {
+            PlottingError::RenderError(
+                "Text rendering aborted because FontSystem lock is poisoned".into(),
+            )
+        })?;
+        let selected = |family: FontFamily, candidates: &[&str], fragment: &str, fallback: &str| {
+            let cosmic_family = family.to_cosmic_family();
+            let shared = system.db().family_name(&cosmic_family);
+            canonical_family_name(&book, shared)
+                .map(str::to_string)
+                .unwrap_or_else(|| select_family(&book, candidates, fragment, fallback))
+        };
+        let sans_family = selected(
+            FontFamily::SansSerif,
+            crate::render::font_policy::SANS,
             "sans",
             "New Computer Modern Sans",
         );
-        let serif_family = select_family(
-            &book,
-            &[
-                "new computer modern",
-                "latin modern roman",
-                "times new roman",
-                "noto serif",
-                "dejavu serif",
-                "liberation serif",
-                "georgia",
-            ],
+        let serif_family = selected(
+            FontFamily::Serif,
+            crate::render::font_policy::SERIF,
             "serif",
-            "New Computer Modern",
+            &sans_family,
         );
-        let mono_family = select_family(
-            &book,
-            &[
-                "new computer modern mono",
-                "latin modern mono",
-                "noto sans mono",
-                "dejavu sans mono",
-                "liberation mono",
-                "courier new",
-                "monaco",
-            ],
+        let mono_family = selected(
+            FontFamily::Monospace,
+            crate::render::font_policy::MONO,
             "mono",
-            "New Computer Modern Mono",
+            &sans_family,
         );
-        FontContext {
+        let cursive_family = selected(
+            FontFamily::Cursive,
+            crate::render::font_policy::CURSIVE,
+            "sans",
+            &sans_family,
+        );
+        let fantasy_family = selected(
+            FontFamily::Fantasy,
+            crate::render::font_policy::FANTASY,
+            "sans",
+            &sans_family,
+        );
+        Ok(FontContext {
             generation: snapshot.generation,
             book: LazyHash::new(book),
             fonts,
             sans_family,
             serif_family,
             mono_family,
-        }
+            cursive_family,
+            fantasy_family,
+        })
     }
 
     fn canonical_family_name<'a>(book: &'a FontBook, requested: &str) -> Option<&'a str> {
@@ -528,24 +600,10 @@ mod imp {
     }
 
     fn inferred_generic_family_for_name(name: &str) -> GenericFontFamily {
-        let lowered = name.to_ascii_lowercase();
-        if lowered.contains("mono")
-            || lowered.contains("courier")
-            || lowered.contains("consolas")
-            || lowered.contains("menlo")
-        {
-            GenericFontFamily::Monospace
-        } else if lowered.contains("sans") {
-            GenericFontFamily::SansSerif
-        } else if lowered.contains("serif")
-            || lowered.contains("times")
-            || lowered.contains("georgia")
-            || lowered.contains("cambria")
-            || lowered.contains("garamond")
-        {
-            GenericFontFamily::Serif
-        } else {
-            GenericFontFamily::SansSerif
+        match crate::render::font_policy::inferred_generic(name) {
+            FontFamily::Serif => GenericFontFamily::Serif,
+            FontFamily::Monospace => GenericFontFamily::Monospace,
+            _ => GenericFontFamily::SansSerif,
         }
     }
 
@@ -561,15 +619,34 @@ mod imp {
         match family {
             FontFamily::Serif => font_ctx.serif_family.clone(),
             FontFamily::Monospace => font_ctx.mono_family.clone(),
-            FontFamily::SansSerif | FontFamily::Cursive | FontFamily::Fantasy => {
-                font_ctx.sans_family.clone()
-            }
+            FontFamily::SansSerif => font_ctx.sans_family.clone(),
+            FontFamily::Cursive => font_ctx.cursive_family.clone(),
+            FontFamily::Fantasy => font_ctx.fantasy_family.clone(),
             FontFamily::Name(name) => canonical_family_name(&font_ctx.book, name)
                 .map(str::to_string)
                 .unwrap_or_else(|| {
                     fallback_family(font_ctx, inferred_generic_family_for_name(name)).to_string()
                 }),
         }
+    }
+
+    fn resolve_typst_font_family_with_options(
+        font_ctx: &FontContext,
+        family: &FontFamily,
+        options: &crate::render::TextOptions,
+    ) -> String {
+        if let FontFamily::Name(name) = family
+            && canonical_family_name(&font_ctx.book, name).is_none()
+            && let Some(fallback) = options
+                .fallback_families()
+                .iter()
+                .map(String::as_str)
+                .chain(options.language_fallbacks().iter().copied())
+                .find_map(|family| canonical_family_name(&font_ctx.book, family))
+        {
+            return fallback.to_string();
+        }
+        resolve_typst_font_family(font_ctx, family)
     }
 
     fn escape_typst_string(value: &str) -> String {
@@ -623,6 +700,7 @@ mod imp {
             rotation_bits: rotation_deg.to_bits(),
             backend,
             font_family: font_family.to_string(),
+            options: crate::render::TextOptions::default(),
         }
     }
 
@@ -736,9 +814,12 @@ mod imp {
     ) -> String {
         let size_pt = size_pt.max(1.0);
         let font_family = escape_typst_string(font_family);
+        // Auto-sized, zero-margin labels must include the actual glyph bounds.
+        // Font ascenders can exclude accents such as the ring in Å, and inline
+        // math otherwise allows tall content to protrude into paragraph leading.
         if rotation_deg.abs() > f32::EPSILON {
             format!(
-                "#set page(width: auto, height: auto, margin: 0pt, fill: none)\n#set text(font: \"{font_family}\", size: {size_pt}pt, fill: rgb({r}, {g}, {b}, {a}), top-edge: \"ascender\", bottom-edge: \"descender\")\n#rotate({rotation_deg}deg, reflow: true)[{snippet}]",
+                "#set page(width: auto, height: auto, margin: 0pt, fill: none)\n#set text(font: \"{font_family}\", size: {size_pt}pt, fill: rgb({r}, {g}, {b}, {a}), top-edge: \"bounds\", bottom-edge: \"bounds\")\n#rotate({rotation_deg}deg, reflow: true)[{snippet}]",
                 r = color.r,
                 g = color.g,
                 b = color.b,
@@ -746,7 +827,7 @@ mod imp {
             )
         } else {
             format!(
-                "#set page(width: auto, height: auto, margin: 0pt, fill: none)\n#set text(font: \"{font_family}\", size: {size_pt}pt, fill: rgb({r}, {g}, {b}, {a}), top-edge: \"ascender\", bottom-edge: \"descender\")\n{snippet}",
+                "#set page(width: auto, height: auto, margin: 0pt, fill: none)\n#set text(font: \"{font_family}\", size: {size_pt}pt, fill: rgb({r}, {g}, {b}, {a}), top-edge: \"bounds\", bottom-edge: \"bounds\")\n{snippet}",
                 r = color.r,
                 g = color.g,
                 b = color.b,
@@ -755,6 +836,124 @@ mod imp {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn build_document_source_with_options(
+        font_ctx: &FontContext,
+        snippet: &str,
+        size_pt: f32,
+        color: Color,
+        rotation_deg: f32,
+        font_family: &str,
+        options: &crate::render::TextOptions,
+    ) -> Result<String> {
+        use std::fmt::Write;
+        options.validate()?;
+        let mut settings = String::new();
+        if !options.fallback_families().is_empty() || !options.language_fallbacks().is_empty() {
+            settings.push_str("#set text(font: (");
+            for family in std::iter::once(font_family)
+                .chain(options.fallback_families().iter().map(String::as_str))
+                .chain(options.language_fallbacks().iter().copied())
+            {
+                let canonical = canonical_family_name(&font_ctx.book, family).unwrap_or(family);
+                let _ = write!(settings, "\"{}\",", escape_typst_string(canonical));
+            }
+            settings.push_str("))\n");
+        }
+        if let Some((lang, script, region)) = options.language_components() {
+            let _ = writeln!(settings, "#set text(lang: \"{lang}\")");
+            if let Some(script) = script {
+                let _ = writeln!(settings, "#set text(script: \"{script}\")");
+            }
+            // Typst accepts ISO alpha-2 regions; numeric UN regions are kept in
+            // SVG language tags and the plain renderer's locale.
+            if let Some(region) = region.filter(|region| region.len() == 2) {
+                let _ = writeln!(
+                    settings,
+                    "#set text(region: \"{}\")",
+                    region.to_ascii_uppercase()
+                );
+            }
+        }
+        if let Some(direction) = options.resolved_direction() {
+            let dir = if direction == crate::render::TextDirection::RightToLeft {
+                "rtl"
+            } else {
+                "ltr"
+            };
+            let _ = writeln!(settings, "#set text(dir: {dir})");
+        }
+        if let Some(family) = options.math_font_family() {
+            let canonical = canonical_family_name(&font_ctx.book, family).ok_or_else(|| {
+                PlottingError::TypstError(format!(
+                    "Math font `{family}` is unavailable; install or register an OpenType math font"
+                ))
+            })?;
+            let is_math = font_ctx
+                .book
+                .select_family(&canonical.to_lowercase())
+                .any(|index| {
+                    font_ctx
+                        .fonts
+                        .get(index)
+                        .and_then(ContextFontSlot::get)
+                        .is_some_and(|font| font.ttf().tables().math.is_some())
+                });
+            if !is_math {
+                return Err(PlottingError::TypstError(format!(
+                    "Font `{family}` has no OpenType MATH table"
+                )));
+            }
+            let _ = writeln!(
+                settings,
+                "#show math.equation: set text(font: \"{}\")",
+                escape_typst_string(canonical)
+            );
+        }
+        if settings.is_empty() {
+            return Ok(build_document_source(
+                snippet,
+                size_pt,
+                color,
+                rotation_deg,
+                font_family,
+            ));
+        }
+        settings.push_str(snippet);
+        Ok(build_document_source(
+            &settings,
+            size_pt,
+            color,
+            rotation_deg,
+            font_family,
+        ))
+    }
+
+    fn validate_frame_glyphs(frame: &typst::layout::Frame) -> Result<()> {
+        use typst::layout::FrameItem;
+        for (_, item) in frame.items() {
+            match item {
+                FrameItem::Group(group) => validate_frame_glyphs(&group.frame)?,
+                FrameItem::Text(text) => {
+                    for glyph in text
+                        .glyphs
+                        .iter()
+                        .filter(|glyph| glyph.id == 0 || text.font.info().is_last_resort())
+                    {
+                        if let Some(error) = crate::render::text_options::missing_glyph_error(
+                            text.text.get(glyph.range()).unwrap_or(&text.text),
+                        ) {
+                            return Err(error);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
     fn compile_single_page(
         font_ctx: &FontContext,
         snippet: &str,
@@ -764,7 +963,38 @@ mod imp {
         font_family: &str,
         operation: &str,
     ) -> Result<Page> {
-        let source_text = build_document_source(snippet, size_pt, color, rotation_deg, font_family);
+        compile_single_page_with_options(
+            font_ctx,
+            snippet,
+            size_pt,
+            color,
+            rotation_deg,
+            font_family,
+            &crate::render::TextOptions::default(),
+            operation,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn compile_single_page_with_options(
+        font_ctx: &FontContext,
+        snippet: &str,
+        size_pt: f32,
+        color: Color,
+        rotation_deg: f32,
+        font_family: &str,
+        options: &crate::render::TextOptions,
+        operation: &str,
+    ) -> Result<Page> {
+        let source_text = build_document_source_with_options(
+            font_ctx,
+            snippet,
+            size_pt,
+            color,
+            rotation_deg,
+            font_family,
+            options,
+        )?;
         let main = FileId::new_fake(VirtualPath::new("/main.typ"));
         let source = Source::new(main, source_text);
         let world = TypstWorld {
@@ -789,6 +1019,12 @@ mod imp {
                 snippet_excerpt(snippet)
             ))
         })?;
+
+        if options.requires_all_glyphs() {
+            for page in &document.pages {
+                validate_frame_glyphs(&page.frame)?;
+            }
+        }
 
         document.pages.first().cloned().ok_or_else(|| {
             PlottingError::TypstError(format!(
@@ -824,6 +1060,26 @@ mod imp {
         font_family: &FontFamily,
         operation: &str,
     ) -> Result<TypstRasterOutput> {
+        render_raster_with_options(
+            snippet,
+            size_pt,
+            color,
+            rotation_deg,
+            font_family,
+            &crate::render::TextOptions::default(),
+            operation,
+        )
+    }
+
+    pub fn render_raster_with_options(
+        snippet: &str,
+        size_pt: f32,
+        color: Color,
+        rotation_deg: f32,
+        font_family: &FontFamily,
+        options: &crate::render::TextOptions,
+        operation: &str,
+    ) -> Result<TypstRasterOutput> {
         if snippet.trim().is_empty() {
             let pixmap = Pixmap::new(1, 1).ok_or_else(|| {
                 PlottingError::RenderError("Failed to allocate pixmap".to_string())
@@ -835,9 +1091,11 @@ mod imp {
             });
         }
 
+        options.validate()?;
         let font_ctx = font_context()?;
-        let resolved_font_family = resolve_typst_font_family(&font_ctx, font_family);
-        let key = make_key_with_font_family(
+        let resolved_font_family =
+            resolve_typst_font_family_with_options(&font_ctx, font_family, options);
+        let mut key = make_key_with_font_family(
             snippet,
             size_pt,
             color,
@@ -846,6 +1104,7 @@ mod imp {
             &resolved_font_family,
             font_ctx.generation,
         );
+        key.options = options.clone();
 
         {
             let mut cache = lock_cache()?;
@@ -874,13 +1133,14 @@ mod imp {
             }
         }
 
-        let page = compile_single_page(
+        let page = compile_single_page_with_options(
             &font_ctx,
             snippet,
             size_pt,
             color,
             rotation_deg,
             &resolved_font_family,
+            options,
             operation,
         )?;
         let size = page.frame.size();
@@ -953,6 +1213,26 @@ mod imp {
         font_family: &FontFamily,
         operation: &str,
     ) -> Result<TypstSvgOutput> {
+        render_svg_with_options(
+            snippet,
+            size_pt,
+            color,
+            rotation_deg,
+            font_family,
+            &crate::render::TextOptions::default(),
+            operation,
+        )
+    }
+
+    pub fn render_svg_with_options(
+        snippet: &str,
+        size_pt: f32,
+        color: Color,
+        rotation_deg: f32,
+        font_family: &FontFamily,
+        options: &crate::render::TextOptions,
+        operation: &str,
+    ) -> Result<TypstSvgOutput> {
         if snippet.trim().is_empty() {
             return Ok(TypstSvgOutput {
                 svg: String::new(),
@@ -961,9 +1241,11 @@ mod imp {
             });
         }
 
+        options.validate()?;
         let font_ctx = font_context()?;
-        let resolved_font_family = resolve_typst_font_family(&font_ctx, font_family);
-        let key = make_key_with_font_family(
+        let resolved_font_family =
+            resolve_typst_font_family_with_options(&font_ctx, font_family, options);
+        let mut key = make_key_with_font_family(
             snippet,
             size_pt,
             color,
@@ -972,6 +1254,7 @@ mod imp {
             &resolved_font_family,
             font_ctx.generation,
         );
+        key.options = options.clone();
         {
             let mut cache = lock_cache()?;
             if synchronize_cache_generation(&mut cache, font_ctx.generation)
@@ -985,13 +1268,14 @@ mod imp {
             }
         }
 
-        let page = compile_single_page(
+        let page = compile_single_page_with_options(
             &font_ctx,
             snippet,
             size_pt,
             color,
             rotation_deg,
             &resolved_font_family,
+            options,
             operation,
         )?;
         let raw_svg = typst_svg::svg(&page);
@@ -1051,25 +1335,50 @@ mod imp {
         font_family: &FontFamily,
         operation: &str,
     ) -> Result<(f32, f32)> {
+        measure_text_with_options(
+            snippet,
+            size_pt,
+            color,
+            rotation_deg,
+            backend,
+            font_family,
+            &crate::render::TextOptions::default(),
+            operation,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn measure_text_with_options(
+        snippet: &str,
+        size_pt: f32,
+        color: Color,
+        rotation_deg: f32,
+        backend: TypstBackendKind,
+        font_family: &FontFamily,
+        options: &crate::render::TextOptions,
+        operation: &str,
+    ) -> Result<(f32, f32)> {
         match backend {
             TypstBackendKind::Raster => {
-                let rendered = render_raster_with_font_family(
+                let rendered = render_raster_with_options(
                     snippet,
                     size_pt,
                     color,
                     rotation_deg,
                     font_family,
+                    options,
                     operation,
                 )?;
                 Ok((rendered.width, rendered.height))
             }
             TypstBackendKind::Svg => {
-                let rendered = render_svg_with_font_family(
+                let rendered = render_svg_with_options(
                     snippet,
                     size_pt,
                     color,
                     rotation_deg,
                     font_family,
+                    options,
                     operation,
                 )?;
                 Ok((rendered.width, rendered.height))
@@ -1080,6 +1389,247 @@ mod imp {
     #[cfg(test)]
     mod tests {
         use super::*;
+
+        #[test]
+        fn mode_switch_keeps_primary_font_and_text_width_for_styles() {
+            let ctx = font_context().unwrap();
+            let text = "Ångström Signal 123";
+            let renderer = crate::render::TextRenderer::new();
+            for family in [
+                FontFamily::SansSerif,
+                FontFamily::Serif,
+                FontFamily::Monospace,
+                FontFamily::from("Missing Serif"),
+            ] {
+                for weight in [
+                    crate::render::FontWeight::Normal,
+                    crate::render::FontWeight::Bold,
+                ] {
+                    let config =
+                        crate::render::FontConfig::new(family.clone(), 20.0).weight(weight);
+                    let (plain_width, _) = renderer.measure_text(text, &config).unwrap();
+                    let resolved = resolve_typst_font_family(&ctx, &family);
+                    let snippet = crate::render::typst_text::with_font_weight(text, weight);
+                    let page = compile_single_page(
+                        &ctx,
+                        &snippet,
+                        20.0,
+                        Color::BLACK,
+                        0.0,
+                        &resolved,
+                        "mode parity",
+                    )
+                    .unwrap();
+                    let typst_width = page.frame.size().x.to_pt() as f32;
+                    assert!(
+                        (plain_width - typst_width).abs() < plain_width * 0.04,
+                        "{family:?} {weight:?}: plain={plain_width}, Typst={typst_width}"
+                    );
+                    let system = crate::render::get_font_system().lock().unwrap();
+                    let plain_family = crate::render::font_policy::resolve(
+                        system.db(),
+                        &family,
+                        &crate::render::TextOptions::new(),
+                    );
+                    assert_eq!(
+                        resolved, plain_family,
+                        "{family:?} must not change fonts on a mode switch"
+                    );
+                }
+            }
+        }
+
+        #[test]
+        fn international_source_preserves_region_font_order_and_direction() {
+            let ctx = font_context().unwrap();
+            let options = crate::render::TextOptions::new()
+                .font_fallbacks(["Example \"quoted\" font", "Second font"])
+                .language("zh-TW")
+                .direction(crate::render::TextDirection::RightToLeft);
+            let source = build_document_source_with_options(
+                &ctx,
+                "Å",
+                12.0,
+                Color::BLACK,
+                0.0,
+                "Primary",
+                &options,
+            )
+            .unwrap();
+            assert!(
+                source.contains("\"Primary\",\"Example \\\"quoted\\\" font\",\"Second font\","),
+                "{source}"
+            );
+            assert!(source.contains("lang: \"zh\""));
+            assert!(source.contains("region: \"TW\""));
+            assert!(source.contains("dir: rtl"));
+            assert!(source.contains("Noto Sans CJK TC"));
+        }
+
+        #[test]
+        fn explicit_math_font_is_validated_and_part_of_cache_identity() {
+            let ctx = font_context().unwrap();
+            let options =
+                crate::render::TextOptions::new().math_font("Ruviz nonexistent math font");
+            let error = render_raster_with_options(
+                "$q (Å^(-1))$",
+                16.0,
+                Color::BLACK,
+                0.0,
+                &FontFamily::SansSerif,
+                &options,
+                "test",
+            )
+            .unwrap_err();
+            assert!(error.to_string().contains("unavailable"), "{error}");
+            let Some(bytes) = font_registry::renamed_test_font(b"NMth") else {
+                return;
+            };
+            let family = font_registry::validate(bytes.clone()).unwrap().faces[0]
+                .family
+                .clone();
+            crate::render::register_font_bytes(bytes).unwrap();
+            let nonmath = crate::render::TextOptions::new().math_font(family);
+            let error = render_svg_with_options(
+                "$q$",
+                16.0,
+                Color::BLACK,
+                0.0,
+                &FontFamily::SansSerif,
+                &nonmath,
+                "test",
+            )
+            .unwrap_err();
+            assert!(error.to_string().contains("MATH table"), "{error}");
+            let family = ctx
+                .fonts
+                .iter()
+                .filter_map(ContextFontSlot::get)
+                .find(|font| font.info().family == "New Computer Modern Math")
+                .expect("bundled math font")
+                .info()
+                .family
+                .clone();
+            let valid = crate::render::TextOptions::new()
+                .math_font(&family)
+                .require_all_glyphs(true);
+            let rendered = render_svg_with_options(
+                "$q (Å^(-1))$",
+                16.0,
+                Color::BLACK,
+                0.0,
+                &FontFamily::SansSerif,
+                &valid,
+                "test",
+            )
+            .unwrap();
+            assert!(rendered.width > 0.0 && rendered.height > 0.0);
+            let mut key = make_key("$q$", 16.0, Color::BLACK, 0.0, TypstBackendKind::Svg);
+            let default_key = key.clone();
+            key.options = valid;
+            assert_ne!(key, default_key);
+        }
+
+        #[test]
+        fn missing_primary_uses_explicit_fallback_before_generic_substitution() {
+            let Some(bytes) = font_registry::renamed_test_font(b"TFbk") else {
+                return;
+            };
+            let font = font_registry::validate(bytes.clone()).unwrap();
+            let family = font.faces[0].family.clone();
+            crate::render::register_font_bytes(bytes).unwrap();
+            let options = crate::render::TextOptions::new()
+                .font_fallbacks([family.clone()])
+                .require_all_glyphs(true);
+            let actual = render_svg_with_options(
+                "Ångström",
+                16.0,
+                Color::BLACK,
+                0.0,
+                &FontFamily::from("Unavailable primary"),
+                &options,
+                "test",
+            )
+            .unwrap();
+            let expected = render_svg_with_font_family(
+                "Ångström",
+                16.0,
+                Color::BLACK,
+                0.0,
+                &FontFamily::from(family),
+                "test",
+            )
+            .unwrap();
+            assert_eq!(actual.width, expected.width);
+            assert_eq!(actual.height, expected.height);
+            assert_eq!(actual.svg, expected.svg);
+        }
+
+        #[test]
+        fn strict_typst_coverage_cannot_reuse_a_non_strict_cached_result() {
+            let text = "Missing \u{10ffff}";
+            let options = crate::render::TextOptions::new().require_all_glyphs(true);
+            render_svg(text, 12.0, Color::BLACK, 0.0, "test").unwrap();
+            let error = render_svg_with_options(
+                text,
+                12.0,
+                Color::BLACK,
+                0.0,
+                &FontFamily::SansSerif,
+                &options,
+                "test",
+            )
+            .unwrap_err();
+            assert!(error.to_string().contains("U+10FFFF"), "{error}");
+        }
+
+        #[test]
+        fn angstrom_labels_keep_their_full_ink_inside_the_page() {
+            use typst::layout::{Abs, Point};
+
+            let font_ctx = font_context().unwrap();
+            for snippet in [
+                "$Å$",
+                "$q (Å^(-1))$",
+                "$\"Re\" chi(q) (Å^(-2))$",
+                "$q (angstrom^(-1))$",
+                "Å",
+            ] {
+                for rotation in [0.0, 90.0, -90.0] {
+                    let page = compile_single_page(
+                        &font_ctx,
+                        snippet,
+                        32.0,
+                        Color::BLACK,
+                        rotation,
+                        "New Computer Modern",
+                        "angstrom regression",
+                    )
+                    .unwrap();
+                    let raster = typst_render::render(&page, 4.0);
+
+                    // Render the same positioned glyphs on a larger canvas. Ink
+                    // outside the original page would be lost in PNG and SVG.
+                    let mut padded = page.clone();
+                    let padding = Abs::pt(8.0);
+                    padded.frame.translate(Point::new(padding, padding));
+                    padded.frame.size_mut().x += 2.0 * padding;
+                    padded.frame.size_mut().y += 2.0 * padding;
+                    let reference = typst_render::render(&padded, 4.0);
+                    let ink = |pixels: &[u8]| -> u64 {
+                        pixels.chunks_exact(4).map(|pixel| pixel[3] as u64).sum()
+                    };
+                    let expected = ink(reference.data());
+                    let actual = ink(raster.data());
+                    // Allow 0.2% for rasterization rounding after translation.
+                    assert!(
+                        actual.abs_diff(expected) <= expected / 500,
+                        "Typst clipped {snippet:?} at {rotation} degrees: \
+                         rendered ink {actual}, unclipped ink {expected}"
+                    );
+                }
+            }
+        }
 
         #[test]
         fn poisoned_typst_cache_lock_returns_error() {
@@ -1104,7 +1654,8 @@ mod imp {
             let font_ctx = build_font_context(font_registry::RegistrySnapshot {
                 generation: 41,
                 fonts: vec![font].into(),
-            });
+            })
+            .unwrap();
             let family = FontFamily::Name("PBef Sans".to_string());
             let resolved = resolve_typst_font_family(&font_ctx, &family);
             assert_eq!(resolved, "PBef Sans");
@@ -1140,7 +1691,8 @@ mod imp {
             let font_ctx = build_font_context(font_registry::RegistrySnapshot {
                 generation: 42,
                 fonts: vec![font].into(),
-            });
+            })
+            .unwrap();
             let selected = font_ctx
                 .book
                 .select_family(&canonical.to_lowercase())
@@ -1303,14 +1855,19 @@ mod imp {
         }
 
         #[test]
-        fn unsupported_typst_generic_families_use_sans_serif_fallback() {
-            let font_ctx = font_context().unwrap();
-
-            for family in [FontFamily::Cursive, FontFamily::Fantasy] {
-                assert_eq!(
-                    resolve_typst_font_family(&font_ctx, &family),
-                    font_ctx.sans_family
-                );
+        fn all_generic_families_follow_the_plain_renderer() {
+            let ctx = font_context().unwrap();
+            let system = crate::render::get_font_system().lock().unwrap();
+            for family in [
+                FontFamily::SansSerif,
+                FontFamily::Serif,
+                FontFamily::Monospace,
+                FontFamily::Cursive,
+                FontFamily::Fantasy,
+            ] {
+                let cosmic_family = family.to_cosmic_family();
+                let plain = system.db().family_name(&cosmic_family);
+                assert_eq!(resolve_typst_font_family(&ctx, &family), plain);
             }
         }
 
@@ -1537,6 +2094,7 @@ mod imp {
 
 #[cfg(feature = "typst-math")]
 pub use imp::{
-    measure_text, measure_text_with_font_family, render_raster, render_raster_with_font_family,
-    render_svg, render_svg_with_font_family,
+    measure_text, measure_text_with_font_family, measure_text_with_options, render_raster,
+    render_raster_with_font_family, render_raster_with_options, render_svg,
+    render_svg_with_font_family, render_svg_with_options,
 };

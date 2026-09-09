@@ -1117,6 +1117,7 @@ impl Plot {
             self.display.theme.clone(),
             self.display.config.typography.family.clone(),
         )?;
+        renderer.set_text_options(self.display.config.typography.text_options.clone());
         renderer.set_text_engine_mode(self.display.text_engine);
         renderer.set_tick_notation(self.layout.scientific_notation);
         renderer.set_render_mode_diagnostics(match mode {
@@ -3722,6 +3723,7 @@ impl Plot {
         );
         let render_scale = self.render_scale();
         svg.set_render_scale(render_scale);
+        svg.set_text_options(self.display.config.typography.text_options.clone());
         svg.set_text_engine_mode(self.display.text_engine);
 
         let (x_min, x_max, y_min, y_max) =
@@ -3742,6 +3744,7 @@ impl Plot {
             self.display.theme.clone(),
             self.display.config.typography.family.clone(),
         )?;
+        measurement_renderer.set_text_options(self.display.config.typography.text_options.clone());
         measurement_renderer.set_text_engine_mode(self.display.text_engine);
         measurement_renderer.set_render_scale(render_scale);
         let x_category_axis =

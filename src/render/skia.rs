@@ -320,6 +320,11 @@ impl SkiaRenderer {
         self.text_engine_mode
     }
 
+    /// Set shared international typography options.
+    pub fn set_text_options(&mut self, options: crate::render::TextOptions) {
+        self.font_config.text_options = options;
+    }
+
     /// Set the font family used by plain and Typst text rendering.
     pub fn set_font_family<F>(&mut self, family: F)
     where
@@ -1420,19 +1425,20 @@ impl SkiaRenderer {
         }
         match self.text_engine_mode {
             TextEngineMode::Plain => {
-                let config = FontConfig::new(self.font_config.family.clone(), size);
+                let config = self.font_config.clone().size(size);
                 self.text_renderer
                     .render_text(&mut self.pixmap, text, x, y, &config, color)
             }
             #[cfg(feature = "typst-math")]
             TextEngineMode::Typst => {
                 let size_pt = self.typst_size_pt(size);
-                let rendered = typst_text::render_raster_with_font_family(
+                let rendered = typst_text::render_raster_with_options(
                     text,
                     size_pt,
                     color,
                     0.0,
                     &self.font_config.family,
+                    &self.font_config.text_options,
                     "Skia text rendering",
                 )?;
                 let (draw_x, draw_y) = typst_text::anchored_top_left(
@@ -1463,19 +1469,20 @@ impl SkiaRenderer {
         }
         match self.text_engine_mode {
             TextEngineMode::Plain => {
-                let config = FontConfig::new(self.font_config.family.clone(), size);
+                let config = self.font_config.clone().size(size);
                 self.text_renderer
                     .render_text_rotated(&mut self.pixmap, text, x, y, &config, color)
             }
             #[cfg(feature = "typst-math")]
             TextEngineMode::Typst => {
                 let size_pt = self.typst_size_pt(size);
-                let rendered = typst_text::render_raster_with_font_family(
+                let rendered = typst_text::render_raster_with_options(
                     text,
                     size_pt,
                     color,
                     -90.0,
                     &self.font_config.family,
+                    &self.font_config.text_options,
                     "Skia rotated text rendering",
                 )?;
                 let (draw_x, draw_y) = typst_text::anchored_top_left(
@@ -1519,7 +1526,7 @@ impl SkiaRenderer {
         }
         match self.text_engine_mode {
             TextEngineMode::Plain => {
-                let config = FontConfig::new(self.font_config.family.clone(), size).weight(weight);
+                let config = self.font_config.clone().size(size).weight(weight);
                 self.text_renderer.render_text_centered(
                     &mut self.pixmap,
                     text,
@@ -1538,12 +1545,13 @@ impl SkiaRenderer {
                     &weighted_text,
                     crate::core::TextAlign::Center,
                 );
-                let rendered = typst_text::render_raster_with_font_family(
+                let rendered = typst_text::render_raster_with_options(
                     &aligned_text,
                     size_pt,
                     color,
                     0.0,
                     &self.font_config.family,
+                    &self.font_config.text_options,
                     "Skia centered text rendering",
                 )?;
                 let (draw_x, draw_y) = typst_text::anchored_top_left(
@@ -1572,7 +1580,7 @@ impl SkiaRenderer {
     ) -> Result<(f32, f32)> {
         match self.text_engine_mode {
             TextEngineMode::Plain => {
-                let config = FontConfig::new(self.font_config.family.clone(), size).weight(weight);
+                let config = self.font_config.clone().size(size).weight(weight);
                 self.text_renderer.measure_text(text, &config)
             }
             #[cfg(feature = "typst-math")]
@@ -1584,13 +1592,14 @@ impl SkiaRenderer {
                     &weighted_text,
                     crate::core::TextAlign::Center,
                 );
-                typst_text::measure_text_with_font_family(
+                typst_text::measure_text_with_options(
                     &aligned_text,
                     size_pt,
                     self.theme.foreground,
                     0.0,
                     TypstBackendKind::Raster,
                     &self.font_config.family,
+                    &self.font_config.text_options,
                     "Skia text measurement",
                 )
             }
@@ -1600,7 +1609,7 @@ impl SkiaRenderer {
     pub(crate) fn measure_text_ink_center_from_top(&self, text: &str, size: f32) -> Result<f32> {
         match self.text_engine_mode {
             TextEngineMode::Plain => {
-                let config = FontConfig::new(self.font_config.family.clone(), size);
+                let config = self.font_config.clone().size(size);
                 self.text_renderer
                     .measure_text_ink_center_from_top(text, &config)
             }

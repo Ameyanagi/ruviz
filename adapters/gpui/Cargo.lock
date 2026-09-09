@@ -5121,7 +5121,7 @@ dependencies = [
 
 [[package]]
 name = "ruviz"
-version = "0.13.1"
+version = "0.14.0"
 dependencies = [
  "base64",
  "bytemuck",
@@ -5142,7 +5142,9 @@ dependencies = [
  "tiny-skia 0.12.0",
  "tiny-skia-path 0.12.0",
  "ttf-parser",
+ "unicode-bidi",
  "unicode-linebreak",
+ "unicode-script",
  "unicode-segmentation",
  "unicode-width",
  "wgpu 29.0.4",
@@ -5151,7 +5153,7 @@ dependencies = [
 
 [[package]]
 name = "ruviz-gpui"
-version = "0.13.1"
+version = "0.14.0"
 dependencies = [
  "arboard",
  "core-foundation 0.10.0",

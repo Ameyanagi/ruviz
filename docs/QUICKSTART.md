@@ -2,7 +2,7 @@
 
 Get started with ruviz in less than 5 minutes!
 
-## What's New in v0.13.1
+## What's New in v0.14.0
 
 - Fast GPUI pan previews erase stale data in uncovered plot areas, preventing
   a stationary copy of a spectrum from appearing beside the moving trace.
@@ -25,7 +25,7 @@ cd my_plot
 2. **Add ruviz to your `Cargo.toml`**:
 ```toml
 [dependencies]
-ruviz = "0.13.1"
+ruviz = "0.14.0"
 ```
 
 3. **Write your first plot** in `src/main.rs`:
@@ -64,8 +64,8 @@ an embedded interactive plot view:
 
 ```toml
 [dependencies]
-ruviz = "0.13.1"
-ruviz-gpui = "0.13.1"
+ruviz = "0.14.0"
+ruviz-gpui = "0.14.0"
 ```
 
 `ruviz-gpui` is supported on Linux, macOS, and Windows. On Windows, prefer the
@@ -93,7 +93,7 @@ If you want publication-style math in labels and titles, enable Typst text rende
 
 ```toml
 [dependencies]
-ruviz = { version = "0.13.1", features = ["typst-math"] }
+ruviz = { version = "0.14.0", features = ["typst-math"] }
 ```
 
 `.typst(true)` is only available when `typst-math` is enabled. The configured
@@ -112,7 +112,7 @@ If you want Typst to stay optional in your own crate, forward a local feature fi
 
 ```toml
 [dependencies]
-ruviz = { version = "0.13.1", default-features = false }
+ruviz = { version = "0.14.0", default-features = false }
 
 [features]
 default = []
@@ -364,7 +364,7 @@ Plot::new()
 ### With polars (requires `polars_support` feature)
 ```toml
 [dependencies]
-ruviz = { version = "0.13.1", features = ["polars_support"] }
+ruviz = { version = "0.14.0", features = ["polars_support"] }
 polars = "0.50"
 ```
 
@@ -392,7 +392,7 @@ Plot::new()
 only when you have benchmarked a path that benefits from the extra SIMD support:
 ```toml
 [dependencies]
-ruviz = { version = "0.13.1", features = ["performance"] }
+ruviz = { version = "0.14.0", features = ["performance"] }
 ```
 
 ### Large Dataset Export

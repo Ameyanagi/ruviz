@@ -899,7 +899,7 @@ pub mod prelude {
     };
     pub use crate::render::{
         Color, ColorMap, ColorMapSpec, FontConfig, FontFamily, FontStyle, FontWeight, LineStyle,
-        MarkerStyle, Theme, XTickRotation,
+        MarkerStyle, TextDirection, TextOptions, Theme, XTickRotation,
     };
 
     // Deprecated 2D shortcuts, kept re-exported so existing `use

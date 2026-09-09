@@ -29,7 +29,7 @@ bindings. Every figure in it is real ruviz output.
 
 ```toml
 [dependencies]
-ruviz = "0.13.1"
+ruviz = "0.14.0"
 ```
 
 ## Hello, plot
@@ -155,8 +155,10 @@ Every one of them takes the same chain shape:
 `seaborn.set_theme()`, and `Theme::builder()` customizes any of them.
 See [styling guide](docs/guide/05_styling.md).
 
-**Math and CJK text:** enable the `typst-math` feature and call `.typst(true)`;
+**Math:** enable the `typst-math` feature and call `.typst(true)`;
 titles and labels then accept Typst math such as `"$f(x) = e^(-x)$"`.
+Plain and Typst modes share font settings. Both support international text with
+[ordered font fallbacks, language, and direction](docs/guide/international_typography.md).
 See [QUICKSTART](docs/QUICKSTART.md).
 
 ## Output

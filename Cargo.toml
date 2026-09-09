@@ -19,7 +19,7 @@ resolver = "2"
 
 [package]
 name = "ruviz"
-version = "0.13.1"
+version = "0.14.0"
 edition = "2024"
 rust-version = "1.92"
 authors = ["Ruviz Contributors"]
@@ -89,6 +89,8 @@ nalgebra = { version = "0.34", optional = true }
 palette = "0.7"
 
 # Text rendering - unified on cosmic-text (pure Rust)
+unicode-script = "0.5"
+unicode-bidi = "0.3"
 cosmic-text = "0.16"  # Professional text layout, shaping, and font discovery
 swash = "0.2"  # Distinguish premultiplied color outlines from straight color bitmaps
 ttf-parser = "0.25"  # Validate registered font faces before mutating shared state
@@ -110,7 +112,7 @@ png = "0.18"
 base64 = { version = "0.22", optional = true }
 
 # PDF export (SVG → PDF pipeline)
-svg2pdf = { version = "0.13", optional = true }  # Uses usvg 0.43 internally
+svg2pdf = { version = "0.13", optional = true }  # Vector SVG-to-PDF conversion
 
 # Error handling
 thiserror = "2.0"
@@ -610,6 +612,10 @@ harness = false
 
 [[bench]]
 name = "baseline_benchmarks"
+harness = false
+
+[[bench]]
+name = "text_rendering"
 harness = false
 
 [[bench]]
