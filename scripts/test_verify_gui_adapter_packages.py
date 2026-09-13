@@ -129,8 +129,10 @@ class WorkflowContractTests(unittest.TestCase):
             "cargo doc --manifest-path adapters/gui/Cargo.toml",
             "Native GUI Adapter MSRV (1.92)",
             "GPUI MSRV (1.92)",
-            "hashFiles('adapters/gui/Cargo.lock')",
-            "hashFiles('adapters/gpui/Cargo.lock')",
+            # rust-cache hashes each workspace's manifests and lockfiles.
+            "uses: Swatinem/rust-cache@",
+            "adapters/gui -> target",
+            "adapters/gpui -> target",
             "cargo clippy --manifest-path adapters/gui/Cargo.toml --workspace --all-targets --locked",
             "cargo clippy --manifest-path adapters/gpui/Cargo.toml --all-targets --locked",
             "cargo test --manifest-path adapters/gui/Cargo.toml --workspace --lib --all-features --locked",
