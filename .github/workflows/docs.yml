@@ -12,9 +12,9 @@ permissions:
   pages: write
   id-token: write
 
-# Allow only one concurrent deployment
+# Keep Pages deployments serialized without PR checks cancelling deployments.
 concurrency:
-  group: "pages"
+  group: ${{ github.event_name == 'pull_request' && format('docs-pr-{0}', github.event.pull_request.number) || 'pages' }}
   cancel-in-progress: true
 
 env:
