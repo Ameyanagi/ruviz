@@ -11,10 +11,19 @@ on:
   schedule:
     - cron: '0 6 * * 1'
 
+# Cancel an older run only when a new commit arrives on the same PR.
+# Pushes, tags, scheduled runs, and manual runs each retain their own group.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
 
+# Rust caches retain dependency builds and prune workspace/incremental artifacts.
+# Most jobs read caches seeded by main/develop, avoiding compression on PR runs.
+# PR-only gallery/preview jobs save their own caches because no branch run seeds them.
 jobs:
   fmt:
     name: Rustfmt
@@ -59,15 +68,14 @@ jobs:
         uses: ./.github/actions/install-linux-desktop-build-deps
 
       - name: Cache cargo
-        uses: actions/cache@v4
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-            adapters/gpui/target
-            adapters/gui/target
-          key: ${{ runner.os }}-cargo-clippy-${{ hashFiles('**/Cargo.lock') }}
+          workspaces: |
+            . -> target
+            adapters/gpui -> target
+            adapters/gui -> target
+          cache-bin: false
+          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' }}
 
       - name: Run clippy
         run: cargo clippy -p ruviz --all-targets --all-features -- -D warnings
@@ -112,7 +120,7 @@ jobs:
   packaged-crates:
     name: Packaged Crates (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    needs: [fmt, clippy]
+    needs: [fmt]
     strategy:
       fail-fast: false
       matrix:
@@ -154,7 +162,7 @@ jobs:
   gui-adapter-packages:
     name: Packaged Native GUI Adapters
     runs-on: ubuntu-latest
-    needs: [fmt, clippy]
+    needs: [fmt]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -174,13 +182,12 @@ jobs:
         uses: ./.github/actions/install-linux-desktop-build-deps
 
       - name: Cache GUI adapter package sources
-        uses: actions/cache@v4
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          path: |
-            ~/.cargo/registry
-            adapters/gui/target
-          key: ${{ runner.os }}-cargo-gui-adapter-packages-${{ hashFiles('adapters/gui/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-gui-adapter-packages-
+          workspaces: |
+            adapters/gui -> target
+          cache-bin: false
+          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' }}
 
       - name: Test native GUI adapter package verifier
         run: uv run python -m unittest scripts/test_verify_gui_adapter_packages.py
@@ -216,15 +223,14 @@ jobs:
         uses: ./.github/actions/install-linux-desktop-build-deps
 
       - name: Cache native GUI test workspaces
-        uses: actions/cache@v4
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            adapters/gui/target
-            adapters/gpui/target
-          key: ${{ matrix.platform.cache_key }}-cargo-native-gui-tests-${{ hashFiles('adapters/gui/Cargo.lock', 'adapters/gpui/Cargo.lock') }}
-          restore-keys: ${{ matrix.platform.cache_key }}-cargo-native-gui-tests-
+          key: ${{ matrix.platform.cache_key }}
+          workspaces: |
+            adapters/gui -> target
+            adapters/gpui -> target
+          cache-bin: false
+          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' }}
 
       - name: Test adapter default behavior
         run: cargo test --manifest-path adapters/gui/Cargo.toml --workspace --lib --locked -- --test-threads=1
@@ -327,7 +333,7 @@ jobs:
   test-fast:
     name: Test Fast Lane
     runs-on: ubuntu-latest
-    needs: [fmt, clippy]
+    needs: [fmt]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -336,13 +342,12 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo
-        uses: actions/cache@v4
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-test-${{ hashFiles('**/Cargo.lock') }}
+          workspaces: |
+            . -> target
+          cache-bin: false
+          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' }}
 
       - name: Create test output directories
         run: |
@@ -391,7 +396,7 @@ jobs:
   test-visual-golden:
     name: Deterministic Golden Images
     runs-on: ubuntu-24.04
-    needs: [fmt, clippy]
+    needs: [fmt]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -412,13 +417,13 @@ jobs:
           fi
 
       - name: Cache cargo
-        uses: actions/cache@v4
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-visual-golden-1.94.1-${{ hashFiles('**/Cargo.lock', 'src/dejavu-sans.ttf', 'tests/fixtures/golden/*.png') }}
+          key: ${{ hashFiles('src/dejavu-sans.ttf', 'tests/fixtures/golden/*.png') }}
+          workspaces: |
+            . -> target
+          cache-bin: false
+          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' }}
 
       - name: Create visual output directory
         run: mkdir -p generated/tests/render
@@ -438,7 +443,7 @@ jobs:
   test-feature-contract:
     name: Feature Contract (${{ matrix.contract.name }})
     runs-on: ubuntu-latest
-    needs: [fmt, clippy]
+    needs: [fmt]
     strategy:
       fail-fast: false
       matrix:
@@ -489,13 +494,13 @@ jobs:
           fi
 
       - name: Cache cargo
-        uses: actions/cache@v4
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-feature-contract-${{ matrix.contract.cache-key }}-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ matrix.contract.cache-key }}
+          workspaces: |
+            . -> target
+          cache-bin: false
+          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' }}
 
       - name: Install Linux desktop build dependencies
         uses: ./.github/actions/install-linux-desktop-build-deps
@@ -524,7 +529,7 @@ jobs:
     # construction could never let the guard fail.
     name: Feature Matrix (${{ matrix.suite.name }})
     runs-on: ubuntu-24.04
-    needs: [fmt, clippy]
+    needs: [fmt]
     env:
       LIBGL_ALWAYS_SOFTWARE: "1"
       WGPU_BACKEND: vulkan
@@ -601,14 +606,13 @@ jobs:
           sudo apt-get install -y mesa-vulkan-drivers
 
       - name: Cache cargo
-        uses: actions/cache@v4
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-feature-matrix-${{ matrix.suite.cache-key }}-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-feature-matrix-${{ matrix.suite.cache-key }}-
+          key: ${{ matrix.suite.cache-key }}
+          workspaces: |
+            . -> target
+          cache-bin: false
+          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' }}
 
       - name: Create test output directories
         run: |
@@ -630,7 +634,7 @@ jobs:
   test-3d-gpu-required-adapter:
     name: 3D GPU Required Adapter (Vulkan llvmpipe)
     runs-on: ubuntu-24.04
-    needs: [fmt, clippy]
+    needs: [fmt]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -639,13 +643,12 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo
-        uses: actions/cache@v4
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-3d-required-adapter-${{ hashFiles('**/Cargo.lock') }}
+          workspaces: |
+            . -> target
+          cache-bin: false
+          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' }}
 
       - name: Install Vulkan software adapter
         run: |
@@ -679,7 +682,7 @@ jobs:
   test-visual-heavy:
     name: Test Visual Heavy Lane
     runs-on: ubuntu-latest
-    needs: [fmt, clippy]
+    needs: [fmt]
     if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
     steps:
       - name: Checkout code
@@ -689,13 +692,12 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo
-        uses: actions/cache@v4
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-test-visual-heavy-${{ hashFiles('**/Cargo.lock') }}
+          workspaces: |
+            . -> target
+          cache-bin: false
+          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' }}
 
       - name: Create test output directories
         run: |
@@ -747,13 +749,12 @@ jobs:
           fi
 
       - name: Cache cargo
-        uses: actions/cache@v4
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-msrv-${{ hashFiles('**/Cargo.lock') }}
+          workspaces: |
+            . -> target
+          cache-bin: false
+          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' }}
 
       - name: Install Linux desktop build dependencies
         uses: ./.github/actions/install-linux-desktop-build-deps
@@ -792,13 +793,12 @@ jobs:
         uses: ./.github/actions/install-linux-desktop-build-deps
 
       - name: Cache MSRV GUI adapter workspace
-        uses: actions/cache@v4
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          path: |
-            ~/.cargo/registry
-            adapters/gui/target
-          key: ${{ runner.os }}-cargo-gui-adapters-msrv-1.92-${{ hashFiles('adapters/gui/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-gui-adapters-msrv-1.92-
+          workspaces: |
+            adapters/gui -> target
+          cache-bin: false
+          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' }}
 
       - name: Check default adapter features on the MSRV
         run: cargo check --manifest-path adapters/gui/Cargo.toml --workspace --locked
@@ -839,14 +839,12 @@ jobs:
         uses: ./.github/actions/install-linux-desktop-build-deps
 
       - name: Cache GPUI MSRV workspace
-        uses: actions/cache@v4
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            adapters/gpui/target
-          key: ${{ runner.os }}-cargo-gpui-msrv-1.92-${{ hashFiles('adapters/gpui/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-gpui-msrv-1.92-
+          workspaces: |
+            adapters/gpui -> target
+          cache-bin: false
+          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' }}
 
       - name: Check GPUI default features on the MSRV
         run: cargo check --manifest-path adapters/gpui/Cargo.toml --locked
@@ -862,7 +860,7 @@ jobs:
   python:
     name: Python (${{ matrix.python.version }})
     runs-on: ubuntu-latest
-    needs: [fmt, clippy]
+    needs: [fmt]
     strategy:
       fail-fast: false
       matrix:
@@ -943,7 +941,7 @@ jobs:
   python-packaging:
     name: Python Packaging
     runs-on: ubuntu-latest
-    needs: [fmt, clippy]
+    needs: [fmt]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -1020,7 +1018,7 @@ jobs:
   npm-package:
     name: NPM Package
     runs-on: ubuntu-latest
-    needs: [fmt, clippy]
+    needs: [fmt]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -1031,14 +1029,12 @@ jobs:
           targets: wasm32-unknown-unknown
 
       - name: Cache cargo
-        uses: actions/cache@v4
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-npm-package-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-npm-package-
+          workspaces: |
+            . -> target
+          cache-bin: false
+          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' }}
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -1061,7 +1057,7 @@ jobs:
   platform-build:
     name: Build (${{ matrix.platform.name }})
     runs-on: ${{ matrix.platform.os }}
-    needs: [fmt, clippy]
+    needs: [fmt]
     strategy:
       fail-fast: false
       matrix:
@@ -1089,14 +1085,14 @@ jobs:
           targets: ${{ matrix.platform.target }}
 
       - name: Cache cargo
-        uses: actions/cache@v4
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-            adapters/gpui/target
-          key: ${{ runner.os }}-${{ matrix.platform.target }}-cargo-build-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ matrix.platform.target }}
+          workspaces: |
+            . -> target
+            adapters/gpui -> target
+          cache-bin: false
+          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' }}
 
       - name: Install GPUI Linux build dependencies
         if: matrix.platform.name == 'Linux'
@@ -1152,7 +1148,7 @@ jobs:
   gui-adapters:
     name: Native GUI Adapters (${{ matrix.platform.name }})
     runs-on: ${{ matrix.platform.os }}
-    needs: [fmt, clippy]
+    needs: [fmt]
     strategy:
       fail-fast: false
       matrix:
@@ -1180,13 +1176,13 @@ jobs:
         uses: ./.github/actions/install-linux-desktop-build-deps
 
       - name: Cache native GUI adapter workspace
-        uses: actions/cache@v4
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          path: |
-            ~/.cargo/registry
-            adapters/gui/target
-          key: ${{ runner.os }}-${{ matrix.platform.target }}-cargo-gui-adapters-${{ hashFiles('adapters/gui/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-${{ matrix.platform.target }}-cargo-gui-adapters-
+          key: ${{ matrix.platform.target }}
+          workspaces: |
+            adapters/gui -> target
+          cache-bin: false
+          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' }}
 
       - name: Check default adapter features
         run: cargo check --manifest-path adapters/gui/Cargo.toml --workspace --target ${{ matrix.platform.target }} --locked
@@ -1208,7 +1204,7 @@ jobs:
   wasm-web:
     name: WASM + Web
     runs-on: ubuntu-latest
-    needs: [fmt, clippy]
+    needs: [fmt]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -1224,14 +1220,12 @@ jobs:
           bun-version: 1.3.5
 
       - name: Cache cargo
-        uses: actions/cache@v4
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-wasm-web-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-wasm-web-
+          workspaces: |
+            . -> target
+          cache-bin: false
+          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' }}
 
       - name: Cache Bun
         uses: actions/cache@v4
@@ -1316,15 +1310,14 @@ jobs:
           bun-version: 1.3.5
 
       - name: Cache cargo
-        uses: actions/cache@v4
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-            adapters/gui/target
-            adapters/gpui/target
-          key: ${{ runner.os }}-cargo-docs-${{ hashFiles('**/Cargo.lock') }}
+          workspaces: |
+            . -> target
+            adapters/gui -> target
+            adapters/gpui -> target
+          cache-bin: false
+          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' }}
 
       - name: Install Linux desktop build dependencies
         uses: ./.github/actions/install-linux-desktop-build-deps
@@ -1445,14 +1438,12 @@ jobs:
           fi
 
       - name: Cache cargo
-        uses: actions/cache@v4
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-gallery-1.94.1-${{ hashFiles('**/Cargo.lock', 'src/dejavu-sans.ttf', 'tests/fixtures/golden/gallery/gallery_subplots.png') }}
-          restore-keys: ${{ runner.os }}-cargo-gallery-1.94.1-
+          key: ${{ hashFiles('src/dejavu-sans.ttf', 'tests/fixtures/golden/gallery/gallery_subplots.png') }}
+          workspaces: |
+            . -> target
+          cache-bin: false
 
       - name: Install Linux desktop build dependencies
         uses: ./.github/actions/install-linux-desktop-build-deps
@@ -1502,14 +1493,11 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo
-        uses: actions/cache@v4
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-generated-preview-rust-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-generated-preview-rust-
+          workspaces: |
+            . -> target
+          cache-bin: false
 
       - name: Build Rust preview artifacts
         run: make build-generated-preview-rust
@@ -1556,14 +1544,11 @@ jobs:
           bun-version: 1.3.5
 
       - name: Cache cargo
-        uses: actions/cache@v4
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-generated-preview-python-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-generated-preview-python-
+          workspaces: |
+            . -> target
+          cache-bin: false
 
       - name: Cache Bun
         uses: actions/cache@v4
@@ -1625,14 +1610,11 @@ jobs:
           bun-version: 1.3.5
 
       - name: Cache cargo
-        uses: actions/cache@v4
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-generated-preview-web-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-generated-preview-web-
+          workspaces: |
+            . -> target
+          cache-bin: false
 
       - name: Cache Bun
         uses: actions/cache@v4

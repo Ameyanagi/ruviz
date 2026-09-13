@@ -926,7 +926,7 @@ class WorkflowIntegrationTests(unittest.TestCase):
         jobs = parse_workflow_jobs(workflow_path)
         packaged = jobs["packaged-crates"]
 
-        self.assertEqual(packaged["needs"], ["fmt", "clippy"])
+        self.assertEqual(packaged["needs"], ["fmt"])
         self.assertEqual(
             step_named(packaged, "Test packaged-crate verifier")["run"],
             "uv run python -m unittest scripts/test_verify_packaged_crates.py",
