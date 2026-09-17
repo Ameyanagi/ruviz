@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.14.2] - 2026-09-17
+
+### Fixed
+
+- GPUI plot context menus render above ordinary host overlays, including range
+  shading and drag handles. Regression coverage verifies that clicking the
+  rendered **Reset View** entry restores the viewport without firing the plot's
+  click callback (#190).
+
+### Added
+
+- `RuvizPlot::is_context_menu_open()` lets hosts yield captured pointer input
+  while a plot context menu is open.
+
+### Changed
+
+- CI runs independent checks in parallel and prunes Rust build caches (#189).
+
 ## [0.14.1] - 2026-09-09
 
 ### Fixed

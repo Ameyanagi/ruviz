@@ -3,7 +3,7 @@
 Enable Ruviz's exact `3d` feature:
 
 ```toml
-ruviz = { version = "0.14.1", features = ["3d"] }
+ruviz = { version = "0.14.2", features = ["3d"] }
 ```
 
 The closest API mappings are:
