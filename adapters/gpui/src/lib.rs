@@ -4373,6 +4373,8 @@ mod platform_impl {
                 cx.read(|app| app.read_entity(&view, |view, _| view.is_context_menu_open()));
             assert!(context_menu_open);
             assert_eq!(clicks.lock().expect("click event lock poisoned").len(), 1);
+            cx.refresh().expect("open menu should render");
+            cx.run_until_parked();
 
             cx.simulate_event(MouseDownEvent {
                 button: MouseButton::Left,
@@ -4391,6 +4393,43 @@ mod platform_impl {
                 !cx.read(|app| view.read(app).is_context_menu_open()),
                 "the deferred menu must still receive its dismissal click"
             );
+            assert_eq!(clicks.lock().expect("click event lock poisoned").len(), 1);
+
+            cx.simulate_mouse_down(click_position, MouseButton::Right, Modifiers::default());
+            cx.simulate_mouse_up(click_position, MouseButton::Right, Modifiers::default());
+            cx.refresh().expect("reopened menu should render");
+            cx.run_until_parked();
+            cx.read(|app| {
+                let view = view.read(app);
+                assert!(view.is_context_menu_open());
+                assert_ne!(
+                    view.session
+                        .viewport_snapshot()
+                        .expect("changed viewport should exist")
+                        .visible_bounds,
+                    initial_bounds,
+                    "reset must start from a changed viewport"
+                );
+            });
+
+            // Reset View is the first enabled entry in the default menu. Use
+            // its rendered bounds so this exercises deferred layout and input
+            // dispatch, rather than calling the action handler directly.
+            let reset_bounds = cx
+                .debug_bounds("ruviz-context-menu-entry-0")
+                .expect("the deferred Reset View entry should be rendered");
+            cx.simulate_click(reset_bounds.center(), Modifiers::default());
+            cx.read(|app| {
+                let view = view.read(app);
+                assert!(!view.is_context_menu_open());
+                assert_viewport_bounds_close(
+                    view.session
+                        .viewport_snapshot()
+                        .expect("reset viewport should exist")
+                        .visible_bounds,
+                    initial_bounds,
+                );
+            });
             assert_eq!(clicks.lock().expect("click event lock poisoned").len(), 1);
         }
 

@@ -1183,6 +1183,7 @@ impl RuvizPlot {
             };
             children.push(
                 div()
+                    .debug_selector(|| format!("ruviz-context-menu-entry-{index}"))
                     .h(px(MENU_ITEM_HEIGHT_PX))
                     .px(px(MENU_PADDING_X_PX))
                     .bg(entry_bg)
