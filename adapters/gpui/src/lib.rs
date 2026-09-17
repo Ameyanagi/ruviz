@@ -1163,6 +1163,13 @@ mod platform_impl {
             &self.options.context_menu
         }
 
+        /// Whether the plot's context menu is open. Hosts that capture pointer
+        /// input for their own plot overlays should leave those events to the
+        /// menu while this returns `true`.
+        pub fn is_context_menu_open(&self) -> bool {
+            self.accepts_user_input && self.interaction_state.context_menu.is_some()
+        }
+
         /// Explicitly retry a render request that most recently failed.
         ///
         /// Identical failed requests are latched to prevent a notify/render
@@ -1549,7 +1556,9 @@ mod platform_impl {
                     this.child(self.render_zoom_overlay(bounds))
                 })
                 .when_some(self.render_context_menu_overlay(), |this, menu_overlay| {
-                    this.child(menu_overlay)
+                    // Host applications can paint range handles after this
+                    // view. Menus must remain above those ordinary siblings.
+                    this.child(gpui::deferred(menu_overlay).with_priority(1))
                 })
                 .on_mouse_down(MouseButton::Left, {
                     let entity = entity.clone();
@@ -4360,13 +4369,12 @@ mod platform_impl {
 
             cx.simulate_mouse_down(click_position, MouseButton::Right, Modifiers::default());
             cx.simulate_mouse_up(click_position, MouseButton::Right, Modifiers::default());
-            let context_menu_open = cx.read(|app| {
-                app.read_entity(&view, |view, _| {
-                    view.interaction_state.context_menu.is_some()
-                })
-            });
+            let context_menu_open =
+                cx.read(|app| app.read_entity(&view, |view, _| view.is_context_menu_open()));
             assert!(context_menu_open);
             assert_eq!(clicks.lock().expect("click event lock poisoned").len(), 1);
+            cx.refresh().expect("open menu should render");
+            cx.run_until_parked();
 
             cx.simulate_event(MouseDownEvent {
                 button: MouseButton::Left,
@@ -4380,6 +4388,47 @@ mod platform_impl {
                 position: click_position,
                 modifiers: Modifiers::default(),
                 click_count: 2,
+            });
+            assert!(
+                !cx.read(|app| view.read(app).is_context_menu_open()),
+                "the deferred menu must still receive its dismissal click"
+            );
+            assert_eq!(clicks.lock().expect("click event lock poisoned").len(), 1);
+
+            cx.simulate_mouse_down(click_position, MouseButton::Right, Modifiers::default());
+            cx.simulate_mouse_up(click_position, MouseButton::Right, Modifiers::default());
+            cx.refresh().expect("reopened menu should render");
+            cx.run_until_parked();
+            cx.read(|app| {
+                let view = view.read(app);
+                assert!(view.is_context_menu_open());
+                assert_ne!(
+                    view.session
+                        .viewport_snapshot()
+                        .expect("changed viewport should exist")
+                        .visible_bounds,
+                    initial_bounds,
+                    "reset must start from a changed viewport"
+                );
+            });
+
+            // Reset View is the first enabled entry in the default menu. Use
+            // its rendered bounds so this exercises deferred layout and input
+            // dispatch, rather than calling the action handler directly.
+            let reset_bounds = cx
+                .debug_bounds("ruviz-context-menu-entry-0")
+                .expect("the deferred Reset View entry should be rendered");
+            cx.simulate_click(reset_bounds.center(), Modifiers::default());
+            cx.read(|app| {
+                let view = view.read(app);
+                assert!(!view.is_context_menu_open());
+                assert_viewport_bounds_close(
+                    view.session
+                        .viewport_snapshot()
+                        .expect("reset viewport should exist")
+                        .visible_bounds,
+                    initial_bounds,
+                );
             });
             assert_eq!(clicks.lock().expect("click event lock poisoned").len(), 1);
         }
