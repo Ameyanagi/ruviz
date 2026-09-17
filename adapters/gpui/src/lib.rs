@@ -1163,6 +1163,13 @@ mod platform_impl {
             &self.options.context_menu
         }
 
+        /// Whether the plot's context menu is open. Hosts that capture pointer
+        /// input for their own plot overlays should leave those events to the
+        /// menu while this returns `true`.
+        pub fn is_context_menu_open(&self) -> bool {
+            self.accepts_user_input && self.interaction_state.context_menu.is_some()
+        }
+
         /// Explicitly retry a render request that most recently failed.
         ///
         /// Identical failed requests are latched to prevent a notify/render
@@ -1549,7 +1556,9 @@ mod platform_impl {
                     this.child(self.render_zoom_overlay(bounds))
                 })
                 .when_some(self.render_context_menu_overlay(), |this, menu_overlay| {
-                    this.child(menu_overlay)
+                    // Host applications can paint range handles after this
+                    // view. Menus must remain above those ordinary siblings.
+                    this.child(gpui::deferred(menu_overlay).with_priority(1))
                 })
                 .on_mouse_down(MouseButton::Left, {
                     let entity = entity.clone();
@@ -4360,11 +4369,8 @@ mod platform_impl {
 
             cx.simulate_mouse_down(click_position, MouseButton::Right, Modifiers::default());
             cx.simulate_mouse_up(click_position, MouseButton::Right, Modifiers::default());
-            let context_menu_open = cx.read(|app| {
-                app.read_entity(&view, |view, _| {
-                    view.interaction_state.context_menu.is_some()
-                })
-            });
+            let context_menu_open =
+                cx.read(|app| app.read_entity(&view, |view, _| view.is_context_menu_open()));
             assert!(context_menu_open);
             assert_eq!(clicks.lock().expect("click event lock poisoned").len(), 1);
 
@@ -4381,6 +4387,10 @@ mod platform_impl {
                 modifiers: Modifiers::default(),
                 click_count: 2,
             });
+            assert!(
+                !cx.read(|app| view.read(app).is_context_menu_open()),
+                "the deferred menu must still receive its dismissal click"
+            );
             assert_eq!(clicks.lock().expect("click event lock poisoned").len(), 1);
         }
 

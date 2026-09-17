@@ -84,6 +84,18 @@ mixed elements/radii, bonds, a cutoff guide, faded context, and a path overlay.
 
 ## Coordinates and pointer callbacks
 
+Context menus are drawn above ordinary host overlays, including range handles.
+If the host captures pointer presses before the plot receives them, check
+`RuvizPlot::is_context_menu_open()` and leave presses to the menu while it is open.
+This display/input state does not change the plot's numerical data or viewport.
+
+![The plot context menu appears above rexafs range overlays](../../docs/assets/rustdoc/gpui-context-menu-rexafs.jpg)
+
+Native macOS validation in rexafs: **Reset View** remains clickable over a
+range boundary. The screenshot uses the public CC0
+[Cu room-temperature measurement](https://github.com/XraySpectroscopy/XASDataLibrary/blob/284edcc1752ede0dd41c7e66eb2dbf6cf9589980/data/Cu/cu_metal_rt.xdi)
+from the XAS Data Library (APS 13-ID-C).
+
 `RuvizPlot::data_at` maps an absolute GPUI window `Point<Pixels>` into the
 currently displayed data coordinates. `RuvizPlot::screen_at` performs the inverse
 mapping and also returns an absolute window point. Both return `Ok(None)` before a
