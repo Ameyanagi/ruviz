@@ -17,24 +17,27 @@ normal axes and support line and scatter overlays.
 row running from left to right. RGB channels use straight alpha: a half-opaque
 red pixel is `[255, 0, 0, 128]`.
 
-```rust
+```rust,check
 use ruviz::prelude::*;
 
-let image = Image::new(2, 2, vec![
-    255, 0, 0, 255,   0, 255, 0, 255,
-    0, 0, 255, 255,   255, 255, 0, 128,
-]);
+fn main() -> ruviz::core::Result<()> {
+    let image = Image::new(2, 2, vec![
+        255, 0, 0, 255,   0, 255, 0, 255,
+        0, 0, 255, 255,   255, 255, 0, 128,
+    ]);
 
-Plot::new()
-    .image(&image)
-    .extent(-1.0, 1.0, -1.0, 1.0)
-    .origin(ImageOrigin::Lower)
-    .interpolation(ImageInterpolation::Nearest)
-    .alpha(0.9)
-    .line(&[-1.0, 1.0], &[0.0, 0.0])
-    .color(Color::BLACK)
-    .data_aspect(1.0)
-    .save("rgba_image.png")?;
+    Plot::new()
+        .image(&image)
+        .extent(-1.0, 1.0, -1.0, 1.0)
+        .origin(ImageOrigin::Lower)
+        .interpolation(ImageInterpolation::Nearest)
+        .alpha(0.9)
+        .line(&[-1.0, 1.0], &[0.0, 0.0])
+        .color(Color::BLACK)
+        .data_aspect(1.0)
+        .save("rgba_image.png")?;
+    Ok(())
+}
 ```
 
 An extent describes the **outer pixel edges**, as `(xmin, xmax, ymin, ymax)`.
@@ -58,15 +61,18 @@ over earlier ones.
 
 For reusable settings, pass an `ImageConfig` to `image_with`:
 
-```rust
+```rust,check
 use ruviz::prelude::*;
 
-let image = Image::new(1, 1, vec![40, 120, 220, 255]);
-let config = ImageConfig::new()
-    .extent(-2.0, 2.0, -1.0, 1.0)
-    .origin(ImageOrigin::Lower)
-    .interpolation(ImageInterpolation::Bilinear);
-Plot::new().image_with(&image, config).save("configured_image.png")?;
+fn main() -> ruviz::core::Result<()> {
+    let image = Image::new(1, 1, vec![40, 120, 220, 255]);
+    let config = ImageConfig::new()
+        .extent(-2.0, 2.0, -1.0, 1.0)
+        .origin(ImageOrigin::Lower)
+        .interpolation(ImageInterpolation::Bilinear);
+    Plot::new().image_with(&image, config).save("configured_image.png")?;
+    Ok(())
+}
 ```
 
 ## Sample a function once
@@ -85,26 +91,29 @@ exactly `width × height` times during the helper call. Rendering at another DPI
 exporting again, or changing the viewport uses the stored samples. Choose a new
 source resolution and build another series to evaluate the function more finely.
 
-```rust
+```rust,check
 use ruviz::prelude::*;
 
-Plot::new()
-    .heatmap_fn(200, 160, (-2.0, 2.0, -1.6, 1.6), |x, y| {
-        (-x * x - y * y).exp()
-    })
-    .cmap("viridis")
-    .colorbar_label("exp(−x² − y²)")
-    .data_aspect(1.0)
-    .save("sampled_scalar.png")?;
+fn main() -> ruviz::core::Result<()> {
+    Plot::new()
+        .heatmap_fn(200, 160, (-2.0, 2.0, -1.6, 1.6), |x, y| {
+            (-x * x - y * y).exp()
+        })
+        .cmap("viridis")
+        .colorbar_label("exp(−x² − y²)")
+        .data_aspect(1.0)
+        .save("sampled_scalar.png")?;
 
-Plot::new()
-    .image_fn(200, 160, (-2.0, 2.0, -1.6, 1.6), |x, y| {
-        let red = ((x + 2.0) / 4.0 * 255.0) as u8;
-        let blue = ((y + 1.6) / 3.2 * 255.0) as u8;
-        Color::from_rgba(red, 80, blue, 255)
-    })
-    .data_aspect(1.0)
-    .save("sampled_rgba.png")?;
+    Plot::new()
+        .image_fn(200, 160, (-2.0, 2.0, -1.6, 1.6), |x, y| {
+            let red = ((x + 2.0) / 4.0 * 255.0) as u8;
+            let blue = ((y + 1.6) / 3.2 * 255.0) as u8;
+            Color::from_rgba(red, 80, blue, 255)
+        })
+        .data_aspect(1.0)
+        .save("sampled_rgba.png")?;
+    Ok(())
+}
 ```
 
 The callback can capture mutable state. Ruviz does not choose complex arithmetic,
@@ -151,4 +160,5 @@ the colors encode two quantities, the image does not add a scalar colorbar.
 
 ![Butterworth phase and magnitude with unit circle and pole overlays](../assets/gallery/rust/advanced/complex_function_domain.png)
 
-Both images are saved under `docs/assets/gallery/rust/advanced/` by the example.
+The example saves both images under `generated/examples/complex_function/`.
+`make rust-gallery` publishes these outputs to the committed gallery above.

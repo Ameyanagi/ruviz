@@ -12,7 +12,7 @@ const SOURCE_SIZE: u32 = 320;
 const EXTENT: (f64, f64, f64, f64) = (-2.0, 2.0, -2.0, 2.0);
 const MIN_MAGNITUDE: f64 = 0.01;
 const MAX_MAGNITUDE: f64 = 20.0;
-const OUTPUT_DIR: &str = "docs/assets/gallery/rust/advanced";
+const OUTPUT_DIR: &str = "generated/examples/complex_function";
 
 /// Evaluate H(s) = 1 / (1 + 2s + 2s² + s³), for s = x + iy.
 ///
