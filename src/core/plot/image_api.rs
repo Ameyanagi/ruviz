@@ -22,9 +22,7 @@ impl Plot {
     /// let pixels = Image::new(2, 1, vec![255, 0, 0, 255, 0, 0, 255, 128]);
     /// Plot::new()
     ///     .image(&pixels)
-    ///     .extent(-1.0, 1.0, -0.5, 0.5)
-    ///     .origin(ImageOrigin::Lower)
-    ///     .data_aspect(1.0)
+    ///     .aspect_equal()
     ///     .save("image.png")?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
@@ -55,7 +53,7 @@ impl Plot {
     ///     .heatmap_fn(200, 160, (-2.0, 2.0, -1.0, 1.0), |x, y| {
     ///         (-x * x - y * y).exp()
     ///     })
-    ///     .cmap("viridis")
+    ///     .aspect_equal()
     ///     .save("field.png")?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```

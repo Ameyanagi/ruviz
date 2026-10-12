@@ -137,7 +137,7 @@ Every one of them takes the same chain shape:
 Use `heatmap_fn` for scalar fields with a colormap, normalization, and colorbar,
 or `image_fn` when each sample supplies its own RGBA color. Both sample a regular
 grid once at cell centers. Image extents describe outer pixel edges, and
-`.data_aspect(1.0)` keeps equal distances on the two axes the same displayed size.
+`.aspect_equal()` keeps equal distances on the two axes the same displayed size.
 
 See the [image-plot guide](docs/guide/15_image_plots.md) and the runnable
 [complex-function example](examples/complex_function.rs), which generates a
@@ -154,7 +154,7 @@ cargo run --example complex_function
 | Series | `.label("name")` `.color(c)` `.alpha(0.5)` `.line_width(2.0)` `.line_style(LineStyle::Dashed)` |
 | Point series | `.marker(MarkerStyle::Circle)` `.marker_size(6.0)` |
 | Plot | `.title(..)` `.xlabel(..)` `.ylabel(..)` `.grid(true)` `.xlim(0.0, 10.0)` `.ylim(..)` |
-| Plot | `.data_aspect(1.0)` / `.aspect_equal()` |
+| Plot | `.aspect_equal()` / `.data_aspect(ratio)` |
 | Plot | `.xscale(AxisScale::Log)` `.yscale(..)` `.size(w, h)` `.size_px(w, h)` `.dpi(300)` `.font_family("Arial")` |
 | Legend | `.legend(LegendPosition::UpperLeft)` or `.legend_best()` |
 | Annotations | `.text(x, y, "note")` `.arrow(x1, y1, x2, y2)` `.hline(y)` `.vline(x)` `.fill_between(&x, &y1, &y2)` |

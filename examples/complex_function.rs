@@ -75,7 +75,7 @@ fn base_plot(title: &str) -> Plot {
         .ylabel("Im(s)")
         .xlim(EXTENT.0, EXTENT.1)
         .ylim(EXTENT.2, EXTENT.3)
-        .data_aspect(1.0)
+        .aspect_equal()
         .grid(false)
         .font_family("DejaVu Sans")
 }
