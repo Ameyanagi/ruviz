@@ -145,16 +145,15 @@ fn aggressive_camera_clipping_is_deterministic_for_both_projection_modes() {
         let height = first.height;
         let red: Vec<(u32, u32)> = first
             .pixels
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .enumerate()
             .filter(|(_, pixel)| pixel[0] > 150 && pixel[1] < 100 && pixel[2] < 100)
             .map(|(index, _)| (index as u32 % width, index as u32 / width))
             .collect();
         assert!(
-            first
-                .pixels
-                .chunks_exact(4)
-                .any(|pixel| pixel == [255, 0, 0, 255]),
+            first.pixels.as_chunks::<4>().0.contains(&[255, 0, 0, 255]),
             "the center marker should remain visible"
         );
 

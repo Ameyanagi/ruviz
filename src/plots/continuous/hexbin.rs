@@ -701,8 +701,10 @@ mod tests {
         let plain = draw(None, dpi_scale);
         let rimmed = draw(Some(Color::BLACK), dpi_scale);
         plain
-            .chunks_exact(4)
-            .zip(rimmed.chunks_exact(4))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .zip(rimmed.as_chunks::<4>().0.iter())
             .filter(|(a, b)| a != b)
             .count()
     }

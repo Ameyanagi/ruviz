@@ -731,7 +731,9 @@ mod tests {
         renderer
             .into_image()
             .pixels
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .filter(|p| p[3] > 0 && (p[0] < 250 || p[1] < 250 || p[2] < 250))
             .count()
     }

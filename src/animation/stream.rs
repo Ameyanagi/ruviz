@@ -271,7 +271,13 @@ impl FrameCapture {
                 rgba.len()
             )));
         }
-        for (destination, source) in self.buffer.chunks_exact_mut(3).zip(rgba.chunks_exact(4)) {
+        for (destination, source) in self
+            .buffer
+            .as_chunks_mut::<3>()
+            .0
+            .iter_mut()
+            .zip(rgba.as_chunks::<4>().0.iter())
+        {
             destination.copy_from_slice(&source[..3]);
         }
         Ok(&self.buffer)

@@ -353,14 +353,13 @@ impl EventProcessor {
                     )));
                 }
             }
-            InteractionEvent::Pan { delta } => {
-                if delta.x.is_infinite()
+            InteractionEvent::Pan { delta }
+                if (delta.x.is_infinite()
                     || delta.x.is_nan()
                     || delta.y.is_infinite()
-                    || delta.y.is_nan()
-                {
-                    return Err(PlottingError::InvalidInput("Invalid pan delta".to_string()));
-                }
+                    || delta.y.is_nan()) =>
+            {
+                return Err(PlottingError::InvalidInput("Invalid pan delta".to_string()));
             }
             _ => {} // Other events don't need validation
         }

@@ -567,7 +567,9 @@ mod tests {
     fn coverage(image: &crate::core::plot::Image) -> u64 {
         image
             .pixels
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .map(|p| u64::from(255 - p[1]))
             .sum()
     }

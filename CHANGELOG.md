@@ -14,6 +14,11 @@ All notable changes to this project will be documented in this file.
 - `Plot::data_aspect` and `aspect_equal` preserve displayed unit lengths without
   changing data limits, including nonlinear axes, subplots, and interaction.
 
+### Changed
+
+- Update the development Rust/Cargo toolchain and matching CI/release pins to
+  stable 1.99.0, with the compatible `ethnum` 1.5.3 lockfile update.
+
 ## [0.14.2] - 2026-09-17
 
 ### Fixed

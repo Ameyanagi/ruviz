@@ -1481,7 +1481,7 @@ where
     let mut y_sum = 0.0;
     let mut count = 0.0;
 
-    for (index, pixel) in image.pixels.chunks_exact(4).enumerate() {
+    for (index, pixel) in image.pixels.as_chunks::<4>().0.iter().enumerate() {
         if !predicate(pixel) {
             continue;
         }
@@ -1581,20 +1581,24 @@ where
 }
 
 fn dark_pixel_fraction(image: &Image) -> f64 {
-    let total = image.pixels.chunks_exact(4).len() as f64;
+    let total = image.pixels.as_chunks::<4>().0.len() as f64;
     let dark = image
         .pixels
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .filter(|pixel| pixel[0] < 32 && pixel[1] < 32 && pixel[2] < 32)
         .count() as f64;
     dark / total
 }
 
 fn non_background_fraction(image: &Image) -> f64 {
-    let total = image.pixels.chunks_exact(4).len() as f64;
+    let total = image.pixels.as_chunks::<4>().0.len() as f64;
     let non_background = image
         .pixels
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .filter(|pixel| pixel[3] > 0 && (pixel[0] < 248 || pixel[1] < 248 || pixel[2] < 248))
         .count() as f64;
     non_background / total
@@ -2773,9 +2777,7 @@ fn test_tooltip_tiny_skia_round_trip_returns_straight_alpha() {
     );
 
     assert!(
-        pixels
-            .chunks_exact(4)
-            .any(|pixel| pixel == [255, 255, 220, 220]),
+        pixels.as_chunks::<4>().0.contains(&[255, 255, 220, 220]),
         "the translucent tooltip background must be demultiplied after text rendering"
     );
 }
@@ -2808,8 +2810,10 @@ fn test_tooltip_overlay_only_touches_its_own_region() {
 
     let before = seeded();
     let changed = pixels
-        .chunks_exact(4)
-        .zip(before.chunks_exact(4))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(before.as_chunks::<4>().0.iter())
         .enumerate()
         .filter(|(_, (after, original))| after != original)
         .map(|(index, _)| (index as u32 % size_px.0, index as u32 / size_px.0))
@@ -2922,7 +2926,9 @@ fn test_tooltip_overlay_renders_text_pixels() {
         .expect("surface frame should include overlay pixels");
     let dark_text_pixels = overlay
         .pixels
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .filter(|pixel| pixel[3] > 0 && (pixel[0] < 220 || pixel[1] < 220 || pixel[2] < 180))
         .count();
 
@@ -3035,7 +3041,7 @@ fn test_draw_rect_outline_clamps_to_buffer_bounds() {
     );
 
     assert!(
-        pixels.chunks_exact(4).any(|pixel| pixel[3] > 0),
+        pixels.as_chunks::<4>().0.iter().any(|pixel| pixel[3] > 0),
         "outline should still draw visible pixels when clamped to the frame"
     );
 }
@@ -4832,7 +4838,7 @@ fn test_dynamic_annotation_changes_dirty_only_overlay_and_reuse_base() {
 fn red_overlay_centroid_x(image: &Image) -> Option<f64> {
     let mut total_x = 0.0;
     let mut count = 0_u64;
-    for (index, pixel) in image.pixels.chunks_exact(4).enumerate() {
+    for (index, pixel) in image.pixels.as_chunks::<4>().0.iter().enumerate() {
         if pixel[0] > 180 && pixel[1] < 80 && pixel[2] < 80 && pixel[3] > 0 {
             total_x += (index as u32 % image.width) as f64 + 0.5;
             count += 1;
@@ -4902,7 +4908,7 @@ fn test_dynamic_annotations_are_clipped_to_displayed_plot_area() {
     let overlay = frame.layers.overlay.as_ref().unwrap();
     let plot_area = session.viewport_snapshot().unwrap().plot_area;
 
-    for (index, pixel) in overlay.pixels.chunks_exact(4).enumerate() {
+    for (index, pixel) in overlay.pixels.as_chunks::<4>().0.iter().enumerate() {
         if pixel[3] == 0 {
             continue;
         }
@@ -5005,7 +5011,9 @@ fn test_dynamic_spans_render_on_reversed_axes() {
         .expect("span overlay should render");
     let opaque_pixels = overlay
         .pixels
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .filter(|pixel| pixel[3] > 0)
         .count();
     assert!(
@@ -5038,7 +5046,9 @@ fn test_translucent_dynamic_annotation_composes_with_straight_alpha() {
         .expect("translucent overlay should render");
     let translucent_pixel = overlay
         .pixels
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .find(|pixel| pixel[3] > 0 && pixel[3] < 255)
         .expect("half-alpha span should produce translucent pixels");
     // Straight (non-premultiplied) alpha: color channels must exceed the
@@ -5568,7 +5578,9 @@ fn test_prepared_frame_canvas_matches_requested_size() {
 fn filled_column_range(image: &Image, row: u32) -> Option<(u32, u32)> {
     let start = (row * image.width) as usize * 4;
     let columns = image.pixels[start..start + image.width as usize * 4]
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .enumerate()
         .filter(|(_, pixel)| pixel[3] > 0)
         .map(|(column, _)| column as u32);
@@ -5587,8 +5599,10 @@ fn differing_column_range(base: &Image, composed: &Image, row: u32) -> Option<(u
     let end = start + base.width as usize * 4;
     let mut range: Option<(u32, u32)> = None;
     for (column, (before, after)) in base.pixels[start..end]
-        .chunks_exact(4)
-        .zip(composed.pixels[start..end].chunks_exact(4))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(composed.pixels[start..end].as_chunks::<4>().0.iter())
         .enumerate()
     {
         if before != after {

@@ -197,7 +197,7 @@ impl ImageData {
 
         for (row_index, row) in pixels.chunks_exact_mut(width as usize * 4).enumerate() {
             let screen_y = (f64::from(y_start) + row_index as f64 + 0.5) as f32;
-            for (column_index, pixel) in row.chunks_exact_mut(4).enumerate() {
+            for (column_index, pixel) in row.as_chunks_mut::<4>().0.iter_mut().enumerate() {
                 let screen_x = (f64::from(x_start) + column_index as f64 + 0.5) as f32;
                 let (data_x, data_y) = area.screen_to_data(screen_x, screen_y);
                 if let Some(color) = self.sample(data_x, data_y, alpha) {

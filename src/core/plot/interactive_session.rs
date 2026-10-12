@@ -289,6 +289,8 @@ struct DynamicAnnotations {
 
 impl DynamicAnnotations {
     fn new() -> Self {
+        // Atomic::try_update requires Rust 1.95; retain support for Rust 1.92.
+        #[allow(deprecated)]
         let session_token = NEXT_ANNOTATION_SESSION_TOKEN
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |token| {
                 token.checked_add(1)
@@ -4651,6 +4653,8 @@ fn advance_atomic_epoch(epoch: &AtomicU64, exhausted: &AtomicBool) -> bool {
     }
 }
 
+// Atomic::try_update requires Rust 1.95; retain support for Rust 1.92.
+#[allow(deprecated)]
 fn reserve_atomic_id(counter: &AtomicU64) -> Option<u64> {
     counter
         .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {

@@ -1209,8 +1209,10 @@ mod tests {
         let mut matching = 0usize;
         for (lhs, rhs) in reference
             .pixels
-            .chunks_exact(4)
-            .zip(candidate.pixels.chunks_exact(4))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .zip(candidate.pixels.as_chunks::<4>().0.iter())
         {
             if lhs
                 .iter()
@@ -1224,10 +1226,12 @@ mod tests {
     }
 
     fn non_background_fraction(image: &Image) -> f64 {
-        let total = image.pixels.chunks_exact(4).len() as f64;
+        let total = image.pixels.as_chunks::<4>().0.len() as f64;
         let ink = image
             .pixels
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .filter(|pixel| pixel[3] > 0 && (pixel[0] < 248 || pixel[1] < 248 || pixel[2] < 248))
             .count() as f64;
         ink / total.max(1.0)

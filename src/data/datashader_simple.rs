@@ -490,11 +490,11 @@ mod tests {
         let image = ds.render();
 
         assert!(
-            image.pixels.chunks_exact(4).any(|px| px[3] == 0),
+            image.pixels.as_chunks::<4>().0.iter().any(|px| px[3] == 0),
             "empty bins should remain transparent so DataShader does not overwrite the plot background"
         );
         assert!(
-            image.pixels.chunks_exact(4).any(|px| px[3] > 0),
+            image.pixels.as_chunks::<4>().0.iter().any(|px| px[3] > 0),
             "occupied bins should remain visible after density shading"
         );
     }
@@ -508,7 +508,13 @@ mod tests {
             .unwrap();
 
         let image = ds.render();
-        let transparent_bins = image.pixels.chunks_exact(4).filter(|px| px[3] == 0).count();
+        let transparent_bins = image
+            .pixels
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .filter(|px| px[3] == 0)
+            .count();
 
         assert!(
             transparent_bins > 0,
@@ -524,12 +530,16 @@ mod tests {
 
         let image = ds.render();
         let top_row_alpha: Vec<u8> = image.pixels[0..(4 * 4)]
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .map(|px| px[3])
             .collect();
         let bottom_row_start = (image.height - 1) * image.width * 4;
         let bottom_row_alpha: Vec<u8> = image.pixels[bottom_row_start..bottom_row_start + (4 * 4)]
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .map(|px| px[3])
             .collect();
 

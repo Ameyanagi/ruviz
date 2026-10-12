@@ -404,7 +404,12 @@ impl ExportSource {
                     "ruviz-iced overlay layer does not match the base image size".to_owned(),
                 ));
             }
-            for (destination, source) in pixels.chunks_exact_mut(4).zip(overlay.chunks_exact(4)) {
+            for (destination, source) in pixels
+                .as_chunks_mut::<4>()
+                .0
+                .iter_mut()
+                .zip(overlay.as_chunks::<4>().0.iter())
+            {
                 let composed = source_over_straight_rgba(
                     [
                         destination[0],

@@ -57,7 +57,7 @@ fn assert_red_circle(pixels: &[u8], width: u32) {
     let mut top = u32::MAX;
     let mut right = 0;
     let mut bottom = 0;
-    for (index, pixel) in pixels.chunks_exact(4).enumerate() {
+    for (index, pixel) in pixels.as_chunks::<4>().0.iter().enumerate() {
         if pixel[0] > 180 && pixel[1] < 100 && pixel[2] < 100 && pixel[3] > 200 {
             let x = index as u32 % width;
             let y = index as u32 / width;

@@ -373,7 +373,7 @@ jobs:
       # assigned to a lane -- the whole-suite `--all-features` run in
       # `test-feature-matrix` is a safety net and deliberately does not count.
       - name: Run styling and rendering suites
-        run: cargo test --test color_palette_tests --test line_style_tests --test scatter_plot_tests --test tick_system_tests --test visual_traits_test --test mixed_coordinate_visual_test --test seaborn_theme_test --verbose
+        run: cargo test --test color_palette_tests --test line_style_tests --test scatter_plot_tests --test tick_system_tests --test visual_traits_test --test mixed_coordinate_visual_test --test seaborn_theme_test --test image_plot_test --test data_aspect_test --verbose
 
       - name: Run DPI and typography suites
         run: cargo test --test dpi_api_test --test dpi_scaling_test --test dpi_scaling_tests --test dpi_typography_scaling_test --verbose
@@ -404,11 +404,11 @@ jobs:
       - name: Install fixed Rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: 1.94.1
+          toolchain: 1.99.0
 
       - name: Assert the pinned rustc is the one that runs
         env:
-          EXPECTED_RUSTC: "1.94.1"
+          EXPECTED_RUSTC: "1.99.0"
         run: |
           actual="$(rustc --version | cut -d' ' -f2)"
           if [[ "${actual}" != "${EXPECTED_RUSTC}" ]]; then
@@ -451,6 +451,9 @@ jobs:
           - name: No defaults + Typst disabled
             cache-key: no-default
             command: cargo test --test typst_feature_gate_ui --no-default-features typst_requires_feature -- --exact
+          - name: Images and data aspect without defaults
+            cache-key: image-no-default
+            command: cargo test --no-default-features --test image_plot_test --test data_aspect_test
           - name: ndarray_support
             cache-key: ndarray-support
             command: cargo test --test data_format_compatibility_test --no-default-features --features ndarray_support test_ndarray_data -- --exact
@@ -481,11 +484,11 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: 1.94.1
+          toolchain: 1.99.0
 
       - name: Assert the pinned rustc is the one that runs
         env:
-          EXPECTED_RUSTC: "1.94.1"
+          EXPECTED_RUSTC: "1.99.0"
         run: |
           actual="$(rustc --version | cut -d' ' -f2)"
           if [[ "${actual}" != "${EXPECTED_RUSTC}" ]]; then
@@ -542,7 +545,7 @@ jobs:
             command: cargo test --all-features --tests
           - name: PDF export
             cache-key: pdf
-            command: cargo test --features pdf --test pdf_export_test --test export_format_tests
+            command: cargo test --features pdf --test pdf_export_test --test export_format_tests --test image_plot_test
           - name: polars ingestion
             cache-key: polars
             command: cargo test --features polars_support --test ecosystem_data_integration_test
@@ -585,11 +588,11 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: 1.94.1
+          toolchain: 1.99.0
 
       - name: Assert the pinned rustc is the one that runs
         env:
-          EXPECTED_RUSTC: "1.94.1"
+          EXPECTED_RUSTC: "1.99.0"
         run: |
           actual="$(rustc --version | cut -d' ' -f2)"
           if [[ "${actual}" != "${EXPECTED_RUSTC}" ]]; then
@@ -719,11 +722,9 @@ jobs:
   msrv:
     name: MSRV (1.92)
     runs-on: ubuntu-latest
-    # `rust-toolchain.toml` pins 1.94.1, and rustup ranks a toolchain file ABOVE
-    # `rustup default` — which is all `dtolnay/rust-toolchain` sets. So this job
-    # silently compiled with 1.94.1 while reporting that it tested the MSRV.
-    # `RUSTUP_TOOLCHAIN` outranks the toolchain file, so it is what actually
-    # makes the selection stick; the assertion below proves it did.
+    # A tracked toolchain file outranks `rustup default`, which is all
+    # `dtolnay/rust-toolchain` sets. `RUSTUP_TOOLCHAIN` selects the MSRV even
+    # when the repository pins a newer compiler; the assertion proves it did.
     env:
       RUSTUP_TOOLCHAIN: 1.92.0
     steps:
@@ -735,9 +736,7 @@ jobs:
         with:
           toolchain: 1.92.0
 
-      # rust-toolchain.toml pins 1.94.1 and a toolchain file outranks
-      # `rustup default`. Without this assertion the MSRV job can compile with
-      # 1.94.1 and go green while the crate no longer builds on its rust-version.
+      # Prove the tracked development toolchain did not override the MSRV.
       - name: Assert the pinned rustc is the one that runs
         env:
           EXPECTED_RUSTC: "1.92.0"
@@ -997,7 +996,7 @@ jobs:
         with:
           command: build
           maturin-version: v1.12.6
-          rust-toolchain: 1.94.1
+          rust-toolchain: 1.99.0
           manylinux: 2_28
           target: x86_64-unknown-linux-gnu
           working-directory: bindings/python
@@ -1425,11 +1424,11 @@ jobs:
       - name: Install fixed Rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: 1.94.1
+          toolchain: 1.99.0
 
       - name: Assert the pinned rustc is the one that runs
         env:
-          EXPECTED_RUSTC: "1.94.1"
+          EXPECTED_RUSTC: "1.99.0"
         run: |
           actual="$(rustc --version | cut -d' ' -f2)"
           if [[ "${actual}" != "${EXPECTED_RUSTC}" ]]; then

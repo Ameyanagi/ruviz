@@ -44,8 +44,10 @@ fn ink_pixels(image: &Image) -> usize {
     let background = &image.pixels[..4];
     image
         .pixels
-        .chunks_exact(4)
-        .filter(|pixel| *pixel != background)
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .filter(|pixel| &pixel[..] != background)
         .count()
 }
 

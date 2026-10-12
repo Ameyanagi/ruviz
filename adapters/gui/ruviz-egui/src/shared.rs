@@ -267,8 +267,10 @@ pub(crate) fn compose_over(base: &Image, overlay: &Image) -> Image {
     let mut pixels = base.pixels_in_alpha_mode(AlphaMode::Straight).into_owned();
     let overlay_pixels = overlay.pixels_in_alpha_mode(AlphaMode::Straight);
     for (destination, source) in pixels
-        .chunks_exact_mut(4)
-        .zip(overlay_pixels.chunks_exact(4))
+        .as_chunks_mut::<4>()
+        .0
+        .iter_mut()
+        .zip(overlay_pixels.as_chunks::<4>().0.iter())
     {
         let blended = source_over_straight_rgba(
             [

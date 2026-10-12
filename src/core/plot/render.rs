@@ -820,12 +820,9 @@ impl Plot {
                         // An explicit range *is* the outer pair of bin edges;
                         // samples outside it are never binned, so only the
                         // range itself has to be placeable.
-                        Some((low, high)) => Self::reject_unplaceable_values(
-                            [low, high].into_iter(),
-                            scale,
-                            "x",
-                            "histogram",
-                        )?,
+                        Some((low, high)) => {
+                            Self::reject_unplaceable_values([low, high], scale, "x", "histogram")?
+                        }
                         None => Self::reject_unplaceable_values(
                             data.resolve_cow(0.0).iter().copied(),
                             scale,

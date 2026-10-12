@@ -309,7 +309,9 @@ fn large_offsets_and_both_projection_modes_render_semantically() {
     assert!(
         orthographic
             .pixels
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .any(|pixel| pixel[..3] != [255, 255, 255])
     );
 }

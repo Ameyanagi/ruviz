@@ -3008,7 +3008,9 @@ mod marker_edge_series_tests {
     fn rim_pixels(image: &Image) -> usize {
         image
             .pixels
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .filter(|px| px[0] > 200 && px[1] < 120 && px[2] < 120)
             .count()
     }
@@ -3022,7 +3024,9 @@ mod marker_edge_series_tests {
     fn exact_fill_pixels(image: &Image) -> usize {
         image
             .pixels
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .filter(|px| px[0] == FILL.r && px[1] == FILL.g && px[2] == FILL.b)
             .count()
     }
@@ -3106,7 +3110,9 @@ mod marker_edge_series_tests {
 
             let darker_than_fill = image
                 .pixels
-                .chunks_exact(4)
+                .as_chunks::<4>()
+                .0
+                .iter()
                 .filter(|px| px[2] < FILL.b && px[2] > 0 && px[1] < FILL.g)
                 .count();
 
@@ -3219,7 +3225,9 @@ mod bar_edge_tests {
     fn edge_pixels(image: &Image) -> usize {
         image
             .pixels
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .filter(|px| px[0] > 200 && px[1] < 120 && px[2] < 120)
             .count()
     }
@@ -3407,7 +3415,9 @@ mod bar_edge_tests {
         let width = drawn.width as usize;
         let left_half_edge = drawn
             .pixels
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .enumerate()
             .filter(|(index, px)| {
                 index % width < width / 2 && px[0] > 200 && px[1] < 120 && px[2] < 120

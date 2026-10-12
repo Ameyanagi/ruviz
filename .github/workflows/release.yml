@@ -336,7 +336,7 @@ jobs:
         with:
           command: build
           maturin-version: v1.12.6
-          rust-toolchain: 1.94.1
+          rust-toolchain: 1.99.0
           working-directory: bindings/python
           args: --release --out dist
 
@@ -380,7 +380,7 @@ jobs:
         with:
           command: build
           maturin-version: v1.12.6
-          rust-toolchain: 1.94.1
+          rust-toolchain: 1.99.0
           working-directory: bindings/python
           args: --release --out dist
 
@@ -424,7 +424,7 @@ jobs:
         with:
           command: build
           maturin-version: v1.12.6
-          rust-toolchain: 1.94.1
+          rust-toolchain: 1.99.0
           working-directory: bindings/python
           args: --release --out dist
 
@@ -467,7 +467,7 @@ jobs:
         with:
           command: build
           maturin-version: v1.12.6
-          rust-toolchain: 1.94.1
+          rust-toolchain: 1.99.0
           manylinux: 2_28
           target: x86_64-unknown-linux-gnu
           working-directory: bindings/python
@@ -510,7 +510,7 @@ jobs:
         with:
           command: build
           maturin-version: v1.12.6
-          rust-toolchain: 1.94.1
+          rust-toolchain: 1.99.0
           manylinux: 2_28
           target: aarch64-unknown-linux-gnu
           working-directory: bindings/python

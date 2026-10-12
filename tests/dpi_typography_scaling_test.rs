@@ -9,7 +9,9 @@ use ruviz::prelude::*;
 fn total_ink(image: &Image) -> u64 {
     image
         .pixels
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .map(|pixel| {
             let alpha = pixel[3] as u64;
             let darkness = (255_u64 - pixel[0] as u64)

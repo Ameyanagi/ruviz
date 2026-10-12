@@ -11,8 +11,10 @@ pub(super) fn compose_images(base: &Image, overlay: &Image) -> Image {
         .into_owned();
     let overlay_pixels = overlay.pixels_in_alpha_mode(crate::core::plot::AlphaMode::Straight);
     for (dst, src) in pixels
-        .chunks_exact_mut(4)
-        .zip(overlay_pixels.chunks_exact(4))
+        .as_chunks_mut::<4>()
+        .0
+        .iter_mut()
+        .zip(overlay_pixels.as_chunks::<4>().0.iter())
     {
         let destination = [dst[0], dst[1], dst[2], dst[3]];
         let source = [src[0], src[1], src[2], src[3]];

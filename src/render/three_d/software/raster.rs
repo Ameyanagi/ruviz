@@ -506,7 +506,7 @@ fn prepare_primitives(
             shading: batch.style.shading,
             two_sided: batch.style.two_sided,
         });
-        for triangle in batch.geometry.indices.chunks_exact(3) {
+        for triangle in batch.geometry.indices.as_chunks::<3>().0 {
             let mut clip_vertices = [ClipVertex3D {
                 clip_position: Vec4::ZERO,
                 local_position: Vec3::ZERO,
@@ -1218,7 +1218,7 @@ mod tests {
         let pixels =
             render_tile(0, 1, viewport, &bin, &[point], &INTERACTIVE_SAMPLE_OFFSETS).pixels;
         assert!(
-            pixels.chunks_exact(4).any(|pixel| pixel[3] > 0),
+            pixels.as_chunks::<4>().0.iter().any(|pixel| pixel[3] > 0),
             "the visible sliver of an off-centre marker must survive"
         );
     }
@@ -1268,7 +1268,7 @@ mod tests {
     fn fully_transparent_pixels_stay_zeroed() {
         let primitive = triangle([(0.0, 0.0), (2.0, 0.0), (0.0, 2.0)], 0.5, Color::RED, 0);
         let pixels = raster_test_primitives(vec![primitive], &EXPORT_SAMPLE_OFFSETS);
-        for pixel in pixels.chunks_exact(4) {
+        for pixel in pixels.as_chunks::<4>().0.iter() {
             if pixel[3] == 0 {
                 assert_eq!(&pixel[..3], &[0, 0, 0]);
             }
@@ -1316,7 +1316,7 @@ mod tests {
         let center = (4 * 8 + 4) * 4;
         assert_eq!(&pixels[center..center + 4], &[255, 0, 0, 255]);
         // Straight alpha everywhere, including the antialiased silhouette.
-        for pixel in pixels.chunks_exact(4) {
+        for pixel in pixels.as_chunks::<4>().0.iter() {
             if pixel[3] == 0 {
                 assert_eq!(&pixel[..3], &[0, 0, 0]);
             }

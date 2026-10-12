@@ -369,6 +369,8 @@ impl InteractivePlot3DSession {
         // and traversal work rather than an unbounded scene-wide BVH build.
         let bvh = Arc::new(Bvh3D::build(&scene.geometry)?);
         let frame = Arc::new(frame);
+        // Atomic::try_update requires Rust 1.95; retain support for Rust 1.92.
+        #[allow(deprecated)]
         let scene_generation = NEXT_SCENE_GENERATION
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
                 value.checked_add(1)
@@ -487,6 +489,8 @@ impl InteractivePlot3DSession {
         {
             return Ok(false);
         }
+        // Atomic::try_update requires Rust 1.95; retain support for Rust 1.92.
+        #[allow(deprecated)]
         let generation = NEXT_SCENE_GENERATION
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
                 value.checked_add(1)
