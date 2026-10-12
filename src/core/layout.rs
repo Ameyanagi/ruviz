@@ -185,6 +185,8 @@ pub(crate) struct LayoutMeasurements {
     pub(crate) dimensions: MeasuredDimensions,
     pub(crate) legend: Option<(f32, f32)>,
     pub(crate) resolved_title: Option<ResolvedTitleLayout>,
+    /// Resolved display bounds, including an interactive viewport when present.
+    pub(crate) data_aspect_bounds: Option<(f64, f64, f64, f64)>,
 }
 
 impl Deref for LayoutMeasurements {

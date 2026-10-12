@@ -413,6 +413,8 @@ pub enum PlotInput {
         y: Vec<f64>,
         z: Vec<Vec<f64>>,
     },
+    /// A source image, shared while its placement is configured.
+    Image(std::sync::Arc<super::Image>),
     /// Categorical data (for bar charts)
     Categorical {
         categories: Vec<String>,
@@ -456,6 +458,7 @@ impl PlotInput {
             PlotInput::XY(x, _) => x.len(),
             PlotInput::XYSource(x, _) => x.len(),
             PlotInput::Grid2D { x, y, .. } => x.len() * y.len(),
+            PlotInput::Image(image) => (image.width as usize).saturating_mul(image.height as usize),
             PlotInput::Categorical { values, .. } => values.len(),
             PlotInput::CategoricalSource { values, .. } => values.len(),
             PlotInput::Quiver { x, .. } => x.len(),
@@ -847,6 +850,18 @@ where
     /// This method forwards to the inner Plot.
     pub fn ylabel(mut self, label: impl Into<super::PlotText>) -> Self {
         self.plot = self.plot.ylabel(label);
+        self
+    }
+
+    /// Set the displayed length of one scaled Y unit relative to one X unit.
+    pub fn data_aspect(mut self, ratio: f64) -> Self {
+        self.plot = self.plot.data_aspect(ratio);
+        self
+    }
+
+    /// Give one scaled unit on either axis the same displayed length.
+    pub fn aspect_equal(mut self) -> Self {
+        self.plot = self.plot.aspect_equal();
         self
     }
 
@@ -2989,6 +3004,7 @@ impl_terminal_methods!(crate::plots::basic::BarConfig);
 impl_terminal_methods!(crate::plots::HistogramConfig);
 impl_terminal_methods!(crate::plots::BoxPlotConfig);
 impl_terminal_methods!(crate::plots::heatmap::HeatmapConfig);
+impl_terminal_methods!(crate::plots::ImageConfig);
 impl_terminal_methods!(crate::plots::error::ErrorBarConfig);
 
 // The compute-only plot types, which enter through `SeriesType::Computed`.

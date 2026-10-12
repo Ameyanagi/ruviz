@@ -21,7 +21,7 @@
 //! - **Performance-Oriented**: Built for release-mode plotting workloads
 //!   with benchmarkable output paths
 //! - **Zero Unsafe Public API**: Memory safety without compromising performance
-//! - **29 Plot Types (33 with the `3d` feature)**: basic, distribution, continuous,
+//! - **30 Plot Types (34 with the `3d` feature)**: basic, distribution, continuous,
 //!   composition, polar, vector and hierarchical families, plus subplot layout helpers
 //! - **Publication Quality**: PNG/SVG export with custom themes
 //! - **Large Dataset Support**: Streaming-friendly data structures and
@@ -268,7 +268,7 @@
 //! | **Basic** | Line, Scatter, Bar |
 //! | **Distribution** | Histogram, Box Plot, Violin, Boxen, KDE, ECDF, Rug, Strip, Swarm |
 //! | **Categorical (multi-series)** | Grouped Bar, Stacked Bar |
-//! | **Continuous** | Heatmap, Contour, Hexbin, Fill Between, Area, Stacked Area |
+//! | **Continuous** | Heatmap, Image, Contour, Hexbin, Fill Between, Area, Stacked Area |
 //! | **Discrete** | Step, Stem |
 //! | **Error** | Error Bars |
 //! | **Composition** | Pie, Donut |
@@ -277,7 +277,7 @@
 //! | **Hierarchical** | Dendrogram |
 //! | **3D** (`3d` feature) | Scatter3D, Line3D, Surface3D, Wireframe3D |
 //!
-//! That is the complete list: 29 types from [`Plot`], 4 more from `Plot3D`.
+//! That is the complete list: 30 types from [`Plot`], 4 more from `Plot3D`.
 //! `src/plots/mod.rs::catalog_is_true` reads the builder's own source and fails
 //! if this table drifts from the API.
 //!
@@ -883,9 +883,10 @@ pub mod prelude {
     pub use crate::plots::{
         BandwidthMethod, BinMethod, BoxPlotConfig, BoxenConfig, BoxenOrientation, ContourConfig,
         ContourInterpolation, EcdfConfig, EcdfStat, HeatmapConfig, HeatmapOrigin, HistogramConfig,
-        Interpolation, KdeConfig, OutlierMethod, PieConfig, PlotArea, PlotCompute, PlotConfig,
-        PlotData, PlotRender, PolarPlotConfig, QuiverConfig, QuiverPivot, RadarConfig, StemMarker,
-        StemOrientation, StepWhere, ViolinConfig, WhiskerMethod,
+        ImageConfig, ImageInterpolation, ImageOrigin, Interpolation, KdeConfig, OutlierMethod,
+        PieConfig, PlotArea, PlotCompute, PlotConfig, PlotData, PlotRender, PolarPlotConfig,
+        QuiverConfig, QuiverPivot, RadarConfig, StemMarker, StemOrientation, StepWhere,
+        ViolinConfig, WhiskerMethod,
     };
     // Enum arguments to prelude-exported setters must themselves be nameable from the
     // prelude, or `.orientation(BoxOrientation::Vertical)` is E0433 and rustc suggests
@@ -1009,7 +1010,7 @@ where
 ///
 /// This is a second spelling of `Plot::new().line(x, y)` that returns the exact
 /// same [`PlotBuilder`]. Write the builder chain instead — it is the one entry
-/// point that works for all 29 plot types, whereas only three of them ever had
+/// point that works for all 30 plot types, whereas only three of them ever had
 /// a free function:
 ///
 /// ```rust,no_run

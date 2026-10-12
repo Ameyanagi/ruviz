@@ -112,7 +112,9 @@ fn sticky_edges_of(series_type: &SeriesType) -> StickyEdges {
         // Grid-sampled fields fill the axes by construction: `imshow` marks all
         // four edges sticky and `ContourSet` calls `autoscale_view(tight=True)`.
         // Without this a filled contour floats inside a bare gutter.
-        SeriesType::Heatmap { .. } | SeriesType::Contour { .. } => StickyEdges::ALL_EDGES,
+        SeriesType::Heatmap { .. } | SeriesType::Image { .. } | SeriesType::Contour { .. } => {
+            StickyEdges::ALL_EDGES
+        }
         // These reserve their own label ring inside `add_computed_series`;
         // padding them again would shrink the figure a second time.
         SeriesType::Pie { .. } | SeriesType::Radar { .. } | SeriesType::Polar { .. } => {
@@ -396,6 +398,7 @@ impl BoundsAccumulator {
     fn add_computed_series(&mut self, series_type: &SeriesType) {
         match series_type {
             SeriesType::Heatmap { data } => self.include_plot_data(data.as_ref()),
+            SeriesType::Image { data } => self.include_plot_data(data.as_ref()),
             SeriesType::Boxen { data } => self.include_plot_data(data.as_ref()),
             // Every `ComputedSeries` states its own extent through `PlotData`,
             // which is the same route heatmap and boxen take — so a plot type

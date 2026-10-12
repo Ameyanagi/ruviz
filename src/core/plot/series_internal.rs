@@ -910,6 +910,20 @@ impl Plot {
         }
 
         match (&series.series_type, resolved) {
+            (SeriesType::Image { data }, ResolvedSeries::Other(_)) => {
+                let area = plot_area_from_rect(
+                    plot_area,
+                    x_min,
+                    x_max,
+                    y_min,
+                    y_max,
+                    &self.layout.x_scale,
+                    &self.layout.y_scale,
+                );
+                if let Some((layer, x, y)) = data.render_layer(&area, alpha)? {
+                    renderer.draw_image_layer(&layer, x, y)?;
+                }
+            }
             (SeriesType::Line { .. }, ResolvedSeries::Line { .. })
             | (SeriesType::Scatter { .. }, ResolvedSeries::Scatter { .. })
             | (SeriesType::Bar { .. }, ResolvedSeries::Bar { .. }) => unreachable!(
@@ -1689,6 +1703,7 @@ impl Plot {
                         return Err(PlottingError::EmptyDataSet);
                     }
                 }
+                SeriesType::Image { .. } => {}
                 SeriesType::Kde { data } => {
                     if data.x.is_empty() {
                         return Err(PlottingError::EmptyDataSet);
@@ -1985,6 +2000,7 @@ impl Plot {
             }
             SeriesType::Quiver { .. } => ("quiver", SCALED, SCALED),
             SeriesType::Heatmap { .. } => ("heatmap", SCALED, SCALED),
+            SeriesType::Image { .. } => ("image", SCALED, SCALED),
             SeriesType::Kde { .. } => ("kde", SCALED, SCALED),
             SeriesType::Ecdf { .. } => ("ecdf", SCALED, SCALED),
             SeriesType::Contour { .. } => ("contour", SCALED, SCALED),

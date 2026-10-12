@@ -1,7 +1,7 @@
 //! Plot type implementations
 //!
-//! **29 plot types are reachable from the [`Plot`](crate::core::Plot)
-//! builder**, plus 4 more from `Plot3D` when the `3d` feature is enabled — 33
+//! **30 plot types are reachable from the [`Plot`](crate::core::Plot)
+//! builder**, plus 4 more from `Plot3D` when the `3d` feature is enabled — 34
 //! in total. The first table below is the complete list. If a type is not in
 //! it, it has no builder entry point and *cannot* be drawn through the public
 //! API, however many types this source tree appears to contain.
@@ -42,7 +42,7 @@
 //! | Composition | [`composition`] | Pie, Donut | `pie`, `donut` |
 //! | Continuous | [`continuous`] | Contour, Area, Fill Between, Hexbin, Stacked Area | `contour`, `area`, `fill_between` (annotation), `hexbin`, `stacked_area` |
 //! | Discrete | [`discrete`] | Step, Stem | `step`, `stem` |
-//! | Grid | [`heatmap`] | Heatmap | `heatmap` |
+//! | Grid | [`heatmap`], [`image`] | Heatmap, Image | `heatmap`, `image` |
 //! | Hierarchical | [`hierarchical`] | Dendrogram | `dendrogram` |
 //! | Error | [`error`] | Error Bars | `error_bars`, `error_bars_xy` |
 //! | Polar | [`polar`] | Polar Line, Radar | `polar_line`, `radar` |
@@ -88,6 +88,7 @@ pub mod basic;
 pub mod boxplot;
 pub mod heatmap;
 pub mod histogram;
+pub mod image;
 pub mod statistics;
 
 // New plot type categories (placeholders for now)
@@ -169,6 +170,7 @@ pub use heatmap::{
     process_heatmap_flat,
 };
 pub use histogram::{BinMethod, HistogramConfig, HistogramData, calculate_histogram};
+pub use image::{ImageConfig, ImageInterpolation, ImageOrigin};
 pub use statistics::{iqr, mean, median, percentile, std_dev};
 
 // Contour plot exports
@@ -232,6 +234,7 @@ mod catalog_is_true {
         ("Step", &["step"]),
         ("Stem", &["stem"]),
         ("Heatmap", &["heatmap"]),
+        ("Image", &["image"]),
         ("Error Bars", &["error_bars", "error_bars_xy"]),
         ("Polar Line", &["polar_line"]),
         ("Radar", &["radar"]),
@@ -274,6 +277,7 @@ mod catalog_is_true {
     /// failure message points at this constant.
     const BUILDER_SOURCES: &[&str] = &[
         include_str!("../core/plot/series_api.rs"),
+        include_str!("../core/plot/image_api.rs"),
         include_str!("../core/plot/series_builders.rs"),
         include_str!("../core/plot/builder.rs"),
         include_str!("../core/plot/annotations.rs"),

@@ -53,6 +53,8 @@ pub struct LayoutManager {
     pub(crate) invert_x: bool,
     /// Flip the y axis after bounds resolve, so it runs high-to-low.
     pub(crate) invert_y: bool,
+    /// Displayed length of a scaled y-axis unit relative to a scaled x-axis unit.
+    pub(crate) data_aspect: Option<f64>,
 }
 
 impl Default for LayoutManager {
@@ -73,6 +75,7 @@ impl LayoutManager {
             y_limits: None,
             invert_x: false,
             invert_y: false,
+            data_aspect: None,
             x_scale: AxisScale::Linear,
             y_scale: AxisScale::Linear,
         }

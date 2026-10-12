@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- RGBA image series with data-space extents, row origin, opacity, and nearest
+  or bilinear interpolation, including PNG/SVG/PDF export and normal overlays.
+- Eager `heatmap_fn` and `image_fn` sampling helpers for scalar and caller-colored
+  mathematical fields, plus a reproducible Butterworth complex-function example
+  and generated previews (#191).
+- `Plot::data_aspect` and `aspect_equal` preserve displayed unit lengths without
+  changing data limits, including nonlinear axes, subplots, and interaction.
+
 ## [0.14.2] - 2026-09-17
 
 ### Fixed

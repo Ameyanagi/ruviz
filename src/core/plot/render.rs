@@ -13,6 +13,58 @@ const TITLE_MIN_FONT_PT: f32 = 6.0;
 const TITLE_MIN_FONT_RATIO: f32 = 0.70;
 const TITLE_ELLIPSIS: &str = "…";
 
+/// Logarithm of a scaled axis span, so extreme finite ranges and aspect ratios
+/// can be compared without overflowing their quotient.
+fn log_scaled_axis_span(scale: &AxisScale, first: f64, second: f64) -> Option<f64> {
+    if !first.is_finite() || !second.is_finite() || first == second {
+        return None;
+    }
+    let log_difference = |a: f64, b: f64| {
+        let difference = (b - a).abs();
+        if difference.is_finite() && difference > 0.0 {
+            Some(difference.ln())
+        } else {
+            let magnitude = a.abs().max(b.abs());
+            let relative = (b / magnitude - a / magnitude).abs();
+            (magnitude.is_finite() && magnitude > 0.0 && relative > 0.0)
+                .then(|| magnitude.ln() + relative.ln())
+        }
+    };
+    match scale {
+        AxisScale::Linear => log_difference(first, second),
+        AxisScale::Log => {
+            let low = first.min(second);
+            let high = first.max(second);
+            if low <= 0.0 {
+                return None;
+            }
+            // ln_1p retains close bounds whose separately computed logarithms
+            // would round to the same value.
+            let relative = (high - low) / low;
+            let span = if relative.is_finite() && relative < 1.0 {
+                relative.ln_1p() / std::f64::consts::LN_10
+            } else {
+                (high.ln() - low.ln()) / std::f64::consts::LN_10
+            };
+            (span.is_finite() && span > 0.0).then(|| span.ln())
+        }
+        AxisScale::SymLog { linthresh } => {
+            if !linthresh.is_finite() || *linthresh <= 0.0 {
+                return None;
+            }
+            let transform = |value: f64| {
+                if value.abs() <= *linthresh {
+                    value / *linthresh
+                } else {
+                    value.signum()
+                        * (1.0 + (value.abs().ln() - linthresh.ln()) / std::f64::consts::LN_10)
+                }
+            };
+            log_difference(transform(first), transform(second))
+        }
+    }
+}
+
 #[derive(Debug)]
 struct WrappedTitle {
     text: String,
@@ -2301,18 +2353,40 @@ impl Plot {
         };
         let provisional =
             self.compute_layout_from_measurements(canvas_size, content, dpi, measurements.as_ref());
-        let resolved = self.fit_plot_title(
-            renderer,
-            title,
-            provisional.plot_area.width(),
-            self.title_height_limit(canvas_size, dpi),
-            canvas_size,
-            dpi,
-        )?;
-        let measurements = measurements.get_or_insert_with(LayoutMeasurements::default);
-        measurements.title = Some((resolved.width, resolved.height));
-        measurements.resolved_title = Some(resolved);
-        Ok(())
+        let mut max_width = provisional.plot_area.width();
+        // Aspect fitting couples the available title width to its own reserved
+        // height. Tighten the width until the measured title fits the resulting
+        // axes; ordinary automatic-aspect plots retain their single pass.
+        for _ in 0..32 {
+            let resolved = self.fit_plot_title(
+                renderer,
+                title,
+                max_width,
+                self.title_height_limit(canvas_size, dpi),
+                canvas_size,
+                dpi,
+            )?;
+            let title_width = resolved.width;
+            let measurements = measurements.get_or_insert_with(LayoutMeasurements::default);
+            measurements.title = Some((resolved.width, resolved.height));
+            measurements.resolved_title = Some(resolved);
+            if self.layout.data_aspect.is_none() {
+                return Ok(());
+            }
+            let fitted = self.compute_layout_from_measurements(
+                canvas_size,
+                content,
+                dpi,
+                Some(measurements),
+            );
+            if title_width <= fitted.plot_area.width() + 0.01 {
+                return Ok(());
+            }
+            max_width = max_width.min(fitted.plot_area.width());
+        }
+        Err(title_layout_error(
+            "data aspect and title measurements did not converge",
+        ))
     }
 
     pub(super) fn compute_layout_from_measurements(
@@ -2354,7 +2428,7 @@ impl Plot {
         {
             position.size = title.font_size_px;
         }
-        self.reserve_outside_legend(
+        let layout = self.reserve_outside_legend(
             ResolvedLayout {
                 layout,
                 legend_rect: None,
@@ -2363,7 +2437,78 @@ impl Plot {
             canvas_size,
             dpi,
             measurements,
-        )
+        );
+        self.fit_data_aspect(layout, measurements.and_then(|m| m.data_aspect_bounds))
+    }
+
+    /// Fit the axes after all content and outside-legend reservations. Moving
+    /// its decorations with the nearest edge preserves their measured padding.
+    fn fit_data_aspect(
+        &self,
+        mut layout: ResolvedLayout,
+        bounds: Option<(f64, f64, f64, f64)>,
+    ) -> ResolvedLayout {
+        let (Some(ratio), Some((x_min, x_max, y_min, y_max))) = (self.layout.data_aspect, bounds)
+        else {
+            return layout;
+        };
+        let (Some(log_x_span), Some(log_y_span)) = (
+            log_scaled_axis_span(&self.layout.x_scale, x_min, x_max),
+            log_scaled_axis_span(&self.layout.y_scale, y_min, y_max),
+        ) else {
+            return layout;
+        };
+        let width = f64::from(layout.plot_area.width());
+        let height = f64::from(layout.plot_area.height());
+        if width <= 0.0 || height <= 0.0 || !width.is_finite() || !height.is_finite() {
+            return layout;
+        }
+
+        let desired_log_ratio = log_x_span - log_y_span - ratio.ln();
+        let available_log_ratio = width.ln() - height.ln();
+        let (fitted_width, fitted_height) = if desired_log_ratio < available_log_ratio {
+            (
+                width * (desired_log_ratio - available_log_ratio).exp(),
+                height,
+            )
+        } else {
+            (
+                width,
+                height * (available_log_ratio - desired_log_ratio).exp(),
+            )
+        };
+        let original = layout.plot_area;
+        let center_x = (f64::from(original.left) + f64::from(original.right)) * 0.5;
+        let center_y = (f64::from(original.top) + f64::from(original.bottom)) * 0.5;
+        layout.plot_area.left = (center_x - fitted_width * 0.5) as f32;
+        layout.plot_area.right = (center_x + fitted_width * 0.5) as f32;
+        layout.plot_area.top = (center_y - fitted_height * 0.5) as f32;
+        layout.plot_area.bottom = (center_y + fitted_height * 0.5) as f32;
+        let left_inset = layout.plot_area.left - original.left;
+        let right_inset = original.right - layout.plot_area.right;
+        let top_inset = layout.plot_area.top - original.top;
+        let bottom_inset = original.bottom - layout.plot_area.bottom;
+        layout.margins.left += left_inset;
+        layout.margins.right += right_inset;
+        layout.margins.top += top_inset;
+        layout.margins.bottom += bottom_inset;
+        layout.xtick_baseline_y -= bottom_inset;
+        layout.ytick_right_x += left_inset;
+        let center_x = layout.plot_area.center_x();
+        let center_y = layout.plot_area.center_y();
+        if let Some(position) = layout.title_pos.as_mut() {
+            position.x = center_x;
+            position.y += top_inset;
+        }
+        if let Some(position) = layout.xlabel_pos.as_mut() {
+            position.x = center_x;
+            position.y -= bottom_inset;
+        }
+        if let Some(position) = layout.ylabel_pos.as_mut() {
+            position.x += left_inset;
+            position.y = center_y;
+        }
+        layout
     }
 
     fn reserve_outside_legend(
@@ -2651,6 +2796,12 @@ impl Plot {
     }
 
     pub(super) fn plot_area_from_layout(layout: &PlotLayout) -> Result<tiny_skia::Rect> {
+        if layout.plot_area.width() <= 0.0 || layout.plot_area.height() <= 0.0 {
+            return Err(PlottingError::InvalidData {
+                message: "Plot area has no representable positive extent".to_string(),
+                position: None,
+            });
+        }
         tiny_skia::Rect::from_ltrb(
             layout.plot_area.left,
             layout.plot_area.top,
@@ -2786,8 +2937,11 @@ impl Plot {
         y_max: f64,
     ) -> Result<(Option<LayoutMeasurements>, Vec<f64>, Vec<f64>)> {
         if !content.show_tick_labels {
-            let measurements =
+            let mut measurements =
                 self.measure_layout_text_with_ticks(renderer, content, dpi, &[], &[])?;
+            measurements
+                .get_or_insert_with(LayoutMeasurements::default)
+                .data_aspect_bounds = Some((x_min, x_max, y_min, y_max));
             return Ok((measurements, Vec::new(), Vec::new()));
         }
 
@@ -2805,8 +2959,11 @@ impl Plot {
             &self.layout.y_scale,
             self.layout.scientific_notation,
         );
-        let measurements =
+        let mut measurements =
             self.measure_layout_text_with_ticks(renderer, content, dpi, &x_labels, &y_labels)?;
+        measurements
+            .get_or_insert_with(LayoutMeasurements::default)
+            .data_aspect_bounds = Some((x_min, x_max, y_min, y_max));
 
         Ok((measurements, x_ticks, y_ticks))
     }
@@ -2814,10 +2971,9 @@ impl Plot {
     /// Decide how the categorical x tick label row is drawn, and re-reserve the
     /// bottom margin from that decision.
     ///
-    /// The row is measured against the plot area the horizontal pass produced.
-    /// That is sound because the only margin this can change is the bottom one,
-    /// and the bottom margin does not move the plot area's left or right edge —
-    /// so a label measured here is drawn at the same x.
+    /// Automatic aspect keeps the horizontal geometry fixed. A configured data
+    /// aspect can also narrow the axes when the bottom reservation grows, so
+    /// categorical centers are measured again against the fitted rectangle.
     ///
     /// Whether a rotated row *fits* is a question only the layout can answer:
     /// a content-driven layout caps its margins by canvas fraction and a fixed
@@ -2831,7 +2987,7 @@ impl Plot {
         content: &PlotContent,
         dpi: f32,
         measurements: Option<&LayoutMeasurements>,
-        layout: ResolvedLayout,
+        mut layout: ResolvedLayout,
         category_labels: &[String],
         category_positions: &[f64],
         x_min: f64,
@@ -2843,49 +2999,62 @@ impl Plot {
 
         let tick_size_px =
             RenderScale::new(dpi).points_to_pixels(self.display.config.typography.tick_size());
-        let centers = SkiaRenderer::categorical_label_centers(
-            &layout.plot_area,
-            category_positions,
-            x_min,
-            x_max,
-        );
-        // The row is kept inside the canvas, not inside the plot area: an end
-        // label is allowed to overhang its own slot into the outer margin (that
-        // is where a first or last category name lives), it is only stopped
-        // from running off the figure.
-        let metrics = renderer.measure_x_tick_row(
-            category_labels,
-            &centers,
-            tick_size_px,
-            XTickRowBounds::canvas(canvas_size.0 as f32),
-        )?;
-        if metrics.horizontal_extent <= 0.0 {
-            // Every slot is unnamed: nothing is drawn, so nothing is reserved.
-            return Ok((layout, XTickLabelPlan::default()));
-        }
+        let passes = if self.layout.data_aspect.is_some() {
+            8
+        } else {
+            1
+        };
+        let mut plan = XTickLabelPlan::default();
+        for _ in 0..passes {
+            let centers = SkiaRenderer::categorical_label_centers(
+                &layout.plot_area,
+                category_positions,
+                x_min,
+                x_max,
+            );
+            // The row is kept inside the canvas, not inside the plot area: an
+            // end label may overhang its own slot into the outer margin.
+            let metrics = renderer.measure_x_tick_row(
+                category_labels,
+                &centers,
+                tick_size_px,
+                XTickRowBounds::canvas(canvas_size.0 as f32),
+            )?;
+            if metrics.horizontal_extent <= 0.0 {
+                return Ok((layout, XTickLabelPlan::default()));
+            }
 
-        let rotation = self.layout.tick_config.xtick_rotation;
-        let rotated_fits = metrics.wants_rotation(rotation) && {
-            let trial = self.layout_with_x_tick_extent(
+            let rotation = self.layout.tick_config.xtick_rotation;
+            let rotated_fits = metrics.wants_rotation(rotation) && {
+                let trial = self.layout_with_x_tick_extent(
+                    renderer,
+                    canvas_size,
+                    content,
+                    dpi,
+                    measurements,
+                    &metrics,
+                    metrics.max_label_width,
+                )?;
+                Self::x_tick_row_fits(&trial, canvas_size.1 as f32, metrics.max_label_width)
+            };
+
+            plan = metrics.plan(rotation, rotated_fits);
+            let fitted = self.layout_with_x_tick_extent(
+                renderer,
                 canvas_size,
                 content,
                 dpi,
                 measurements,
                 &metrics,
-                metrics.max_label_width,
-            );
-            Self::x_tick_row_fits(&trial, canvas_size.1 as f32, metrics.max_label_width)
-        };
-
-        let plan = metrics.plan(rotation, rotated_fits);
-        let layout = self.layout_with_x_tick_extent(
-            canvas_size,
-            content,
-            dpi,
-            measurements,
-            &metrics,
-            plan.extent,
-        );
+                plan.extent,
+            )?;
+            let stable = (fitted.plot_area.left - layout.plot_area.left).abs() <= 0.01
+                && (fitted.plot_area.right - layout.plot_area.right).abs() <= 0.01;
+            layout = fitted;
+            if stable {
+                break;
+            }
+        }
 
         Ok((layout, plan))
     }
@@ -2893,16 +3062,27 @@ impl Plot {
     /// The layout that reserves `extent` vertical pixels for the x tick labels.
     fn layout_with_x_tick_extent(
         &self,
+        renderer: &SkiaRenderer,
         canvas_size: (u32, u32),
         content: &PlotContent,
         dpi: f32,
         measurements: Option<&LayoutMeasurements>,
         metrics: &XTickRowMetrics,
         extent: f32,
-    ) -> ResolvedLayout {
+    ) -> Result<ResolvedLayout> {
         let mut measurements = measurements.cloned().unwrap_or_default();
         measurements.xtick = Some((metrics.max_label_width, extent));
-        self.compute_layout_from_measurements(canvas_size, content, dpi, Some(&measurements))
+        let mut measurements = Some(measurements);
+        if self.layout.data_aspect.is_some() {
+            self.resolve_title_layout_measurements(
+                renderer,
+                canvas_size,
+                content,
+                dpi,
+                &mut measurements,
+            )?;
+        }
+        Ok(self.compute_layout_from_measurements(canvas_size, content, dpi, measurements.as_ref()))
     }
 
     /// Whether a label row `extent` pixels tall clears the x label and the
@@ -2993,6 +3173,13 @@ impl Plot {
                             }
                         }
                     }
+                }
+                SeriesType::Image { .. } => {
+                    return Err(PlottingError::UnsupportedOperation {
+                        operation: "render_with_datashader",
+                        reason: "RGBA image colors cannot be reduced to a point-density field"
+                            .into(),
+                    });
                 }
                 SeriesType::Histogram { .. } => {
                     if let Ok(hist_data) = series.series_type.histogram_data_at(0.0) {
@@ -3793,6 +3980,9 @@ impl Plot {
             &x_major_measurement_layout.labels,
             y_measurement_labels,
         )?;
+        measured_dimensions
+            .get_or_insert_with(LayoutMeasurements::default)
+            .data_aspect_bounds = Some((x_min, x_max, y_min, y_max));
         self.resolve_title_layout_measurements(
             &measurement_renderer,
             (width_px, height_px),
@@ -3830,11 +4020,7 @@ impl Plot {
         let plot_height = layout.plot_area.height();
 
         // Create plot area rectangle for coordinate mapping
-        let plot_area = tiny_skia::Rect::from_ltrb(plot_left, plot_top, plot_right, plot_bottom)
-            .ok_or(PlottingError::InvalidData {
-                message: "Invalid plot area from layout".to_string(),
-                position: None,
-            })?;
+        let plot_area = Self::plot_area_from_layout(&layout)?;
 
         // Draw background
         svg.draw_rectangle(0.0, 0.0, width, height, self.display.theme.background, true);

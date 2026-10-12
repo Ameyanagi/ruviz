@@ -109,7 +109,7 @@ polars = { version = "0.50", optional = true }
 # Image I/O
 image = { version = "0.25", default-features = false, features = ["png"] }
 png = "0.18"
-base64 = { version = "0.22", optional = true }
+base64 = "0.22"
 
 # PDF export (SVG → PDF pipeline)
 svg2pdf = { version = "0.13", optional = true }  # Vector SVG-to-PDF conversion
@@ -213,7 +213,7 @@ default = ["ndarray_support", "parallel"]
 
 # Experimental 3D plotting. CPU/static support lives in this feature; direct
 # GPU rendering composes with the existing `gpu` feature.
-"3d" = ["dep:base64"]
+"3d" = []
 
 # Display and window features.
 # `interactive` owns both the desktop dependencies and the `cfg(feature =
@@ -282,6 +282,10 @@ name = "generate_gallery"
 path = "scripts/generate_gallery.rs"
 
 # Gallery Examples
+[[example]]
+name = "complex_function"
+path = "examples/complex_function.rs"
+
 [[example]]
 name = "basic_example"
 path = "tools/gallery/basic/basic_example.rs"

@@ -637,6 +637,37 @@ impl Plot {
         self
     }
 
+    /// Set the displayed length of one scaled y-axis unit relative to one
+    /// scaled x-axis unit.
+    ///
+    /// A ratio of `1.0` gives equal unit lengths, so a circle on linear axes
+    /// remains circular. A ratio of `2.0` makes a y-axis unit twice as long as
+    /// an x-axis unit. On logarithmic axes, a unit is one base-10 decade;
+    /// symmetric logarithmic axes use their transformed coordinates.
+    ///
+    /// This fits and centers the axes rectangle inside the available layout
+    /// without changing the resolved data limits. By default, plots fill the
+    /// available rectangle automatically. The ratio must be finite and positive;
+    /// invalid values produce an error when the plot is rendered or saved.
+    pub fn data_aspect(mut self, ratio: f64) -> Self {
+        if ratio.is_finite() && ratio > 0.0 {
+            self.layout.data_aspect = Some(ratio);
+        } else {
+            self.set_pending_ingestion_error(PlottingError::InvalidData {
+                message: "Data aspect ratio must be finite and positive".to_string(),
+                position: None,
+            });
+        }
+        self
+    }
+
+    /// Use equal displayed lengths for scaled x-axis and y-axis units.
+    ///
+    /// Equivalent to [`data_aspect(1.0)`](Self::data_aspect).
+    pub fn aspect_equal(self) -> Self {
+        self.data_aspect(1.0)
+    }
+
     /// Flip the x axis, so it runs from high on the left to low on the right.
     ///
     /// Applies after the axis range resolves, so it composes with auto-scaled

@@ -4861,6 +4861,9 @@ fn compute_plot_layout_from_frame(
             layout_plot.layout.scientific_notation,
         ),
     )?;
+    measured_dimensions
+        .get_or_insert_with(crate::core::layout::LayoutMeasurements::default)
+        .data_aspect_bounds = Some((visible.x_min, visible.x_max, visible.y_min, visible.y_max));
     layout_plot.resolve_title_layout_measurements(
         &renderer,
         size_px,
@@ -4875,16 +4878,7 @@ fn compute_plot_layout_from_frame(
         measured_dimensions.as_ref(),
     );
 
-    let plot_area_rect = tiny_skia::Rect::from_ltrb(
-        layout.plot_area.left,
-        layout.plot_area.top,
-        layout.plot_area.right,
-        layout.plot_area.bottom,
-    )
-    .ok_or(PlottingError::InvalidData {
-        message: "Invalid plot area from layout".to_string(),
-        position: None,
-    })?;
+    let plot_area_rect = Plot::plot_area_from_layout(&layout)?;
 
     // Inward tick marks and the axis spine sit just inside the plot area;
     // a translated preview must leave that band to the frame's own axes.
