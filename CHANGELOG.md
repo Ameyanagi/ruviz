@@ -19,6 +19,11 @@ All notable changes to this project will be documented in this file.
 - Update the development Rust/Cargo toolchain and matching CI/release pins to
   stable 1.99.0, with the compatible `ethnum` 1.5.3 lockfile update.
 
+### Fixed
+
+- Fresh Linux consumers of the GPUI package select a `libc` version compatible
+  with its legacy `xattr` dependency; the published manifest preserves the bound.
+
 ## [0.14.2] - 2026-09-17
 
 ### Fixed
