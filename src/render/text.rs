@@ -155,7 +155,7 @@ pub(crate) fn with_premultiplied_glyph_pixels<F: FnMut(i32, i32, PremultipliedCo
         }
         SwashContent::Color => {
             let is_premultiplied = matches!(image.source, SwashSource::ColorOutline(_));
-            for (index, rgba) in image.data.chunks_exact(4).enumerate() {
+            for (index, rgba) in image.data.as_chunks::<4>().0.iter().enumerate() {
                 let x = index as u32 % image.placement.width;
                 let y = index as u32 / image.placement.width;
                 let rgba = [rgba[0], rgba[1], rgba[2], rgba[3]];

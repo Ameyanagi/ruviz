@@ -1322,7 +1322,7 @@ impl SkiaRenderer {
         // unnoticed because every theme's `foreground` is black, white or grey,
         // where the swap is invisible.
         let pixmap_data = datashader_pixmap.data_mut();
-        for (i, chunk) in image.pixels.chunks_exact(4).enumerate() {
+        for (i, chunk) in image.pixels.as_chunks::<4>().0.iter().enumerate() {
             let a = chunk[3];
 
             let alpha_f = a as f32 / 255.0;
@@ -1381,7 +1381,7 @@ impl SkiaRenderer {
         let point_alpha = f32::from(color.a) / 255.0;
         for (&count, pixel) in counts
             .iter()
-            .zip(density_pixmap.data_mut().chunks_exact_mut(4))
+            .zip(density_pixmap.data_mut().as_chunks_mut::<4>().0.iter_mut())
         {
             if count == 0 {
                 continue;

@@ -12,6 +12,26 @@ Contour rendering example with level interpolation.
 
 Source: [examples/doc_contour.rs](../../../examples/doc_contour.rs)
 
+### Complex-Function Magnitude
+
+A sampled Butterworth magnitude field with logarithmic grayscale, a colorbar, and pole overlays.
+
+![Complex-Function Magnitude](../../assets/gallery/rust/advanced/complex_function_magnitude.png)
+
+Source: [examples/complex_function.rs](../../../examples/complex_function.rs)
+
+Guide: [Images & Complex Functions](../../guide/15_image_plots.md)
+
+### Complex-Function Domain Coloring
+
+Caller-defined RGBA colors encode phase and magnitude with equal data aspect and line/scatter overlays.
+
+![Complex-Function Domain Coloring](../../assets/gallery/rust/advanced/complex_function_domain.png)
+
+Source: [examples/complex_function.rs](../../../examples/complex_function.rs)
+
+Guide: [Images & Complex Functions](../../guide/15_image_plots.md)
+
 ### Radar Chart
 
 Radar chart example demonstrating non-cartesian layout support.

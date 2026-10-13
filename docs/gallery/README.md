@@ -2,7 +2,7 @@
 
 Curated visual showcase of the Rust examples and rustdoc media for `ruviz`.
 
-**Total Examples**: 41
+**Total Examples**: 43
 
 ## Gallery Categories
 
@@ -30,7 +30,7 @@ Large-dataset examples and optimization-oriented render outputs.
 
 [View Performance →](performance/README.md)
 
-### 🎨 Advanced Techniques (9 examples)
+### 🎨 Advanced Techniques (11 examples)
 
 Styling, polar/radar, and layout-heavy visualizations.
 

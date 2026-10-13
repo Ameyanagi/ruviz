@@ -2114,8 +2114,10 @@ mod wasm {
         );
         let mut pixels = base.pixels.clone();
         for (dst, src) in pixels
-            .chunks_exact_mut(4)
-            .zip(overlay.pixels.chunks_exact(4))
+            .as_chunks_mut::<4>()
+            .0
+            .iter_mut()
+            .zip(overlay.pixels.as_chunks::<4>().0.iter())
         {
             let alpha = src[3] as f32 / 255.0;
             if alpha <= 0.0 {

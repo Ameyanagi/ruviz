@@ -322,6 +322,51 @@ macro_rules! impl_series_continuation_methods {
             $self_.$finalize().heatmap_with(data, config)
         }
 
+        /// Continue with an explicit-color RGBA image series.
+        pub fn image(
+            $self_,
+            image: &$crate::core::Image,
+        ) -> $crate::core::plot::PlotBuilder<$crate::plots::ImageConfig> {
+            $self_.$finalize().image(image)
+        }
+
+        /// Continue with an image using an existing placement configuration.
+        pub fn image_with(
+            $self_,
+            image: &$crate::core::Image,
+            config: $crate::plots::ImageConfig,
+        ) -> $crate::core::plot::PlotBuilder<$crate::plots::ImageConfig> {
+            $self_.$finalize().image_with(image, config)
+        }
+
+        /// Continue with an eagerly sampled scalar field.
+        pub fn heatmap_fn<F>(
+            $self_,
+            width: u32,
+            height: u32,
+            extent: (f64, f64, f64, f64),
+            function: F,
+        ) -> $crate::core::plot::PlotBuilder<$crate::plots::HeatmapConfig>
+        where
+            F: FnMut(f64, f64) -> f64,
+        {
+            $self_.$finalize().heatmap_fn(width, height, extent, function)
+        }
+
+        /// Continue with an eagerly sampled RGBA color field.
+        pub fn image_fn<F>(
+            $self_,
+            width: u32,
+            height: u32,
+            extent: (f64, f64, f64, f64),
+            function: F,
+        ) -> $crate::core::plot::PlotBuilder<$crate::plots::ImageConfig>
+        where
+            F: FnMut(f64, f64) -> $crate::render::Color,
+        {
+            $self_.$finalize().image_fn(width, height, extent, function)
+        }
+
         /// Continue with a KDE series.
         pub fn kde<T, D: $crate::data::Data1D<T>>(
             $self_,
@@ -615,6 +660,7 @@ mod construction;
 pub mod data;
 mod error_bars;
 mod image;
+mod image_api;
 mod interactive_session;
 mod layout_manager;
 mod mixed_render;

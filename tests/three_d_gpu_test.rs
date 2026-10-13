@@ -37,7 +37,9 @@ fn required_adapter_executes_direct_mesh_line_and_point_draws() {
     assert!(
         image
             .pixels
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .any(|pixel| pixel[..3] != [255, 255, 255])
     );
     if let Some(path) = std::env::var_os("RUVIZ_3D_GPU_TEST_OUTPUT") {
@@ -120,7 +122,7 @@ fn each_direct_gpu_primitive_produces_visible_colored_fragments() {
     ];
     for image in images {
         assert!(
-            image.pixels.chunks_exact(4).any(|pixel| {
+            image.pixels.as_chunks::<4>().0.iter().any(|pixel| {
                 pixel[0] > 100
                     && u16::from(pixel[0]) > u16::from(pixel[1]).saturating_mul(2)
                     && u16::from(pixel[0]) > u16::from(pixel[2]).saturating_mul(2)

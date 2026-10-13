@@ -121,8 +121,10 @@ fn fraction_pixels_within_channel_delta(
 
     let matching = reference
         .pixels
-        .chunks_exact(4)
-        .zip(candidate.pixels.chunks_exact(4))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(candidate.pixels.as_chunks::<4>().0.iter())
         .filter(|(lhs, rhs)| {
             lhs.iter()
                 .zip(rhs.iter())
@@ -135,7 +137,7 @@ fn fraction_pixels_within_channel_delta(
 fn non_background_fraction(pixels: &[u8]) -> f64 {
     let mut non_background = 0usize;
     let mut total = 0usize;
-    for pixel in pixels.chunks_exact(4) {
+    for pixel in pixels.as_chunks::<4>().0.iter() {
         total += 1;
         if pixel[3] > 0 && (pixel[0] > 0 || pixel[1] > 0 || pixel[2] > 0) {
             non_background += 1;
@@ -734,7 +736,12 @@ fn test_draw_pixel_aligned_solid_rectangle_preserves_subpixel_tiles() {
 
     let image = renderer.into_image();
     assert!(
-        image.pixels.chunks_exact(4).any(|pixel| pixel[3] > 0),
+        image
+            .pixels
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .any(|pixel| pixel[3] > 0),
         "thin pixel-aligned tiles should still contribute visible coverage"
     );
 }
@@ -1380,12 +1387,16 @@ fn rotated_multiline_text_keeps_all_lines_and_decoration() {
     );
     let rotated_green = rotated
         .pixels
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .filter(|pixel| pixel[1] > 120 && pixel[0] < 100 && pixel[2] < 100)
         .count();
     let rotated_blue = rotated
         .pixels
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .filter(|pixel| pixel[2] > 150 && pixel[0] < 100 && pixel[1] < 100)
         .count();
 

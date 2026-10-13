@@ -60,6 +60,12 @@ rfd = { version = "0.15", default-features = false }
 [target.'cfg(target_os = "linux")'.dependencies]
 gpui = "0.2.2"
 rfd = { version = "0.15", default-features = false, features = ["gtk3"] }
+# Registry GPUI 0.2.2 uses zed-async-tar -> xattr 0.2.3, which still references
+# Linux's ENOATTR alias removed in libc 0.2.190. Keep this normal dependency in
+# the published manifest so fresh consumers resolve a compatible libc too.
+# Remove the bound when GPUI no longer depends on xattr 0.2.
+# https://github.com/rust-lang/libc/pull/5401
+libc = ">=0.2, <0.2.190"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 gpui = "0.2.2"

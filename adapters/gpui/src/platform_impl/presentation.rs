@@ -984,7 +984,7 @@ fn write_surface_pixels(
             // inside row `row` of the plane.
             let dst =
                 unsafe { std::slice::from_raw_parts_mut(y_plane.add(row * y_stride), y_width) };
-            for (dst, px) in dst.iter_mut().zip(src.chunks_exact(4)) {
+            for (dst, px) in dst.iter_mut().zip(src.as_chunks::<4>().0.iter()) {
                 let (r, g, b) = straight_rgb(px, alpha_mode);
                 *dst = luma_full_range(r, g, b);
             }
@@ -1013,7 +1013,7 @@ fn write_surface_pixels(
             let dst = unsafe {
                 std::slice::from_raw_parts_mut(uv_plane.add(uv_row * uv_stride), uv_cols * 2)
             };
-            for (uv_col, dst) in dst.chunks_exact_mut(2).enumerate() {
+            for (uv_col, dst) in dst.as_chunks_mut::<2>().0.iter_mut().enumerate() {
                 let x0 = uv_col * 2;
                 let cols = if x0 + 1 < width { 2 } else { 1 };
                 let mut r_sum: u32 = 0;
@@ -1208,13 +1208,18 @@ pub(super) fn render_image_to_ruviz(image: &RenderImage) -> Option<RuvizImage> {
 }
 
 pub(super) fn rgba_to_bgra_in_place(pixels: &mut [u8]) {
-    for pixel in pixels.chunks_exact_mut(4) {
+    for pixel in pixels.as_chunks_mut::<4>().0.iter_mut() {
         pixel.swap(0, 2);
     }
 }
 
 pub(super) fn blend_rgba_into_rgba(src_rgba: &[u8], dst_rgba: &mut [u8]) {
-    for (src, dst) in src_rgba.chunks_exact(4).zip(dst_rgba.chunks_exact_mut(4)) {
+    for (src, dst) in src_rgba
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(dst_rgba.as_chunks_mut::<4>().0.iter_mut())
+    {
         let destination = [dst[0], dst[1], dst[2], dst[3]];
         let source = [src[0], src[1], src[2], src[3]];
         dst.copy_from_slice(&source_over_straight_rgba(destination, source));

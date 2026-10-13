@@ -109,7 +109,7 @@ impl DeviceSelector {
         scored_adapters.retain(|(_, _, score)| *score >= 0);
 
         // Sort by score (highest first)
-        scored_adapters.sort_by(|a, b| b.2.cmp(&a.2));
+        scored_adapters.sort_by_key(|adapter| std::cmp::Reverse(adapter.2));
 
         // Return the highest scored adapter
         scored_adapters

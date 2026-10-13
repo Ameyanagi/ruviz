@@ -782,7 +782,7 @@ impl PlotSeries {
             SeriesType::BoxPlot { config, .. } => LegendItemType::Bar {
                 edge: config.resolved_edge(theme, color),
             },
-            SeriesType::Heatmap { .. } => return None,
+            SeriesType::Heatmap { .. } | SeriesType::Image { .. } => return None,
             SeriesType::Kde { .. }
             | SeriesType::Ecdf { .. }
             | SeriesType::Polar { .. }
@@ -1100,6 +1100,10 @@ pub(crate) enum SeriesType {
     },
     Heatmap {
         data: Arc<crate::plots::heatmap::HeatmapData>,
+    },
+    /// Caller-supplied straight-alpha RGBA pixels placed in data coordinates.
+    Image {
+        data: Arc<crate::plots::image::ImageData>,
     },
     /// KDE (Kernel Density Estimation) plot
     Kde {

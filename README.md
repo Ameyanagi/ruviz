@@ -2,7 +2,7 @@
 
 # ruviz
 
-High-performance 2D and 3D plotting for Rust. One builder, 29 plot types
+High-performance 2D and 3D plotting for Rust. One builder, 30 plot types
 (34 with the `3d` feature), PNG / SVG / PDF output.
 
 [![Crates.io](https://img.shields.io/crates/v/ruviz)](https://crates.io/crates/ruviz)
@@ -21,7 +21,7 @@ https://github.com/user-attachments/assets/bce842b5-50d8-43e4-893d-074bf6738975
 
 [![Watch the ruviz demo on YouTube](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/readme/demo-thumbnail.png)](https://youtu.be/6MT_hu8xpjo)
 
-A 77-second tour: 29 plot types from one builder, the built-in themes, Typst
+A 77-second tour of the builder, the built-in themes, Typst
 mathematics and CJK text, 3D and animation, and the Python and WebAssembly
 bindings. Every figure in it is real ruviz output.
 
@@ -104,7 +104,8 @@ Grid data differs by plot: `heatmap` takes nested rows (`&Vec<Vec<f64>>`), while
 | `.bar(&["A", "B"], &values)` / `.bar(...).horizontal()` | vertical or horizontal bar chart |
 | `.histogram(&data)` | histogram |
 | `.boxplot(&data)` | box plot |
-| `.heatmap(&data_2d)` | heatmap |
+| `.heatmap(&data_2d)` / `.heatmap_fn(width, height, extent, f)` | scalar heatmap |
+| `.image(&rgba_image)` / `.image_fn(width, height, extent, f)` | caller-colored RGBA image in data coordinates |
 | `.kde(&data)` | kernel density estimate |
 | `.ecdf(&data)` | empirical CDF |
 | `.violin(&data)` | violin plot |
@@ -131,6 +132,21 @@ Grid data differs by plot: `heatmap` takes nested rows (`&Vec<Vec<f64>>`), while
 Every one of them takes the same chain shape:
 `.<series>(..).label(..).color(..).legend_best().save(..)`.
 
+## Mathematical fields and images
+
+Use `heatmap_fn` for scalar fields with a colormap, normalization, and colorbar,
+or `image_fn` when each sample supplies its own RGBA color. Both sample a regular
+grid once at cell centers. Image extents describe outer pixel edges, and
+`.aspect_equal()` keeps equal distances on the two axes the same displayed size.
+
+See the [image-plot guide](docs/guide/15_image_plots.md) and the runnable
+[complex-function example](examples/complex_function.rs), which generates a
+Butterworth magnitude plot and a phase/magnitude domain-coloring image:
+
+```bash
+cargo run --example complex_function
+```
+
 ## Styling
 
 | Scope | Setters |
@@ -138,6 +154,7 @@ Every one of them takes the same chain shape:
 | Series | `.label("name")` `.color(c)` `.alpha(0.5)` `.line_width(2.0)` `.line_style(LineStyle::Dashed)` |
 | Point series | `.marker(MarkerStyle::Circle)` `.marker_size(6.0)` |
 | Plot | `.title(..)` `.xlabel(..)` `.ylabel(..)` `.grid(true)` `.xlim(0.0, 10.0)` `.ylim(..)` |
+| Plot | `.aspect_equal()` / `.data_aspect(ratio)` |
 | Plot | `.xscale(AxisScale::Log)` `.yscale(..)` `.size(w, h)` `.size_px(w, h)` `.dpi(300)` `.font_family("Arial")` |
 | Legend | `.legend(LegendPosition::UpperLeft)` or `.legend_best()` |
 | Annotations | `.text(x, y, "note")` `.arrow(x1, y1, x2, y2)` `.hline(y)` `.vline(x)` `.fill_between(&x, &y1, &y2)` |

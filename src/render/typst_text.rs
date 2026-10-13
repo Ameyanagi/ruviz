@@ -1617,7 +1617,12 @@ mod imp {
                     padded.frame.size_mut().y += 2.0 * padding;
                     let reference = typst_render::render(&padded, 4.0);
                     let ink = |pixels: &[u8]| -> u64 {
-                        pixels.chunks_exact(4).map(|pixel| pixel[3] as u64).sum()
+                        pixels
+                            .as_chunks::<4>()
+                            .0
+                            .iter()
+                            .map(|pixel| pixel[3] as u64)
+                            .sum()
                     };
                     let expected = ink(reference.data());
                     let actual = ink(raster.data());

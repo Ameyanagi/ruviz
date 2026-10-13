@@ -883,15 +883,7 @@ impl RuvizPlot {
 
         let mut is_true_click = false;
         match (self.interaction_state.active_drag, position_px) {
-            (
-                ActiveDrag::Brush {
-                    anchor_px: _,
-                    current_px: _,
-                    crossed_threshold: _,
-                    ..
-                },
-                Some(position_px),
-            ) if self.options.interaction.selection => {
+            (ActiveDrag::Brush { .. }, Some(position_px)) if self.options.interaction.selection => {
                 self.session
                     .apply_input(PlotInputEvent::BrushEnd { position_px });
                 cx.notify();

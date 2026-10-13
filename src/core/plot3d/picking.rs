@@ -176,7 +176,7 @@ impl Bvh3D {
                 u32::try_from(mesh_batch).map_err(|_| PlottingError::InvalidTopology3D {
                     reason: "3D mesh batch count exceeds u32 BVH indexing".to_string(),
                 })?;
-            for (triangle_index, triangle) in mesh.indices.chunks_exact(3).enumerate() {
+            for (triangle_index, triangle) in mesh.indices.as_chunks::<3>().0.iter().enumerate() {
                 let vertices = triangle_vertices(geometry, mesh_batch, triangle)?;
                 triangles.push(TriangleRef3D {
                     mesh_batch,

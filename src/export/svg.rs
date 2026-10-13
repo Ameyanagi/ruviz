@@ -24,7 +24,6 @@ use std::borrow::Cow;
 use std::fmt::Write as FmtWrite;
 use std::path::Path;
 
-#[cfg(feature = "3d")]
 use base64::Engine as _;
 
 /// SVG renderer for vector-based plot export
@@ -804,7 +803,6 @@ impl SvgRenderer {
     }
 
     /// Embed a straight-alpha RGBA image as a PNG data URI.
-    #[cfg(feature = "3d")]
     pub(crate) fn draw_embedded_png(
         &mut self,
         image: &crate::core::plot::Image,

@@ -1749,7 +1749,7 @@ impl ApplicationHandler<InteractiveAppEvent> for InteractiveApp {
 }
 
 fn copy_rgba_to_softbuffer(src_rgba: &[u8], dst_rgbx: &mut [u32]) {
-    for (dst, rgba) in dst_rgbx.iter_mut().zip(src_rgba.chunks_exact(4)) {
+    for (dst, rgba) in dst_rgbx.iter_mut().zip(src_rgba.as_chunks::<4>().0.iter()) {
         let red = rgba[0] as u32;
         let green = rgba[1] as u32;
         let blue = rgba[2] as u32;
@@ -1758,7 +1758,7 @@ fn copy_rgba_to_softbuffer(src_rgba: &[u8], dst_rgbx: &mut [u32]) {
 }
 
 fn blend_rgba_into_softbuffer(src_rgba: &[u8], dst_rgbx: &mut [u32]) {
-    for (dst, rgba) in dst_rgbx.iter_mut().zip(src_rgba.chunks_exact(4)) {
+    for (dst, rgba) in dst_rgbx.iter_mut().zip(src_rgba.as_chunks::<4>().0.iter()) {
         let alpha = rgba[3];
         if alpha == 0 {
             continue;
@@ -1804,7 +1804,12 @@ fn render_output_to_image(frame: &InteractiveRenderOutput, width: u32, height: u
 }
 
 fn blend_rgba_into_rgba(src_rgba: &[u8], dst_rgba: &mut [u8]) {
-    for (src, dst) in src_rgba.chunks_exact(4).zip(dst_rgba.chunks_exact_mut(4)) {
+    for (src, dst) in src_rgba
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(dst_rgba.as_chunks_mut::<4>().0.iter_mut())
+    {
         let destination = [dst[0], dst[1], dst[2], dst[3]];
         let source = [src[0], src[1], src[2], src[3]];
         dst.copy_from_slice(&source_over_straight_rgba(destination, source));

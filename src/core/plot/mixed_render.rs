@@ -92,6 +92,9 @@ impl Plot {
                 SeriesType::Histogram { data, .. } => data.len(),
                 SeriesType::BoxPlot { data, .. } => data.len(),
                 SeriesType::Heatmap { data } => data.n_rows * data.n_cols,
+                SeriesType::Image { data } => {
+                    data.image.width as usize * data.image.height as usize
+                }
                 SeriesType::Kde { data } => data.x.len(),
                 SeriesType::Ecdf { data } => data.x.len(),
                 SeriesType::Violin { data } => data.data.len(),
@@ -121,6 +124,9 @@ impl Plot {
                 ResolvedSeries::BoxPlot { data, .. } => data.len(),
                 ResolvedSeries::Other(series) => match series {
                     SeriesType::Heatmap { data } => data.n_rows * data.n_cols,
+                    SeriesType::Image { data } => {
+                        data.image.width as usize * data.image.height as usize
+                    }
                     SeriesType::Kde { data } => data.x.len(),
                     SeriesType::Ecdf { data } => data.x.len(),
                     SeriesType::Violin { data } => data.data.len(),
@@ -668,6 +674,28 @@ impl Plot {
                     values, config, color, plot_area, x_min, x_max, y_min, y_max,
                 )
                 .draw_svg(svg);
+            }
+            (SeriesType::Image { data }, ResolvedSeries::Other(_)) => {
+                let area = super::raster_batches::plot_area_from_rect(
+                    plot_area,
+                    x_min,
+                    x_max,
+                    y_min,
+                    y_max,
+                    &self.layout.x_scale,
+                    &self.layout.y_scale,
+                );
+                if let Some((layer, x, y)) =
+                    data.render_layer(&area, series.props.alpha.value_or(1.0))?
+                {
+                    svg.draw_embedded_png(
+                        &layer,
+                        x as f32,
+                        y as f32,
+                        layer.width as f32,
+                        layer.height as f32,
+                    )?;
+                }
             }
             (SeriesType::Heatmap { data }, ResolvedSeries::Other(_)) => {
                 let area = super::raster_batches::plot_area_from_rect(

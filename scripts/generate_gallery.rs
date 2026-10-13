@@ -303,6 +303,42 @@ pub fn entries() -> Vec<GalleryEntry> {
         },
         GalleryEntry {
             category: "advanced",
+            title: "Complex-Function Magnitude",
+            summary: "A sampled Butterworth magnitude field with logarithmic grayscale, a colorbar, and pole overlays.",
+            asset_name: "complex_function_magnitude.png",
+            source_path: "examples/complex_function.rs",
+            guide: Some((
+                "Images & Complex Functions",
+                "../../guide/15_image_plots.md",
+            )),
+            source: AssetSource::Example {
+                run: ExampleRun {
+                    name: "complex_function",
+                    features: None,
+                },
+                output_rel: "generated/examples/complex_function/complex_function_magnitude.png",
+            },
+        },
+        GalleryEntry {
+            category: "advanced",
+            title: "Complex-Function Domain Coloring",
+            summary: "Caller-defined RGBA colors encode phase and magnitude with equal data aspect and line/scatter overlays.",
+            asset_name: "complex_function_domain.png",
+            source_path: "examples/complex_function.rs",
+            guide: Some((
+                "Images & Complex Functions",
+                "../../guide/15_image_plots.md",
+            )),
+            source: AssetSource::Example {
+                run: ExampleRun {
+                    name: "complex_function",
+                    features: None,
+                },
+                output_rel: "generated/examples/complex_function/complex_function_domain.png",
+            },
+        },
+        GalleryEntry {
+            category: "advanced",
             title: "Radar Chart",
             summary: "Radar chart example demonstrating non-cartesian layout support.",
             asset_name: "radar_chart.png",

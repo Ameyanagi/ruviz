@@ -141,10 +141,8 @@ impl SeriesManager {
                         return Err("Histogram data cannot be empty");
                     }
                 }
-                SeriesType::BoxPlot { data, .. } => {
-                    if data.is_empty() {
-                        return Err("Box plot data cannot be empty");
-                    }
+                SeriesType::BoxPlot { data, .. } if data.is_empty() => {
+                    return Err("Box plot data cannot be empty");
                 }
                 // Other series types don't need validation here
                 _ => {}

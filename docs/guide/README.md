@@ -22,7 +22,9 @@ Complete guide to using ruviz for data visualization in Rust.
 11. [Advanced Techniques](11_advanced.md) - Custom layouts, annotations, interactive plots
 12. [3D Plots](12_3d.md) - Scatter, line, surface, wireframe, cameras, and GPU interaction
 13. [Molecular Spheres](13_molecular_views.md) - Physical radii, shading, picking, and faded atom context
-14. [Native GUI Adapters](../../adapters/gui/README.md) - egui, Iced, Slint, and GPUI embedding
+14. [API Map](14_api_map.md) - Builders, sessions, frontend capabilities, and cleanup
+15. [Image Plots and Mathematical Fields](15_image_plots.md) - RGBA images, scalar fields, domain coloring, and data aspect
+16. [Native GUI Adapters](../../adapters/gui/README.md) - egui, Iced, Slint, and GPUI embedding
 
 ### Migration Guides
 - [From matplotlib](../migration/matplotlib.md) - For Python/matplotlib users

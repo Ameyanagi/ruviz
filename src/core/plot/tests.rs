@@ -136,9 +136,11 @@ fn count_short_horizontal_svg_lines(svg: &str, max_length: f32) -> usize {
 }
 
 fn mean_rgb(pixels: &[u8]) -> (f64, f64, f64) {
-    let total = pixels.chunks_exact(4).len() as f64;
+    let total = pixels.as_chunks::<4>().0.len() as f64;
     let (r, g, b) = pixels
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .fold((0_u64, 0_u64, 0_u64), |(r, g, b), px| {
             (r + px[0] as u64, g + px[1] as u64, b + px[2] as u64)
         });
@@ -146,18 +148,22 @@ fn mean_rgb(pixels: &[u8]) -> (f64, f64, f64) {
 }
 
 fn dark_pixel_fraction(pixels: &[u8]) -> f64 {
-    let total = pixels.chunks_exact(4).len() as f64;
+    let total = pixels.as_chunks::<4>().0.len() as f64;
     let dark = pixels
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .filter(|px| px[0] < 32 && px[1] < 32 && px[2] < 32)
         .count() as f64;
     dark / total
 }
 
 fn non_background_fraction(pixels: &[u8]) -> f64 {
-    let total = pixels.chunks_exact(4).len() as f64;
+    let total = pixels.as_chunks::<4>().0.len() as f64;
     let non_background = pixels
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .filter(|px| px[3] > 0 && (px[0] < 248 || px[1] < 248 || px[2] < 248))
         .count() as f64;
     non_background / total
@@ -6327,7 +6333,9 @@ fn plot_with_weighted_title(weight: crate::render::FontWeight) -> Plot {
 fn blue_dominant_pixel_indices(image: &Image) -> Vec<usize> {
     image
         .pixels
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .enumerate()
         .filter_map(|(index, pixel)| {
             (pixel[3] > 0
@@ -6341,8 +6349,10 @@ fn blue_dominant_pixel_indices(image: &Image) -> Vec<usize> {
 
 fn differing_pixel_count(left: &Image, right: &Image) -> usize {
     left.pixels
-        .chunks_exact(4)
-        .zip(right.pixels.chunks_exact(4))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(right.pixels.as_chunks::<4>().0.iter())
         .filter(|(left, right)| left != right)
         .count()
 }

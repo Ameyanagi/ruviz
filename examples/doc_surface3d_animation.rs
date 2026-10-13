@@ -37,7 +37,7 @@ fn surface_data(side: usize) -> (Vec<f64>, Vec<f64>, Vec<Vec<f64>>) {
 
 fn rgb_pixels(image: &ruviz::core::Image) -> Vec<u8> {
     let mut rgb = Vec::with_capacity(image.width as usize * image.height as usize * 3);
-    for pixel in image.pixels.chunks_exact(4) {
+    for pixel in image.pixels.as_chunks::<4>().0 {
         rgb.extend_from_slice(&pixel[..3]);
     }
     rgb

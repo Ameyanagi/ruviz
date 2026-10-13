@@ -910,6 +910,20 @@ impl Plot {
         }
 
         match (&series.series_type, resolved) {
+            (SeriesType::Image { data }, ResolvedSeries::Other(_)) => {
+                let area = plot_area_from_rect(
+                    plot_area,
+                    x_min,
+                    x_max,
+                    y_min,
+                    y_max,
+                    &self.layout.x_scale,
+                    &self.layout.y_scale,
+                );
+                if let Some((layer, x, y)) = data.render_layer(&area, alpha)? {
+                    renderer.draw_image_layer(&layer, x, y)?;
+                }
+            }
             (SeriesType::Line { .. }, ResolvedSeries::Line { .. })
             | (SeriesType::Scatter { .. }, ResolvedSeries::Scatter { .. })
             | (SeriesType::Bar { .. }, ResolvedSeries::Bar { .. }) => unreachable!(
@@ -1689,6 +1703,7 @@ impl Plot {
                         return Err(PlottingError::EmptyDataSet);
                     }
                 }
+                SeriesType::Image { .. } => {}
                 SeriesType::Kde { data } => {
                     if data.x.is_empty() {
                         return Err(PlottingError::EmptyDataSet);
@@ -1985,6 +2000,7 @@ impl Plot {
             }
             SeriesType::Quiver { .. } => ("quiver", SCALED, SCALED),
             SeriesType::Heatmap { .. } => ("heatmap", SCALED, SCALED),
+            SeriesType::Image { .. } => ("image", SCALED, SCALED),
             SeriesType::Kde { .. } => ("kde", SCALED, SCALED),
             SeriesType::Ecdf { .. } => ("ecdf", SCALED, SCALED),
             SeriesType::Contour { .. } => ("contour", SCALED, SCALED),
@@ -2992,7 +3008,9 @@ mod marker_edge_series_tests {
     fn rim_pixels(image: &Image) -> usize {
         image
             .pixels
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .filter(|px| px[0] > 200 && px[1] < 120 && px[2] < 120)
             .count()
     }
@@ -3006,7 +3024,9 @@ mod marker_edge_series_tests {
     fn exact_fill_pixels(image: &Image) -> usize {
         image
             .pixels
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .filter(|px| px[0] == FILL.r && px[1] == FILL.g && px[2] == FILL.b)
             .count()
     }
@@ -3090,7 +3110,9 @@ mod marker_edge_series_tests {
 
             let darker_than_fill = image
                 .pixels
-                .chunks_exact(4)
+                .as_chunks::<4>()
+                .0
+                .iter()
                 .filter(|px| px[2] < FILL.b && px[2] > 0 && px[1] < FILL.g)
                 .count();
 
@@ -3203,7 +3225,9 @@ mod bar_edge_tests {
     fn edge_pixels(image: &Image) -> usize {
         image
             .pixels
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .filter(|px| px[0] > 200 && px[1] < 120 && px[2] < 120)
             .count()
     }
@@ -3391,7 +3415,9 @@ mod bar_edge_tests {
         let width = drawn.width as usize;
         let left_half_edge = drawn
             .pixels
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .enumerate()
             .filter(|(index, px)| {
                 index % width < width / 2 && px[0] > 200 && px[1] < 120 && px[2] < 120

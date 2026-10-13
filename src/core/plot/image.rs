@@ -291,7 +291,7 @@ pub fn source_over_straight_rgba(destination: [u8; 4], source: [u8; 4]) -> [u8; 
 pub(crate) fn convert_rgba_alpha_mode(pixels: &mut [u8], from: AlphaMode, to: AlphaMode) {
     match (from, to) {
         (AlphaMode::Straight, AlphaMode::Premultiplied) => {
-            for pixel in pixels.chunks_exact_mut(4) {
+            for pixel in pixels.as_chunks_mut::<4>().0 {
                 let alpha = u32::from(pixel[3]);
                 for channel in &mut pixel[..3] {
                     *channel = ((u32::from(*channel) * alpha + 127) / 255) as u8;
@@ -299,7 +299,7 @@ pub(crate) fn convert_rgba_alpha_mode(pixels: &mut [u8], from: AlphaMode, to: Al
             }
         }
         (AlphaMode::Premultiplied, AlphaMode::Straight) => {
-            for pixel in pixels.chunks_exact_mut(4) {
+            for pixel in pixels.as_chunks_mut::<4>().0 {
                 let alpha = u32::from(pixel[3]);
                 if alpha == 0 {
                     pixel[..3].fill(0);

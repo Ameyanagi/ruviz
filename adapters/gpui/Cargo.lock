@@ -5163,6 +5163,7 @@ dependencies = [
  "gpui_macos",
  "gpui_platform",
  "image",
+ "libc",
  "rfd",
  "ruviz",
  "smallvec",

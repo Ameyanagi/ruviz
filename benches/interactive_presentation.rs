@@ -164,8 +164,10 @@ fn prepared_session(scenario: Scenario) -> InteractivePlotSession {
 fn compose_straight(base: &Image, overlay: &Image) -> Image {
     let mut pixels = base.pixels.clone();
     for (dst, src) in pixels
-        .chunks_exact_mut(4)
-        .zip(overlay.pixels.chunks_exact(4))
+        .as_chunks_mut::<4>()
+        .0
+        .iter_mut()
+        .zip(overlay.pixels.as_chunks::<4>().0.iter())
     {
         let destination = [dst[0], dst[1], dst[2], dst[3]];
         let source = [src[0], src[1], src[2], src[3]];

@@ -159,8 +159,7 @@ impl SIMDTransformer {
         let mut result = Vec::with_capacity(x_data.len());
 
         // Process in chunks of 4
-        let chunks = x_data.chunks_exact(4);
-        let remainder = chunks.remainder();
+        let (chunks, remainder) = x_data.as_chunks::<4>();
 
         for chunk in chunks {
             // Convert f64 to f32 and load into SIMD vector
@@ -214,8 +213,7 @@ impl SIMDTransformer {
         let mut result = Vec::with_capacity(y_data.len());
 
         // Process in chunks of 4
-        let chunks = y_data.chunks_exact(4);
-        let remainder = chunks.remainder();
+        let (chunks, remainder) = y_data.as_chunks::<4>();
 
         for chunk in chunks {
             // Convert f64 to f32 and load into SIMD vector
@@ -281,11 +279,10 @@ impl SIMDTransformer {
         let mut result = Vec::with_capacity(x_data.len());
 
         // Process coordinate pairs in chunks of 4
-        let chunks = x_data.chunks_exact(4);
-        let remainder = chunks.remainder();
-        let y_chunks = y_data.chunks_exact(4);
+        let (chunks, remainder) = x_data.as_chunks::<4>();
+        let (y_chunks, y_remainder) = y_data.as_chunks::<4>();
 
-        for (x_chunk, y_chunk) in chunks.zip(y_chunks) {
+        for (x_chunk, y_chunk) in chunks.iter().zip(y_chunks) {
             // Load coordinates into SIMD vectors
             let x_vec = f32x4::new([
                 x_chunk[0] as f32,
@@ -314,7 +311,6 @@ impl SIMDTransformer {
         }
 
         // Handle remaining elements
-        let y_remainder = &y_data[x_data.len() - remainder.len()..];
         for (i, (&x, &y)) in remainder.iter().zip(y_remainder.iter()).enumerate() {
             let px = (x as f32) * x_scale + x_offset;
             let py = (y as f32) * y_scale + y_offset;
@@ -337,8 +333,7 @@ impl SIMDTransformer {
         let mut result = Vec::with_capacity(points.len());
 
         // Process in chunks of 4 points
-        let chunks = points.chunks_exact(4);
-        let remainder = chunks.remainder();
+        let (chunks, remainder) = points.as_chunks::<4>();
 
         for chunk in chunks {
             // Load point coordinates
@@ -386,8 +381,7 @@ impl SIMDTransformer {
 
         let mut result = Vec::with_capacity(points.len());
 
-        let chunks = points.chunks_exact(4);
-        let remainder = chunks.remainder();
+        let (chunks, remainder) = points.as_chunks::<4>();
 
         for chunk in chunks {
             // Load point coordinates

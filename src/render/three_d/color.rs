@@ -141,7 +141,7 @@ fn divide_out(weighted: u32, alpha: u32) -> u8 {
 /// anything read back from a `Rgba8UnormSrgb` render target.
 #[cfg(feature = "gpu")]
 pub(crate) fn unpremultiply_linear_srgb_bytes(pixels: &mut [u8]) {
-    for pixel in pixels.chunks_exact_mut(4) {
+    for pixel in pixels.as_chunks_mut::<4>().0 {
         let alpha = f32::from(pixel[3]) / 255.0;
         if alpha <= 0.0 {
             pixel[0] = 0;

@@ -392,7 +392,7 @@ impl SkiaRenderer {
         let mut gap_midpoint = None;
         let mut longest_gap = 0.0f32;
         let mut offset = 0.0f64;
-        for pair in dash_pattern.chunks_exact(2) {
+        for pair in dash_pattern.as_chunks::<2>().0 {
             offset += f64::from(pair[0]);
             if pair[1] > longest_gap {
                 longest_gap = pair[1];
@@ -2530,8 +2530,10 @@ mod tests {
                     let actual = chunked.into_image();
                     let changed = actual
                         .pixels
-                        .chunks_exact(4)
-                        .zip(reference.pixels.chunks_exact(4))
+                        .as_chunks::<4>()
+                        .0
+                        .iter()
+                        .zip(reference.pixels.as_chunks::<4>().0.iter())
                         .filter(|(actual, reference)| actual != reference)
                         .count();
                     assert_eq!(
@@ -2704,7 +2706,9 @@ mod tests {
         assert!(
             edged
                 .pixels
-                .chunks_exact(4)
+                .as_chunks::<4>()
+                .0
+                .iter()
                 .any(|px| px[0] > px[2] && px[0] > 200),
             "the edge colour must actually reach the canvas"
         );
@@ -2987,7 +2991,9 @@ mod tests {
 
         let count_red = |pixels: &[u8]| {
             pixels
-                .chunks_exact(4)
+                .as_chunks::<4>()
+                .0
+                .iter()
                 .filter(|px| px[0] > 200 && px[1] < 60 && px[2] < 60)
                 .count()
         };
@@ -3036,7 +3042,9 @@ mod tests {
         assert!(
             image
                 .pixels
-                .chunks_exact(4)
+                .as_chunks::<4>()
+                .0
+                .iter()
                 .all(|px| px.iter().all(|channel| *channel == 255)),
             "a rectangle with neither fill nor edge must not touch the canvas"
         );
@@ -3085,13 +3093,20 @@ mod tests {
             let actual = batched.into_image();
             let expected = direct.into_image();
             assert!(
-                expected.pixels.chunks_exact(4).any(|px| px[0] < 255),
+                expected
+                    .pixels
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .any(|px| px[0] < 255),
                 "reference must contain ink"
             );
             let different_pixels = actual
                 .pixels
-                .chunks_exact(4)
-                .zip(expected.pixels.chunks_exact(4))
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .zip(expected.pixels.as_chunks::<4>().0.iter())
                 .filter(|(actual, expected)| actual != expected)
                 .count();
             assert_eq!(
@@ -3186,7 +3201,9 @@ mod tests {
         assert!(
             image
                 .pixels
-                .chunks_exact(4)
+                .as_chunks::<4>()
+                .0
+                .iter()
                 .all(|px| px.iter().all(|channel| *channel == 255)),
             "a segment with no endpoint must not paint anything"
         );
@@ -3304,7 +3321,9 @@ mod tests {
         assert!(
             image
                 .pixels
-                .chunks_exact(4)
+                .as_chunks::<4>()
+                .0
+                .iter()
                 .all(|px| px.iter().all(|channel| *channel == 255)),
             "an unplaceable marker must not touch the canvas"
         );

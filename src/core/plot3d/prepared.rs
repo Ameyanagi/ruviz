@@ -711,7 +711,7 @@ fn push_segment_if_finite(segments: &mut Vec<[u32; 2]>, start: Option<u32>, end:
 
 fn recompute_smooth_normals(vertices: &mut [MeshVertex3D], indices: &[u32]) {
     let mut accumulated = vec![Vec3::ZERO; vertices.len()];
-    for triangle in indices.chunks_exact(3) {
+    for triangle in indices.as_chunks::<3>().0 {
         let [first, second, third] = [
             triangle[0] as usize,
             triangle[1] as usize,
@@ -736,7 +736,7 @@ fn expand_flat_vertices(
 ) -> Result<(Vec<MeshVertex3D>, Vec<u32>)> {
     let mut flat_vertices = Vec::with_capacity(indices.len());
     let mut flat_indices = Vec::with_capacity(indices.len());
-    for triangle in indices.chunks_exact(3) {
+    for triangle in indices.as_chunks::<3>().0 {
         let source = [
             vertices[triangle[0] as usize],
             vertices[triangle[1] as usize],
@@ -1084,12 +1084,16 @@ mod tests {
 
         let cpu_mask: Vec<_> = cpu
             .pixels
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .map(|pixel| pixel[3] > 0)
             .collect();
         let gpu_mask: Vec<_> = gpu
             .pixels
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .map(|pixel| pixel[3] > 0)
             .collect();
         let intersection = cpu_mask

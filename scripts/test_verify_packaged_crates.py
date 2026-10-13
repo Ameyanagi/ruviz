@@ -59,6 +59,7 @@ gpui = "0.2.2"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 gpui = "0.2.2"
+libc = ">=0.2, <0.2.190"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 gpui = "0.2.2"
@@ -879,6 +880,44 @@ class NormalizedDependencyTests(unittest.TestCase):
 
         with self.assertRaisesRegex(VerificationError, "non-crates.io source"):
             verify_packaged_crates.validate_active_dependency_sources(crate)
+
+
+class LinuxLibcCompatibilityTests(unittest.TestCase):
+    def manifest(self, dependency: str | dict) -> dict:
+        return {
+            "target": {
+                'cfg(target_os = "linux")': {
+                    "dependencies": {"libc": dependency}
+                }
+            }
+        }
+
+    def test_source_and_normalized_dependency_preserve_the_bound(self) -> None:
+        requirement = verify_packaged_crates.LINUX_LIBC_REQUIREMENT
+        for dependency in (requirement, {"version": requirement}):
+            with self.subTest(dependency=dependency):
+                verify_packaged_crates.require_linux_libc_compatibility(
+                    self.manifest(dependency)
+                )
+
+    def test_missing_linux_dependency_is_rejected(self) -> None:
+        with self.assertRaisesRegex(VerificationError, "Linux libc compatibility"):
+            verify_packaged_crates.require_linux_libc_compatibility({})
+
+    def test_unbounded_dependency_is_rejected(self) -> None:
+        with self.assertRaisesRegex(VerificationError, "must require version"):
+            verify_packaged_crates.require_linux_libc_compatibility(
+                self.manifest({"version": "0.2"})
+            )
+
+    def test_optional_dependency_does_not_protect_consumers(self) -> None:
+        with self.assertRaisesRegex(VerificationError, "must not be optional"):
+            verify_packaged_crates.require_linux_libc_compatibility(
+                self.manifest({
+                    "version": verify_packaged_crates.LINUX_LIBC_REQUIREMENT,
+                    "optional": True,
+                })
+            )
 
 
 class RegistryRetryTests(unittest.TestCase):

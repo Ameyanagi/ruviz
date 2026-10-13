@@ -27,6 +27,9 @@ SUPPORTED_GPUI_TARGETS = {
     'cfg(target_os = "windows")',
 }
 WORKSPACE_ONLY_DEV_DEPENDENCIES = {"gpui_macos", "gpui_platform"}
+# Registry GPUI still brings xattr 0.2, whose Linux ENOATTR alias was removed in
+# libc 0.2.190. This must constrain published consumers, not only our lockfile.
+LINUX_LIBC_REQUIREMENT = ">=0.2, <0.2.190"
 
 # `adapters/gpui` is its own workspace, deliberately outside the one rooted
 # at the repository root. `[patch.crates-io]` is workspace-scoped and
@@ -98,6 +101,24 @@ def require_registry_dependency(dependency: Any, *, name: str, version: str) -> 
         raise VerificationError(
             f"{name} must resolve from crates.io; found {', '.join(forbidden)}"
         )
+
+
+def require_linux_libc_compatibility(manifest: dict[str, Any]) -> None:
+    """Keep legacy GPUI's Linux compatibility bound in published manifests."""
+    dependency = (
+        manifest.get("target", {})
+        .get('cfg(target_os = "linux")', {})
+        .get("dependencies", {})
+        .get("libc")
+    )
+    if isinstance(dependency, str):
+        dependency = {"version": dependency}
+    require_registry_dependency(
+        dependency, name="Linux libc compatibility dependency",
+        version=LINUX_LIBC_REQUIREMENT,
+    )
+    if dependency.get("optional", False):
+        raise VerificationError("Linux libc compatibility dependency must not be optional")
 
 
 def iter_dependency_tables(
@@ -228,6 +249,7 @@ def inspect_workspace(workspace: Path) -> WorkspaceContract:
             "cargo command has to resolve from crates.io alone"
         )
     require_registry_only_lockfile(workspace / "Cargo.lock")
+    require_linux_libc_compatibility(gpui_manifest)
 
     if not isinstance(gpui_manifest.get("workspace"), dict):
         raise VerificationError(
@@ -558,6 +580,7 @@ def validate_normalized_manifests(
     validate_active_dependency_sources(
         ruviz_gpui, contract.workspace_only_dev_dependencies
     )
+    require_linux_libc_compatibility(ruviz_gpui.manifest)
 
     dependency = dependency_table(ruviz_gpui.manifest, "dependencies", "ruviz")
     require_registry_dependency(dependency, name="ruviz", version=contract.version)

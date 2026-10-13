@@ -2482,8 +2482,10 @@ fn compose_layers(base: &Arc<RuvizImage>, overlay: Option<&RuvizImage>) -> Arc<R
     let mut pixels = base.pixels_in_alpha_mode(AlphaMode::Straight).into_owned();
     let overlay_pixels = overlay.pixels_in_alpha_mode(AlphaMode::Straight);
     for (destination, source) in pixels
-        .chunks_exact_mut(4)
-        .zip(overlay_pixels.chunks_exact(4))
+        .as_chunks_mut::<4>()
+        .0
+        .iter_mut()
+        .zip(overlay_pixels.as_chunks::<4>().0.iter())
     {
         let blended = source_over_straight_rgba(
             [
@@ -2717,6 +2719,8 @@ fn next_slot_incarnation() -> Option<u64> {
     reserve_slot_incarnation(&NEXT_SLOT_INCARNATION)
 }
 
+// Atomic::try_update requires Rust 1.95; retain support for Rust 1.92.
+#[allow(deprecated)]
 fn reserve_slot_incarnation(counter: &AtomicU64) -> Option<u64> {
     counter
         .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
