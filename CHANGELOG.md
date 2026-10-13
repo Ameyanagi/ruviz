@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-10-14
+
 ### Added
 
 - RGBA image series with data-space extents, row origin, opacity, and nearest
@@ -17,7 +19,8 @@ All notable changes to this project will be documented in this file.
 ### Changed
 
 - Update the development Rust/Cargo toolchain and matching CI/release pins to
-  stable 1.99.0, with the compatible `ethnum` 1.5.3 lockfile update.
+  stable 1.99.0, with the compatible `ethnum` 1.5.3 lockfile update. The declared
+  minimum supported Rust version remains 1.92.
 
 ### Fixed
 

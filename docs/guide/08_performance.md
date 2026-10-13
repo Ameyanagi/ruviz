@@ -48,7 +48,7 @@ at `t`.
 
 ```toml
 [dependencies]
-ruviz = "0.14.2"
+ruviz = "0.15.0"
 ```
 
 Useful opt-in features:

@@ -29,7 +29,7 @@ bindings. Every figure in it is real ruviz output.
 
 ```toml
 [dependencies]
-ruviz = "0.14.2"
+ruviz = "0.15.0"
 ```
 
 ## Hello, plot
