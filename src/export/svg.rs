@@ -1345,24 +1345,24 @@ impl SvgRenderer {
                 #[cfg(feature = "typst-math")]
                 TextEngineMode::Typst => {
                     if let Some(element) = typst_native.take() {
-                        writeln!(
+                        let _ = writeln!(
                             self.content,
                             r#"    <g transform="translate({:.2},{:.2})">{element}</g>"#,
                             layout.text_x, layout.text_y
-                        )
-                        .unwrap();
+                        );
                     } else {
-                        let rendered = typst_rendered
-                            .take()
-                            .expect("Typst annotation rendering must produce SVG output");
+                        let rendered = typst_rendered.take().ok_or_else(|| {
+                            PlottingError::RenderError(
+                                "Typst annotation rendering produced no SVG output".into(),
+                            )
+                        })?;
                         let embedded_svg = self.embedded_typst_svg(&rendered);
                         let label = self.typst_outline_label(text);
-                        writeln!(
+                        let _ = writeln!(
                             self.content,
                             r#"    <g data-ruviz-text-engine="typst"{label} transform="translate({:.2},{:.2})">{}</g>"#,
                             layout.text_x, layout.text_y, embedded_svg
-                        )
-                        .unwrap();
+                        );
                     }
                 }
             }
@@ -1421,12 +1421,11 @@ impl SvgRenderer {
                         height,
                         TypstTextAnchor::TopLeft,
                     );
-                    writeln!(
+                    let _ = writeln!(
                         self.content,
                         r#"  <g transform="translate({:.2},{:.2})">{element}</g>"#,
                         draw_x, draw_y
-                    )
-                    .unwrap();
+                    );
                     return Ok(());
                 }
                 let size_pt = self.typst_size_pt(size);
@@ -1575,12 +1574,11 @@ impl SvgRenderer {
                         height,
                         TypstTextAnchor::TopCenter,
                     );
-                    writeln!(
+                    let _ = writeln!(
                         self.content,
                         r#"  <g transform="translate({:.2},{:.2})">{element}</g>"#,
                         draw_x, draw_y
-                    )
-                    .unwrap();
+                    );
                     return Ok(());
                 }
                 let rendered = typst_text::render_svg_with_options(
@@ -1656,7 +1654,7 @@ impl SvgRenderer {
                 )? {
                     // Rotate the unrotated label box about its center, which is
                     // where the outlined path anchors the rotated box.
-                    writeln!(
+                    let _ = writeln!(
                         self.content,
                         r#"  <g transform="translate({:.2},{:.2}) rotate({:.1}) translate({:.2},{:.2})">{element}</g>"#,
                         x,
@@ -1664,8 +1662,7 @@ impl SvgRenderer {
                         angle,
                         -width / 2.0,
                         -height / 2.0
-                    )
-                    .unwrap();
+                    );
                     return Ok(());
                 }
                 let size_pt = self.typst_size_pt(size);
