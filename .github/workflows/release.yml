@@ -661,7 +661,8 @@ jobs:
 
   verify-gui-adapter-packages:
     name: Verify packaged native GUI adapters
-    runs-on: ubuntu-latest
+    # ubuntu-26.04 (ubuntu-latest) ran out of /tmp quota packaging ruviz-slint.
+    runs-on: ubuntu-24.04
     needs: [check-ci, build-release, publish-ruviz]
     steps:
       - name: Checkout code
