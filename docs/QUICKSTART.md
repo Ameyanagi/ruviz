@@ -2,18 +2,17 @@
 
 Get started with ruviz in less than 5 minutes!
 
-## What's New in v0.15.0
+## What's New in v0.15.1
 
-- Place an RGBA buffer in ordinary axes with `image`, explicit data-space
-  extents, row origins, and nearest or bilinear interpolation.
-- Sample scalar fields with `heatmap_fn` or caller-defined colors with
-  `image_fn`. Functions run once at the centers of the source grid cells.
-- Use `.aspect_equal()` to keep unit circles circular without changing data
-  limits, or `.data_aspect(ratio)` to choose another ratio.
+- Add `.svg_native_text(true)` to a Typst-mode plot to export labels without
+  math or markup as editable SVG `<text>`, placed at the baselines Typst
+  computed. Math labels stay outlined and carry their source in `aria-label`.
+  The option is off by default, so existing SVG and PDF output is unchanged.
 
-See the [image and complex-function guide](guide/15_image_plots.md),
-[release notes for v0.15.0](releases/v0.15.0.md), and
-[project changelog](../CHANGELOG.md).
+See the [release notes for v0.15.1](releases/v0.15.1.md) and the
+[project changelog](../CHANGELOG.md). v0.15.0 added RGBA image plots,
+`heatmap_fn`/`image_fn` field sampling and `aspect_equal`; see its
+[release notes](releases/v0.15.0.md).
 
 ## Installation
 
@@ -26,7 +25,7 @@ cd my_plot
 2. **Add ruviz to your `Cargo.toml`**:
 ```toml
 [dependencies]
-ruviz = "0.15.0"
+ruviz = "0.15.1"
 ```
 
 3. **Write your first plot** in `src/main.rs`:
@@ -65,7 +64,7 @@ an embedded interactive plot view:
 
 ```toml
 [dependencies]
-ruviz = "0.15.0"
+ruviz = "0.15.1"
 ruviz-gpui = "0.15.0"
 ```
 

@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.15.1] - 2026-10-22
+
 ### Added
 
 - `Plot::svg_native_text` writes Typst-mode labels without math or markup as
