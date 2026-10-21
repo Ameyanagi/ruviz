@@ -228,3 +228,40 @@ fn public_typst_multiline_title_preserves_inline_markup() {
         .render()
         .expect("multiline Typst markup should remain compilable");
 }
+
+#[cfg(feature = "typst-math")]
+#[test]
+fn svg_native_text_writes_literal_labels_as_text_and_labels_math() {
+    let x = vec![8900.0, 9000.0];
+    let y = vec![0.0, 1.0];
+    let render = |native: bool| {
+        Plot::new()
+            .line(&x, &y)
+            .label("Cu foil")
+            .title("Cu K-edge")
+            .xlabel("Energy (eV)")
+            .ylabel("$mu(E)$")
+            .legend_position(crate::core::LegendPosition::UpperRight)
+            .typst(true)
+            .svg_native_text(native)
+            .render_to_svg()
+            .expect("Typst SVG plot render should succeed")
+    };
+
+    let outlined = render(false);
+    assert!(!outlined.contains("<text"));
+    assert!(!outlined.contains("aria-label"));
+
+    let native = render(true);
+    for label in ["Cu foil", "Cu K-edge", "Energy (eV)", "9000"] {
+        assert!(
+            native.contains(&format!(">{label}</tspan>")),
+            "{label} should be native SVG text"
+        );
+    }
+    assert!(native.contains(r#"role="img" aria-label="$mu(E)$""#));
+    assert_eq!(
+        native.matches(r#"data-ruviz-text-engine="typst""#).count(),
+        1
+    );
+}

@@ -46,6 +46,73 @@ pub fn literal_text_snippet(text: &str) -> String {
         .join("\\\n")
 }
 
+/// One shaped run of text from a Typst layout.
+#[cfg(feature = "typst-math")]
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct TypstTextRun {
+    /// Baseline origin in points, measured from the top-left of the rendered box.
+    pub x: f32,
+    pub y: f32,
+    /// The run's text after Typst's substitutions (smart quotes, dashes, ...).
+    pub text: String,
+}
+
+/// Size and text runs of a Typst snippet that renders as plain text.
+#[cfg(feature = "typst-math")]
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct TypstTextLayout {
+    pub width: f32,
+    pub height: f32,
+    pub runs: Vec<TypstTextRun>,
+}
+
+/// Whether a Typst snippet renders as unstyled text that an SVG `<text>`
+/// element can reproduce.
+///
+/// Accepts snippets built by [`literal_text_snippet`] and source strings
+/// without Typst math (`$...$`), code (`#`), escapes, emphasis, raw text,
+/// labels, references, comments, headings or lists. Anything else is treated
+/// as markup and keeps Typst's outlined rendering.
+#[cfg(feature = "typst-math")]
+pub(crate) fn is_literal_text(source: &str) -> bool {
+    fn is_generated_line(line: &str) -> bool {
+        let Some(inner) = line
+            .strip_prefix("#text(\"")
+            .and_then(|rest| rest.strip_suffix("\")"))
+        else {
+            return false;
+        };
+        let mut chars = inner.chars();
+        while let Some(ch) = chars.next() {
+            match ch {
+                '\\' => {
+                    chars.next();
+                }
+                '"' => return false,
+                _ => {}
+            }
+        }
+        true
+    }
+
+    if source.split("\\\n").all(is_generated_line) {
+        return true;
+    }
+    const MARKUP: &[char] = &['$', '#', '\\', '*', '_', '`', '<', '>', '@', '[', ']'];
+    !source.contains(MARKUP)
+        && !source.contains("//")
+        && !source.contains("/*")
+        && source.lines().all(|line| {
+            let line = line.trim_start();
+            let numbered = line.trim_start_matches(|ch: char| ch.is_ascii_digit());
+            !(line.starts_with('=')
+                || ["- ", "+ ", "/ "]
+                    .iter()
+                    .any(|marker| line.starts_with(marker))
+                || (numbered.len() < line.len() && numbered.starts_with(". ")))
+        })
+}
+
 pub(crate) fn with_explicit_line_breaks(snippet: &str) -> String {
     if snippet.trim().is_empty() || !snippet.contains('\n') {
         return snippet.to_string();
@@ -122,6 +189,38 @@ mod weight_tests {
             "already\\\nexplicit"
         );
         assert_eq!(with_explicit_line_breaks(" \n\t"), " \n\t");
+    }
+
+    #[cfg(feature = "typst-math")]
+    #[test]
+    fn literal_text_detection_accepts_plain_labels_and_rejects_markup() {
+        for literal in [
+            "Energy (eV)",
+            "Cu foil",
+            "−0.5",
+            "8,900",
+            "Cu K-edge, 2 runs",
+            "a/b",
+        ] {
+            assert!(is_literal_text(literal), "{literal}");
+        }
+        assert!(is_literal_text(&literal_text_snippet("$x$ \"#y\"\nz")));
+        for markup in [
+            "$k^2 chi(k)$",
+            "Normalized $mu(E)$",
+            "#emph[x]",
+            "*bold*",
+            "Cu_2O",
+            "a \\ b",
+            "`raw`",
+            "= Heading",
+            "- item",
+            "1. item",
+            "x // comment",
+            "#text(\"a\") b",
+        ] {
+            assert!(!is_literal_text(markup), "{markup}");
+        }
     }
 
     #[test]
@@ -1386,6 +1485,67 @@ mod imp {
         }
     }
 
+    /// Lay out `snippet` and collect its text runs for native SVG text.
+    ///
+    /// Returns `None` when the layout holds anything other than text, such as
+    /// shapes or images, so the caller can keep the outlined rendering.
+    pub(crate) fn layout_text_runs(
+        snippet: &str,
+        size_pt: f32,
+        color: Color,
+        font_family: &FontFamily,
+        options: &crate::render::TextOptions,
+        operation: &str,
+    ) -> Result<Option<super::TypstTextLayout>> {
+        use typst::layout::{Frame, FrameItem, Transform};
+
+        fn collect(frame: &Frame, ts: Transform, runs: &mut Vec<super::TypstTextRun>) -> bool {
+            frame.items().all(|(pos, item)| match item {
+                FrameItem::Group(group) => collect(
+                    &group.frame,
+                    ts.pre_concat(Transform::translate(pos.x, pos.y))
+                        .pre_concat(group.transform),
+                    runs,
+                ),
+                FrameItem::Text(text) => {
+                    let origin = pos.transform(ts);
+                    runs.push(super::TypstTextRun {
+                        x: origin.x.to_pt() as f32,
+                        y: origin.y.to_pt() as f32,
+                        text: text.text.to_string(),
+                    });
+                    true
+                }
+                FrameItem::Shape(..) | FrameItem::Image(..) => false,
+                _ => true,
+            })
+        }
+
+        let font_ctx = font_context()?;
+        let resolved_font_family =
+            resolve_typst_font_family_with_options(&font_ctx, font_family, options);
+        let page = compile_single_page_with_options(
+            &font_ctx,
+            snippet,
+            size_pt,
+            color,
+            0.0,
+            &resolved_font_family,
+            options,
+            operation,
+        )?;
+        let mut runs = Vec::new();
+        if !collect(&page.frame, Transform::identity(), &mut runs) || runs.is_empty() {
+            return Ok(None);
+        }
+        let size = page.frame.size();
+        Ok(Some(super::TypstTextLayout {
+            width: size.x.to_pt() as f32,
+            height: size.y.to_pt() as f32,
+            runs,
+        }))
+    }
+
     #[cfg(test)]
     mod tests {
         use super::*;
@@ -2097,6 +2257,8 @@ mod imp {
     }
 }
 
+#[cfg(feature = "typst-math")]
+pub(crate) use imp::layout_text_runs;
 #[cfg(feature = "typst-math")]
 pub use imp::{
     measure_text, measure_text_with_font_family, measure_text_with_options, render_raster,

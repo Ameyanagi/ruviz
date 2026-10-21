@@ -1020,3 +1020,45 @@ fn international_svg_keeps_font_stack_language_and_geometric_rtl_anchor() {
     assert!(svg.contains("&lt;x&gt;"));
     assert!(!svg.contains("<x>"));
 }
+
+#[cfg(feature = "typst-math")]
+#[test]
+fn typst_native_text_keeps_the_outlined_label_box_and_escapes_xml() {
+    let draw = |native: bool, text: &str| {
+        let mut renderer = SvgRenderer::new(200.0, 150.0);
+        renderer.set_text_engine_mode(TextEngineMode::Typst);
+        renderer.set_typst_native_text(native);
+        renderer
+            .draw_text(text, 20.0, 30.0, 12.0, Color::BLACK)
+            .unwrap();
+        renderer.to_svg_string()
+    };
+    let snippet = typst_text::literal_text_snippet("a<b & c");
+
+    let outlined = draw(false, &snippet);
+    let native = draw(true, &snippet);
+    assert!(!outlined.contains("<text"));
+    assert!(native.contains(">a&lt;b &amp; c</tspan></text>"));
+    assert!(!native.contains("data-ruviz-text-engine"));
+    assert_eq!(
+        extract_typst_group_translates(&outlined)[0],
+        svg_group_translate(&native),
+        "native text must occupy the box Typst laid out"
+    );
+
+    let math = draw(true, "$a < b$ & \"c\"");
+    assert!(!math.contains("<text"));
+    assert!(math.contains(r#"role="img" aria-label="$a &lt; b$ &amp; &quot;c&quot;""#));
+}
+
+#[cfg(feature = "typst-math")]
+fn svg_group_translate(svg: &str) -> (f32, f32) {
+    let line = svg
+        .lines()
+        .find(|line| line.contains("<g transform=\"translate("))
+        .expect("translated group");
+    let start = line.find("translate(").unwrap() + "translate(".len();
+    let end = start + line[start..].find(')').unwrap();
+    let (x, y) = line[start..end].split_once(',').unwrap();
+    (x.parse().unwrap(), y.parse().unwrap())
+}
