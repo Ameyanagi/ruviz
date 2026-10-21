@@ -458,6 +458,8 @@ mod imp {
         backend: TypstBackendKind,
         font_family: String,
         options: crate::render::TextOptions,
+        /// Distinguishes collected text runs from the SVG of the same snippet.
+        text_runs: bool,
     }
 
     #[derive(Debug, Clone)]
@@ -474,6 +476,8 @@ mod imp {
             width: f32,
             height: f32,
         },
+        /// `None` records a snippet whose layout is not plain text.
+        TextRuns(Option<super::TypstTextLayout>),
     }
 
     #[derive(Debug, Default)]
@@ -800,6 +804,7 @@ mod imp {
             backend,
             font_family: font_family.to_string(),
             options: crate::render::TextOptions::default(),
+            text_runs: false,
         }
     }
 
@@ -819,6 +824,13 @@ mod imp {
         match value {
             CachedValue::Raster { pixels, .. } => pixels.len(),
             CachedValue::Svg { svg, .. } => svg.len(),
+            CachedValue::TextRuns(layout) => layout.as_ref().map_or(0, |layout| {
+                layout
+                    .runs
+                    .iter()
+                    .map(|run| run.text.len() + std::mem::size_of::<super::TypstTextRun>())
+                    .sum()
+            }),
         }
     }
 
@@ -1521,9 +1533,30 @@ mod imp {
             })
         }
 
+        options.validate()?;
         let font_ctx = font_context()?;
         let resolved_font_family =
             resolve_typst_font_family_with_options(&font_ctx, font_family, options);
+        let mut key = make_key_with_font_family(
+            snippet,
+            size_pt,
+            color,
+            0.0,
+            TypstBackendKind::Svg,
+            &resolved_font_family,
+            font_ctx.generation,
+        );
+        key.options = options.clone();
+        key.text_runs = true;
+        {
+            let mut cache = lock_cache()?;
+            if synchronize_cache_generation(&mut cache, font_ctx.generation)
+                && let Some(CachedValue::TextRuns(layout)) = cache.entries.get(&key)
+            {
+                return Ok(layout.clone());
+            }
+        }
+
         let page = compile_single_page_with_options(
             &font_ctx,
             snippet,
@@ -1535,15 +1568,21 @@ mod imp {
             operation,
         )?;
         let mut runs = Vec::new();
-        if !collect(&page.frame, Transform::identity(), &mut runs) || runs.is_empty() {
-            return Ok(None);
+        let layout = (collect(&page.frame, Transform::identity(), &mut runs) && !runs.is_empty())
+            .then(|| {
+                let size = page.frame.size();
+                super::TypstTextLayout {
+                    width: size.x.to_pt() as f32,
+                    height: size.y.to_pt() as f32,
+                    runs,
+                }
+            });
+
+        let mut cache = lock_cache()?;
+        if synchronize_cache_generation(&mut cache, font_ctx.generation) {
+            insert_cached_value(&mut cache, key, CachedValue::TextRuns(layout.clone()));
         }
-        let size = page.frame.size();
-        Ok(Some(super::TypstTextLayout {
-            width: size.x.to_pt() as f32,
-            height: size.y.to_pt() as f32,
-            runs,
-        }))
+        Ok(layout)
     }
 
     #[cfg(test)]
@@ -2146,6 +2185,53 @@ mod imp {
             assert_eq!(serif, font_ctx.serif_family);
             assert_eq!(sans, font_ctx.sans_family);
             assert_eq!(mono, font_ctx.mono_family);
+        }
+
+        #[test]
+        fn text_runs_are_served_from_the_render_cache() {
+            let snippet = "#text(\"cached runs 8,900\")";
+            let options = crate::render::TextOptions::default();
+            let family = FontFamily::SansSerif;
+            let layout =
+                || layout_text_runs(snippet, 11.0, Color::BLACK, &family, &options, "test");
+            let marker = super::super::TypstTextLayout {
+                width: 123.0,
+                height: 4.0,
+                runs: Vec::new(),
+            };
+            // Other tests share the global cache and may evict entries or bump
+            // the font generation, so retry instead of asserting on one pass.
+            for _ in 0..5 {
+                let compiled = layout().unwrap().expect("literal snippet has runs");
+                assert_ne!(compiled, marker);
+                let font_ctx = font_context().unwrap();
+                let mut key = make_key_with_font_family(
+                    snippet,
+                    11.0,
+                    Color::BLACK,
+                    0.0,
+                    TypstBackendKind::Svg,
+                    &resolve_typst_font_family_with_options(&font_ctx, &family, &options),
+                    font_ctx.generation,
+                );
+                key.options = options.clone();
+                key.text_runs = true;
+                {
+                    let mut cache = lock_cache().unwrap();
+                    if !synchronize_cache_generation(&mut cache, font_ctx.generation) {
+                        continue;
+                    }
+                    insert_cached_value(
+                        &mut cache,
+                        key,
+                        CachedValue::TextRuns(Some(marker.clone())),
+                    );
+                }
+                if layout().unwrap() == Some(marker.clone()) {
+                    return;
+                }
+            }
+            panic!("text runs were never read back from the cache");
         }
 
         #[test]
