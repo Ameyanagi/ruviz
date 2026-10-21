@@ -702,6 +702,30 @@ impl Plot {
         self
     }
 
+    /// Export Typst-mode labels without math or markup as editable SVG text.
+    ///
+    /// Off by default, so Typst-mode SVG keeps every label as glyph outlines.
+    /// When enabled together with [`typst(true)`](Self::typst), SVG export
+    /// (and PDF export, which converts that SVG) writes labels such as tick
+    /// numbers, `"Energy (eV)"`, legend names and titles as `<text>` elements
+    /// that vector editors and browsers can select, search and edit. Each
+    /// label keeps the position and size Typst computed, so the layout does
+    /// not change. Labels with Typst math or markup, such as `"$mu(E)$"`, stay
+    /// outlined for fidelity and gain `role="img"` with an `aria-label`
+    /// holding their source string.
+    ///
+    /// Native text is drawn by the viewer, so it matches the Typst output only
+    /// when the viewer has the same font installed. Plain mode always writes
+    /// `<text>`, and PNG and other raster output are unaffected.
+    ///
+    /// Requires the `typst-math` feature.
+    #[cfg(feature = "typst-math")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "typst-math")))]
+    pub fn svg_native_text(mut self, enabled: bool) -> Self {
+        self.display.svg_native_text = enabled;
+        self
+    }
+
     /// Compatibility shim for older code paths.
     ///
     /// This method is currently a no-op on [`Plot`]. To set transparency on a

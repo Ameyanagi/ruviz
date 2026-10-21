@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- `Plot::svg_native_text` writes Typst-mode labels without math or markup as
+  editable SVG `<text>` at the baselines Typst computed; math labels stay
+  outlined with an `aria-label` holding their source. Off by default.
+
 ## [0.15.0] - 2026-10-14
 
 ### Added

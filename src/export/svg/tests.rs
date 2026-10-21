@@ -1020,3 +1020,213 @@ fn international_svg_keeps_font_stack_language_and_geometric_rtl_anchor() {
     assert!(svg.contains("&lt;x&gt;"));
     assert!(!svg.contains("<x>"));
 }
+
+#[cfg(feature = "typst-math")]
+#[test]
+fn typst_native_text_escapes_xml_and_labels_outlined_math() {
+    let draw = |native: bool, text: &str| {
+        let mut renderer = SvgRenderer::new(200.0, 150.0);
+        renderer.set_text_engine_mode(TextEngineMode::Typst);
+        renderer.set_typst_native_text(native);
+        renderer
+            .draw_text(text, 20.0, 30.0, 12.0, Color::BLACK)
+            .unwrap();
+        renderer.to_svg_string()
+    };
+    let snippet = typst_text::literal_text_snippet("a<b & c");
+
+    assert!(!draw(false, &snippet).contains("<text"));
+    let native = draw(true, &snippet);
+    assert!(native.contains(">a&lt;b &amp; c</tspan></text>"));
+    assert!(!native.contains("data-ruviz-text-engine"));
+
+    let math = draw(true, "$a < b$ & \"c\"");
+    assert!(!math.contains("<text"));
+    assert!(math.contains(r#"role="img" aria-label="$a &lt; b$ &amp; &quot;c&quot;""#));
+}
+
+/// Draw one label in Typst mode, outlined or as native text.
+#[cfg(feature = "typst-math")]
+fn draw_typst_label(native: bool, kind: &str, text: &str) -> String {
+    let mut renderer = SvgRenderer::new(300.0, 300.0);
+    renderer.set_text_engine_mode(TextEngineMode::Typst);
+    renderer.set_typst_native_text(native);
+    match kind {
+        "top-left" => renderer.draw_text(text, 40.0, 50.0, 12.0, Color::BLACK),
+        "centered" => renderer.draw_text_centered_with_weight(
+            text,
+            150.0,
+            50.0,
+            16.0,
+            Color::BLACK,
+            FontWeight::Bold,
+        ),
+        "rotated" => renderer.draw_text_rotated(text, 60.0, 150.0, 14.0, Color::BLACK, -90.0),
+        _ => unreachable!("unknown label kind {kind}"),
+    }
+    .unwrap();
+    renderer.to_svg_string()
+}
+
+#[cfg(feature = "typst-math")]
+#[test]
+fn typst_native_text_runs_match_the_outlined_typst_layout() {
+    let size = |kind: &str| match kind {
+        "top-left" => 12.0,
+        "centered" => 16.0,
+        _ => 14.0,
+    };
+    for (kind, text) in [
+        ("top-left", "Energy (eV)"),
+        ("centered", "Cu K-edge XANES"),
+        ("centered", "wide first line\nshort"),
+        ("rotated", "Normalized absorption"),
+    ] {
+        let outlined = draw_typst_label(false, kind, text);
+        let native = draw_typst_label(true, kind, text);
+        let (box_x, box_y) = extract_typst_group_translates(&outlined)[0];
+        let inner = outlined
+            .split("<svg class=\"typst-doc\"")
+            .nth(1)
+            .expect("embedded Typst SVG");
+        let (outlined_w, outlined_h) = (
+            parse_svg_attr(inner, "width"),
+            parse_svg_attr(inner, "height"),
+        );
+
+        // The runs are the shaped lines of the same Typst layout, unrotated.
+        let mut snippet = typst_text::with_explicit_line_breaks(text);
+        if kind == "centered" {
+            snippet = typst_text::with_horizontal_alignment(
+                &typst_text::with_font_weight(&snippet, FontWeight::Bold),
+                TextAlign::Center,
+            );
+        }
+        let layout = typst_text::layout_text_runs(
+            &snippet,
+            size(kind),
+            Color::BLACK,
+            &FontFamily::SansSerif,
+            &crate::render::TextOptions::default(),
+            "test",
+        )
+        .unwrap()
+        .expect("literal label has text runs");
+        let tspans: Vec<_> = native.split("<tspan ").skip(1).collect();
+        assert_eq!(tspans.len(), layout.runs.len(), "{kind}: {text}");
+        assert_eq!(
+            tspans.len(),
+            text.lines().count(),
+            "{kind}: one run per line"
+        );
+        for (tspan, run) in tspans.iter().zip(&layout.runs) {
+            assert_approx_eq(parse_svg_attr(tspan, "x"), run.x);
+            assert_approx_eq(parse_svg_attr(tspan, "y"), run.y);
+            // Baselines fall inside the label box, below its top edge.
+            assert!(
+                run.y > 0.0 && run.y <= layout.height + 0.01,
+                "{kind}: {run:?}"
+            );
+        }
+        if text.contains('\n') {
+            assert!(layout.runs[1].y > layout.runs[0].y, "lines stack downward");
+            assert!(
+                layout.runs[1].x > layout.runs[0].x,
+                "short line is centered"
+            );
+        }
+
+        let native_group = native
+            .lines()
+            .find(|line| line.contains("<text "))
+            .expect("native text group");
+        if kind == "rotated" {
+            // The outlined box is the rotated box; native text rotates the
+            // unrotated box about the same center.
+            assert_approx_eq(outlined_w, layout.height);
+            assert_approx_eq(outlined_h, layout.width);
+            assert!(native_group.contains("translate(60.00,150.00) rotate(-90.0)"));
+            assert!(native_group.contains(&format!(
+                "translate({:.2},{:.2})",
+                -layout.width / 2.0,
+                -layout.height / 2.0
+            )));
+        } else {
+            assert_approx_eq(outlined_w, layout.width);
+            assert_approx_eq(outlined_h, layout.height);
+            assert!(
+                native_group.contains(&format!("translate({box_x:.2},{box_y:.2})")),
+                "{kind}: native box must sit where the outlined box sits"
+            );
+        }
+    }
+}
+
+/// The glyphs of a native label cover the same area as the outlined glyphs.
+#[cfg(all(feature = "typst-math", feature = "pdf"))]
+#[test]
+fn typst_native_text_ink_matches_outlined_ink() {
+    use svg2pdf::usvg;
+    let fontdb = crate::render::get_font_system()
+        .lock()
+        .unwrap()
+        .db()
+        .clone();
+    let options = usvg::Options {
+        fontdb: std::sync::Arc::new(fontdb),
+        ..Default::default()
+    };
+    // Union of glyph outline bounds; usvg's text bounds are line boxes.
+    fn glyph_bounds(group: &usvg::Group, bounds: &mut Option<usvg::Rect>) {
+        for node in group.children() {
+            let rect = match node {
+                usvg::Node::Group(group) => {
+                    glyph_bounds(group, bounds);
+                    continue;
+                }
+                usvg::Node::Text(text) => text
+                    .flattened()
+                    .bounding_box()
+                    .transform(text.abs_transform())
+                    .unwrap(),
+                usvg::Node::Path(path) => path.abs_bounding_box(),
+                usvg::Node::Image(_) => continue,
+            };
+            *bounds = Some(bounds.map_or(rect, |bounds| {
+                usvg::Rect::from_ltrb(
+                    bounds.left().min(rect.left()),
+                    bounds.top().min(rect.top()),
+                    bounds.right().max(rect.right()),
+                    bounds.bottom().max(rect.bottom()),
+                )
+                .unwrap()
+            }));
+        }
+    }
+    let ink = |svg: &str| {
+        let tree = usvg::Tree::from_str(svg, &options).unwrap();
+        let mut bounds = None;
+        glyph_bounds(tree.root(), &mut bounds);
+        bounds.expect("label has glyphs")
+    };
+    for (kind, text) in [
+        ("top-left", "8,900"),
+        ("centered", "Cu K-edge XANES"),
+        ("centered", "wide first line\nshort"),
+        ("rotated", "Energy (eV)"),
+    ] {
+        let outlined = ink(&draw_typst_label(false, kind, text));
+        let native = ink(&draw_typst_label(true, kind, text));
+        for (a, b) in [
+            (outlined.left(), native.left()),
+            (outlined.top(), native.top()),
+            (outlined.right(), native.right()),
+            (outlined.bottom(), native.bottom()),
+        ] {
+            assert!(
+                (a - b).abs() < 0.5,
+                "{kind} {text:?}: outlined {outlined:?} vs native {native:?}"
+            );
+        }
+    }
+}

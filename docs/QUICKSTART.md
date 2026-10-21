@@ -165,6 +165,13 @@ fn main() -> PlotResult<()> {
 }
 ```
 
+Typst-mode SVG draws every label as glyph outlines by default, which vector
+editors cannot edit. Add `.svg_native_text(true)` to write labels without math
+or markup (tick numbers, `"Energy (eV)"`, legend names, titles) as SVG `<text>`
+at the same positions. Math labels such as `"$mu(E)$"` stay outlined and carry
+their source in an `aria-label`. Native text uses the viewer's copy of the font,
+so it matches only where that font is installed. PNG output is unchanged.
+
 ## Your First Real Plot
 
 Let's create a more interesting plot with real data:

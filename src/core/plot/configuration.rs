@@ -71,6 +71,9 @@ pub struct PlotConfiguration {
     pub(crate) theme: Theme,
     /// Active text engine mode for all static text surfaces.
     pub(crate) text_engine: TextEngineMode,
+    /// Emit literal Typst-mode labels as native SVG `<text>`.
+    #[cfg(feature = "typst-math")]
+    pub(crate) svg_native_text: bool,
     /// DPI-independent plot configuration
     pub(crate) config: PlotConfig,
 }
@@ -92,6 +95,8 @@ impl PlotConfiguration {
             dpi: 100,
             theme: Theme::default(),
             text_engine: TextEngineMode::Plain,
+            #[cfg(feature = "typst-math")]
+            svg_native_text: false,
             config: PlotConfig::default(),
         }
     }

@@ -42,6 +42,9 @@ pub struct SvgRenderer {
     /// Font family for plain SVG text and Typst-rendered SVG text.
     font_family: FontFamily,
     text_options: crate::render::TextOptions,
+    /// Emit literal Typst-mode labels as native `<text>` elements.
+    #[cfg(feature = "typst-math")]
+    typst_native_text: bool,
     /// First shape that reached an emitter with a non-finite dimension.
     ///
     /// Latched rather than returned because most emitters are infallible by
@@ -74,6 +77,8 @@ impl SvgRenderer {
             text_renderer: TextRenderer::new(),
             font_family,
             text_options: crate::render::TextOptions::default(),
+            #[cfg(feature = "typst-math")]
+            typst_native_text: false,
             invalid_geometry: None,
         }
     }
@@ -114,6 +119,21 @@ impl SvgRenderer {
     /// Get text rendering backend mode.
     pub fn text_engine_mode(&self) -> TextEngineMode {
         self.text_engine_mode
+    }
+
+    /// Emit Typst-mode labels without math or markup as native SVG text.
+    ///
+    /// Off by default. When on and the text engine is
+    /// [`TextEngineMode::Typst`], labels such as tick numbers, `"Energy (eV)"`
+    /// or legend names become `<text>` elements that editors can select and
+    /// edit. They are placed at the baselines Typst computed, so layout does
+    /// not move. Labels with Typst math or markup (for example `$mu(E)$`) stay
+    /// outlined and gain `role="img"` and an `aria-label` holding their
+    /// source. Plain mode always emits `<text>` and ignores this setting.
+    #[cfg(feature = "typst-math")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "typst-math")))]
+    pub fn set_typst_native_text(&mut self, enabled: bool) {
+        self.typst_native_text = enabled;
     }
 
     /// Set shared international typography options.
@@ -347,6 +367,71 @@ impl SvgRenderer {
         Self::set_root_svg_dimension(&mut svg, "width", rendered.width);
         Self::set_root_svg_dimension(&mut svg, "height", rendered.height);
         svg
+    }
+
+    /// Lay out a literal Typst-mode label as a native `<text>` element.
+    ///
+    /// The element is positioned relative to the label's top-left corner and
+    /// returned with the label box size. Returns `None` when native text is
+    /// off, `source` uses Typst markup, or the text runs right to left.
+    #[cfg(feature = "typst-math")]
+    #[allow(clippy::too_many_arguments)]
+    fn typst_native_text(
+        &self,
+        source: &str,
+        snippet: &str,
+        size: f32,
+        color: Color,
+        weight: Option<FontWeight>,
+        family: &FontFamily,
+        options: &crate::render::TextOptions,
+        operation: &str,
+    ) -> Result<Option<(String, f32, f32)>> {
+        if !self.typst_native_text
+            || !typst_text::is_literal_text(source)
+            || options.resolved_direction() == Some(crate::render::TextDirection::RightToLeft)
+        {
+            return Ok(None);
+        }
+        let size_pt = self.typst_size_pt(size);
+        let Some(layout) =
+            typst_text::layout_text_runs(snippet, size_pt, color, family, options, operation)?
+        else {
+            return Ok(None);
+        };
+        let weight_attr = weight
+            .map(|weight| format!(r#" font-weight="{}""#, weight.numeric()))
+            .unwrap_or_default();
+        let mut element = format!(
+            r#"<text font-family="{}"{} font-size="{:.2}"{} fill="{}" xml:space="preserve">"#,
+            self.escaped_font_family_with_options(family, options)?,
+            self.text_attributes(options),
+            size_pt,
+            weight_attr,
+            self.color_to_svg(color)
+        );
+        for run in &layout.runs {
+            write!(
+                element,
+                r#"<tspan x="{:.2}" y="{:.2}">{}</tspan>"#,
+                run.x,
+                run.y,
+                self.escape_xml(&run.text)
+            )
+            .unwrap();
+        }
+        element.push_str("</text>");
+        Ok(Some((element, layout.width, layout.height)))
+    }
+
+    /// Accessible-name attributes for an outlined Typst label in native-text mode.
+    #[cfg(feature = "typst-math")]
+    fn typst_outline_label(&self, source: &str) -> String {
+        if self.typst_native_text {
+            format!(r#" role="img" aria-label="{}""#, self.escape_xml(source))
+        } else {
+            String::new()
+        }
     }
 
     fn set_root_svg_dimension(svg: &mut String, attribute: &str, value: f32) {
@@ -1116,6 +1201,8 @@ impl SvgRenderer {
             .weight(weight);
         #[cfg(feature = "typst-math")]
         let mut typst_rendered = None;
+        #[cfg(feature = "typst-math")]
+        let mut typst_native = None;
         let metrics = if text.trim().is_empty() {
             TextPlacementMetrics::new(0.0, font_size, font_size)
         } else {
@@ -1127,19 +1214,36 @@ impl SvgRenderer {
                     let weighted_text = typst_text::with_font_weight(&multiline_text, weight);
                     let aligned_text =
                         typst_text::with_horizontal_alignment(&weighted_text, style.align);
-                    let rendered = typst_text::render_svg_with_options(
+                    if let Some((element, width, height)) = self.typst_native_text(
+                        text,
                         &aligned_text,
-                        self.typst_size_pt(font_size),
+                        font_size,
                         style.color,
-                        0.0,
+                        Some(weight),
                         family,
                         &options,
-                        "SVG annotation text rendering",
-                    )?;
-                    let metrics =
-                        TextPlacementMetrics::new(rendered.width, rendered.height, rendered.height);
-                    typst_rendered = Some(rendered);
-                    metrics
+                        "SVG annotation text layout",
+                    )? {
+                        typst_native = Some(element);
+                        TextPlacementMetrics::new(width, height, height)
+                    } else {
+                        let rendered = typst_text::render_svg_with_options(
+                            &aligned_text,
+                            self.typst_size_pt(font_size),
+                            style.color,
+                            0.0,
+                            family,
+                            &options,
+                            "SVG annotation text rendering",
+                        )?;
+                        let metrics = TextPlacementMetrics::new(
+                            rendered.width,
+                            rendered.height,
+                            rendered.height,
+                        );
+                        typst_rendered = Some(rendered);
+                        metrics
+                    }
                 }
             }
         };
@@ -1240,16 +1344,26 @@ impl SvgRenderer {
                 }
                 #[cfg(feature = "typst-math")]
                 TextEngineMode::Typst => {
-                    let rendered = typst_rendered
-                        .take()
-                        .expect("Typst annotation rendering must produce SVG output");
-                    let embedded_svg = self.embedded_typst_svg(&rendered);
-                    writeln!(
-                        self.content,
-                        r#"    <g data-ruviz-text-engine="typst" transform="translate({:.2},{:.2})">{}</g>"#,
-                        layout.text_x, layout.text_y, embedded_svg
-                    )
-                    .unwrap();
+                    if let Some(element) = typst_native.take() {
+                        let _ = writeln!(
+                            self.content,
+                            r#"    <g transform="translate({:.2},{:.2})">{element}</g>"#,
+                            layout.text_x, layout.text_y
+                        );
+                    } else {
+                        let rendered = typst_rendered.take().ok_or_else(|| {
+                            PlottingError::RenderError(
+                                "Typst annotation rendering produced no SVG output".into(),
+                            )
+                        })?;
+                        let embedded_svg = self.embedded_typst_svg(&rendered);
+                        let label = self.typst_outline_label(text);
+                        let _ = writeln!(
+                            self.content,
+                            r#"    <g data-ruviz-text-engine="typst"{label} transform="translate({:.2},{:.2})">{}</g>"#,
+                            layout.text_x, layout.text_y, embedded_svg
+                        );
+                    }
                 }
             }
         }
@@ -1290,6 +1404,30 @@ impl SvgRenderer {
             }
             #[cfg(feature = "typst-math")]
             TextEngineMode::Typst => {
+                if let Some((element, width, height)) = self.typst_native_text(
+                    text,
+                    text,
+                    size,
+                    color,
+                    None,
+                    &self.font_family,
+                    &self.text_options,
+                    "SVG text layout",
+                )? {
+                    let (draw_x, draw_y) = typst_text::anchored_top_left(
+                        x,
+                        y,
+                        width,
+                        height,
+                        TypstTextAnchor::TopLeft,
+                    );
+                    let _ = writeln!(
+                        self.content,
+                        r#"  <g transform="translate({:.2},{:.2})">{element}</g>"#,
+                        draw_x, draw_y
+                    );
+                    return Ok(());
+                }
                 let size_pt = self.typst_size_pt(size);
                 let rendered = typst_text::render_svg_with_options(
                     text,
@@ -1308,9 +1446,10 @@ impl SvgRenderer {
                     TypstTextAnchor::TopLeft,
                 );
                 let embedded_svg = self.embedded_typst_svg(&rendered);
+                let label = self.typst_outline_label(text);
                 writeln!(
                     self.content,
-                    r#"  <g data-ruviz-text-engine="typst" transform="translate({:.2},{:.2})">{}</g>"#,
+                    r#"  <g data-ruviz-text-engine="typst"{label} transform="translate({:.2},{:.2})">{}</g>"#,
                     draw_x, draw_y, embedded_svg
                 )
                 .unwrap();
@@ -1418,6 +1557,30 @@ impl SvgRenderer {
                     weighted_text.as_deref().unwrap_or(&multiline_text),
                     TextAlign::Center,
                 );
+                if let Some((element, width, height)) = self.typst_native_text(
+                    text,
+                    &aligned_text,
+                    size,
+                    color,
+                    weight,
+                    &self.font_family,
+                    &self.text_options,
+                    "SVG centered text layout",
+                )? {
+                    let (draw_x, draw_y) = typst_text::anchored_top_left(
+                        x,
+                        y,
+                        width,
+                        height,
+                        TypstTextAnchor::TopCenter,
+                    );
+                    let _ = writeln!(
+                        self.content,
+                        r#"  <g transform="translate({:.2},{:.2})">{element}</g>"#,
+                        draw_x, draw_y
+                    );
+                    return Ok(());
+                }
                 let rendered = typst_text::render_svg_with_options(
                     &aligned_text,
                     size_pt,
@@ -1435,9 +1598,10 @@ impl SvgRenderer {
                     TypstTextAnchor::TopCenter,
                 );
                 let embedded_svg = self.embedded_typst_svg(&rendered);
+                let label = self.typst_outline_label(text);
                 writeln!(
                     self.content,
-                    r#"  <g data-ruviz-text-engine="typst" transform="translate({:.2},{:.2})">{}</g>"#,
+                    r#"  <g data-ruviz-text-engine="typst"{label} transform="translate({:.2},{:.2})">{}</g>"#,
                     draw_x, draw_y, embedded_svg
                 )
                 .unwrap();
@@ -1478,6 +1642,29 @@ impl SvgRenderer {
             }
             #[cfg(feature = "typst-math")]
             TextEngineMode::Typst => {
+                if let Some((element, width, height)) = self.typst_native_text(
+                    text,
+                    text,
+                    size,
+                    color,
+                    None,
+                    &self.font_family,
+                    &self.text_options,
+                    "SVG rotated text layout",
+                )? {
+                    // Rotate the unrotated label box about its center, which is
+                    // where the outlined path anchors the rotated box.
+                    let _ = writeln!(
+                        self.content,
+                        r#"  <g transform="translate({:.2},{:.2}) rotate({:.1}) translate({:.2},{:.2})">{element}</g>"#,
+                        x,
+                        y,
+                        angle,
+                        -width / 2.0,
+                        -height / 2.0
+                    );
+                    return Ok(());
+                }
                 let size_pt = self.typst_size_pt(size);
                 let rendered = typst_text::render_svg_with_options(
                     text,
@@ -1496,9 +1683,10 @@ impl SvgRenderer {
                     TypstTextAnchor::Center,
                 );
                 let embedded_svg = self.embedded_typst_svg(&rendered);
+                let label = self.typst_outline_label(text);
                 writeln!(
                     self.content,
-                    r#"  <g data-ruviz-text-engine="typst" transform="translate({:.2},{:.2})">{}</g>"#,
+                    r#"  <g data-ruviz-text-engine="typst"{label} transform="translate({:.2},{:.2})">{}</g>"#,
                     draw_x, draw_y, embedded_svg
                 )
                 .unwrap();

@@ -3909,6 +3909,8 @@ impl Plot {
         svg.set_render_scale(render_scale);
         svg.set_text_options(self.display.config.typography.text_options.clone());
         svg.set_text_engine_mode(self.display.text_engine);
+        #[cfg(feature = "typst-math")]
+        svg.set_typst_native_text(self.display.svg_native_text);
 
         let (x_min, x_max, y_min, y_max) =
             self.effective_main_panel_bounds_from_resolved(&self.series_mgr.series, &frame.series)?;

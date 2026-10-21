@@ -169,6 +169,8 @@ impl Plot {
             dpi: config.figure.dpi as u32,
             theme,
             text_engine: TextEngineMode::Plain,
+            #[cfg(feature = "typst-math")]
+            svg_native_text: false,
             config,
         };
         Self {

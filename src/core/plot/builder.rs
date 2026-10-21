@@ -1180,6 +1180,19 @@ where
         self
     }
 
+    /// Export Typst-mode labels without math or markup as editable SVG text.
+    ///
+    /// This method forwards to the inner Plot; see
+    /// [`Plot::svg_native_text`](crate::core::Plot::svg_native_text).
+    ///
+    /// Requires the `typst-math` feature.
+    #[cfg(feature = "typst-math")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "typst-math")))]
+    pub fn svg_native_text(mut self, enabled: bool) -> Self {
+        self.plot = self.plot.svg_native_text(enabled);
+        self
+    }
+
     /// Set theme
     ///
     /// This method forwards to the inner Plot.
