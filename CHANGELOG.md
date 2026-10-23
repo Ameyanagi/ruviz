@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Typst-mode raster legends size their frame to the rendered label instead of
+  its markup source, so labels like `#text("...")` or `Fit $mu(E)$` no longer
+  leave extra space on the right.
+
 ## [0.15.1] - 2026-10-22
 
 ### Added
