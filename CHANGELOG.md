@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.15.2] - 2026-10-24
+
 ### Fixed
 
 - Typst-mode raster legends size their frame to the rendered label instead of
