@@ -2816,6 +2816,9 @@ impl SkiaRenderer {
     /// `legend` must already be scaled for this renderer. The measurement
     /// callback is this backend's own, which is how a Typst-shaped label and a
     /// cosmic-text one stay honestly different without duplicating the layout.
+    /// Labels are measured with [`SkiaRenderer::measure_text`], the same text
+    /// [`SkiaRenderer::draw_text`] renders: in Typst mode a label is markup, so
+    /// `#text("a")` is as wide as `a`, not as its source.
     fn legend_layout(
         &self,
         items: &[LegendItem],
@@ -2824,7 +2827,7 @@ impl SkiaRenderer {
         placement: LegendPlacement<'_>,
     ) -> Result<LegendLayout> {
         layout_legend(items, legend, plot_area, placement, |text| {
-            Ok(self.measure_label_text(text, legend.font_size)?.0)
+            Ok(self.measure_text(text, legend.font_size)?.0)
         })
     }
 
@@ -2866,7 +2869,7 @@ impl SkiaRenderer {
     ) -> Result<(f32, f32)> {
         let legend = legend.scaled_for_render(self.render_scale);
         measure_legend_size(items, &legend, |text| {
-            Ok(self.measure_label_text(text, legend.font_size)?.0)
+            Ok(self.measure_text(text, legend.font_size)?.0)
         })
     }
 
@@ -3688,7 +3691,7 @@ mod legend_patch_tests {
                 )
                 .expect("legend layout");
             let text_width = renderer
-                .measure_label_text(label, scaled.font_size)
+                .measure_text(label, scaled.font_size)
                 .expect("measure")
                 .0;
             let entry = layout.entries[0];
@@ -3701,6 +3704,54 @@ mod legend_patch_tests {
             );
             // The reservation and the drawing are the same call, so the size the
             // figure layout reserves is the size the frame is drawn at.
+            assert_eq!(
+                layout.size(),
+                renderer.measure_legend(&items, &legend).expect("reserve")
+            );
+        }
+    }
+
+    #[cfg(feature = "typst-math")]
+    #[test]
+    fn typst_legend_frame_fits_the_rendered_label_not_its_source() {
+        let mut renderer = SkiaRenderer::new(400, 300, Theme::default()).unwrap();
+        renderer.set_text_engine_mode(TextEngineMode::Typst);
+        let legend = Legend {
+            enabled: true,
+            position: crate::core::LegendPosition::UpperLeft,
+            ..Default::default()
+        };
+        let scaled = legend.scaled_for_render(renderer.render_scale());
+
+        for label in [r#"#text("CuO reference sample")"#, "Fit $mu(E)$"] {
+            let items = vec![LegendItem::line(label, Color::BLUE, LineStyle::Solid, 1.5)];
+            let layout = renderer
+                .legend_layout(
+                    &items,
+                    &scaled,
+                    (0.0, 0.0, 400.0, 300.0),
+                    LegendPlacement::default(),
+                )
+                .expect("legend layout");
+            let rendered = renderer.measure_text(label, scaled.font_size).unwrap().0;
+            let source = renderer
+                .measure_text(&typst_text::literal_text_snippet(label), scaled.font_size)
+                .unwrap()
+                .0;
+            assert!(
+                source > rendered + 1.0,
+                "{label:?}: the source must be visibly wider than the rendered text"
+            );
+
+            let entry = layout.entries[0];
+            let inner_right = layout.x + layout.width - layout.spacing.border_pad;
+            let slack = inner_right - (entry.label_x + rendered);
+            assert!(
+                slack.abs() < 0.5,
+                "{label:?}: frame should end at the rendered label, slack {slack}px \
+                 (source would add {}px)",
+                source - rendered
+            );
             assert_eq!(
                 layout.size(),
                 renderer.measure_legend(&items, &legend).expect("reserve")
