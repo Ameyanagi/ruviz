@@ -1724,6 +1724,10 @@ pub(crate) struct LegendConfig {
     pub(crate) position: LegendPosition,
     /// Font size override in typographic points.
     pub(crate) font_size: Option<f32>,
+    /// Frame style override
+    pub(crate) style: Option<LegendStyle>,
+    /// Spacing override in font-size units
+    pub(crate) spacing: Option<LegendSpacing>,
     /// Corner radius for rounded corners
     pub(crate) corner_radius: Option<f32>,
     /// Number of columns (1 = vertical, >1 = horizontal/multi-column)
@@ -1736,6 +1740,8 @@ impl Default for LegendConfig {
             enabled: false,
             position: LegendPosition::UpperRight,
             font_size: None,
+            style: None,
+            spacing: None,
             corner_radius: None,
             columns: None,
         }
@@ -1749,6 +1755,8 @@ impl LegendConfig {
             enabled: self.enabled,
             position: self.position,
             font_size: self.font_size.unwrap_or(default_font_size),
+            style: self.style.clone().unwrap_or_default(),
+            spacing: self.spacing.unwrap_or_default(),
             ..Legend::default()
         };
         if let Some(radius) = self.corner_radius {

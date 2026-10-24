@@ -859,12 +859,12 @@ pub mod prelude {
         InteractiveChangeSubscription, InteractiveFrame, InteractivePlotSession,
         InteractiveRenderStamp, InteractiveViewportSnapshot, IntoPlot, IntoPlotSession,
         LayerImages, LayerRenderState, Legend, LegendAnchor, LegendItem, LegendItemType,
-        LegendPosition, Plot, PlotBuilder, PlotContextMenuAction, PlotInputEvent, PlotResult,
-        PlotSource, PlottingError, Position, PreparedPlot, QualityPolicy, ReactiveSubscription,
-        ReactiveValue, RenderTargetKind, RenderedLayer, ScheduledRequestId, ShapeStyle,
-        StampedInteractiveFrame, StampedInteractiveLayers, SubplotFigure, SurfaceCapability,
-        SurfaceTarget, TextAlign, TextStyle, TextVAlign, TickDirection, TickSides, ViewportPoint,
-        ViewportRect, figure, subplots, subplots_default,
+        LegendPosition, LegendSpacing, LegendStyle, Plot, PlotBuilder, PlotContextMenuAction,
+        PlotInputEvent, PlotResult, PlotSource, PlottingError, Position, PreparedPlot,
+        QualityPolicy, ReactiveSubscription, ReactiveValue, RenderTargetKind, RenderedLayer,
+        ScheduledRequestId, ShapeStyle, StampedInteractiveFrame, StampedInteractiveLayers,
+        SubplotFigure, SurfaceCapability, SurfaceTarget, TextAlign, TextStyle, TextVAlign,
+        TickDirection, TickSides, ViewportPoint, ViewportRect, figure, subplots, subplots_default,
     };
     #[cfg(feature = "3d")]
     pub use crate::core::{

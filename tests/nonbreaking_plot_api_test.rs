@@ -843,3 +843,295 @@ fn backend_resolution_and_diagnostics_agree_on_executed_renderer() {
     assert_eq!(resolution.actual_backend(), diagnostics.actual_backend());
     assert!(resolution.used_fallback());
 }
+
+mod legend_customization {
+    use super::*;
+
+    const LABEL: &str = "Frame-free legend";
+    const FONT_SIZE: f32 = 14.0;
+    const X: [f64; 2] = [0.1, 0.9];
+    const Y: [f64; 2] = [0.1, 0.2];
+
+    fn base_plot() -> Plot {
+        Plot::new()
+            .size(8.0, 5.0)
+            .dpi(72)
+            .grid(false)
+            .ticks(false)
+            .xlim(0.0, 1.0)
+            .ylim(0.0, 1.0)
+            .legend_font_size(FONT_SIZE)
+    }
+
+    fn labeled_plot() -> Plot {
+        // Keep the data well below the upper-right legend so pixel differences
+        // in that region come only from the frame, handle and label.
+        base_plot()
+            .line(&X, &Y)
+            .color(Color::RED)
+            .line_width(2.0)
+            .label(LABEL)
+            .into_plot()
+    }
+
+    fn attribute(element: &str, name: &str) -> f32 {
+        let prefix = format!(" {name}=\"");
+        let value = element
+            .split_once(&prefix)
+            .unwrap_or_else(|| panic!("missing {name} attribute: {element}"))
+            .1
+            .split('"')
+            .next()
+            .expect("attribute value");
+        value
+            .parse()
+            .unwrap_or_else(|_| panic!("non-numeric {name} attribute: {element}"))
+    }
+
+    fn frame_element(svg: &str) -> &str {
+        // This line-only fixture has no other rounded rectangles.
+        svg.lines()
+            .find(|line| line.trim_start().starts_with("<rect ") && line.contains(" rx=\""))
+            .unwrap_or_else(|| panic!("missing legend frame: {svg}"))
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn exported_png(plot: Plot, name: &str) -> image::RgbaImage {
+        let directory = tempfile::tempdir().expect("temporary PNG directory should exist");
+        let path = directory.path().join(format!("{name}.png"));
+        plot.save(&path).expect("legend plot should save as PNG");
+        image::open(path)
+            .expect("exported legend PNG should decode")
+            .to_rgba8()
+    }
+
+    #[test]
+    fn frameless_style_omits_svg_frame_and_keeps_labels() {
+        let disabled = labeled_plot().render_to_svg().unwrap();
+        let framed = labeled_plot()
+            .legend_position(LegendPosition::UpperRight)
+            .render_to_svg()
+            .unwrap();
+        let frameless = base_plot()
+            .line(&X, &Y)
+            .legend_style(LegendStyle::invisible())
+            .legend_spacing(LegendSpacing::default())
+            .color(Color::RED)
+            .line_width(2.0)
+            .label(LABEL)
+            .legend_position(LegendPosition::UpperRight)
+            .render_to_svg()
+            .unwrap();
+
+        assert!(!disabled.contains(LABEL));
+        assert!(framed.contains(LABEL));
+        assert!(
+            frameless.contains(LABEL),
+            "hiding the frame must retain its label"
+        );
+        assert_eq!(
+            frameless.matches("<rect ").count(),
+            disabled.matches("<rect ").count(),
+            "a frameless line legend must emit no frame rectangles"
+        );
+        assert_eq!(
+            framed.matches("<rect ").count(),
+            frameless.matches("<rect ").count() + 2,
+            "the default legend adds a face and an edge"
+        );
+        assert_eq!(
+            frameless.matches("<line ").count(),
+            disabled.matches("<line ").count() + 1,
+            "the line handle must survive alongside the label"
+        );
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn frameless_style_omits_png_frame_and_fill_and_keeps_label_pixels() {
+        // A tinted canvas makes even the default white frame fill detectable.
+        let theme = Theme {
+            background: Color::from_rgb(215, 230, 245),
+            ..Theme::default()
+        };
+        let framed_plot = labeled_plot()
+            .theme(theme.clone())
+            .legend_style(LegendStyle::default())
+            .legend_position(LegendPosition::UpperRight);
+        let svg = framed_plot.render_to_svg().unwrap();
+        let frame = frame_element(&svg);
+        let left = attribute(frame, "x").ceil() as u32;
+        let top = attribute(frame, "y").ceil() as u32;
+        let right = (attribute(frame, "x") + attribute(frame, "width")).floor() as u32;
+        let bottom = (attribute(frame, "y") + attribute(frame, "height")).floor() as u32;
+        let label = svg
+            .lines()
+            .find(|line| line.contains(&format!(">{LABEL}<")))
+            .expect("legend label should be SVG text");
+        let label_left = attribute(label, "x").ceil() as u32;
+
+        let disabled = exported_png(labeled_plot().theme(theme.clone()), "disabled");
+        let framed = exported_png(framed_plot, "framed");
+        let frameless = exported_png(
+            labeled_plot()
+                .theme(theme)
+                .legend_style(LegendStyle::invisible())
+                .legend_position(LegendPosition::UpperRight),
+            "frameless",
+        );
+        assert_eq!(disabled.dimensions(), framed.dimensions());
+        assert_eq!(disabled.dimensions(), frameless.dimensions());
+        assert!(right < framed.width() && bottom < framed.height());
+
+        let mut visible_frame_pixels = 0;
+        let mut label_pixels = 0;
+        // The outer four pixels lie within the configured border padding,
+        // outside the label and handle. They sample both edge and face paint.
+        for y in top.saturating_sub(2)..=bottom + 2 {
+            for x in left.saturating_sub(2)..=right + 2 {
+                let in_frame_band = x < left + 4 || x > right - 4 || y < top + 4 || y > bottom - 4;
+                if in_frame_band {
+                    assert_eq!(
+                        frameless.get_pixel(x, y),
+                        disabled.get_pixel(x, y),
+                        "frameless PNG retained frame/fill paint at ({x}, {y})"
+                    );
+                    if framed.get_pixel(x, y) != disabled.get_pixel(x, y) {
+                        visible_frame_pixels += 1;
+                    }
+                }
+                if x >= label_left
+                    && x <= right
+                    && y >= top
+                    && y <= bottom
+                    && frameless.get_pixel(x, y) != disabled.get_pixel(x, y)
+                {
+                    label_pixels += 1;
+                }
+            }
+        }
+        assert!(
+            visible_frame_pixels > 100,
+            "the framed control must visibly paint its frame"
+        );
+        assert!(
+            label_pixels > 20,
+            "the frameless PNG must retain label pixels"
+        );
+    }
+
+    #[test]
+    fn shorter_handle_length_reduces_measured_svg_legend_width() {
+        let default = labeled_plot()
+            .legend_position(LegendPosition::UpperRight)
+            .render_to_svg()
+            .unwrap();
+        let spacing = LegendSpacing {
+            handle_length: 0.5,
+            ..LegendSpacing::default()
+        };
+        let plot_api = labeled_plot()
+            .legend_spacing(spacing)
+            .legend_position(LegendPosition::UpperRight)
+            .render_to_svg()
+            .unwrap();
+        let builder_api = base_plot()
+            .line(&X, &Y)
+            .legend_spacing(spacing)
+            .color(Color::RED)
+            .line_width(2.0)
+            .label(LABEL)
+            .legend_position(LegendPosition::UpperRight)
+            .render_to_svg()
+            .unwrap();
+        assert_eq!(
+            plot_api, builder_api,
+            "Plot and PlotBuilder must apply identical spacing"
+        );
+
+        let default_frame = frame_element(&default);
+        let short_frame = frame_element(&plot_api);
+        let width_reduction = attribute(default_frame, "width") - attribute(short_frame, "width");
+        let expected = (LegendSpacing::default().handle_length - spacing.handle_length) * FONT_SIZE;
+        assert!(
+            (width_reduction - expected).abs() < 0.02,
+            "handle length should reduce measured frame width by {expected}, got {width_reduction}"
+        );
+        assert_eq!(
+            attribute(default_frame, "height"),
+            attribute(short_frame, "height")
+        );
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn explicit_themed_defaults_preserve_svg_and_exported_png() {
+        let theme = Theme::default();
+        // The existing high-level legend inherits its colors from the theme.
+        // Explicit styles own their colors, so spell out those same defaults.
+        let style = LegendStyle::default()
+            .face_color(theme.background)
+            .edge_color(Some(theme.grid_color));
+        let baseline = labeled_plot().legend_position(LegendPosition::UpperRight);
+        let spacing_only = labeled_plot()
+            .legend_spacing(LegendSpacing::default())
+            .legend_position(LegendPosition::UpperRight);
+        let plot_api = labeled_plot()
+            .legend_style(style.clone())
+            .legend_spacing(LegendSpacing::default())
+            .legend_position(LegendPosition::UpperRight);
+        let builder_api = base_plot()
+            .line(&X, &Y)
+            .legend_style(style)
+            .legend_spacing(LegendSpacing::default())
+            .color(Color::RED)
+            .line_width(2.0)
+            .label(LABEL)
+            .legend_position(LegendPosition::UpperRight)
+            .into_plot();
+        let baseline_svg = baseline.render_to_svg().unwrap();
+        assert_eq!(baseline_svg, spacing_only.render_to_svg().unwrap());
+        assert_eq!(baseline_svg, plot_api.render_to_svg().unwrap());
+        assert_eq!(baseline_svg, builder_api.render_to_svg().unwrap());
+
+        let baseline_png = exported_png(baseline, "default-baseline");
+        assert_eq!(
+            baseline_png,
+            exported_png(spacing_only, "default-spacing-only")
+        );
+        assert_eq!(baseline_png, exported_png(plot_api, "default-plot-api"));
+        assert_eq!(
+            baseline_png,
+            exported_png(builder_api, "default-builder-api")
+        );
+    }
+
+    #[test]
+    fn corner_radius_overrides_custom_style_in_either_setter_order() {
+        let style = LegendStyle::rounded(1.0)
+            .alpha(1.0)
+            .face_color(Color::from_rgb(17, 93, 151))
+            .edge_color(Some(Color::from_rgb(211, 37, 89)));
+        let radius_first = labeled_plot()
+            .legend_corner_radius(9.0)
+            .legend_style(style.clone())
+            .legend_position(LegendPosition::UpperRight)
+            .render_to_svg()
+            .unwrap();
+        let style_first = base_plot()
+            .line(&X, &Y)
+            .legend_style(style)
+            .legend_corner_radius(9.0)
+            .color(Color::RED)
+            .line_width(2.0)
+            .label(LABEL)
+            .legend_position(LegendPosition::UpperRight)
+            .render_to_svg()
+            .unwrap();
+
+        assert_eq!(radius_first, style_first);
+        assert_eq!(attribute(frame_element(&radius_first), "rx"), 9.0);
+        assert!(radius_first.contains("fill=\"rgb(17,93,151)\""));
+        assert!(radius_first.contains("stroke=\"rgb(211,37,89)\""));
+    }
+}
