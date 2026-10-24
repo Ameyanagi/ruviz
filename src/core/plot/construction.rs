@@ -1500,8 +1500,10 @@ impl Plot {
             .legend
             .to_legend(config.typography.legend_size());
         legend.text_color = theme.foreground;
-        legend.style.face_color = theme.background;
-        legend.style.edge_color = Some(theme.grid_color);
+        if self.layout.legend.style.is_none() {
+            legend.style.face_color = theme.background;
+            legend.style.edge_color = Some(theme.grid_color);
+        }
 
         ResolvedStyle {
             theme,

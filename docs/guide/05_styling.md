@@ -553,6 +553,42 @@ Plot::new()
     .save("multi_series_legend.png")?;
 ```
 
+### Legend Frame and Spacing
+
+Use `LegendStyle::invisible()` for a frameless legend, equivalent to
+matplotlib's `plt.legend(frameon=False)`. `LegendSpacing` controls the handle
+length, row spacing, and padding in multiples of the legend font size;
+`handle_length` and `label_spacing` correspond to matplotlib's `handlelength`
+and `labelspacing`.
+
+```rust,check
+use ruviz::prelude::*;
+
+fn main() -> PlotResult<()> {
+    Plot::new()
+        .line(&[0.0, 1.0, 2.0], &[1.0, 2.0, 1.5])
+        .label("Measurements")
+        .legend(LegendPosition::UpperRight)
+        .legend_style(LegendStyle::invisible())
+        .legend_spacing(LegendSpacing {
+            handle_length: 1.0,
+            label_spacing: 0.3,
+            border_pad: 0.3,
+            ..LegendSpacing::default()
+        })
+        .save("compact_legend.png")?;
+    Ok(())
+}
+```
+
+Both setters work before or after a series call. They configure appearance;
+call `.legend(...)` or `.legend_best()` to enable the legend. For a visible
+frame, use `LegendStyle::sharp()` or customize `LegendStyle::default()` with
+`.face_color(...)`, `.edge_color(...)`, `.border_width(...)`, and `.alpha(...)`.
+An explicit style keeps its own colors. `.legend_corner_radius(...)` overrides
+the style's radius regardless of call order; `fancy_box` must be enabled for
+rounded corners.
+
 ## Axes
 
 ### Axis Limits

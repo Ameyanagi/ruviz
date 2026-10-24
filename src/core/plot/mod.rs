@@ -708,9 +708,9 @@ use crate::{
     core::{
         Annotation, ArrowStyle, FillStyle, GridStyle, LayoutCalculator, LayoutConfig,
         LayoutMeasurements, Legend, LegendItem, LegendItemType, LegendOccupancy, LegendPosition,
-        MarginConfig, MeasuredDimensions, PlotConfig, PlotContent, PlotLayout, PlotStyle,
-        PlottingError, REFERENCE_DPI, RenderScale, ResolvedLayout, ResolvedTitleLayout, Result,
-        ShapeStyle, StyleResolver, TextStyle, pt_to_px,
+        LegendSpacing, LegendStyle, MarginConfig, MeasuredDimensions, PlotConfig, PlotContent,
+        PlotLayout, PlotStyle, PlottingError, REFERENCE_DPI, RenderScale, ResolvedLayout,
+        ResolvedTitleLayout, Result, ShapeStyle, StyleResolver, TextStyle, pt_to_px,
     },
     data::{
         Data1D, DataShader, NullPolicy, NumericData1D, NumericData2D, StreamingXY,

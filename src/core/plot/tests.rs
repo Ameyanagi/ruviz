@@ -2470,6 +2470,74 @@ fn test_group_mixed_series_uses_first_member_legend_glyph() {
 }
 
 #[test]
+fn test_plot_legend_config_preserves_defaults() {
+    let plot = Plot::new();
+    let default_font_size = plot.display.config.typography.legend_size();
+    let legend = plot.layout.legend.to_legend(default_font_size);
+    let default = Legend::default();
+
+    assert!(!legend.enabled);
+    assert_eq!(legend.position, LegendPosition::UpperRight);
+    assert_eq!(legend.font_size, default_font_size);
+    assert_eq!(legend.style, default.style);
+    assert_eq!(
+        legend.spacing.to_pixels(1.0),
+        default.spacing.to_pixels(1.0)
+    );
+    assert_eq!(legend.columns, default.columns);
+    assert_eq!(legend.text_color, default.text_color);
+    assert_eq!(legend.title, default.title);
+}
+
+#[test]
+fn test_plot_legend_style_and_spacing_preserve_overrides() {
+    let style = LegendStyle::rounded(3.0)
+        .face_color(Color::RED)
+        .edge_color(None)
+        .border_width(2.0)
+        .alpha(0.4);
+    let spacing = LegendSpacing {
+        handle_length: 1.0,
+        label_spacing: 0.2,
+        border_pad: 0.3,
+        ..LegendSpacing::default()
+    };
+
+    // The corner-radius override wins in either order, before and after a
+    // series call. Setting appearance alone must not enable the legend.
+    let plots = [
+        Plot::new()
+            .legend_style(style.clone())
+            .legend_spacing(spacing)
+            .legend_corner_radius(7.0),
+        Plot::new()
+            .legend_corner_radius(7.0)
+            .line(&[0.0, 1.0], &[1.0, 2.0])
+            .legend_style(style.clone())
+            .legend_spacing(spacing)
+            .into_plot(),
+    ];
+    let expected_style = LegendStyle {
+        corner_radius: 7.0,
+        ..style
+    };
+    for plot in plots {
+        let legend = plot.layout.legend.to_legend(12.0);
+        assert!(!legend.enabled);
+        assert_eq!(legend.font_size, 12.0);
+        assert_eq!(legend.style, expected_style);
+        assert_eq!(legend.spacing.to_pixels(1.0), spacing.to_pixels(1.0));
+
+        let frame = plot.resolve_frame(0.0).expect("frame should resolve");
+        assert_eq!(frame.style.legend.style, expected_style);
+        assert_eq!(
+            frame.style.legend.spacing.to_pixels(1.0),
+            spacing.to_pixels(1.0)
+        );
+    }
+}
+
+#[test]
 fn test_svg_legend_default_font_size_uses_typography_and_dpi() {
     let x = vec![0.0, 1.0];
     let y = vec![1.0, 2.0];

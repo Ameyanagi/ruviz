@@ -90,10 +90,67 @@ impl Plot {
 
     /// Set legend corner radius for rounded corners
     ///
-    /// A value of 0.0 gives sharp corners (default).
+    /// A value of 0.0 gives sharp corners.
     /// Typical values are 3.0 to 8.0 for subtle rounded corners.
+    /// Overrides the radius from [`legend_style`](Self::legend_style), regardless
+    /// of call order. The style's `fancy_box` setting still controls rounding.
     pub fn legend_corner_radius(mut self, radius: f32) -> Self {
         self.layout.legend.corner_radius = Some(radius);
+        self
+    }
+
+    /// Set the legend frame style.
+    ///
+    /// Use [`LegendStyle::invisible`] for matplotlib's `frameon=False`.
+    /// Explicit styles keep their face and edge colors instead of using theme
+    /// colors. [`legend_corner_radius`](Self::legend_corner_radius) overrides
+    /// the style's corner radius, regardless of call order.
+    /// Enable the legend separately with [`legend`](Self::legend) or
+    /// [`legend_best`](Self::legend_best).
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use ruviz::prelude::*;
+    ///
+    /// let plot = Plot::new()
+    ///     .legend_best()
+    ///     .legend_style(LegendStyle::invisible())
+    ///     .line(&[0.0, 1.0], &[1.0, 2.0])
+    ///     .label("Data")
+    ///     .into_plot();
+    /// ```
+    pub fn legend_style(mut self, style: LegendStyle) -> Self {
+        self.layout.legend.style = Some(style);
+        self
+    }
+
+    /// Set legend spacing in multiples of the legend font size.
+    ///
+    /// `handle_length` and `label_spacing` correspond to matplotlib's
+    /// `handlelength` and `labelspacing`. Shorter handles make the legend
+    /// narrower; smaller label spacing brings rows closer together.
+    /// Enable the legend separately with [`legend`](Self::legend) or
+    /// [`legend_best`](Self::legend_best).
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use ruviz::prelude::*;
+    ///
+    /// let plot = Plot::new()
+    ///     .legend_best()
+    ///     .legend_spacing(LegendSpacing {
+    ///         handle_length: 1.0,
+    ///         label_spacing: 0.3,
+    ///         ..LegendSpacing::default()
+    ///     })
+    ///     .line(&[0.0, 1.0], &[1.0, 2.0])
+    ///     .label("Data")
+    ///     .into_plot();
+    /// ```
+    pub fn legend_spacing(mut self, spacing: LegendSpacing) -> Self {
+        self.layout.legend.spacing = Some(spacing);
         self
     }
 

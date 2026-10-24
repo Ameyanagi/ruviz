@@ -1,4 +1,3 @@
-use ruviz::core::LegendPosition;
 /// Gallery Example: Legend Features
 ///
 /// This example demonstrates all legend features implemented in ruviz:
@@ -7,7 +6,9 @@ use ruviz::core::LegendPosition;
 /// - Rounded corners
 /// - Multi-column (horizontal) layout
 /// - Frame styling with background and border
+/// - Frameless legends with compact spacing
 use ruviz::core::Plot;
+use ruviz::core::{LegendPosition, LegendSpacing, LegendStyle};
 use ruviz::render::{Color, LineStyle, MarkerStyle, Theme};
 
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
@@ -121,6 +122,26 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .legend_corner_radius(6.0)
         .save("generated/bench/legend_mixed.png")?;
 
+    // Example 5: Like plt.legend(frameon=False, handlelength=1, labelspacing=0.3).
+    println!("5. Creating compact frameless legend...");
+    Plot::new()
+        .title("Compact Frameless Legend")
+        .theme(Theme::publication())
+        .ylim(-1.5, 1.5)
+        .legend_style(LegendStyle::invisible())
+        .legend_spacing(LegendSpacing {
+            handle_length: 1.0,
+            label_spacing: 0.3,
+            border_pad: 0.3,
+            ..LegendSpacing::default()
+        })
+        .line(&x, &y_sin)
+        .label("sin(x)")
+        .line(&x, &y_cos)
+        .label("cos(x)")
+        .legend(LegendPosition::UpperRight)
+        .save("generated/bench/legend_frameless.png")?;
+
     println!();
     println!("Gallery examples created!");
     println!("Check the following files:");
@@ -128,6 +149,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     println!("  - generated/bench/legend_scatter_markers.png");
     println!("  - generated/bench/legend_horizontal.png");
     println!("  - generated/bench/legend_mixed.png");
+    println!("  - generated/bench/legend_frameless.png");
 
     Ok(())
 }

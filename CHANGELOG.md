@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- `Plot::legend_style` and `legend_spacing`, also available on `PlotBuilder`,
+  expose frameless legends, frame styling, and spacing in font-size units.
+  `LegendStyle` and `LegendSpacing` are now exported from the prelude.
+
 ## [0.15.2] - 2026-10-24
 
 ### Fixed

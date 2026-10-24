@@ -938,6 +938,57 @@ where
         self
     }
 
+    /// Set the legend frame style, forwarding to [`Plot::legend_style`](super::Plot::legend_style).
+    ///
+    /// Use [`LegendStyle::invisible`](crate::core::LegendStyle::invisible) for
+    /// matplotlib's `frameon=False`. Enable the legend separately with
+    /// [`legend`](Self::legend) or [`legend_best`](Self::legend_best).
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use ruviz::prelude::*;
+    ///
+    /// let plot = Plot::new()
+    ///     .line(&[0.0, 1.0], &[1.0, 2.0])
+    ///     .label("Data")
+    ///     .legend_best()
+    ///     .legend_style(LegendStyle::invisible())
+    ///     .into_plot();
+    /// ```
+    pub fn legend_style(mut self, style: crate::core::LegendStyle) -> Self {
+        self.plot = self.plot.legend_style(style);
+        self
+    }
+
+    /// Set legend spacing in font-size units, forwarding to
+    /// [`Plot::legend_spacing`](super::Plot::legend_spacing).
+    ///
+    /// `handle_length` and `label_spacing` correspond to matplotlib's
+    /// `handlelength` and `labelspacing`. Enable the legend separately with
+    /// [`legend`](Self::legend) or [`legend_best`](Self::legend_best).
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use ruviz::prelude::*;
+    ///
+    /// let plot = Plot::new()
+    ///     .line(&[0.0, 1.0], &[1.0, 2.0])
+    ///     .label("Data")
+    ///     .legend_best()
+    ///     .legend_spacing(LegendSpacing {
+    ///         handle_length: 1.0,
+    ///         label_spacing: 0.3,
+    ///         ..LegendSpacing::default()
+    ///     })
+    ///     .into_plot();
+    /// ```
+    pub fn legend_spacing(mut self, spacing: crate::core::LegendSpacing) -> Self {
+        self.plot = self.plot.legend_spacing(spacing);
+        self
+    }
+
     /// Set number of legend columns
     ///
     /// This method forwards to the inner Plot.

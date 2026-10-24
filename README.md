@@ -157,6 +157,7 @@ cargo run --example complex_function
 | Plot | `.aspect_equal()` / `.data_aspect(ratio)` |
 | Plot | `.xscale(AxisScale::Log)` `.yscale(..)` `.size(w, h)` `.size_px(w, h)` `.dpi(300)` `.font_family("Arial")` |
 | Legend | `.legend(LegendPosition::UpperLeft)` or `.legend_best()` |
+| Legend appearance | `.legend_style(LegendStyle::invisible())` `.legend_spacing(LegendSpacing { handle_length: 1.0, ..Default::default() })` |
 | Annotations | `.text(x, y, "note")` `.arrow(x1, y1, x2, y2)` `.hline(y)` `.vline(x)` `.fill_between(&x, &y1, &y2)` |
 
 **Colors:** `Color::BLUE` (and `RED`, `GREEN`, `BLACK`, `WHITE`, `ORANGE`, …),
