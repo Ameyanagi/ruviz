@@ -1,0 +1,19 @@
+[advisories]
+# Check unsoundness in transitive dependencies as well as direct dependencies.
+unsound = "all"
+# Maintenance status alone is not a security vulnerability finding. CI keeps
+# these visible with `check advisories --warn unmaintained` while vulnerabilities
+# and unsoundness remain errors unless individually justified below.
+unmaintained = "all"
+yanked = "warn"
+
+# These exceptions accept the remaining exposure while the affected upstream
+# dependencies require a separate compatibility migration. New vulnerability and
+# unsoundness advisories fail.
+ignore = [
+    { id = "RUSTSEC-2026-0176", reason = "ruviz-py and numpy 0.24 require pyo3 0.24; the iterator out-of-bounds fix requires pyo3 >=0.29 and a coordinated Python/numpy binding migration. Accept this exposure pending that migration." },
+    { id = "RUSTSEC-2026-0177", reason = "ruviz-py and numpy 0.24 require pyo3 0.24; the PyCFunction closure Sync-bound fix requires pyo3 >=0.29 and a coordinated Python/numpy binding migration. Accept this exposure pending that migration." },
+    { id = "RUSTSEC-2026-0194", reason = "Typst 0.13 -> hayagriva 0.8 -> citationberg 0.5 requires quick-xml 0.36; optional Polars cloud dependencies also lock object_store 0.12 -> quick-xml 0.38. The >=0.41 fix needs upstream compatibility migrations. Accept XML duplicate-attribute denial-of-service exposure pending those upgrades." },
+    { id = "RUSTSEC-2026-0195", reason = "Typst 0.13 -> hayagriva 0.8 -> citationberg 0.5 requires quick-xml 0.36; optional Polars cloud dependencies also lock object_store 0.12 -> quick-xml 0.38. The >=0.41 fix needs upstream compatibility migrations. Accept XML namespace-allocation denial-of-service exposure pending those upgrades." },
+    { id = "RUSTSEC-2026-0300", reason = "The optional polars_support feature uses Polars 0.50 -> polars-compute 0.50 -> skiplist 0.6; the fix requires skiplist >=1.1.1 outside that dependency range. Accept panic-unwind use-after-free exposure pending a compatible Polars upgrade." },
+]

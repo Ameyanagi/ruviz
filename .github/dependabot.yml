@@ -1,0 +1,19 @@
+version: 2
+
+# Omitting target-branch keeps version and security updates on the default branch.
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+
+  # packages/ruviz and apps/web-demo share the root Bun workspace lockfile.
+  - package-ecosystem: bun
+    directory: /
+    schedule:
+      interval: weekly
