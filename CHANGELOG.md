@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Security
+
+- Use Bun 1.4.4 for web tooling and fetch the latest Node.js 24 release in the
+  npm publishing job.
+- Pin CI actions to commit SHAs, disable persisted checkout credentials, scope
+  publishing permissions to the jobs that need them, and remove release and
+  Pages artifact build caches.
+- Refresh vulnerable Rust dependencies within the existing manifest constraints,
+  add an advisory CI gate with documented exceptions for upstream upgrades, and
+  enable weekly Dependabot checks for actions, Cargo, and the Bun workspace.
+
 ## [0.15.2] - 2026-10-24
 
 ### Fixed

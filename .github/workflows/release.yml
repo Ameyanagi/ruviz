@@ -16,8 +16,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  actions: read
-  contents: write
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -28,13 +27,17 @@ env:
 jobs:
   check-ci:
     name: Wait for CI
+    permissions:
+      contents: read
+      actions: read
     runs-on: ubuntu-latest
     outputs:
       release_sha: ${{ steps.release-target.outputs.release_sha }}
     steps:
       - name: Checkout workflow utilities
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          persist-credentials: false
           ref: ${{ github.sha }}
 
       - name: Manual recovery - skip tag-push CI gate
@@ -70,12 +73,13 @@ jobs:
     needs: check-ci
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          persist-credentials: false
           ref: ${{ needs.check-ci.outputs.release_sha }}
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           targets: wasm32-unknown-unknown
 
@@ -83,14 +87,15 @@ jobs:
         run: rustup target add wasm32-unknown-unknown
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
-          bun-version: 1.3.5
+          bun-version: 1.4.4
+          no-cache: true
 
       - name: Validate release tag matches package versions
         run: |
@@ -200,25 +205,6 @@ jobs:
           sys.exit(1 if errors else 0)
           PY
 
-      - name: Cache cargo
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-            adapters/gui/target
-            adapters/gpui/target
-          key: ${{ runner.os }}-cargo-release-${{ hashFiles('Cargo.lock', 'adapters/gui/Cargo.lock', 'adapters/gpui/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-release-
-
-      - name: Cache Bun
-        uses: actions/cache@v4
-        with:
-          path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
-          restore-keys: ${{ runner.os }}-bun-
-
       - name: Install JS workspace dependencies
         run: bun install --frozen-lockfile
 
@@ -277,23 +263,24 @@ jobs:
     needs: [check-ci, build-release, build-python-widget-bundle]
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          persist-credentials: false
           ref: ${{ needs.check-ci.outputs.release_sha }}
 
       - name: Download canonical widget bundle
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: python-widget-bundle
           path: .
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
 
       - name: Build sdist
-        uses: PyO3/maturin-action@v1
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1
         with:
           maturin-version: v1.12.6
           command: sdist
@@ -304,7 +291,7 @@ jobs:
       # source and needs the Linux desktop build dependencies, so CI covers that
       # install in the `Python Packaging` job instead.
       - name: Upload Python sdist
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: python-dist-sdist
           path: bindings/python/dist/*.tar.gz
@@ -316,23 +303,24 @@ jobs:
     needs: [check-ci, build-release, build-python-widget-bundle]
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          persist-credentials: false
           ref: ${{ needs.check-ci.outputs.release_sha }}
 
       - name: Download canonical widget bundle
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: python-widget-bundle
           path: .
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
 
       - name: Build macOS Intel wheel
-        uses: PyO3/maturin-action@v1
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1
         with:
           command: build
           maturin-version: v1.12.6
@@ -348,7 +336,7 @@ jobs:
             --label "macOS Intel wheel"
 
       - name: Upload macOS Intel wheel
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: python-dist-macos-intel
           path: bindings/python/dist/*.whl
@@ -360,23 +348,24 @@ jobs:
     needs: [check-ci, build-release, build-python-widget-bundle]
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          persist-credentials: false
           ref: ${{ needs.check-ci.outputs.release_sha }}
 
       - name: Download canonical widget bundle
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: python-widget-bundle
           path: .
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
 
       - name: Build macOS Apple Silicon wheel
-        uses: PyO3/maturin-action@v1
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1
         with:
           command: build
           maturin-version: v1.12.6
@@ -392,7 +381,7 @@ jobs:
             --label "macOS Apple Silicon wheel"
 
       - name: Upload macOS Apple Silicon wheel
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: python-dist-macos-arm
           path: bindings/python/dist/*.whl
@@ -404,23 +393,24 @@ jobs:
     needs: [check-ci, build-release, build-python-widget-bundle]
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          persist-credentials: false
           ref: ${{ needs.check-ci.outputs.release_sha }}
 
       - name: Download canonical widget bundle
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: python-widget-bundle
           path: .
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
 
       - name: Build Windows wheel
-        uses: PyO3/maturin-action@v1
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1
         with:
           command: build
           maturin-version: v1.12.6
@@ -440,7 +430,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Upload Windows wheel
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: python-dist-windows
           path: bindings/python/dist/*.whl
@@ -452,18 +442,19 @@ jobs:
     needs: [check-ci, build-release, build-python-widget-bundle]
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          persist-credentials: false
           ref: ${{ needs.check-ci.outputs.release_sha }}
 
       - name: Download canonical widget bundle
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: python-widget-bundle
           path: .
 
       - name: Build Linux wheel
-        uses: PyO3/maturin-action@v1
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1
         with:
           command: build
           maturin-version: v1.12.6
@@ -481,7 +472,7 @@ jobs:
             --label "Linux x86_64 wheel" --no-native-show
 
       - name: Upload Linux wheel
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: python-dist-linux
           path: bindings/python/dist/*.whl
@@ -495,18 +486,19 @@ jobs:
     needs: [check-ci, build-release, build-python-widget-bundle]
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          persist-credentials: false
           ref: ${{ needs.check-ci.outputs.release_sha }}
 
       - name: Download canonical widget bundle
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: python-widget-bundle
           path: .
 
       - name: Build Linux aarch64 wheel
-        uses: PyO3/maturin-action@v1
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1
         with:
           command: build
           maturin-version: v1.12.6
@@ -524,7 +516,7 @@ jobs:
             --label "Linux aarch64 wheel" --no-native-show
 
       - name: Upload Linux aarch64 wheel
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: python-dist-linux-aarch64
           path: bindings/python/dist/*.whl
@@ -536,12 +528,13 @@ jobs:
     needs: [check-ci, build-release]
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          persist-credentials: false
           ref: ${{ needs.check-ci.outputs.release_sha }}
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           targets: wasm32-unknown-unknown
 
@@ -549,26 +542,10 @@ jobs:
         run: rustup target add wasm32-unknown-unknown
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
-          bun-version: 1.3.5
-
-      - name: Cache cargo
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-release-python-widget-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-release-python-widget-
-
-      - name: Cache Bun
-        uses: actions/cache@v4
-        with:
-          path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
-          restore-keys: ${{ runner.os }}-bun-
+          bun-version: 1.4.4
+          no-cache: true
 
       - name: Install JS workspace dependencies
         run: bun install --frozen-lockfile
@@ -577,7 +554,7 @@ jobs:
         run: bun run build:python-widget
 
       - name: Upload canonical widget bundle
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: python-widget-bundle
           path: bindings/python/ruviz_py/ruviz/widget.js
@@ -589,12 +566,13 @@ jobs:
     needs: [check-ci, build-release]
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          persist-credentials: false
           ref: ${{ needs.check-ci.outputs.release_sha }}
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
 
       - name: Detect published ruviz version
         id: ruviz-version
@@ -624,29 +602,23 @@ jobs:
     needs: [check-ci, publish-ruviz]
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          persist-credentials: false
           ref: ${{ needs.check-ci.outputs.release_sha }}
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
 
       - name: Setup uv
-        uses: astral-sh/setup-uv@v8.0.0
-
-      - name: Cache cargo sources
-        uses: actions/cache@v4
+        uses: astral-sh/setup-uv@cec208311dfd045dd5311c1add060b2062131d57 # v8.0.0
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: ${{ runner.os }}-cargo-release-packaged-crates-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-release-packaged-crates-
+          enable-cache: false
 
       - name: Install GPUI Linux build dependencies
         uses: ./.github/actions/install-linux-desktop-build-deps
@@ -666,32 +638,26 @@ jobs:
     needs: [check-ci, build-release, publish-ruviz]
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          persist-credentials: false
           ref: ${{ needs.check-ci.outputs.release_sha }}
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
 
       - name: Setup uv
-        uses: astral-sh/setup-uv@v8.0.0
+        uses: astral-sh/setup-uv@cec208311dfd045dd5311c1add060b2062131d57 # v8.0.0
+        with:
+          enable-cache: false
 
       - name: Install Linux desktop build dependencies
         uses: ./.github/actions/install-linux-desktop-build-deps
-
-      - name: Cache GUI adapter package sources
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            adapters/gui/target
-          key: ${{ runner.os }}-cargo-release-gui-adapters-${{ hashFiles('adapters/gui/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-release-gui-adapters-
 
       - name: Verify packaged adapters against crates.io
         run: >-
@@ -711,12 +677,13 @@ jobs:
         crate: [ruviz-egui, ruviz-iced, ruviz-slint]
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          persist-credentials: false
           ref: ${{ needs.check-ci.outputs.release_sha }}
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
 
       - name: Detect published adapter version
         id: adapter-version
@@ -756,12 +723,13 @@ jobs:
     needs: [check-ci, publish-ruviz, verify-packaged-crates]
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          persist-credentials: false
           ref: ${{ needs.check-ci.outputs.release_sha }}
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
 
       - name: Detect published ruviz-web version
         id: web-version
@@ -813,12 +781,13 @@ jobs:
     needs: [check-ci, verify-packaged-crates]
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          persist-credentials: false
           ref: ${{ needs.check-ci.outputs.release_sha }}
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
 
       - name: Detect published ruviz-gpui version
         id: gpui-version
@@ -855,18 +824,21 @@ jobs:
       id-token: write
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          persist-credentials: false
           ref: ${{ needs.check-ci.outputs.release_sha }}
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: '24'
+          check-latest: true
+          package-manager-cache: false
           registry-url: 'https://registry.npmjs.org'
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           targets: wasm32-unknown-unknown
 
@@ -874,26 +846,10 @@ jobs:
         run: rustup target add wasm32-unknown-unknown
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
-          bun-version: 1.3.5
-
-      - name: Cache cargo
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-release-web-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-release-web-
-
-      - name: Cache Bun
-        uses: actions/cache@v4
-        with:
-          path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
-          restore-keys: ${{ runner.os }}-bun-
+          bun-version: 1.4.4
+          no-cache: true
 
       - name: Install JS workspace dependencies
         run: bun install --frozen-lockfile
@@ -963,17 +919,18 @@ jobs:
       url: https://pypi.org/p/ruviz
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          persist-credentials: false
           ref: ${{ needs.check-ci.outputs.release_sha }}
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
 
       - name: Download Python distributions
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: python-dist-*
           path: dist
@@ -1028,13 +985,16 @@ jobs:
 
   create-github-release:
     name: Create GitHub Release
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     needs: [check-ci, build-release, publish-ruviz, verify-packaged-crates, verify-gui-adapter-packages, publish-gui-adapters, publish-ruviz-web, publish-ruviz-gpui, publish-npm-web, publish-python]
     if: ${{ always() && needs.build-release.result == 'success' && needs.publish-ruviz.result == 'success' && needs.verify-packaged-crates.result == 'success' && needs.verify-gui-adapter-packages.result == 'success' && needs.publish-gui-adapters.result == 'success' && needs.publish-ruviz-web.result == 'success' && needs.publish-ruviz-gpui.result == 'success' && needs.publish-npm-web.result == 'success' && needs.publish-python.result == 'success' }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          persist-credentials: false
           ref: ${{ needs.check-ci.outputs.release_sha }}
 
       - name: Prepare release notes body
@@ -1059,7 +1019,7 @@ jobs:
           fi
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
           body_path: RELEASE_NOTES.md
